@@ -837,6 +837,22 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
             if is_merchant_account_error(_ec):
                 _merchant_health_state['consecutive_errors'] += 1
                 _on_merchant_error(_ec, err_msg, result, channel=_alert_channel)
+                # auto-disable channel on merchant errors
+                if payment_channel_id:
+                    try:
+                        _dc = get_db()
+                        _dc_c = _dc.cursor()
+                        _dc_c.execute("UPDATE payment_channels SET failure_count = COALESCE(failure_count, 0) + 1 WHERE id=%s", (payment_channel_id,))
+                        _dc.commit()
+                        _dc_c.execute("SELECT failure_count FROM payment_channels WHERE id=%s", (payment_channel_id,))
+                        _fc = _dc_c.fetchone()
+                        if _fc and _fc[0] >= 3:
+                            _dc_c.execute("UPDATE payment_channels SET auto_disabled=1, is_active=0 WHERE id=%s", (payment_channel_id,))
+                            _dc.commit()
+                            logger.warning('[MERCHANT] auto-disabled channel %s, failure_count=%s' % (payment_channel_id, _fc[0]))
+                        _dc.close()
+                    except Exception as _dx:
+                        logger.error('[MERCHANT] update failure_count error: %s' % _dx)
             elif result.get('return_code') != 'SUCCESS':
                 # return_code 非 SUCCESS 也可能是账户问题
                 _rc = result.get('return_code', '')
@@ -1120,7 +1136,7 @@ def assign_merchant(phone=None, openid=None):
         if row and row[0]:
             c.close()
             return row[0]
-        row = c.execute("SELECT mch_id FROM payment_channels WHERE is_active=TRUE ORDER BY total_users ASC LIMIT 1").fetchone()
+        row = c.execute("SELECT mch_id FROM payment_channels WHERE is_active=TRUE ORDER BY weight DESC, total_users ASC LIMIT 1").fetchone()
         if not row:
             c.close()
             return None

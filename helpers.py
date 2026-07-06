@@ -377,10 +377,11 @@ def send_open_lock(device_id, board_no, lock_no, protocol=None, order_id='', slo
 
     
     # 内存队列兜底（设备离线时用）
-    if device_id not in pending_lock_commands:
-        pending_lock_commands[device_id] = []
-    if command not in pending_lock_commands[device_id]:
-        pending_lock_commands[device_id].append(command)
+    if not _ws_sent:
+        if device_id not in pending_lock_commands:
+            pending_lock_commands[device_id] = []
+        if command not in pending_lock_commands[device_id]:
+            pending_lock_commands[device_id].append(command)
     
     # 数据库操作：始终delivered=0，让HTTP轮询作为可靠兜底（WS可能发送成功但设备未收到）
     _delivered = 1 if _ws_sent else 0
@@ -514,6 +515,8 @@ def update_channel_stats(channel_id, amount):
 
 def get_channel_wxpay(channel, use_mp_appid=False):
     """根据渠道配置创建支付实例"""
+    if not channel.get('is_active', True):
+        return get_wxpay(use_mp_appid=use_mp_appid), None
     from wxpay import WxPay, ThirdPartyPay as TPP
     channel_type = channel.get('channel_type', 'wechat')
     if channel_type == 'wechat':

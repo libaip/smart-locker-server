@@ -385,8 +385,13 @@ def admin_slot_save():
         data = request.get_json()
         conn = get_db()
         c = conn.cursor()
+        logger.info(f'[slot_save] BEFORE: slot_id={data.get("id")}, status={data.get("status")}')
         c.execute('UPDATE cabinet_slots SET slot_size=%s,status=%s,slot_label=%s WHERE id=%s',
                   (data.get('slot_size'), data.get('status'), data.get('slot_label', ''), data['id']))
+        logger.info(f'[slot_save] AFTER: affected={c.rowcount}, slot_id={data["id"]}')
+        c.execute('SELECT cabinet_id FROM cabinet_slots WHERE id=%s', (data["id"],))
+        _cab_row = c.fetchone()
+        if _cab_row: logger.info(f'[slot_save] cabinet_id={_cab_row["cabinet_id"]}')
         conn.commit()
         conn.close()
         return json_response(message='保存成功')

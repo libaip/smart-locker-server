@@ -991,7 +991,7 @@ def deposit_end_storage():
         from config import DATABASE_URL as _DU
         conn = psycopg2.connect(_DU, connect_timeout=10)
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute('SELECT o.*, cs.slot_number, cs.board_no, cs.lock_no, c.cabinet_code, c.mainboard_device_id FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id JOIN cabinets c ON o.cabinet_id = c.id WHERE o.id = %s', (order_id,))
+        cursor.execute('SELECT o.*, cs.slot_number, cs.board_no, cs.lock_no, c.cabinet_code, c.mainboard_device_id, c.mainboard_source FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id JOIN cabinets c ON o.cabinet_id = c.id WHERE o.id = %s', (order_id,))
         order = cursor.fetchone()
         if not order or order['status'] != 2:
             conn.close()

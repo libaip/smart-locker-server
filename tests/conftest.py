@@ -9,6 +9,7 @@ def mock_db():
         cur.fetchone.side_effect = lambda: None
         cur.fetchall.return_value = []
         db.cursor.return_value = cur
+        db.execute.return_value = cur
         cur.execute.return_value = cur
         m.return_value = db
         yield cur

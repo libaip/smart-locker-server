@@ -1029,10 +1029,18 @@ def _auto_clear_cabinet_scheduler():
 
             for loc in locations:
                 loc_id = loc['id']
-                clear_time = loc['clear_box_time'] or '23:00'
+                clear_time_str = loc['clear_box_time'] or '23:00'
                 cycle = loc['clear_box_cycle'] or 1
-
-                if current_time < clear_time:
+                
+                # limit clear window to 30 min after scheduled time
+                try:
+                    _ch, _cm = map(int, clear_time_str.split(':'))
+                    _nh, _nm = map(int, current_time.split(':'))
+                    _clear_min = _ch * 60 + _cm
+                    _now_min = _nh * 60 + _nm
+                    if _now_min < _clear_min or _now_min > _clear_min + 30:
+                        continue
+                except:
                     continue
 
                 last_date = _clear_box_processed.get(loc_id, '')

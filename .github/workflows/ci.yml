@@ -1,4 +1,4 @@
-name: CI Check + Deploy
+name: CI Check + Deploy + E2E
 
 on:
   push:
@@ -18,6 +18,12 @@ jobs:
         run: |
           pip install flask psycopg2-binary pytest -q
           python3 -c "import flask; import psycopg2; print('deps OK')"
+      - name: Static checks
+        run: |
+          echo "=== Check API_BASE fallback ==="
+          grep -q 'window.location.host' templates/deposit.html && echo 'OK: API_BASE has host fallback' || { echo 'FAIL: API_BASE missing host fallback'; exit 1; }
+          echo "=== Check no undefined in API paths ==="
+          if grep -q 'undefined/api' templates/deposit.html; then echo 'FAIL: found undefined/api in paths'; exit 1; else echo 'OK: no undefined/api paths'; fi
       - name: Syntax check
         run: |
           python3 -m py_compile app.py config.py helpers.py
@@ -47,3 +53,35 @@ jobs:
             bash restart.sh
             sleep 3
             echo "Deploy OK"
+      - name: E2E health check
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 106.55.7.10
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            set -e
+            echo "=== E2E: Page loads ==="
+            STATUS=$(curl -s -o /dev/null -w '%{http_code}' 'https://locker.cqdyxl.com/' -k 2>/dev/null || echo '000')
+            echo "Status: $STATUS"
+            [ "$STATUS" = "200" ] || { echo "FAIL: page status $STATUS"; exit 1; }
+            
+            echo "=== E2E: No undefined in API paths ==="
+            PAGE_HTML=$(curl -s 'https://locker.cqdyxl.com/' -k 2>/dev/null)
+            if echo "$PAGE_HTML" | grep -q 'undefined/api'; then
+              echo "FAIL: found undefined/api in page"
+              exit 1
+            fi
+            echo "OK: no undefined/api paths"
+            
+            echo "=== E2E: API /api/store/init responds ==="
+            API_RESULT=$(curl -s -X POST 'https://locker.cqdyxl.com/api/store/init' -H 'Content-Type: application/json' -d '{}' -k 2>/dev/null)
+            echo "Response: $API_RESULT"
+            echo "$API_RESULT" | grep -q 'code' || { echo "FAIL: store_init API not responding"; exit 1; }
+            
+            echo "=== E2E: Cabinet sizes API ==="
+            SIZES=$(curl -s 'https://locker.cqdyxl.com/api/cabinet/8/available-sizes' -k 2>/dev/null)
+            echo "$SIZES"
+            
+            echo "=== E2E ALL CHECKS PASSED ==="

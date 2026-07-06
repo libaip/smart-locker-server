@@ -20,7 +20,15 @@ jobs:
       - name: Pylint
         run: |
           pip install pylint -q 2>/dev/null
+      - name: Run tests
+        run: |
+          pip install pytest -q 2>/dev/null
+          python3 -m pytest tests/ -v --tb=short 2>&1 || true
           pylint --disable=all --enable=E0602 routes/ 2>&1 || true
+      - name: Run tests
+        run: |
+          pip install pytest -q 2>/dev/null
+          python3 -m pytest tests/ -v --tb=short 2>&1 || true
 
   deploy:
     needs: check

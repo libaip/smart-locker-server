@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>设备管理</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#f5f5f5;font-family:-apple-system,sans-serif;min-height:100vh}
+.top-bar{background:#2B6CB0;padding:12px 16px;color:#fff;display:flex;align-items:center;position:sticky;top:0;z-index:100}
+.top-bar .title{font-size:16px;font-weight:600;flex:1;text-align:center}
+.device-list{padding:12px}
+.device-card{background:#fff;border-radius:10px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
+.device-info{display:flex;flex-direction:column;gap:4px}
+.device-name{font-size:15px;font-weight:600;color:#333}
+.device-loc{font-size:13px;color:#999}
+.device-status{font-size:12px;padding:3px 10px;border-radius:10px}
+.status-online{background:#e8f5e9;color:#2e7d32}
+.status-offline{background:#fbe9e7;color:#c62828}
+.loading,.empty{text-align:center;padding:60px 0;color:#999;font-size:14px}
+</style></head>
+<body>
+<div class="top-bar"><div class="title">设备管理</div></div>
+<div id="loading" class="loading">加载中...</div>
+<div id="empty" class="empty" style="display:none">暂无设备</div>
+<div id="deviceList" class="device-list" style="display:none"></div>
+<script>
+var token = localStorage.getItem('merchant_token') || '';
+var params = new URLSearchParams(window.location.search);
+if (!token) token = params.get('token') || '';
+var baseUrl = window.location.origin + '/api';
+
+function loadDevices() {
+  fetch(baseUrl + '/merchant/locations', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){return r.json()}).then(function(res){
+      var locations = res.data || [];
+      if (locations.length === 0) { showEmpty(); return }
+      var allDevices = [];
+      var promises = locations.map(function(loc){
+        if (!loc.cabinet_count) return Promise.resolve();
+        return fetch(baseUrl + '/merchant/cabinets?location_id=' + loc.id, {
+          headers: { 'Authorization': 'Bearer ' + token }
+        }).then(function(r){return r.json()}).then(function(cabRes){
+          var cabinets = cabRes.data || [];
+          cabinets.forEach(function(c){
+            var hb = c.last_heartbeat;
+            var online = hb && (Date.now() - new Date(hb).getTime()) < 120000;
+            allDevices.push({id:c.id,name:c.name||c.cabinet_code,loc:loc.name,online:online,hb:hb})
+          })
+        }).catch(function(){})
+      });
+      Promise.all(promises).then(function(){
+        if (allDevices.length === 0) { showEmpty(); return }
+        document.getElementById('loading').style.display = 'none'
+        var list = document.getElementById('deviceList')
+        list.style.display = 'block'
+        var h = ''
+        allDevices.forEach(function(d){
+          var cls = d.online ? 'status-online' : 'status-offline'
+          var txt = d.online ? '在线' : '离线'
+          h += '<div class="device-card"><div class="device-info"><span class="device-name">' + d.name + '</span><span class="device-loc">' + d.loc + '</span></div><span class="device-status ' + cls + '">' + txt + '</span></div>'
+        })
+        list.innerHTML = h
+      })
+    }).catch(function(){ showEmpty() })
+}
+function showEmpty() {
+  document.getElementById('loading').style.display = 'none'
+  document.getElementById('empty').style.display = 'block'
+}
+loadDevices()
+</script></body></html>

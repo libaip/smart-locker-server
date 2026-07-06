@@ -1,0 +1,16 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+<string name='server_url'>https://locker.cqdyxl.com</string>
+<string name='websocket_url'>wss://locker.cqdyxl.com/ws/</string>
+<string name='device_id'>123456</string>
+<string name='device_name'>柜机1号</string>
+<string name='store_name'>科莱维寄存柜</string>
+<string name='serial_port'>/dev/ttyS1</string>
+<int name='baud_rate' value='9600'/>
+<string name='serial_type'>NormalSerial</string>
+<string name='protocol_type'>YBM</string>
+<int name='board_no' value='1'/>
+<int name='board_count' value='1'/>
+<string name='admin_password'>123456</string>
+<boolean name='is_registered' value='true'/>
+</map>

@@ -1,0 +1,487 @@
+import time
+import threading
+import os
+#!/usr/bin/env python3
+"""
+修复Flask 3.x WebSocket路由问题
+Flask 3.x的url_map会拒绝WebSocket请求(WebsocketMismatch)
+需要在WSGI层面拦截WebSocket请求，绕过Flask路由
+"""
+import json, logging
+from datetime import datetime
+
+import logging as _logging
+import sqlite3 as _sqlite3
+_sl = _logging
+
+_rules_logger = _logging.getLogger('ws_middleware')
+
+# 设备在线状态追踪表 {device_id: True/False}，只记录状态变化，避免重复告警
+device_online_status = {}
+
+
+def _record_alert(device_id, alert_type, message):
+    """记录设备上下线告警到device_alerts表（仅状态变化时记录）"""
+    global device_online_status
+    try:
+        # 检查当前设备的上次状态
+        was_online = device_online_status.get(device_id, None)
+        
+        if alert_type == 'online':
+            # 如果之前已经是在线状态，不重复记录
+            if was_online is True:
+                _sl.getLogger('ws_middleware').info(f'[alert_skip] 设备{device_id}已在线，跳过online告警')
+                return
+            device_online_status[device_id] = True
+        elif alert_type == 'offline':
+            # 如果之前已经是离线状态，不重复记录
+            if was_online is False:
+                _sl.getLogger('ws_middleware').info(f'[alert_skip] 设备{device_id}已离线，跳过offline告警')
+                return
+            device_online_status[device_id] = False
+        
+        # 状态发生变化，记录告警
+        _db2 = _sqlite3.connect('/home/ubuntu/smart-locker/locker.db', timeout=30)
+        _cur2 = _db2.cursor()
+        _cur2.execute('INSERT INTO device_alerts (device_id, alert_type, detail) VALUES (?, ?, ?)',
+                     (device_id, alert_type, message))
+        _db2.commit()
+        _db2.close()
+        _sl.getLogger('ws_middleware').info(f'[alert_recorded] 设备{device_id} 状态变化: {alert_type}')
+    except Exception as e:
+        _sl.getLogger('ws_middleware').error(f'[record_alert] {e}')
+
+
+def _init_device_online_status():
+    """服务启动时根据last_heartbeat初始化设备在线状态"""
+    global device_online_status
+    try:
+        _db = _sqlite3.connect('/home/ubuntu/smart-locker/locker.db', timeout=30)
+        _db.row_factory = _sqlite3.Row
+        _cur = _db.cursor()
+        sql = "SELECT mainboard_device_id, last_heartbeat FROM cabinets WHERE mainboard_device_id IS NOT NULL AND mainboard_device_id != ''"
+        _cur.execute(sql)
+        rows = _cur.fetchall()
+        _db.close()
+        from datetime import datetime, timedelta
+        threshold = datetime.now() - timedelta(minutes=2)
+        for row in rows:
+            dev_id = row['mainboard_device_id']
+            hb = row['last_heartbeat']
+            if hb:
+                try:
+                    if isinstance(hb, str):
+                        hb_time = datetime.strptime(hb[:19], '%Y-%m-%d %H:%M:%S')
+                    else:
+                        hb_time = hb
+                    device_online_status[dev_id] = (hb_time >= threshold)
+                except:
+                    device_online_status[dev_id] = False
+            else:
+                device_online_status[dev_id] = False
+        _sl.getLogger('ws_middleware').info(f'[init_status] 初始化设备在线状态: {device_online_status}')
+    except Exception as e:
+        _sl.getLogger('ws_middleware').error(f'[init_status] 初始化失败: {e}')
+
+# 服务启动时初始化
+_init_device_online_status()
+
+
+def _push_usage_rules(device_id, ws):
+    """推送使用规则到设备APP"""
+    try:
+        import sqlite3 as _sq
+        _db = _sq.connect('/home/ubuntu/smart-locker/locker.db', timeout=10)
+        _db.row_factory = _sq.Row
+        _cur = _db.cursor()
+        _cur.execute('SELECT usage_rules, deposit_amount FROM cabinets WHERE mainboard_device_id=?', (device_id,))
+        row = _cur.fetchone()
+        _db.close()
+        rules = row['usage_rules'] if row and row['usage_rules'] else ''
+        if '{deposit_amount}' in rules:
+            da = row['deposit_amount'] if row else 20
+            try: da = int(da) if da == int(da) else da
+            except: da = 20
+            rules = rules.replace('{deposit_amount}', str(da))
+        rules = rules.replace(chr(92) + chr(110), chr(10))
+        msg = json.dumps({
+            'type': 'usage_rules_update',
+            'usage_rules': rules,
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+        ws.send(msg)
+        _rules_logger.info(f'[WS-MW] 推送使用规则: device={device_id}, rules_len={len(rules)}')
+    except Exception as e:
+        _rules_logger.error(f'[WS-MW] 推送使用规则失败: {e}')
+
+
+def fix_websocket(app):
+    """添加WSGI中间件处理WebSocket请求"""
+    
+    # 保存原始wsgi_app
+    original_wsgi = app.wsgi_app
+    
+    def websocket_middleware(environ, start_response):
+        # 检查是否是WebSocket升级请求
+        if environ.get('HTTP_UPGRADE', '').lower() == 'websocket':
+            from helpers import connected_devices, pending_lock_commands, logger
+            # Log the request path and query for debugging
+            req_path = environ.get('PATH_INFO', '')
+            req_query = environ.get('QUERY_STRING', '')
+            req_ua = environ.get('HTTP_USER_AGENT', '')
+            logger.info(f'[WS-MW] WS升级请求: path={req_path}, query={req_query}, ua={req_ua}')
+            
+            # 获取geventwebsocket提供的websocket对象
+            ws = environ.get('wsgi.websocket')
+            if ws is None:
+                # 没有websocket对象，走普通Flask流程
+                return original_wsgi(environ, start_response)
+            
+            # 直接处理WebSocket，绕过Flask路由
+            
+            # 从URL获取device_id
+            query = environ.get('QUERY_STRING', '')
+            device_id = ''
+            for param in query.split('&'):
+                if param.startswith('device_id='):
+                    device_id = param.split('=', 1)[1]
+                    break
+            
+            path = environ.get('PATH_INFO', '')
+            logger.info(f'[WS-MW] WebSocket连接: device_id={device_id}, path={path}')
+            
+            if device_id:
+                # 注册设备
+                if device_id in connected_devices and connected_devices[device_id] is not ws:
+                    logger.info(f'[WS-MW] 设备已存在连接,替换旧连接: {device_id}')
+                    try:
+                        old_ws = connected_devices[device_id]
+                        old_ws.close()
+                    except:
+                        pass
+                connected_devices[device_id] = ws
+                _record_alert(device_id, "online", "设备WebSocket连接建立")
+                
+                # 发送注册确认
+                try:
+                    ack = json.dumps({
+                        'type': 'register_ack',
+                        'device_id': device_id,
+                        'status': 'ok',
+                        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    })
+                    ws.send(ack)
+                    logger.info(f'[WS-MW] 发送register_ack(初始): {device_id}')
+                except Exception as e:
+                    logger.error(f'[WS-MW] 发送register_ack失败: {e}')
+                
+                # 推送使用规则
+                _push_usage_rules(device_id, ws)
+                
+                # 同步离线订单
+                logger.info(f'[WS-MW] sync_offline_orders完成: device={device_id}')
+                sync_offline_orders(device_id)
+                logger.info(f'[WS-MW] sync_offline_orders结束: device={device_id}')
+                
+                # 发送积压的开锁指令（内存队列）
+                if device_id in pending_lock_commands and pending_lock_commands[device_id]:
+                    for cmd in pending_lock_commands[device_id]:
+                        try:
+                            ws.send(json.dumps(cmd))
+                            logger.info(f'[WS-MW] 发送积压指令(内存): lock={cmd.get("lock_no")}')
+                        except:
+                            pass
+                    pending_lock_commands[device_id] = []
+                
+                # 发送积压指令（数据库持久化）
+                logger.info(f'[WS-MW] 开始检查SQLite积压指令: device={device_id}, type={type(device_id).__name__}')
+                import sqlite3 as _sqlite3
+                try:
+                    _db = _sqlite3.connect('/home/ubuntu/smart-locker/locker.db', timeout=30)
+                    _db.row_factory = _sqlite3.Row
+                    _cur = _db.cursor()
+                    # 诊断：查看所有待投递指令
+                    _cur.execute('SELECT id, device_id, delivered FROM pending_lock_cmds WHERE delivered=0 ORDER BY id LIMIT 100')
+                    _diag_rows = _cur.fetchall()
+                    logger.info('[WS-MW] 诊断-未投递指令数: ' + str(len(_diag_rows)) + ', 前5条: ' + str([(r["id"], r["device_id"], type(r["device_id"]).__name__, r["delivered"]) for r in _diag_rows[:5]]))
+                    _cur.execute('SELECT * FROM pending_lock_cmds WHERE device_id=? AND delivered=0 ORDER BY id', (device_id,))
+                    pending_rows = _cur.fetchall()
+                    logger.info(f'[WS-MW] SQLite查询结果: device={device_id}, rows={len(pending_rows)}')
+                    for row in pending_rows:
+                        logger.info(f'[WS-MW] 处理积压指令: id={row["id"]}, command={row["command"][:80]}')
+                        try:
+                            cmd_str = row['command']
+                            if cmd_str:
+                                cmd = json.loads(cmd_str)
+                            else:
+                                cmd = {
+                                    'type': 'open_lock',
+                                    'board_no': row['board_no'],
+                                    'boardNo': row['board_no'],
+                                    'lock_no': row['lock_no'],
+                                    'lockNo': row['lock_no'],
+                                    'protocol': row['protocol'],
+                                    'order_id': row['order_id'] or '',
+                                    'orderId': row['order_id'] or ''
+                                }
+                            ws.send(json.dumps(cmd))
+                            logger.info(f'[WS-MW] 发送积压指令(DB): type={cmd.get("type")}, id={row["id"]}')
+                        except:
+                            pass
+                    # Mark as delivered after sending via WebSocket
+                    if pending_rows:
+                        _cur.execute('UPDATE pending_lock_cmds SET delivered=1 WHERE device_id=? AND delivered=0', (device_id,))
+                        _db.commit()
+                        logger.info(f'[WS-MW] 标记{len(pending_rows)}条指令为已投递')
+                    _db.close()
+                except Exception as db_err:
+                    logger.error(f'[WS-MW] 读取数据库指令失败: {db_err}')
+                
+                # 消息循环
+                try:
+                    while not ws.closed:
+                        msg = ws.receive()
+                        if msg is None:
+                            logger.info(f'[WS-MW] 连接关闭(收到None): device_id={device_id}')
+                            break
+                        try:
+                            # Log raw message for debugging
+                            logger.info(f'[WS-MW] 收到原始消息: device={device_id}, len={len(msg)}, preview={msg[:200]}')
+                            data = json.loads(msg)
+                            msg_type = data.get('type', '')
+                            
+                            if msg_type == 'register':
+                                did = data.get('device_id', '')
+                                if did:
+                                    if device_id and device_id in connected_devices and connected_devices[device_id] is ws:
+                                        del connected_devices[device_id]
+                                    device_id = did
+                                    connected_devices[device_id] = ws
+                                    ws.send(json.dumps({
+                                        'type': 'register_ack',
+                                        'device_id': device_id,
+                                        'status': 'ok'
+                                    }))
+                                    logger.info(f'[WS-MW] 设备注册(消息): {device_id}')
+                                    _record_alert(device_id, 'online', '设备WebSocket连接建立')
+                                    # 更新数据库版本号+心跳
+                                    try:
+                                        from database import get_db
+                                        db = get_db()
+                                        reg_ver = data.get('version', '')
+                                        reg_ver_code = int(data.get('version_code', 0) or 0)
+                                        if reg_ver:
+                                            db.execute(
+                                                "UPDATE cabinets SET last_heartbeat=NOW(), app_version=%s, app_version_code=%s WHERE mainboard_device_id=%s",
+                                                (reg_ver, reg_ver_code, device_id))
+                                        else:
+                                            db.execute(
+                                                "UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s",
+                                                (device_id,))
+                                        db.commit()
+                                        db.close()
+                                        logger.info(f'[WS-MW] 注册更新版本: device={device_id}, ver={reg_ver}, code={reg_ver_code}')
+                                    except Exception as db_e:
+                                        logger.error(f'[WS-MW] 注册写DB失败: {db_e}')
+                                    # 版本更新改为推送下载模式，通过 /api/admin/device/push-update 手动触发
+                                    
+                                    # 推送使用规则
+                                    _push_usage_rules(device_id, ws)
+                                    
+                                    # 更新数据库心跳
+                                    try:
+                                        from database import get_db
+                                        db = get_db()
+                                        db.execute(
+                                            "UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s",
+                                            (device_id,))
+                                        db.commit()
+                                        db.close()
+                                    except:
+                                        pass
+                            
+                            elif msg_type == 'debug_echo_resp':
+                                logger.info(f'[WS-MW] ★★★DEBUG回显★★★: device={device_id}, data={data}')
+                            
+                            elif msg_type == 'heartbeat':
+                                logger.info(f'[WS-MW] 心跳: {device_id}')
+                                try:
+                                    from database import get_db
+                                    db = get_db()
+                                    version = data.get('version', '')
+                                    version_code = int(data.get('version_code', 0) or 0)
+                                    if version:
+                                        db.execute(
+                                            "UPDATE cabinets SET last_heartbeat=NOW(), app_version=%s, app_version_code=%s WHERE mainboard_device_id=%s",
+                                            (version, version_code, device_id))
+                                    else:
+                                        db.execute(
+                                            "UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s",
+                                            (device_id,))
+                                    db.commit()
+                                    db.close()
+                                    # 版本更新改为推送下载模式，通过 /api/admin/device/push-update 手动触发
+                                except:
+                                    pass
+                                # 回复心跳确认
+                                try:
+                                    ack_data = {
+                                        'type': 'heartbeat_ack',
+                                        'device_id': device_id,
+                                        'status': 'ok',
+                                        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                    }
+                                    ws.send(json.dumps(ack_data))
+                                except Exception as e:
+                                    logger.error(f'[WS-MW] 发送心跳确认失败: {e}')
+                                # 在同一greenlet中发送队列中的开锁指令
+                                if device_id in pending_lock_commands and pending_lock_commands[device_id]:
+                                    for cmd in pending_lock_commands[device_id]:
+                                        try:
+                                            cmd_json = json.dumps(cmd)
+                                            ws.send(cmd_json)
+                                            logger.info(f'[WS-MW] ★发送开锁指令: device={device_id}, type={cmd.get("type")}, board={cmd.get("board_no")}, lock={cmd.get("lock_no")}')
+                                        except Exception as ce:
+                                            logger.error(f'[WS-MW] 发送开锁指令失败: {ce}')
+                                    pending_lock_commands[device_id] = []
+                                    logger.info(f'[WS-MW] 队列已清空: device={device_id}')
+                                # 心跳时不再重发DB积压指令（只在连接/注册时发送一次，避免无限循环重发）
+                            elif msg_type == 'lock_result':
+                                order_id = data.get('order_id') or data.get('orderId')
+                                success = data.get('success', False)
+                                logger.info(f'[WS-MW] 开锁结果: device={device_id}, order={order_id}, success={success}')
+                            elif msg_type == 'door_status_result':
+                                req_id = data.get('request_id', '')
+                                is_open = data.get('is_open', None)
+                                door_status_val = data.get('door_status', None)
+                                logger.info(f'[WS-MW] 柜门状态响应: device={device_id}, request_id={req_id}, is_open={is_open}')
+                                if req_id:
+                                    # Also write to door_query_cache for merchant API
+                                    try:
+                                        from database import get_db as _get_db
+                                        _db = _get_db()
+                                        _cur = _db.cursor()
+                                        _cur.execute("UPDATE door_query_cache SET is_open=%s, door_status=%s, query_success=TRUE WHERE request_id=%s",
+                                                     (1 if data.get('is_open') else 0, data.get('door_status', 'unknown'), req_id))
+                                        _db.commit()
+                                        _db.close()
+                                    except Exception as _dqe:
+                                        logger.error(f"[WS-MW] door_query_cache update fail: {_dqe}")
+                                    try:
+                                        from routes.admin_v2 import _door_status_results, _door_status_lock
+                                        with _door_status_lock:
+                                            if req_id in _door_status_results:
+                                                _door_status_results[req_id]['result'] = {
+                                                    'is_open': is_open,
+                                                    'door_status': door_status_val,
+                                                    'board_no': data.get('board_no', 0),
+                                                    'lock_no': data.get('lock_no', 0),
+                                                    'slot_id': data.get('slot_id')
+                                                }
+                                                _door_status_results[req_id]['event'].set()
+                                    except Exception as _dse:
+                                        logger.error(f'[WS-MW] 柜门状态响应处理失败: {_dse}')
+
+                                
+                                if order_id and success:
+                                    try:
+                                        from database import get_db
+                                        db = get_db()
+                                        cur = db.cursor()
+                                        try:
+                                            oid = int(order_id) if len(str(order_id)) < 10 else None
+                                            if oid:
+                                                cur.execute('SELECT slot_id FROM orders WHERE id=%s', (oid,))
+                                            else:
+                                                cur.execute('SELECT slot_id FROM orders WHERE order_no=%s', (str(order_id),))
+                                        except:
+                                            cur.execute('SELECT slot_id FROM orders WHERE order_no=%s', (str(order_id),))
+                                        o = cur.fetchone()
+                                        if o and o['slot_id']:
+                                            cur.execute('UPDATE cabinet_slots SET status=1 WHERE id=%s', (o['slot_id'],))
+                                            db.commit()
+                                        db.close()
+                                    except Exception as e:
+                                        logger.error(f'[WS-MW] 更新柜格失败: {e}')
+                        
+                        except json.JSONDecodeError:
+                            logger.warning(f'[WS-MW] 非JSON消息: device={device_id}, preview={msg[:200]}')
+                            pass
+                        except Exception as e:
+                            logger.error(f'[WS-MW] 消息处理错误: {e}')
+                
+                except Exception as e:
+                    logger.error(f'[WS-MW] 连接异常: device_id={device_id}, {e}')
+                finally:
+                    if device_id:
+                        if device_id in connected_devices and connected_devices[device_id] is ws:
+                            del connected_devices[device_id]
+                            logger.info(f'[WS-MW] 断开(清理): device_id={device_id}')
+                        else:
+                            logger.info(f'[WS-MW] 断开(已被新连接替代): device_id={device_id}')
+                        _record_alert(device_id, 'offline', '设备WebSocket断开连接')
+                
+                # 返回空响应(WebSocket已关闭)
+                start_response('200 OK', [('Content-Type', 'text/plain')])
+                return [b'']
+            else:
+                start_response('400 Bad Request', [('Content-Type', 'text/plain')])
+                return [b'Missing device_id']
+        
+        # 非WebSocket请求，走原始Flask流程
+        return original_wsgi(environ, start_response)
+    
+    app.wsgi_app = websocket_middleware
+    return app
+
+def sync_offline_orders(device_id):
+    """Device online: sync pending orders for this device's cabinet"""
+    import logging as _sl
+    _sl_log = _sl.getLogger('sync_offline')
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        # Find cabinet by mainboard_device_id (this is the device_id from APK)
+        cur.execute("SELECT id FROM cabinets WHERE mainboard_device_id = %s", (device_id,))
+        cab_row = cur.fetchone()
+        if not cab_row:
+            conn.close()
+            return
+        cabinet_id = cab_row["id"]
+        # Find pending orders (status=1 = paid but lock not opened yet)
+        cur.execute(
+            "SELECT id, order_no, slot_id, compartment_number "
+            "FROM orders "
+            "WHERE cabinet_id = %s AND status = 1 "
+            "AND created_at > NOW() - INTERVAL '2 hours' "
+            "ORDER BY created_at ASC",
+            (cabinet_id,)
+        )
+        pending_orders = cur.fetchall()
+        synced = 0
+        for order in pending_orders:
+            order_data = {
+                "type": "open_lock",
+                "order_id": order["id"],
+                "order_no": order["order_no"],
+                "slot_id": order["slot_id"],
+                "compartment_number": order["compartment_number"]
+            }
+            if device_id not in pending_lock_commands:
+                pending_lock_commands[device_id] = []
+            pending_lock_commands[device_id].append(order_data)
+            cur.execute(
+                "UPDATE orders SET status = 2 WHERE id = %s AND status = 1",
+                (order["id"],)
+            )
+            if cur.rowcount > 0:
+                synced += 1
+                _sl_log.info("[sync_offline] Order %s synced to device %s" % (order["order_no"], device_id))
+        conn.commit()
+        conn.close()
+        if synced > 0:
+            _sl_log.info("[sync_offline] %d offline orders synced for device %s" % (synced, device_id))
+    except Exception as e:
+        import logging as _sl2
+        _sl2.getLogger('sync_offline').error("[sync_offline] Error: %s" % e)

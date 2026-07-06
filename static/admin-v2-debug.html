@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>业务管理系统</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/view-design@4.7.0/dist/styles/iview.css">
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    html,body,#app{height:100%}
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+    .layout{height:100%;background:#f5f7f9}
+    .sidebar{width:220px;height:100vh;background:#001529;overflow-y:auto;overflow-x:hidden;position:fixed;left:0;top:0;z-index:100;transition:width .2s}
+    .sidebar.collapsed{width:64px}
+    .sidebar.collapsed .menu-text,.sidebar.collapsed .menu-arrow,.sidebar.collapsed .sub-items{display:none}
+    .sidebar.collapsed .menu-group-title{text-align:center;padding:10px 0}
+    .sidebar::-webkit-scrollbar{width:4px}
+    .sidebar::-webkit-scrollbar-thumb{background:rgba(255,255,255,.2);border-radius:2px}
+    .logo{height:64px;line-height:64px;text-align:center;color:#fff;font-size:18px;font-weight:700;border-bottom:1px solid #002140;white-space:nowrap;overflow:hidden}
+    .menu-group{border-bottom:1px solid rgba(255,255,255,.04)}
+    .menu-group-title{color:rgba(255,255,255,.65);padding:12px 24px 8px;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none;transition:color .2s}
+    .menu-group-title:hover{color:#fff}
+    .menu-group-title .menu-arrow{font-size:10px;transition:transform .2s;display:inline-block}
+    .menu-group-title .menu-arrow.open{transform:rotate(90deg)}
+    .sub-items{overflow:hidden;transition:max-height .3s ease}
+    .sub-items.closed{max-height:0!important}
+    .menu-item{color:rgba(255,255,255,.65);padding:10px 24px 10px 48px;cursor:pointer;font-size:14px;transition:all .2s;white-space:nowrap}
+    .menu-item:hover{color:#fff;background:rgba(255,255,255,.04)}
+    .menu-item.active{color:#fff;background:#2d8cf0}
+    .main-area{margin-left:220px;height:100vh;display:flex;flex-direction:column;transition:margin-left .2s}
+    .main-area.expanded{margin-left:64px}
+    .header-bar{background:#fff;padding:0 20px;height:56px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 1px 4px rgba(0,21,41,.08);flex-shrink:0}
+    .content-area{flex:1;padding:12px;overflow-y:auto}
+    .content-area>div{background:#fff;border-radius:4px;padding:16px;min-height:calc(100vh - 120px)}
+    .stat-card{padding:20px;margin-bottom:12px}
+    .stat-card .title{color:#808695;font-size:14px;margin-bottom:8px}
+    .stat-card .value{font-size:24px;font-weight:700}
+    .login-bg{position:fixed;top:0;left:0;width:100%;height:100%;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);display:flex;align-items:center;justify-content:center;z-index:9999}
+    .captcha-row{display:flex;gap:8px;align-items:center}
+    .captcha-canvas{cursor:pointer;border-radius:4px;flex-shrink:0}
+    .captcha-tip{font-size:12px;color:#808695;margin-top:4px}
+    .toggle-btn{cursor:pointer;font-size:16px;color:rgba(255,255,255,.65);line-height:64px;text-align:center;border-bottom:1px solid #002140}
+    .toggle-btn:hover{color:#fff;background:rgba(255,255,255,.05)}
+  </style>
+</head>
+<body>
+<div id="app">
+  <!-- 登录页 -->
+  <div v-if="showLogin" class="login-bg">
+    <Card style="width:400px;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3)">
+      <div style="text-align:center;margin-bottom:24px">
+        <div style="font-size:28px;font-weight:bold;color:#2d8cf0">业务管理系统</div>
+        <div style="color:#808695;margin-top:8px;font-size:14px">重庆科莱维科技有限公司</div>
+      </div>
+      <Form @submit.native.prevent="doLogin">
+        <FormItem><Input v-model="loginForm.username" size="large" prefix="ios-person" placeholder="请输入用户名"/></FormItem>
+        <FormItem><Input v-model="loginForm.password" type="password" size="large" prefix="ios-lock" placeholder="请输入密码" @keyup.enter.native="focusCaptcha"/></FormItem>
+        <FormItem>
+          <div class="captcha-row">
+            <Input v-model="loginForm.captcha" ref="captchaInput" size="large" prefix="ios-shield" placeholder="请输入验证码" style="flex:1" @keyup.enter.native="doLogin"/>
+            <canvas ref="captchaCanvas" class="captcha-canvas" width="120" height="36" @click="refreshCaptcha" title="点击刷新验证码"></canvas>
+          </div>
+          <div class="captcha-tip">看不清？点击图片刷新</div>
+        </FormItem>
+        <FormItem v-if="loginError"><Alert type="error" show-icon>{{loginError}}</Alert></FormItem>
+        <FormItem><Button type="primary" size="large" long :loading="loginLoading" @click="doLogin">登 录</Button></FormItem>
+      </Form>
+    </Card>
+  </div>
+
+  <!-- 主布局 -->
+  <div v-else class="layout">
+    <div class="sidebar" :class="{collapsed:isShrink}">
+      <div class="toggle-btn" @click="isShrink=!isShrink">{{isShrink?'▶':'◀'}} 切换</div>
+      <div class="logo">{{isShrink?'科':'科莱维管理'}}</div>
+      <!-- DEBUG: 菜单开始 -->
+      <div style="color:#ff9900;padding:8px 16px;font-size:12px;background:rgba(255,153,0,.1)">▼ 菜单加载成功</div>
+      <!-- 工作台 -->
+      <div class="menu-group">
+        <div class="menu-group-title" @click="toggleGroup('workbench')"><span>工作台</span><span class="menu-arrow" :class="{open:openGroups['workbench']}">▶</span></div>
+        <div class="sub-items" :class="{closed:!openGroups['workbench']}" :style="{maxHeight:openGroups['workbench']?'44px':'0'}">
+          <div class="menu-item" :class="{active:activeMenu==='dashboard'}" @click="onMenuSelect('dashboard')">主控台</div>
+        </div>
+      </div>
+      <!-- 设备管理 -->
+      <div class="menu-group">
+        <div class="menu-group-title" @click="toggleGroup('dev-mgr')"><span>设备管理</span><span class="menu-arrow" :class="{open:openGroups['dev-mgr']}">▶</span></div>
+        <div class="sub-items" :class="{closed:!openGroups['dev-mgr']}" :style="{maxHeight:openGroups['dev-mgr']?'44px':'0'}">
+          <div class="menu-item" :class="{active:activeMenu==='machine-list'}" @click="onMenuSelect('machine-list')">机器列表</div>
+        </div>
+      </div>
+      <!-- 网点管理 -->
+      <div class="menu-group">
+        <div class="menu-group-title" @click="toggleGroup('loc-mgr')"><span>网点管理</span><span class="menu-arrow" :class="{open:openGroups['loc-mgr']}">▶</span></div>
+        <div class="sub-items" :class="{closed:!openGroups['loc-mgr']}" :style="{maxHeight:openGroups['loc-mgr']?'44px':'0'}">
+          <div class="menu-item" :class="{active:activeMenu==='location-list'}" @click="onMenuSelect('location-list')">网点列表</div>
+        </div>
+      </div>
+      <!-- 寄存柜订单管理 -->
+      <div class="menu-group">
+        <div class="menu-group-title" @click="toggleGroup('order-mgr')"><span>订单管理</span><span class="menu-arrow" :class="{open:openGroups['order-mgr']}">▶</span></div>
+        <div class="sub-items" :class="{closed:!openGroups['order-mgr']}" :style="{maxHeight:openGroups['order-mgr']?'132px':'0'}">
+          <div class="menu-item" :class="{active:activeMenu==='online-order'}" @click="onMenuSelect('online-order')">在线订单</div>
+          <div class="menu-item" :class="{active:activeMenu==='settlement'}" @click="onMenuSelect('settlement')">结算流水</div>
+          <div class="menu-item" :class="{active:activeMenu==='query-all'}" @click="onMenuSelect('query-all')">综合查询</div>
+        </div>
+      </div>
+      <!-- 会员管理 -->
+      <div class="menu-group">
+        <div class="menu-group-title" @click="toggleGroup('member-mgr')"><span>会员管理</span><span class="menu-arrow" :class="{open:openGroups['member-mgr']}">▶</span></div>
+        <div class="sub-items" :class="{closed:!openGroups['member-mgr']}" :style="{maxHeight:openGroups['member-mgr']?'220px':'0'}">
+          <div class="menu-item" :class="{active:activeMenu==='member-list'}" @click="onMenuSelect('member-list')">会员管理</div>
+          <div class="menu-item" :class="{active:activeMenu==='member-withdraw'}" @click="onMenuSelect('member-withdraw')">会员提现</div>
+          <div class="menu-item" :class="{active:activeMenu==='member-recharge'}" @click="onMenuSelect('member-recharge')">会员充值记录</div>
+          <div class="menu-item" :class="{active:activeMenu==='complaint-self'}" @click="onMenuSelect('complaint-self')">自有投诉</div>
+          <div class="menu-item" :class="{active:activeMenu==='complaint-wx'}" @click="onMenuSelect('complaint-wx')">微信投诉</div>
+        </div>
+      </div>
+      <!-- 代理商管理 -->
+      <div class="menu-group">
+        <div class="menu-group-title" @click="toggleGroup('agent-mgr')"><span>代理商管理</span><span class="menu-arrow" :class="{open:openGroups['agent-mgr']}">▶</span></div>
+        <div class="sub-items" :class="{closed:!openGroups['agent-mgr']}" :style="{maxHeight:openGroups['agent-mgr']?'132px':'0'}">
+          <div class="menu-item" :class="{active:activeMenu==='agent-list'}" @click="onMenuSelect('agent-list')">代理商管理</div>
+          <div class="menu-item" :class="{active:activeMenu==='merchant-list'}" @click="onMenuSelect('merchant-list')">商家管理</div>
+          <div class="menu-item" :class="{active:activeMenu==='employee-list'}" @click="onMenuSelect('employee-list')">员工管理</div>
+        </div>
+      </div>
+      <!-- 财务管理 -->
+      <div class="menu-group">
+        <div class="menu-group-title" @click="toggleGroup('finance-mgr')"><span>财务管理</span><span class="menu-arrow" :class="{open:openGroups['finance-mgr']}">▶</span></div>
+        <div class="sub-items" :class="{closed:!openGroups['finance-mgr']}" :style="{maxHeight:openGroups['finance-mgr']?'132px':'0'}">
+          <div class="menu-item" :class="{active:activeMenu==='withdraw-manage'}" @click="onMenuSelect('withdraw-manage')">提现管理</div>
+          <div class="menu-item" :class="{active:activeMenu==='platform-flow'}" @click="onMenuSelect('platform-flow')">平台流水管理</div>
+          <div class="menu-item" :class="{active:activeMenu==='fund-flow'}" @click="onMenuSelect('fund-flow')">资金流水</div>
+        </div>
+      </div>
+      <!-- 统计管理 -->
+      <div class="menu-group">
+        <div class="menu-group-title" @click="toggleGroup('stat-mgr')"><span>统计管理</span><span class="menu-arrow" :class="{open:openGroups['stat-mgr']}">▶</span></div>
+        <div class="sub-items" :class="{closed:!openGroups['stat-mgr']}" :style="{maxHeight:openGroups['stat-mgr']?'44px':'0'}">
+          <div class="menu-item" :class="{active:activeMenu==='biz-stat'}" @click="onMenuSelect('biz-stat')">业务统计</div>
+        </div>
+      </div>
+      <!-- 公司管理 -->
+      <div class="menu-group">
+        <div class="menu-group-title" @click="toggleGroup('company-mgr')"><span>公司管理</span><span class="menu-arrow" :class="{open:openGroups['company-mgr']}">▶</span></div>
+        <div class="sub-items" :class="{closed:!openGroups['company-mgr']}" :style="{maxHeight:openGroups['company-mgr']?'132px':'0'}">
+          <div class="menu-item" :class="{active:activeMenu==='company-list'}" @click="onMenuSelect('company-list')">公司管理</div>
+          <div class="menu-item" :class="{active:activeMenu==='user-manage'}" @click="onMenuSelect('user-manage')">用户管理</div>
+          <div class="menu-item" :class="{active:activeMenu==='role-manage'}" @click="onMenuSelect('role-manage')">角色权限管理</div>
+        </div>
+      </div>
+      <!-- 个人管理 -->
+      <div class="menu-group">
+        <div class="menu-group-title" @click="toggleGroup('personal-mgr')"><span>个人管理</span><span class="menu-arrow" :class="{open:openGroups['personal-mgr']}">▶</span></div>
+        <div class="sub-items" :class="{closed:!openGroups['personal-mgr']}" :style="{maxHeight:openGroups['personal-mgr']?'88px':'0'}">
+          <div class="menu-item" :class="{active:activeMenu==='personal-info'}" @click="onMenuSelect('personal-info')">个人信息</div>
+          <div class="menu-item" :class="{active:activeMenu==='change-pwd'}" @click="onMenuSelect('change-pwd')">修改密码</div>
+        </div>
+      </div>
+      <!-- 系统维护 -->
+      <div class="menu-group">
+        <div class="menu-group-title" @click="toggleGroup('sys-mgr')"><span>系统维护</span><span class="menu-arrow" :class="{open:openGroups['sys-mgr']}">▶</span></div>
+        <div class="sub-items" :class="{closed:!openGroups['sys-mgr']}" :style="{maxHeight:openGroups['sys-mgr']?'44px':'0'}">
+          <div class="menu-item" :class="{active:activeMenu==='data-reset'}" @click="onMenuSelect('data-reset')">数据重置</div>
+        </div>
+      </div>
+      <!-- 远程升级 -->
+      <div class="menu-group">
+        <div class="menu-group-title" @click="toggleGroup('apk-mgr')"><span>远程升级</span><span class="menu-arrow" :class="{open:openGroups['apk-mgr']}">▶</span></div>
+        <div class="sub-items" :class="{closed:!openGroups['apk-mgr']}" :style="{maxHeight:openGroups['apk-mgr']?'44px':'0'}">
+          <div class="menu-item" :class="{active:activeMenu==='apk-version'}" @click="onMenuSelect('apk-version')">APK版本管理</div>
+        </div>
+      </div>
+      <!-- 售后管理 -->
+      <div class="menu-group">
+        <div class="menu-group-title" @click="toggleGroup('after-mgr')"><span>售后管理</span><span class="menu-arrow" :class="{open:openGroups['after-mgr']}">▶</span></div>
+        <div class="sub-items" :class="{closed:!openGroups['after-mgr']}" :style="{maxHeight:openGroups['after-mgr']?'176px':'0'}">
+          <div class="menu-item" :class="{active:activeMenu==='store-record'}" @click="onMenuSelect('store-record')">寄存记录</div>
+          <div class="menu-item" :class="{active:activeMenu==='blacklist'}" @click="onMenuSelect('blacklist')">黑名单</div>
+          <div class="menu-item" :class="{active:activeMenu==='alarm-record'}" @click="onMenuSelect('alarm-record')">告警记录</div>
+          <div class="menu-item" :class="{active:activeMenu==='location-alarm'}" @click="onMenuSelect('location-alarm')">网点告警</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="main-area" :class="{expanded:isShrink}">
+      <div class="header-bar">
+        <div style="font-size:16px;font-weight:700">智能寄存柜管理系统</div>
+        <Dropdown @on-click="onUserMenu">
+          <a href="javascript:void(0)">{{adminUser}} <Icon type="ios-arrow-down"/></a>
+          <DropdownMenu slot="list">
+            <DropdownItem name="personal-info">个人信息</DropdownItem>
+            <DropdownItem name="change-pwd">修改密码</DropdownItem>
+            <DropdownItem name="logout" divided>退出登录</DropdownItem>
+          </DropdownMenu>
+        </Dropdown>
+      </div>
+      <div class="content-area">
+        <!-- 主控台 -->
+        <div v-if="activeMenu==='dashboard'">
+          <Row :gutter="16">
+            <Col span="6"><Card><p slot="title">商家线上收入</p><div class="stat-card"><div class="value" style="color:#2d8cf0">¥{{stats.onlineIncome}}</div></div></Card></Col>
+            <Col span="6"><Card><p slot="title">商家寄存收入</p><div class="stat-card"><div class="value" style="color:#19be6b">¥{{stats.storageIncome}}</div></div></Card></Col>
+            <Col span="6"><Card><p slot="title">已提现</p><div class="stat-card"><div class="value">¥{{stats.withdrawn}}</div></div></Card></Col>
+            <Col span="6"><Card><p slot="title">商家总收入</p><div class="stat-card"><div class="value" style="color:#ff9900">¥{{stats.totalIncome}}</div></div></Card></Col>
+          </Row>
+          <Row :gutter="16" style="margin-top:12px">
+            <Col span="6"><Card><p slot="title">订单金额</p><div class="stat-card"><div class="value">¥{{stats.orderAmount}}</div></div></Card></Col>
+            <Col span="6"><Card><p slot="title">退款金额</p><div class="stat-card"><div class="value" style="color:#ed4014">¥{{stats.refundAmount}}</div></div></Card></Col>
+            <Col span="6"><Card><p slot="title">订单数</p><div class="stat-card"><div class="value" style="color:#2d8cf0">{{stats.orderCount}}</div></div></Card></Col>
+            <Col span="6"><Card><p slot="title">订单总收益</p><div class="stat-card"><div class="value" style="color:#19be6b">¥{{stats.orderProfit}}</div></div></Card></Col>
+          </Row>
+          <Row :gutter="16" style="margin-top:12px">
+            <Col span="6"><Card><p slot="title">会员余额</p><div class="stat-card"><div class="value">¥{{stats.memberBalance}}</div></div></Card></Col>
+            <Col span="6"><Card><p slot="title">会员充值</p><div class="stat-card"><div class="value">¥{{stats.memberRecharge}}</div></div></Card></Col>
+            <Col span="6"><Card><p slot="title">网点数量</p><div class="stat-card"><div class="value" style="color:#2d8cf0">{{stats.locationCount}}</div></div></Card></Col>
+            <Col span="6"><Card><p slot="title">设备数量/在线</p><div class="stat-card"><div class="value">{{stats.deviceCount}} / {{stats.onlineCount}}</div></div></Card></Col>
+          </Row>
+        </div>
+        <!-- 机器列表 -->
+        <div v-else-if="activeMenu==='machine-list'">
+          <Card><p slot="title">机器列表</p>
+            <div style="margin-bottom:12px;display:flex;gap:8px">
+              <Input v-model="search.machine" placeholder="搜索设备" style="width:200px"/>
+              <Select v-model="search.machineStatus" style="width:120px" placeholder="状态"><Option value="">全部</Option><Option value="online">在线</Option><Option value="offline">离线</Option></Select>
+              <Button type="primary" icon="ios-search" @click="loadMachines">查询</Button>
+            </div>
+            <Table :columns="machineCols" :data="machines" border></Table>
+          </Card>
+        </div>
+        <!-- 网点列表 -->
+        <div v-else-if="activeMenu==='location-list'">
+          <Card><p slot="title">网点列表</p>
+            <div style="margin-bottom:12px"><Input v-model="search.location" placeholder="搜索网点" style="width:200px"/><Button type="primary" @click="loadLocations" style="margin-left:8px">查询</Button></div>
+            <Table :columns="locationCols" :data="locations" border></Table>
+          </Card>
+        </div>
+        <!-- 在线订单 -->
+        <div v-else-if="activeMenu==='online-order'">
+          <Card><p slot="title">在线订单</p>
+            <div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap">
+              <Input v-model="search.orderNo" placeholder="订单号" style="width:180px"/>
+              <Input v-model="search.orderPhone" placeholder="手机号" style="width:150px"/>
+              <Select v-model="search.orderStatus" style="width:120px" placeholder="状态"><Option value="">全部</Option><Option value="1">存物中</Option><Option value="2">已支付</Option><Option value="3">已取物</Option><Option value="4">已退款</Option></Select>
+              <Button type="primary" @click="loadOrders">查询</Button>
+            </div>
+            <Table :columns="orderCols" :data="orders" border></Table>
+          </Card>
+        </div>
+        <!-- 会员管理 -->
+        <div v-else-if="activeMenu==='member-list'">
+          <Card><p slot="title">会员管理</p>
+            <div style="margin-bottom:12px"><Input v-model="search.memberPhone" placeholder="手机号" style="width:200px"/><Button type="primary" @click="loadMembers" style="margin-left:8px">查询</Button></div>
+            <Table :columns="memberCols" :data="members" border></Table>
+          </Card>
+        </div>
+        <!-- 代理商 -->
+        <div v-else-if="activeMenu==='agent-list'">
+          <Card><p slot="title">代理商管理</p>
+            <div style="margin-bottom:12px"><Input v-model="search.agentName" placeholder="搜索" style="width:200px"/><Button type="primary" @click="loadAgents" style="margin-left:8px">查询</Button><Button type="success" @click="openAgentModal()" style="margin-left:8px">新增</Button></div>
+            <Table :columns="agentCols" :data="agents" border></Table>
+          </Card>
+        </div>
+        <!-- 商家 -->
+        <div v-else-if="activeMenu==='merchant-list'">
+          <Card><p slot="title">商家管理</p>
+            <div style="margin-bottom:12px"><Input v-model="search.merchantName" placeholder="搜索" style="width:200px"/><Button type="primary" @click="loadMerchants" style="margin-left:8px">查询</Button></div>
+            <Table :columns="merchantCols" :data="merchants" border></Table>
+          </Card>
+        </div>
+        <!-- 员工 -->
+        <div v-else-if="activeMenu==='employee-list'">
+          <Card><p slot="title">员工管理</p>
+            <div style="margin-bottom:12px"><Input v-model="search.empName" placeholder="搜索" style="width:200px"/><Button type="primary" @click="loadEmployees" style="margin-left:8px">查询</Button></div>
+            <Table :columns="employeeCols" :data="employees" border></Table>
+          </Card>
+        </div>
+        <!-- 用户管理 -->
+        <div v-else-if="activeMenu==='user-manage'">
+          <Card><p slot="title">用户管理</p>
+            <Button type="success" @click="openAdminUserModal()" style="margin-bottom:12px">新增用户</Button>
+            <Table :columns="adminUserCols" :data="adminUsers" border></Table>
+          </Card>
+        </div>
+        <!-- 修改密码 -->
+        <div v-else-if="activeMenu==='change-pwd'">
+          <Card style="max-width:400px"><p slot="title">修改密码</p>
+            <Form label-position="top"><FormItem label="旧密码"><Input v-model="pwdForm.old" type="password"/></FormItem><FormItem label="新密码"><Input v-model="pwdForm.new1" type="password"/></FormItem><FormItem label="确认新密码"><Input v-model="pwdForm.new2" type="password"/></FormItem><Button type="primary" @click="changePwd">确认修改</Button></Form>
+          </Card>
+        </div>
+        <!-- 个人信息 -->
+        <div v-else-if="activeMenu==='personal-info'">
+          <Card style="max-width:400px"><p slot="title">个人信息</p>
+            <Form label-position="top"><FormItem label="用户名"><Input :value="adminUser" disabled/></FormItem><FormItem label="角色"><Input value="管理员" disabled/></FormItem></Form>
+          </Card>
+        </div>
+        <!-- APK版本管理 -->
+        <div v-else-if="activeMenu==='apk-version'">
+          <Card><p slot="title">APK版本管理</p>
+            <Form label-position="top" style="max-width:500px">
+              <FormItem label="版本名称"><Input v-model="apkForm.version_name" placeholder="如 1.1.0"/></FormItem>
+              <FormItem label="版本号"><Input v-model="apkForm.version_code" placeholder="如 110" type="number"/></FormItem>
+              <FormItem label="下载地址"><Input v-model="apkForm.download_url" placeholder="https://cqdyxl.com/static/smart-locker.apk"/></FormItem>
+              <FormItem label="更新说明"><Input v-model="apkForm.update_desc" type="textarea" :rows="3" placeholder="更新内容说明"/></FormItem>
+              <Button type="primary" @click="saveApkVersion">发布新版本</Button>
+            </Form>
+            <div style="margin-top:16px">
+              <p style="font-weight:700;margin-bottom:8px">当前版本信息</p>
+              <p>版本名称：{{currentApk.version_name || '-'}}</p>
+              <p>版本号：{{currentApk.version_code || '-'}}</p>
+              <p>下载地址：{{currentApk.download_url || '-'}}</p>
+              <p>更新说明：{{currentApk.update_desc || '-'}}</p>
+            </div>
+          </Card>
+        </div>
+        <!-- 其他页面占位 -->
+        <div v-else>
+          <Card><p slot="title">{{currentTitle}}</p><div style="text-align:center;padding:60px 0;color:#c5c8ce"><p style="font-size:48px">🚧</p><p style="margin-top:12px">功能开发中...</p></div></Card>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 弹窗 -->
+  <Modal v-model="agentModal" title="代理商" @on-ok="saveAgent"><Form label-position="top"><FormItem label="名称"><Input v-model="agentForm.name"/></FormItem><FormItem label="联系人"><Input v-model="agentForm.contact_name"/></FormItem><FormItem label="联系电话"><Input v-model="agentForm.contact_phone"/></FormItem></Form></Modal>
+  <Modal v-model="adminUserModal" title="用户" @on-ok="saveAdminUser"><Form label-position="top"><FormItem label="用户名"><Input v-model="adminUserForm.username"/></FormItem><FormItem label="密码"><Input v-model="adminUserForm.password" type="password"/></FormItem><FormItem label="角色"><Select v-model="adminUserForm.role"><Option value="admin">管理员</Option><Option value="super_admin">超级管理员</Option></Select></FormItem></Form></Modal>
+</div>
+
+<script src="https://unpkg.com/vue@2.7.16/dist/vue.min.js"></script>
+<script src="https://unpkg.com/view-design@4.7.0/dist/iview.min.js"></script>
+<script>
+var API='/api';
+function api(path,data,method){
+  var m=method||(data?'POST':'GET');
+  var opts={method:m,headers:{'Content-Type':'application/json'},credentials:'same-origin'};
+  if(data)opts.body=JSON.stringify(data);
+  return fetch(API+path,opts).then(function(r){
+    if(r.status===401){if(window.vueApp)window.vueApp.showLogin=true;return{code:401,message:'登录已过期'};}
+    if(!r.ok&&r.status!==401){return r.text().then(function(t){try{var j=JSON.parse(t);return j;}catch(e){return{code:r.status,message:'请求失败('+r.status+')'};}});}
+    return r.json();
+  }).catch(function(e){return{code:-1,message:e.message};});
+}
+
+function generateCaptcha(){var chars='ABCDEFGHJKMNPQRSTUVWXYZ23456789';var code='';for(var i=0;i<4;i++)code+=chars.charAt(Math.floor(Math.random()*chars.length));return code;}
+
+function drawCaptcha(canvas,code){
+  if(!canvas)return;var ctx=canvas.getContext('2d');var w=canvas.width,h=canvas.height;
+  ctx.fillStyle='#f0f0f0';ctx.fillRect(0,0,w,h);
+  for(var i=0;i<4;i++){ctx.strokeStyle='rgba('+Math.random()*180+','+Math.random()*180+','+Math.random()*180+',0.5)';ctx.beginPath();ctx.moveTo(Math.random()*w,Math.random()*h);ctx.lineTo(Math.random()*w,Math.random()*h);ctx.stroke();}
+  for(var i=0;i<30;i++){ctx.fillStyle='rgba('+Math.random()*255+','+Math.random()*255+','+Math.random()*255+',0.4)';ctx.fillRect(Math.random()*w,Math.random()*h,2,2);}
+  var colors=['#2d8cf0','#19be6b','#ff9900','#ed4014','#722ed1'];
+  for(var i=0;i<code.length;i++){ctx.save();ctx.font=(16+Math.random()*8)+'px sans-serif';ctx.fillStyle=colors[i%colors.length];ctx.translate(18+i*26,h-6);ctx.rotate((Math.random()-0.5)*0.4);ctx.fillText(code[i],0,0);ctx.restore();}
+}
+
+window.vueApp=new Vue({
+  el:'#app',
+  data:function(){
+    return {
+      showLogin:true,
+      loginForm:{username:'',password:'',captcha:''},
+      loginLoading:false,loginError:'',captchaCode:'',
+      isShrink:false,
+      activeMenu:'dashboard',
+      adminUser:'管理员',
+      openGroups:{workbench:true,'dev-mgr':true,'loc-mgr':true,'order-mgr':true,'member-mgr':false,'agent-mgr':false,'finance-mgr':false,'stat-mgr':false,'company-mgr':false,'personal-mgr':false,'sys-mgr':false,'after-mgr':false,'apk-mgr':true},
+      search:{machine:'',machineStatus:'',location:'',orderNo:'',orderPhone:'',orderStatus:'',memberPhone:'',agentName:'',merchantName:'',empName:''},
+      stats:{onlineIncome:'0.00',storageIncome:'0.00',withdrawn:'0.00',totalIncome:'0.00',memberBalance:'0.00',memberPending:'0.00',memberWithdrawn:'0.00',memberRecharge:'0.00',orderCount:0,orderAmount:'0.00',refundAmount:'0.00',orderProfit:'0.00',userCount:0,locationCount:0,deviceCount:0,onlineCount:0},
+      machines:[],machineCols:[{title:'ID',key:'id',width:60},{title:'设备编号',key:'device_id'},{title:'设备名',key:'device_name'},{title:'状态',key:'status'},{title:'最后心跳',key:'last_heartbeat'}],
+      locations:[],locationCols:[{title:'ID',key:'id',width:60},{title:'名称',key:'name'},{title:'地址',key:'address'},{title:'设备数',key:'device_count'}],
+      orders:[],orderCols:[{title:'订单号',key:'order_no',width:200},{title:'手机号',key:'user_phone',width:120},{title:'柜号',key:'compartment_number',width:60},{title:'金额',key:'deposit_amount',width:80},{title:'状态',key:'status',width:80},{title:'存入时间',key:'store_time',width:160}],
+      members:[],memberCols:[{title:'ID',key:'id',width:60},{title:'手机号',key:'phone'},{title:'余额',key:'balance'},{title:'注册时间',key:'created_at'}],
+      agents:[],agentCols:[{title:'ID',key:'id',width:60},{title:'名称',key:'name'},{title:'联系人',key:'contact_name'},{title:'电话',key:'contact_phone'}],
+      merchants:[],merchantCols:[{title:'ID',key:'id',width:60},{title:'名称',key:'name'},{title:'联系人',key:'contact_name'},{title:'电话',key:'contact_phone'}],
+      employees:[],employeeCols:[{title:'ID',key:'id',width:60},{title:'名称',key:'name'},{title:'电话',key:'phone'}],
+      adminUsers:[],adminUserCols:[{title:'ID',key:'id',width:60},{title:'用户名',key:'username'},{title:'角色',key:'role'}],
+      agentModal:false,agentForm:{name:'',contact_name:'',contact_phone:''},
+      adminUserModal:false,adminUserForm:{username:'',password:'',role:'admin'},
+      pwdForm:{old:'',new1:'',new2:''},
+      apkForm:{version_name:'',version_code:'',download_url:'https://cqdyxl.com/static/smart-locker.apk',update_desc:''},
+      currentApk:{}
+    }
+  },
+  computed:{
+    currentTitle:function(){
+      var m={dashboard:'主控台','machine-list':'机器列表','location-list':'网点列表','online-order':'在线订单',settlement:'结算流水','query-all':'综合查询','member-list':'会员管理','member-withdraw':'会员提现','member-recharge':'会员充值记录','complaint-self':'自有投诉','complaint-wx':'微信投诉','agent-list':'代理商管理','merchant-list':'商家管理','employee-list':'员工管理','withdraw-manage':'提现管理','platform-flow':'平台流水管理','fund-flow':'资金流水','biz-stat':'业务统计','company-list':'公司管理','user-manage':'用户管理','role-manage':'角色权限管理','personal-info':'个人信息','change-pwd':'修改密码','data-reset':'数据重置','store-record':'寄存记录',blacklist:'黑名单','alarm-record':'告警记录','location-alarm':'网点告警','apk-version':'APK版本管理'};
+      return m[this.activeMenu]||this.activeMenu;
+    }
+  },
+  methods:{
+    refreshCaptcha:function(){this.captchaCode=generateCaptcha();this.$nextTick(function(){drawCaptcha(this.$refs.captchaCanvas,this.captchaCode);}.bind(this));},
+    focusCaptcha:function(){this.$nextTick(function(){if(this.$refs.captchaInput)this.$refs.captchaInput.focus();}.bind(this));},
+    doLogin:function(){
+      var self=this;self.loginError='';
+      if(!self.loginForm.captcha){self.loginError='请输入验证码';return;}
+      if(self.loginForm.captcha.toUpperCase()!==self.captchaCode.toUpperCase()){self.loginError='验证码错误';self.refreshCaptcha();return;}
+      self.loginLoading=true;
+      api('/admin/login',{username:self.loginForm.username,password:self.loginForm.password}).then(function(r){
+        self.loginLoading=false;
+        if(r.code===0||r.code===200){self.showLogin=false;if(r.data&&r.data.username)self.adminUser=r.data.username;self.loadStats();iview.Message.success('登录成功');}
+        else{self.loginError=r.msg||r.message||'用户名或密码错误';self.refreshCaptcha();}
+      }).catch(function(e){self.loginLoading=false;self.loginError='网络错误';self.refreshCaptcha();});
+    },
+    toggleGroup:function(key){this.$set(this.openGroups,key,!this.openGroups[key]);},
+    onMenuSelect:function(name){this.activeMenu=name;this.loadPageData(name);},
+    onUserMenu:function(name){
+      if(name==='logout'){var self=this;api('/admin/logout',null,'POST').then(function(){self.showLogin=true;self.loginForm={username:'',password:'',captcha:''};self.loginError='';self.refreshCaptcha();});}
+      else{this.onMenuSelect(name);}
+    },
+    loadPageData:function(name){
+      switch(name){
+        case 'dashboard':this.loadStats();break;case 'machine-list':this.loadMachines();break;case 'location-list':this.loadLocations();break;
+        case 'online-order':this.loadOrders();break;case 'member-list':this.loadMembers();break;case 'agent-list':this.loadAgents();break;
+        case 'merchant-list':this.loadMerchants();break;case 'employee-list':this.loadEmployees();break;case 'user-manage':this.loadAdminUsers();break;
+        case 'apk-version':this.loadApkVersion();break;
+      }
+    },
+    loadStats:function(){var self=this;api('/admin/dashboard').then(function(r){if(r.code===0||r.code===200){var d=r.data||{};Object.keys(self.stats).forEach(function(k){if(d[k]!==undefined)self.stats[k]=d[k];});}});},
+    loadMachines:function(){var self=this;api('/admin/devices',{keyword:this.search.machine,status:this.search.machineStatus}).then(function(r){if(r.code===0||r.code===200){self.machines=r.data&&r.data.list||[];self.machineTotal=r.data&&r.data.total||0;}});},
+    loadLocations:function(){var self=this;api('/admin/locations',{keyword:this.search.location}).then(function(r){if(r.code===0||r.code===200){self.locations=r.data&&r.data.list||[];self.locationTotal=r.data&&r.data.total||0;}});},
+    loadOrders:function(){var self=this;api('/admin/orders',{order_no:this.search.orderNo,phone:this.search.orderPhone,status:this.search.orderStatus}).then(function(r){if(r.code===0||r.code===200){self.orders=r.data&&r.data.list||[];self.orderTotal=r.data&&r.data.total||0;}});},
+    loadMembers:function(){var self=this;api('/admin/members',{phone:this.search.memberPhone}).then(function(r){if(r.code===0||r.code===200){self.members=r.data&&r.data.list||[];self.memberTotal=r.data&&r.data.total||0;}});},
+    loadAgents:function(){var self=this;api('/admin/agents',{keyword:this.search.agentName}).then(function(r){if(r.code===0||r.code===200){self.agents=r.data&&r.data.list||[];self.agentTotal=r.data&&r.data.total||0;}});},
+    openAgentModal:function(form){this.agentModal=true;this.agentForm=form||{name:'',contact_name:'',contact_phone:''};},
+    saveAgent:function(){api('/admin/agent/save',this.agentForm).then(function(r){if(r.code===0)iview.Message.success('保存成功');});},
+    loadMerchants:function(){var self=this;api('/admin/merchants',{keyword:this.search.merchantName}).then(function(r){if(r.code===0||r.code===200){self.merchants=r.data&&r.data.list||[];self.merchantTotal=r.data&&r.data.total||0;}});},
+    loadEmployees:function(){var self=this;api('/admin/employees',{keyword:this.search.empName}).then(function(r){if(r.code===0||r.code===200){self.employees=r.data&&r.data.list||[];self.employeeTotal=r.data&&r.data.total||0;}});},
+    loadAdminUsers:function(){var self=this;api('/admin/users').then(function(r){if(r.code===0||r.code===200)self.adminUsers=r.data||[];});},
+    openAdminUserModal:function(form){this.adminUserModal=true;this.adminUserForm=form||{username:'',password:'',role:'admin'};},
+    saveAdminUser:function(){api('/admin/user/save',this.adminUserForm).then(function(r){if(r.code===0)iview.Message.success('保存成功');});},
+    changePwd:function(){
+      if(this.pwdForm.new1!==this.pwdForm.new2){iview.Message.error('两次密码不一致');return;}
+      api('/admin/change-password',{old_password:this.pwdForm.old,new_password:this.pwdForm.new1}).then(function(r){if(r.code===0)iview.Message.success('修改成功');else iview.Message.error(r.msg||r.message||'修改失败');});
+    },
+    loadApkVersion:function(){var self=this;api('/admin/apk-version').then(function(r){if(r.code===0||r.code===200)self.currentApk=r.data||{};});},
+    saveApkVersion:function(){
+      var self=this;
+      if(!this.apkForm.version_name||!this.apkForm.version_code){iview.Message.error('请填写版本名称和版本号');return;}
+      api('/admin/apk-version/save',this.apkForm).then(function(r){
+        if(r.code===0||r.code===200){iview.Message.success('版本发布成功');self.loadApkVersion();self.apkForm={version_name:'',version_code:'',download_url:'https://cqdyxl.com/static/smart-locker.apk',update_desc:''};}
+        else iview.Message.error(r.msg||r.message||'发布失败');
+      });
+    }
+  },
+  mounted:function(){
+    var self=this;
+    this.refreshCaptcha();
+    api('/admin/info').then(function(r){
+      if(r.code===0||r.code===200){self.showLogin=false;if(r.data&&r.data.username)self.adminUser=r.data.username;self.loadStats();}
+      else{self.showLogin=true;}
+    }).catch(function(){self.showLogin=true;});
+  }
+});
+</script>
+</body>
+</html>

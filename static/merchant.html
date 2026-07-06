@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>商户管理</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #f5f5f5; font-family: -apple-system, sans-serif; min-height: 100vh; }
+.top-bar { background: #2B6CB0; padding: 12px 16px; color: #fff; display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 100; }
+.top-bar .back { font-size: 22px; cursor: pointer; }
+.top-bar .title { font-size: 16px; font-weight: 600; flex: 1; }
+.page { display: none; padding-bottom: 80px; }
+.page.active { display: block; }
+
+/* Dashboard */
+.dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 16px; }
+.dash-card { background: #fff; border-radius: 12px; padding: 16px; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+.dash-card .num { font-size: 28px; font-weight: 800; color: #2B6CB0; }
+.dash-card .label { font-size: 13px; color: #999; margin-top: 4px; }
+.dash-card .sub { font-size: 11px; color: #bbb; margin-top: 2px; }
+
+/* Menu */
+.menu-list { margin: 16px; background: #fff; border-radius: 12px; overflow: hidden; }
+.menu-item { display: flex; align-items: center; justify-content: space-between; padding: 16px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+.menu-item:last-child { border-bottom: none; }
+.menu-item .left { display: flex; align-items: center; gap: 12px; font-size: 15px; color: #333; }
+.menu-item .left .icon { font-size: 20px; width: 24px; text-align: center; }
+.menu-item .right { color: #ccc; font-size: 16px; }
+
+/* Login */
+.login-box { padding: 40px 24px; }
+.login-box .title { font-size: 20px; font-weight: 700; color: #333; text-align: center; margin-bottom: 30px; }
+.login-input { width: 100%; padding: 14px 16px; border: 1px solid #e0e0e0; border-radius: 10px; font-size: 15px; margin-bottom: 14px; outline: none; }
+.login-input:focus { border-color: #2B6CB0; }
+.login-btn { width: 100%; padding: 14px; background: #2B6CB0; color: #fff; border: none; border-radius: 10px; font-size: 16px; font-weight: 600; cursor: pointer; }
+.login-btn:disabled { background: #ccc; cursor: not-allowed; }
+
+/* Common */
+.list-item { background: #fff; margin: 0 16px 10px; border-radius: 10px; padding: 14px 16px; }
+.list-item .row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 13px; }
+.list-item .row:last-child { margin-bottom: 0; }
+.list-item .label { color: #999; }
+.list-item .value { color: #333; font-weight: 500; }
+</style>
+</head>
+<body>
+
+<div class="top-bar" id="topBar">
+  <span class="back" id="backBtn" onclick="goBack();" style="display:none;">←</span>
+  <span class="title" id="pageTitle">商户管理</span>
+</div>
+
+<!-- ===== 登录 ===== -->
+<div class="page active" id="pageLogin">
+  <div class="login-box">
+    <div class="title">商户管理系统</div>
+    <input class="login-input" id="loginPhone" type="tel" maxlength="11" placeholder="请输入手机号">
+    <input class="login-input" id="loginPwd" type="password" placeholder="请输入密码">
+    <button class="login-btn" id="loginBtn" onclick="handleLogin();">登 录</button>
+  </div>
+</div>
+
+<!-- ===== 首页 ===== -->
+<div class="page" id="pageHome">
+  <div class="dashboard-grid" id="dashGrid"></div>
+  <div class="menu-list">
+    <div class="menu-item" onclick="navigateTo('devices');"><div class="left"><span class="icon">📡</span>设备管理</div><div class="right">›</div></div>
+    <div class="menu-item" onclick="navigateTo('orders');"><div class="left"><span class="icon">📋</span>订单管理</div><div class="right">›</div></div>
+    <div class="menu-item" onclick="navigateTo('statistics');"><div class="left"><span class="icon">📊</span>统计分析</div><div class="right">›</div></div>
+    <div class="menu-item" onclick="navigateTo('locations');"><div class="left"><span class="icon">📍</span>网点管理</div><div class="right">›</div></div>
+    <div class="menu-item" onclick="navigateTo('withdrawals');"><div class="left"><span class="icon">💰</span>提现管理</div><div class="right">›</div></div>
+    <div class="menu-item" onclick="navigateTo('alerts');"><div class="left"><span class="icon">🔔</span>告警管理</div><div class="right">›</div></div>
+  </div>
+</div>
+
+<!-- ===== 我的 ===== -->
+<div class="page" id="pageProfile">
+  <div class="user-section" style="background:#2B6CB0;padding:30px 20px;text-align:center;color:#fff;">
+    <div style="width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;margin:0 auto 10px;font-size:28px;">👤</div>
+    <div style="font-size:16px;font-weight:600;" id="merchantName">...</div>
+  </div>
+  <div class="balance-cards" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:-20px 16px 0;position:relative;z-index:1;">
+    <div class="dash-card"><div class="num" id="balanceWithdrawn">0.00</div><div class="label" id="labelWithdrawn">已提现</div></div>
+    <div class="dash-card"><div class="num" id="balanceReserve">0.00</div><div class="label" id="labelReserve">储备金</div></div>
+    <div class="dash-card"><div class="num" id="balanceCashback">0.00</div><div class="label" id="labelCashback">返现收入</div></div>
+  </div>
+  <div class="menu-list" id="merchantMenu"></div>
+</div>
+
+<!-- ===== 占位页 ===== -->
+<div class="page" id="pagePlaceholder">
+  <div style="text-align:center;padding:60px 20px;color:#999;font-size:15px;" id="placeholderText">功能开发中...</div>
+</div>
+
+
+<!-- Password Modal -->
+<div id="pwdModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:200;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:16px;padding:24px;width:85%;max-width:360px;">
+    <div style="font-size:17px;font-weight:700;color:#333;margin-bottom:16px;text-align:center;">修改密码</div>
+    <input id="oldPwd" type="password" placeholder="请输入旧密码" style="width:100%;padding:12px;border:1px solid #e0e0e0;border-radius:8px;font-size:14px;margin-bottom:10px;outline:none;">
+    <input id="newPwd" type="password" placeholder="请输入新密码（至少6位）" style="width:100%;padding:12px;border:1px solid #e0e0e0;border-radius:8px;font-size:14px;margin-bottom:10px;outline:none;">
+    <button id="pwdBtn" onclick="handleChangePassword();" style="width:100%;padding:12px;background:#2B6CB0;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;">确认修改</button>
+    <button onclick="hidePasswordModal();" style="width:100%;padding:12px;background:#f0f0f0;color:#666;border:none;border-radius:8px;font-size:15px;margin-top:8px;cursor:pointer;">取消</button>
+  </div>
+</div>
+<script>
+var token = (location.search.match(/token=([^&]*)/) || [])[1] || '';
+var currentPage = 'home';
+
+var merchantInfo = {};
+var permissions = [];
+
+function showPage(id) {
+  var pages = ['pageLogin','pageHome','pageProfile','pagePlaceholder','pageDevices','pageOrders','pageStatistics','pageLocations','pageWithdrawals','pageAlerts','pageMerchantEdit','pagePayment','pagePrivacy','pageAgreement'];
+  pages.forEach(function(p) {
+    var el = document.getElementById(p);
+    if (el) el.classList.remove('active');
+  });
+  var target = document.getElementById(id);
+  if (target) target.classList.add('active');
+  document.getElementById('backBtn').style.display = (id !== 'pageHome' && id !== 'pageLogin' && id !== 'pageProfile') ? 'block' : 'none';
+  var titles = {pageLogin:'商户管理系统',pageHome:'商户管理',pageProfile:'我的',pagePlaceholder:'功能开发中...'};
+  document.getElementById('pageTitle').textContent = titles[id] || '商户管理';
+}
+
+function goBack() {
+  if (currentPage === 'home' || !currentPage) showPage('pageHome');
+  else showPage('pageHome');
+}
+
+function navigateTo(page) {
+  currentPage = page;
+  var el = document.getElementById('pagePlaceholder');
+  var txt = '';
+  switch(page) {
+    case 'devices': txt = '设备管理'; break;
+    case 'orders': txt = '订单管理'; break;
+    case 'statistics': txt = '统计分析'; break;
+    case 'locations': txt = '网点管理'; break;
+    case 'withdrawals': txt = '提现管理'; break;
+    case 'alerts': txt = '告警管理'; break;
+    case 'merchant-edit': txt = '商户编辑'; break;
+    case 'payment': txt = '支付绑定'; break;
+    case 'privacy': txt = '隐私政策'; break;
+    case 'agreement': txt = '用户协议'; break;
+  }
+  document.getElementById('placeholderText').textContent = txt + ' - 功能开发中...';
+  document.getElementById('pageTitle').textContent = txt;
+  showPage('pagePlaceholder');
+  document.getElementById('backBtn').style.display = 'block';
+}
+
+function loadProfile() {
+  fetch('https://locker.cqdyxl.com/api/merchant/balance', {
+    headers: token ? {'Authorization':'Bearer '+token} : {}
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    if ((d.code === 0 || d.code === 200) && d.data) {
+      document.getElementById('balanceWithdrawn').textContent = d.data.withdrawn || '0.00';
+      document.getElementById('balanceReserve').textContent = d.data.reserve || '0.00';
+      document.getElementById('balanceCashback').textContent = d.data.cashback || '0.00';
+      if (d.data.text_labels) {
+        if (d.data.text_labels.withdrawn) document.getElementById('labelWithdrawn').textContent = d.data.text_labels.withdrawn;
+        if (d.data.text_labels.reserve) document.getElementById('labelReserve').textContent = d.data.text_labels.reserve;
+        if (d.data.text_labels.cashback) document.getElementById('labelCashback').textContent = d.data.text_labels.cashback;
+      }
+    }
+  })
+  .catch(function(){});
+  loadMerchantInfo();
+  loadMenuItems();
+}
+
+function loadMerchantInfo() {
+  var name = location.search.match(/name=([^&]*)/);
+  var el = document.getElementById('merchantName');
+  if (name) el.textContent = decodeURIComponent(name[1]);
+  else el.textContent = '商户';
+}
+
+function loadMenuItems() {
+  var menu = document.getElementById('merchantMenu');
+  var items = [
+    {key:'merchant-manage', icon:'👥', label:'商户管理', perm:'merchant_manage'},
+    {key:'locations', icon:'📍', label:'网点列表', perm:'locations'},
+    {key:'devices', icon:'📡', label:'设备管理', perm:'devices'},
+    {key:'alerts', icon:'🔔', label:'告警记录', perm:'alerts'},
+    {key:'withdrawals', icon:'💰', label:'提现管理', perm:'withdrawal'},
+    {key:'statistics', icon:'📊', label:'全景数据', perm:'statistics'},
+    {key:'orders', icon:'📋', label:'订单管理', perm:'orders'},
+    {key:'payment', icon:'💳', label:'收款绑定', perm:'merchant_manage'},
+    {key:'', icon:'🔒', label:'修改密码', perm:'', fn:'showPasswordModal'},
+    {key:'', icon:'❌', label:'退出登录', perm:'', fn:'handleLogout'},
+  ];
+  var html = '';
+  items.forEach(function(item) {
+    html += '<div class="menu-item" onclick="' + (item.fn ? item.fn+'()' : 'navigateTo(\''+item.key+'\')') + '"><div class="left"><span class="icon">' + item.icon + '</span>' + item.label + '</div><div class="right">›</div></div>';
+  });
+  menu.innerHTML = html;
+}
+
+function handleLogin() {
+  var phone = document.getElementById('loginPhone').value.trim();
+  var pwd = document.getElementById('loginPwd').value.trim();
+  if (!phone || !pwd) { alert('请输入手机号和密码'); return; }
+  document.getElementById('loginBtn').disabled = true;
+  document.getElementById('loginBtn').textContent = '登录中...';
+  fetch('https://locker.cqdyxl.com/api/merchant/login', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({phone: phone, password: pwd})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    if (d.code === 200 && d.data && d.data.token) {
+      token = d.data.token;
+      showPage('pageHome');
+      loadDashboard();
+    } else {
+      alert(d.message || '登录失败');
+    }
+  })
+  .catch(function(){ alert('网络错误'); })
+  .then(function(){
+    document.getElementById('loginBtn').disabled = false;
+    document.getElementById('loginBtn').textContent = '登 录';
+  });
+}
+
+function loadDashboard() {
+  var grid = document.getElementById('dashGrid');
+  grid.innerHTML = '<div style="text-align:center;padding:30px;color:#999;font-size:13px;grid-column:1/-1;">加载中...</div>';
+  fetch('https://locker.cqdyxl.com/api/merchant/dashboard', {
+    headers: token ? {'Authorization':'Bearer '+token} : {}
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    if (d.code === 200 && d.data) {
+      var data = d.data;
+      grid.innerHTML = '';
+      var items = [
+        {num: data.today_orders || 0, label: '今日订单', sub: '订单总数'},
+        {num: data.yesterday_orders || 0, label: '昨日订单', sub: '订单总数'},
+        {num: '\u00a5' + (data.today_income || 0).toFixed(2), label: '今日收益', sub: '寄存收益'},
+        {num: '\u00a5' + (data.total_balance || 0).toFixed(2), label: '总余额', sub: '待提现'},
+      ];
+      items.forEach(function(item) {
+        grid.innerHTML += '<div class="dash-card"><div class="num">' + item.num + '</div><div class="label">' + item.label + '</div><div class="sub">' + item.sub + '</div></div>';
+      });
+    } else {
+      grid.innerHTML = '<div style="text-align:center;padding:30px;color:#999;font-size:13px;grid-column:1/-1;">加载失败</div>';
+    }
+  })
+  .catch(function(){ grid.innerHTML = '<div style="text-align:center;padding:30px;color:#999;font-size:13px;grid-column:1/-1;">网络错误</div>'; });
+}
+
+// Check token on load
+document.addEventListener('DOMContentLoaded', function() {
+  var page = (location.search.match(/page=([^&]*)/) || [])[1] || '';
+  if (!token) { showPage('pageLogin'); return; }
+  if (page === 'profile') { showPage('pageProfile'); loadProfile(); }
+  else { showPage('pageHome'); loadDashboard(); }
+});
+
+function showPageDevices(){
+  var el=document.getElementById('pagePlaceholder');
+  el.innerHTML='<div id="dLoading" style="padding:60px 0;text-align:center;color:#999">加载中...</div>';
+  var base=window.location.origin+'/api';
+  var tok=token;
+  function h(t){return '<div style="background:#fff;border-radius:10px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between"><div style="display:flex;flex-direction:column;gap:4px"><span style="font-size:15px;font-weight:600;color:#333">'+t.name+'</span><span style="font-size:13px;color:#999">'+t.loc+'</span></div><span style="font-size:12px;padding:3px 10px;border-radius:10px;'+(t.online?'background:#e8f5e9;color:#2e7d32':'background:#fbe9e7;color:#c62828')+'">'+(t.online?'在线':'离线')+'</span></div>'}
+  fetch(base+'/merchant/locations',{headers:{'Authorization':'Bearer '+tok}}).then(function(r){return r.json()}).then(function(res){
+    var locations=res.data||[];
+    if(!locations.length){el.innerHTML='<div style="padding:60px;text-align:center;color:#ccc">暂无设备</div>';return}
+    var allDevices=[],promises=[];
+    locations.forEach(function(loc){
+      if(!loc.cabinet_count)return;
+      promises.push(fetch(base+'/merchant/cabinets?location_id='+loc.id,{headers:{'Authorization':'Bearer '+tok}}).then(function(r){return r.json()}).then(function(cr){
+        (cr.data||[]).forEach(function(c){
+          var hb=c.last_heartbeat,online=hb&&(Date.now()-new Date(hb).getTime())<120000;
+          allDevices.push({id:c.id,name:c.name||c.cabinet_code||'--',loc:loc.name,online:online})
+        })
+      }).catch(function(){}))
+    });
+    Promise.all(promises).then(function(){
+      if(!allDevices.length){el.innerHTML='<div style="padding:60px;text-align:center;color:#ccc">暂无设备</div>';return}
+      el.innerHTML='<div style="padding:12px">'+allDevices.map(h).join('')+'</div>'
+    })
+  }).catch(function(){el.innerHTML='<div style="padding:60px;text-align:center;color:#ccc">加载失败</div>'})
+}
+
+</script>
+</body>
+</html>

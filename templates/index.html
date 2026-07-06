@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head><title>智能寄存柜 API</title><meta charset="UTF-8"></head>
+<body>
+    <h1>智能寄存柜系统 API 服务</h1>
+    <p>服务运行正常，可用接口：</p>
+    <ul>
+        <li><code>POST /api/deposit</code> - 存包</li>
+        <li><code>POST /api/retrieve</code> - 取包</li>
+        <li><code>GET /api/cabinet/&lt;cabinet_id&gt;/status</code> - 柜体状态</li>
+        <li><code>GET /api/cabinet/&lt;cabinet_id&gt;/qrcode</code> - 生成二维码</li>
+        <li><code>GET /static/deposit.html?cabinet_id=xxx</code> - 用户存包页面（示例）</li>
+    </ul>
+    <p>前端页面请访问 <a href=\"/static/deposit.html?v=1782082334\">/static/deposit.html</a>（示例页面会自动创建）</p>
+</body>
+</html>

@@ -1,0 +1,46 @@
+name: CI Check + Deploy
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+      - name: Syntax check
+        run: |
+          python3 -m py_compile app.py config.py helpers.py
+          for f in routes/*.py; do python3 -m py_compile "" || exit 1; done
+      - name: Pylint
+        run: |
+          pip install pylint -q 2>/dev/null
+          pylint --disable=all --enable=E0602 routes/ 2>&1 || true
+
+  deploy:
+    needs: check
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v3
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 106.55.7.10
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            cd /home/ubuntu/smart-locker
+            git fetch origin main
+            git reset --hard origin/main
+            killall gunicorn 2>/dev/null || true
+            sleep 2
+            nohup /home/ubuntu/.local/bin/gunicorn --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker --workers 2 --timeout 120 --bind 127.0.0.1:5001 app:app > /tmp/gunicorn_deploy.log 2>&1 &
+            sleep 3
+            echo "Deploy OK"

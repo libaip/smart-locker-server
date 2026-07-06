@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>开锁日志</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#f5f5f5;font-family:-apple-system,sans-serif;min-height:100vh}
+.top-bar{background:#2B6CB0;padding:12px 16px;color:#fff;display:flex;align-items:center;position:sticky;top:0;z-index:100}
+.top-bar .title{font-size:16px;font-weight:600;flex:1;text-align:center}
+.log-list{padding:12px}
+.log-item{background:#fff;border-radius:10px;padding:14px 16px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
+.log-info{display:flex;flex-direction:column;gap:4px}
+.log-cabinet{font-size:15px;font-weight:600;color:#333}
+.log-slot{font-size:13px;color:#999}
+.log-time{font-size:12px;color:#bbb;white-space:nowrap}
+.loading{text-align:center;padding:60px 0;color:#999;font-size:14px}
+.empty{text-align:center;padding:80px 0;color:#ccc;font-size:14px}
+</style></head>
+<body>
+<div class="top-bar"><div class="title">开锁日志</div></div>
+<div id="loading" class="loading">加载中...</div>
+<div id="empty" class="empty" style="display:none">暂无开锁记录</div>
+<div id="logList" class="log-list" style="display:none"></div>
+<script>
+var token = localStorage.getItem('merchant_token') || '';
+if (!token) {
+  // Try to get token from URL params
+  var params = new URLSearchParams(window.location.search)
+  token = params.get('token') || ''
+}
+var baseUrl = window.location.origin + '/api';
+
+function loadLogs() {
+  fetch(baseUrl + '/merchant/open-logs?limit=50', {
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }
+  }).then(function(r) { return r.json() }).then(function(res) {
+    document.getElementById('loading').style.display = 'none'
+    var logs = res.data || []
+    if (logs.length === 0) {
+      document.getElementById('empty').style.display = 'block'
+      return
+    }
+    var list = document.getElementById('logList')
+    list.style.display = 'block'
+    var html = ''
+    logs.forEach(function(item) {
+      var time = (item.created_at || '').substring(0,19).replace('T',' ')
+      html += '<div class="log-item">'
+        + '<div class="log-info"><span class="log-cabinet">' + (item.cabinet_name || item.cabinet || '--') + '</span>'
+        + '<span class="log-slot">格口：' + (item.slot_number || item.slot_id || '--') + '</span></div>'
+        + '<span class="log-time">' + time + '</span></div>'
+    })
+    list.innerHTML = html
+  }).catch(function() {
+    document.getElementById('loading').textContent = '加载失败'
+  })
+}
+loadLogs()
+</script></body></html>

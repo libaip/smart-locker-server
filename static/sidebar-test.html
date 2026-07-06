@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html><head><title>侧边栏测试</title><meta charset="UTF-8">
+<style>
+.sidebar{width:220px;height:100vh;background:#001529;overflow-y:auto;position:fixed;left:0;top:0}
+.logo{height:64px;line-height:64px;text-align:center;color:#fff;font-size:18px;font-weight:700;border-bottom:1px solid #002140}
+.menu-group{border-bottom:1px solid rgba(255,255,255,.04)}
+.menu-group-title{color:rgba(255,255,255,.65);padding:12px 24px 8px;font-size:13px;cursor:pointer}
+.menu-group-title:hover{color:#fff}
+.menu-item{color:rgba(255,255,255,.65);padding:10px 24px 10px 48px;cursor:pointer;font-size:14px}
+.menu-item:hover{color:#fff;background:rgba(255,255,255,.04)}
+</style></head><body>
+<div class="sidebar">
+  <div class="logo">科莱维管理</div>
+  <div class="menu-group">
+    <div class="menu-group-title">工作台</div>
+    <div class="menu-item">主控台</div>
+  </div>
+  <div class="menu-group">
+    <div class="menu-group-title">设备管理</div>
+    <div class="menu-item">机器列表</div>
+  </div>
+  <div class="menu-group">
+    <div class="menu-group-title">网点管理</div>
+    <div class="menu-item">网点列表</div>
+  </div>
+  <div class="menu-group">
+    <div class="menu-group-title">订单管理</div>
+    <div class="menu-item">在线订单</div>
+    <div class="menu-item">结算流水</div>
+  </div>
+</div>
+<div style="margin-left:220px;padding:20px">
+  <h1>测试页面 - 侧边栏应显示菜单项</h1>
+</div>
+</body></html>

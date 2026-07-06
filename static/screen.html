@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>智能寄存柜</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif; background: #0d47a1; }
+
+        .screen-container { width: 100%; height: 100%; display: flex; flex-direction: column; position: relative; }
+
+        /* 离线状态条 */
+        .offline-banner { display: none; background: #ff9800; color: white; padding: 8px 16px; text-align: center; font-size: 14px; font-weight: 500; flex-shrink: 0; z-index: 100; }
+        .offline-banner.show { display: block; }
+        .offline-banner .icon { margin-right: 6px; }
+
+        /* 顶部栏 */
+        .top-bar { background: linear-gradient(135deg, #1565c0 0%, #0d47a1 100%); color: white; padding: 12px 30px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+        .top-bar .title { font-size: 22px; font-weight: 600; }
+        .top-bar .info { font-size: 14px; opacity: 0.85; }
+
+        /* 主内容区：左右分栏 */
+        .main { flex: 1; display: flex; background: linear-gradient(180deg, #e8f4fc 0%, #ffffff 100%); overflow: hidden; }
+
+        /* 左侧：取物 + 规则（占2/3） */
+        .left-panel { flex: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px 30px; border-right: 2px solid #e0e4e8; }
+
+        .retrieve-section { text-align: center; margin-bottom: 20px; }
+        .retrieve-icon { font-size: 72px; margin-bottom: 10px; }
+        .retrieve-title { font-size: 28px; font-weight: 600; color: #1a73e8; margin-bottom: 8px; }
+        .retrieve-hint { font-size: 15px; color: #999; margin-bottom: 20px; }
+
+        .big-btn { width: 260px; height: 76px; border-radius: 38px; font-size: 26px; font-weight: 600; border: none; cursor: pointer; transition: all 0.3s ease; display: inline-flex; align-items: center; justify-content: center; gap: 10px; }
+        .big-btn:active { transform: scale(0.95); }
+        .btn-primary { background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%); color: white; box-shadow: 0 6px 20px rgba(26,115,232,0.4); }
+
+        /* 使用规则 */
+        .rules-box { background: #f5f7fa; border-radius: 16px; padding: 16px 22px; width: 100%; max-width: 480px; border: 1px solid #e0e4e8; }
+        .rules-title { font-size: 16px; font-weight: 600; color: #1a73e8; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+        .rules-list { font-size: 14px; color: #666; line-height: 2; }
+        .rules-list .rule-item { display: flex; align-items: flex-start; gap: 6px; }
+        .rules-list .rule-num { color: #1a73e8; font-weight: 600; flex-shrink: 0; min-width: 20px; }
+
+        /* 右侧：二维码（占1/3） */
+        .right-panel { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; background: white; }
+
+        .qr-label { font-size: 18px; font-weight: 600; color: #1a73e8; margin-bottom: 12px; }
+        .qr-label .arrow { font-size: 22px; }
+        .qr-box { width: 220px; height: 220px; background: white; border: 3px solid #1a73e8; border-radius: 16px; display: flex; align-items: center; justify-content: center; padding: 8px; }
+        .qr-box canvas { width: 200px; height: 200px; }
+        .qr-hint { font-size: 14px; color: #999; margin-top: 12px; text-align: center; line-height: 1.6; }
+
+        /* ===== 子页面通用 ===== */
+        .sub-page { display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(180deg, #e8f4fc 0%, #ffffff 100%); flex-direction: column; z-index: 50; }
+        .sub-page.active { display: flex; }
+
+        .sub-header { background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%); color: white; padding: 14px 20px; display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+        .sub-header .back-btn { width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,0.2); border: none; color: white; font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+        .sub-header h1 { font-size: 22px; font-weight: 600; }
+        .sub-header .hint { font-size: 14px; opacity: 0.85; }
+
+        .sub-content { flex: 1; display: flex; align-items: center; justify-content: center; padding: 20px; }
+
+        /* 输入卡片 */
+        .input-card { background: white; border-radius: 20px; padding: 30px; width: 100%; max-width: 480px; box-shadow: 0 8px 32px rgba(0,0,0,0.1); }
+        .input-card h2 { font-size: 24px; color: #333; text-align: center; margin-bottom: 20px; }
+        .input-group { margin-bottom: 16px; }
+        .input-group label { display: block; font-size: 15px; color: #666; margin-bottom: 8px; }
+        .input-display { background: #f5f7fa; border: 2px solid #e0e4e8; border-radius: 12px; padding: 14px 16px; font-size: 26px; color: #333; letter-spacing: 4px; min-height: 56px; display: flex; align-items: center; }
+        .input-display .placeholder { color: #aaa; font-size: 18px; letter-spacing: 0; }
+
+        .numpad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 16px; }
+        .numpad-btn { height: 60px; border-radius: 12px; font-size: 28px; font-weight: 500; border: none; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; justify-content: center; background: #f0f4f8; color: #333; }
+        .numpad-btn:active { background: #e0e4e8; transform: scale(0.95); }
+        .numpad-btn.action { background: #1a73e8; color: white; font-size: 15px; }
+        .numpad-btn.delete { background: #ea4335; color: white; font-size: 18px; }
+
+        .confirm-section { margin-top: 16px; width: 100%; }
+        .confirm-btn { width: 100%; height: 60px; border-radius: 30px; font-size: 22px; font-weight: 600; border: none; cursor: pointer; background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%); color: white; box-shadow: 0 6px 20px rgba(26,115,232,0.4); }
+        .confirm-btn:disabled { background: #ccc; box-shadow: none; cursor: not-allowed; }
+        .confirm-btn:not(:disabled):active { transform: scale(0.98); }
+
+        .step-indicator { display: flex; justify-content: center; gap: 10px; margin-bottom: 16px; }
+        .step-dot { width: 10px; height: 10px; border-radius: 50%; background: #e0e4e8; transition: all 0.3s; }
+        .step-dot.active { background: #1a73e8; width: 24px; border-radius: 5px; }
+        .step-dot.done { background: #34a853; }
+
+        /* 成功页 */
+        .success-icon { font-size: 100px; margin-bottom: 16px; animation: pulse 1.5s ease-in-out infinite; }
+        @keyframes pulse { 0%,100%{ transform: scale(1); } 50%{ transform: scale(1.05); } }
+        .slot-display { background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%); color: white; padding: 20px 50px; border-radius: 16px; margin: 12px 0 20px; text-align: center; }
+        .slot-label { font-size: 16px; opacity: 0.9; margin-bottom: 6px; }
+        .slot-number { font-size: 56px; font-weight: 700; letter-spacing: 6px; }
+        .success-hint { font-size: 22px; color: #34a853; font-weight: 500; animation: blink 1s ease-in-out infinite; }
+        @keyframes blink { 0%,100%{ opacity: 1; } 50%{ opacity: 0.5; } }
+
+        /* 选择页 */
+        .choice-card { background: white; border-radius: 20px; padding: 30px; width: 100%; max-width: 500px; box-shadow: 0 8px 32px rgba(0,0,0,0.1); text-align: center; }
+        .choice-card h2 { font-size: 24px; color: #333; margin-bottom: 24px; }
+        .choice-buttons { display: flex; gap: 20px; }
+        .choice-btn { flex: 1; height: 80px; border-radius: 16px; font-size: 22px; font-weight: 600; border: none; cursor: pointer; transition: all 0.3s; display: flex; align-items: center; justify-content: center; gap: 10px; }
+        .choice-btn:active { transform: scale(0.98); }
+        .choice-btn.continue { background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%); color: white; box-shadow: 0 4px 16px rgba(26,115,232,0.4); }
+        .choice-btn.end { background: linear-gradient(135deg, #ea4335 0%, #b71c1c 100%); color: white; box-shadow: 0 4px 16px rgba(234,67,53,0.4); }
+
+        /* 完成页 */
+        .complete-icon { font-size: 90px; margin-bottom: 16px; }
+        .complete-title { font-size: 30px; font-weight: 600; color: #34a853; margin-bottom: 12px; }
+        .refund-info { background: #f0f4f8; padding: 18px 30px; border-radius: 14px; margin: 12px 0 20px; }
+        .refund-label { font-size: 15px; color: #666; margin-bottom: 4px; }
+        .refund-amount { font-size: 36px; font-weight: 700; color: #34a853; }
+        .countdown-hint { font-size: 15px; color: #999; margin-top: 16px; }
+        .sub-header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; margin-left: auto; }
+        .sub-header-right .time-info { font-size: 13px; opacity: 0.9; white-space: nowrap; }
+        .sub-header-right .scan-btn { display: inline-flex; align-items: center; gap: 4px; padding: 6px 14px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.4); background: rgba(255,255,255,0.15); color: white; font-size: 13px; cursor: pointer; transition: all 0.2s; text-decoration: none; }
+        .sub-header-right .scan-btn:active { background: rgba(255,255,255,0.3); }
+
+
+        /* 离线模式提示 */
+        .offline-mode-badge { background: #ff9800; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; margin-left: 8px; }
+
+        /* 错误提示 */
+        .error-toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); background: #ea4335; color: white; padding: 12px 28px; border-radius: 10px; font-size: 18px; z-index: 1000; opacity: 0; transition: opacity 0.3s; box-shadow: 0 4px 16px rgba(234,67,53,0.4); }
+        .error-toast.show { opacity: 1; }
+
+        /* 成功提示 */
+        .success-toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); background: #4caf50; color: white; padding: 12px 28px; border-radius: 10px; font-size: 18px; z-index: 1000; opacity: 0; transition: opacity 0.3s; box-shadow: 0 4px 16px rgba(76,175,80,0.4); }
+        .success-toast.show { opacity: 1; }
+
+        /* 加载 */
+        .loading-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.9); display: none; align-items: center; justify-content: center; flex-direction: column; z-index: 100; }
+        .loading-overlay.show { display: flex; }
+        .loading-spinner { width: 60px; height: 60px; border: 5px solid #e0e4e8; border-top-color: #1a73e8; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-text { margin-top: 14px; font-size: 18px; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="screen-container" id="app">
+        <!-- 离线状态条 -->
+        <div class="offline-banner" id="offlineBanner">
+            <span class="icon">📡</span>
+            <span id="offlineText">当前离线模式</span>
+        </div>
+
+        <div class="error-toast" id="errorToast"></div>
+        <div class="success-toast" id="successToast"></div>
+        <div class="loading-overlay" id="loadingOverlay">
+            <div class="loading-spinner"></div>
+            <div class="loading-text" id="loadingText">处理中...</div>
+        </div>
+
+        <!-- ===== 主页：横屏左右分栏 ===== -->
+        <div class="top-bar">
+            <div class="title" id="headerTitle">智能寄存柜</div>
+            <div class="info"><span id="locationName">加载中...</span> | <span id="groupCodeDisplay"></span></div>
+        </div>
+        <div class="main" id="mainPage">
+            <!-- 左侧：取物 + 规则 -->
+            <div class="left-panel">
+                <div class="retrieve-section">
+                    <div class="retrieve-icon">📤</div>
+                    <div class="retrieve-title">取物请点击</div>
+                    <div class="retrieve-hint">输入手机号和取物码即可开门取物</div>
+                    <button class="big-btn btn-primary" onclick="goToRetrieve()">
+                        <span>取 物</span>
+                    </button>
+                </div>
+                <div class="rules-box">
+                    <div class="rules-title">📋 使用规则</div>
+                    <div class="rules-list" id="rulesContainer">
+                        <div class="rule-item"><span class="rule-num">1.</span><span>存放时间截至到当日23:00，请提前取走物品</span></div>
+                        <div class="rule-item"><span class="rule-num">2.</span><span>避免无效占用，请支付保证金20元</span></div>
+                        <div class="rule-item"><span class="rule-num">3.</span><span>寄存结束后押金即可退回，请务必关好柜门</span></div>
+                    </div>
+                </div>
+            </div>
+            <!-- 右侧：二维码 -->
+            <div class="right-panel">
+                <div class="qr-label">扫一扫存包 <span class="arrow">→</span></div>
+                <div class="qr-box">
+                    <canvas id="qrCanvas"></canvas>
+                </div>
+                <div class="qr-hint">使用微信扫一扫<br>即可在手机上存包</div>
+            </div>
+        </div>
+
+        <!-- ===== 取物：手机号 + 取物码合一 ===== -->
+        <div class="sub-page" id="pageRetrieve">
+            <div class="sub-header">
+                <button class="back-btn" id="retrieveBackBtn" onclick="handleRetrieveBack()"><span id="retrieveBackText">← (20s)</span></button>
+                <div><h1>取物验证</h1><div class="hint">请输入手机号和取物码</div></div>
+                <div class="sub-header-right">
+                    <div class="time-info">⏰ 请于 <span id="deadlineTime">23:00</span> 前取物</div>
+                    <button class="scan-btn" onclick="goHome()">📷 返回扫描取包</button>
+                </div>
+            </div>
+            <div class="sub-content">
+                <div class="input-card">
+                    <div class="input-group">
+                        <label>📱 手机号码</label>
+                        <div class="input-display" id="phoneDisplay" onclick="setActiveField('phone')" style="cursor:pointer;"><span class="placeholder">点击输入手机号</span></div>
+                    </div>
+                    <div class="input-group">
+                        <label>🔑 取物码（4位数字）</label>
+                        <div class="input-display" id="passwordDisplay" onclick="setActiveField('password')" style="cursor:pointer;"><span class="placeholder">点击输入取物码</span></div>
+                    </div>
+                    <div class="numpad">
+                        <button class="numpad-btn" onclick="inputDigit('1')">1</button>
+                        <button class="numpad-btn" onclick="inputDigit('2')">2</button>
+                        <button class="numpad-btn" onclick="inputDigit('3')">3</button>
+                        <button class="numpad-btn" onclick="inputDigit('4')">4</button>
+                        <button class="numpad-btn" onclick="inputDigit('5')">5</button>
+                        <button class="numpad-btn" onclick="inputDigit('6')">6</button>
+                        <button class="numpad-btn" onclick="inputDigit('7')">7</button>
+                        <button class="numpad-btn" onclick="inputDigit('8')">8</button>
+                        <button class="numpad-btn" onclick="inputDigit('9')">9</button>
+                        <button class="numpad-btn action" onclick="clearActiveInput()">清空</button>
+                        <button class="numpad-btn" onclick="inputDigit('0')">0</button>
+                        <button class="numpad-btn delete" onclick="deleteActiveDigit()">⌫</button>
+                    </div>
+                    <div class="confirm-section">
+                        <button class="confirm-btn" id="retrieveBtn" onclick="doRetrieve()" disabled>确认取物</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== 开门成功 ===== -->
+        <div class="sub-page" id="pageSuccess">
+            <div class="sub-header">
+                <button class="back-btn" onclick="goHome()">←</button>
+                <div><h1>取包成功</h1></div>
+            </div>
+            <div class="sub-content">
+                <div style="text-align:center;">
+                    <div style="font-size:120px;margin-bottom:20px;">✅</div>
+                    <div style="font-size:48px;font-weight:800;color:#34a853;margin-bottom:24px;letter-spacing:4px;">取包成功</div>
+                    <div style="background:linear-gradient(135deg,#1a73e8 0%,#0d47a1 100%);color:white;padding:24px 60px;border-radius:20px;margin:0 auto 20px;display:inline-block;">
+                        <div style="font-size:20px;opacity:0.9;margin-bottom:8px;">柜门已打开</div>
+                        <div style="font-size:72px;font-weight:900;letter-spacing:8px;" id="slotNumber">--</div>
+                        <div style="font-size:20px;opacity:0.9;margin-top:8px;">号柜门</div>
+                    </div>
+                    <div style="font-size:22px;color:#ff9800;font-weight:600;margin-top:20px;">⚠ 请及时取走您的物品</div>
+                    <div id="offlineHint" class="offline-mode-badge" style="display:none;margin-top:16px;">离线模式</div>
+                    <div style="margin-top:32px;display:flex;gap:20px;justify-content:center;">
+                        <button style="width:220px;height:64px;border-radius:32px;font-size:22px;font-weight:600;border:none;cursor:pointer;background:linear-gradient(135deg,#1a73e8,#0d47a1);color:white;box-shadow:0 4px 16px rgba(26,115,232,0.4);" onclick="goToChoice()">我已取物</button>
+                        <button style="width:180px;height:64px;border-radius:32px;font-size:22px;font-weight:600;border:2px solid #1a73e8;background:white;color:#1a73e8;cursor:pointer;" onclick="goHome()">返回首页</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== 继续/结束 ===== -->
+        <div class="sub-page" id="pageChoice">
+            <div class="sub-header">
+                <button class="back-btn" onclick="goToRetrieve()">←</button>
+                <div><h1>操作选择</h1><span class="hint">页面将在 <span id="choiceCountdown">20</span> 秒后返回首页</span></div>
+            </div>
+            <div class="sub-content">
+                <div class="choice-card">
+                    <h2>请选择下一步操作</h2>
+                    <div class="choice-buttons">
+                        <button class="choice-btn continue" onclick="doContinueStorage()"><span>📦</span><span>继续存放</span></button>
+                        <button class="choice-btn end" onclick="doEndStorage()"><span>🏠</span><span>结束取物</span></button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== 完成 ===== -->
+        <div class="sub-page" id="pageComplete">
+            <div class="sub-header">
+                <button class="back-btn" onclick="goHome()">←</button>
+                <div><h1>操作完成</h1></div>
+            </div>
+            <div class="sub-content">
+                <div style="text-align:center;">
+                    <div class="complete-icon" id="completeIcon">✅</div>
+                    <div class="complete-title" id="completeTitle">操作成功</div>
+                    <div class="refund-info" id="refundInfo">
+                        <div class="refund-label">已退还保证金</div>
+                        <div class="refund-amount" id="refundAmount">¥0.00</div>
+                    </div>
+                    <div class="countdown-hint" id="countdownHint">页面将在 <span id="countdown">20</span> 秒后返回首页</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==================== 全局变量 ====================
+        var groupCode = '';  // 柜组编号（主要参数）
+        var cabinetCode = '';  // 兼容旧参数
+        var groupId = null;
+        var locationName = '智能寄存柜';
+        var currentOrder = null;
+        var isOffline = !navigator.onLine;
+        var phoneInput = '';
+        var passwordInput = '';
+        var activeField = 'phone';
+        var countdownTimer = null;
+        var idleTimer = null;
+        var IDLE_TIMEOUT = 30000;
+        var API_BASE = window.location.origin;
+
+        // 离线缓存配置
+        var CACHE_KEY_ORDERS = 'offline_orders_' + (new URLSearchParams(window.location.search).get('group_code') || 'default');
+        var CACHE_KEY_ORDERS_TIME = CACHE_KEY_ORDERS + '_time'; // 缓存时间戳
+        var CACHE_KEY_QUEUE = 'offline_queue';
+        var CACHE_KEY_GROUP_INFO = 'offline_group_info';
+        var CACHE_TTL = 2 * 60 * 60 * 1000; // 缓存有效期2小时
+        var SYNC_INTERVAL = 30000; // 30秒同步一次订单数据
+
+        // ==================== Service Worker 注册（Blob方式） ====================
+        function registerServiceWorker() {
+            // Force unregister any old Blob-based Service Workers, clear all caches, then register real file
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                    for (var i = 0; i < registrations.length; i++) {
+                        registrations[i].unregister();
+                        console.log('[SW] Unregistered old SW:', registrations[i].scope);
+                    }
+                    if ('caches' in window) {
+                        caches.keys().then(function(names) {
+                            for (var i = 0; i < names.length; i++) {
+                                caches.delete(names[i]);
+                                console.log('[SW] Deleted cache:', names[i]);
+                            }
+                            navigator.serviceWorker.register('/static/sw-screen.js?v=3')
+                                .then(function(reg) { console.log('[SW] New SW registered:', reg.scope); })
+                                .catch(function(err) { console.log('[SW] New SW registration failed:', err); });
+                        });
+                    } else {
+                        navigator.serviceWorker.register('/static/sw-screen.js?v=3')
+                            .then(function(reg) { console.log('[SW] New SW registered:', reg.scope); })
+                            .catch(function(err) { console.log('[SW] New SW registration failed:', err); });
+                    }
+                });
+            }
+        }
+
+        // ==================== 离线数据管理 ====================
+        function getCachedOrders() {
+            try {
+                var data = localStorage.getItem(CACHE_KEY_ORDERS);
+                return data ? JSON.parse(data) : [];
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function setCachedOrders(orders) {
+            try {
+                localStorage.setItem(CACHE_KEY_ORDERS, JSON.stringify(orders));
+            } catch (e) {
+                console.error('[Cache] 保存订单缓存失败:', e);
+            }
+        }
+
+        function getOfflineQueue() {
+            try {
+                var data = localStorage.getItem(CACHE_KEY_QUEUE);
+                return data ? JSON.parse(data) : [];
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function addToOfflineQueue(action) {
+            var queue = getOfflineQueue();
+            queue.push({
+                ...action,
+                timestamp: Date.now()
+            });
+            try {
+                localStorage.setItem(CACHE_KEY_QUEUE, JSON.stringify(queue));
+            } catch (e) {
+                console.error('[Cache] 添加离线队列失败:', e);
+            }
+        }
+
+        function clearOfflineQueue() {
+            try {
+                localStorage.removeItem(CACHE_KEY_QUEUE);
+            } catch (e) {}
+        }
+
+        function removeFromQueue(index) {
+            var queue = getOfflineQueue();
+            queue.splice(index, 1);
+            try {
+                localStorage.setItem(CACHE_KEY_QUEUE, JSON.stringify(queue));
+            } catch (e) {}
+        }
+
+        // ==================== 网络状态管理 ====================
+        function updateOnlineStatus() {
+            isOffline = !navigator.onLine;
+            var banner = document.getElementById('offlineBanner');
+            if (isOffline) {
+                banner.classList.add('show');
+                document.getElementById('offlineText').textContent = '当前离线模式，缓存数据可用';
+            } else {
+                banner.classList.remove('show');
+                // 网络恢复时：立即刷新缓存 + 同步离线队列
+                syncOrdersData();
+                syncOfflineQueue();
+            }
+        }
+
+        function checkOnline() {
+            return new Promise(function(resolve) {
+                if (!navigator.onLine) {
+                    resolve(false);
+                    return;
+                }
+                // 发送一个简单的请求检测网络
+                var timeout = setTimeout(function() {
+                    resolve(false);
+                }, 3000);
+
+                fetch(API_BASE + '/api/settings', { method: 'HEAD' })
+                    .then(function() {
+                        clearTimeout(timeout);
+                        resolve(true);
+                    })
+                    .catch(function() {
+                        clearTimeout(timeout);
+                        resolve(false);
+                    });
+            });
+        }
+
+        // ==================== 同步离线队列 ====================
+        function syncOfflineQueue() {
+            var queue = getOfflineQueue();
+            if (queue.length === 0) return;
+
+            console.log('[Sync] 开始同步离线队列，剩余 ' + queue.length + ' 条');
+
+            // 倒序处理，避免splice导致索引偏移
+            var syncOne = function(idx) {
+                if (idx < 0) return;
+                var item = queue[idx];
+                fetch(API_BASE + item.endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(item.data)
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(result) {
+                    if (result.code === 200) {
+                        removeFromQueue(idx);
+                        console.log('[Sync] 离线操作同步成功:', item.action);
+                    } else {
+                        console.warn('[Sync] 离线操作同步失败:', item.action, result.message);
+                    }
+                    syncOne(idx - 1);
+                })
+                .catch(function() {
+                    syncOne(idx - 1);
+                });
+            };
+            syncOne(queue.length - 1);
+        }
+
+        // ==================== 订单数据同步 ====================
+        function syncOrdersData() {
+            if (isOffline) return;
+
+            checkOnline().then(function(online) {
+                if (!online) return;
+
+                if (!groupId) {
+                    // 如果没有 groupId，先获取
+                    loadGroupInfo(function() {
+                        if (groupId) {
+                            fetchOrdersForGroup(groupId);
+                        }
+                    });
+                } else {
+                    fetchOrdersForGroup(groupId);
+                }
+            });
+        }
+
+        function fetchOrdersForGroup(gid) {
+            fetch(API_BASE + '/api/cabinet-groups/' + gid + '/active-orders')
+                .then(function(r) { return r.json(); })
+                .then(function(result) {
+                    if (result.code === 200) {
+                        // 缓存活跃订单（status=2），用于离线取物验证
+                        setCachedOrders(result.data || []);
+                        console.log('[Sync] 活跃订单已缓存，共 ' + (result.data || []).length + ' 条');
+                    }
+                })
+                .catch(function() {});
+        }
+
+        // ==================== 初始化 ====================
+        document.addEventListener('DOMContentLoaded', function() {
+            var params = new URLSearchParams(window.location.search);
+            groupCode = params.get('group_code') || params.get('cabinet_code') || 'G001';
+            cabinetCode = groupCode;
+
+            document.getElementById('groupCodeDisplay').textContent = '柜组：' + groupCode;
+
+            // 注册 Service Worker
+            registerServiceWorker();
+
+            // 监听网络状态
+            window.addEventListener('online', updateOnlineStatus);
+            window.addEventListener('offline', updateOnlineStatus);
+            updateOnlineStatus();
+
+            // 加载柜组信息
+            loadGroupInfo(function() {
+                loadCabinetInfo();
+                generateQR();
+            });
+
+            // 启动定时同步
+            setInterval(syncOrdersData, SYNC_INTERVAL);
+
+            resetIdleTimer();
+            document.addEventListener('click', resetIdleTimer);
+            document.addEventListener('touchstart', resetIdleTimer);
+        });
+
+        function loadGroupInfo(callback) {
+            fetch(API_BASE + '/api/cabinet-groups/by-code/' + encodeURIComponent(groupCode))
+                .then(function(r) { return r.json(); })
+                .then(function(result) {
+                    if (result.code === 200 && result.data) {
+                        groupId = result.data.id;
+                        var _locN = result.data.location_name || '';
+                        var _grpN = result.data.name || '';
+                        locationName = (_locN && _grpN) ? _locN + '-' + _grpN : (_locN || _grpN || '智能寄存柜');
+                        // 加载寄存规则
+                        var rulesText = result.data.usage_rules || '';
+                        var rulesContainer = document.getElementById('rulesContainer');
+                        if (rulesContainer) {
+                            if (rulesText) {
+                                var rules = rulesText.split('\n').filter(function(r) { return r.trim(); });
+                                var html = '';
+                                for (var i = 0; i < rules.length; i++) {
+                                    html += '<div class="rule-item"><span class="rule-num">' + (i+1) + '.</span><span>' + rules[i].trim() + '</span></div>';
+                                }
+                                rulesContainer.innerHTML = html;
+                            } else {
+                                rulesContainer.innerHTML = '<div class="rule-item"><span>贵重物品请随身携带，如有疑问请联系客服</span></div>';
+                            }
+                        }
+                        // 缓存柜组信息
+                        try {
+                            localStorage.setItem(CACHE_KEY_GROUP_INFO, JSON.stringify(result.data));
+                        } catch (e) {}
+                        // 同步订单数据
+                        syncOrdersData();
+                        if (callback) callback();
+                    } else {
+                        // 尝试从缓存加载
+                        try {
+                            var cached = localStorage.getItem(CACHE_KEY_GROUP_INFO);
+                            if (cached) {
+                                var data = JSON.parse(cached);
+                                if (data.group_code === groupCode) {
+                                    groupId = data.id;
+                                    var _locN = data.location_name || '';
+                                    var _grpN = data.name || '';
+                                    locationName = (_locN && _grpN) ? _locN + '-' + _grpN : (_locN || _grpN || '智能寄存柜');
+                                    if (callback) callback();
+                                    return;
+                                }
+                            }
+                        } catch (e) {}
+                        showError(result.message || '柜组不存在');
+                    }
+                })
+                .catch(function() {
+                    // 网络失败，尝试从缓存加载
+                    try {
+                        var cached = localStorage.getItem(CACHE_KEY_GROUP_INFO);
+                        if (cached) {
+                            var data = JSON.parse(cached);
+                            if (data.group_code === groupCode) {
+                                groupId = data.id;
+                                var _locN = data.location_name || '';
+                                var _grpN = data.name || '';
+                                locationName = (_locN && _grpN) ? _locN + '-' + _grpN : (_locN || _grpN || '智能寄存柜');
+                            }
+                        }
+                    } catch (e) {}
+                    if (callback) callback();
+                });
+        }
+
+        function loadCabinetInfo() {
+            document.getElementById('locationName').textContent = locationName;
+            document.getElementById('headerTitle').textContent = '智能寄存柜';
+        }
+
+        function generateQR() {
+            var depositUrl = 'https://locker.cqdyxl.com/static/deposit.html?group_code=' + encodeURIComponent(groupCode);
+            var canvas = document.getElementById('qrCanvas');
+            if (!canvas) return;
+            var ctx = canvas.getContext('2d');
+            canvas.width = 200;
+            canvas.height = 200;
+
+            fetch(API_BASE + '/api/qrcode?url=' + encodeURIComponent(depositUrl))
+                .then(function(r) { return r.json(); })
+                .then(function(res) {
+                    if (res.code === 200 && res.data && res.data.qrcode) {
+                        var img = new Image();
+                        img.onload = function() { ctx.drawImage(img, 0, 0, 200, 200); };
+                        img.onerror = function() {
+                            drawFallbackQR(ctx, depositUrl);
+                        };
+                        img.src = res.data.qrcode;
+                    } else {
+                        drawFallbackQR(ctx, depositUrl);
+                    }
+                })
+                .catch(function() {
+                    drawFallbackQR(ctx, depositUrl);
+                });
+        }
+
+        function drawFallbackQR(ctx, url) {
+            ctx.fillStyle = '#1a73e8';
+            ctx.fillRect(0, 0, 200, 200);
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('扫码存包', 100, 90);
+            ctx.font = '11px sans-serif';
+            ctx.fillText(url.substring(0, 35) + '...', 100, 115);
+        }
+
+        // ==================== 基础功能函数 ====================
+        function resetIdleTimer() {
+            if (idleTimer) clearTimeout(idleTimer);
+            idleTimer = setTimeout(function() { goHome(); }, IDLE_TIMEOUT);
+        }
+
+        function showPage(pageId) {
+            document.querySelectorAll('.sub-page').forEach(function(p) { p.classList.remove('active'); });
+            document.getElementById(pageId).classList.add('active');
+            resetIdleTimer();
+        }
+
+        function showError(msg) {
+            var t = document.getElementById('errorToast');
+            t.textContent = msg;
+            t.classList.add('show');
+            setTimeout(function() { t.classList.remove('show'); }, 3000);
+        }
+
+        function showSuccess(msg) {
+            var t = document.getElementById('successToast');
+            t.textContent = msg;
+            t.classList.add('show');
+            setTimeout(function() { t.classList.remove('show'); }, 3000);
+        }
+
+        function showLoading(show, text) {
+            document.getElementById('loadingOverlay').classList.toggle('show', show);
+            if (text) document.getElementById('loadingText').textContent = text;
+        }
+
+        function goHome() {
+            if (countdownTimer) clearInterval(countdownTimer);
+            phoneInput = '';
+            passwordInput = '';
+            activeField = 'phone';
+            currentOrder = null;
+            updateDisplay('phone');
+            updateDisplay('password');
+            updateFieldHighlight();
+            document.getElementById('retrieveBtn').disabled = true;
+            document.querySelectorAll('.sub-page').forEach(function(p) { p.classList.remove('active'); });
+            document.getElementById('offlineHint').style.display = 'none';
+            resetIdleTimer();
+        }
+
+        var retrieveBackTimer = null;
+        var retrieveBackEnabled = false;
+        function startRetrieveBackCountdown() {
+            retrieveBackEnabled = false;
+            if (retrieveBackTimer) { clearInterval(retrieveBackTimer); retrieveBackTimer = null; }
+            var sec = 20;
+            var el = document.getElementById("retrieveBackText");
+            if (el) el.textContent = "← (" + sec + "s)";
+            var btn = document.getElementById("retrieveBackBtn");
+            if (btn) btn.style.opacity = "0.5";
+            retrieveBackTimer = setInterval(function() {
+                sec--;
+                if (sec > 0) {
+                    if (el) el.textContent = "← (" + sec + "s)";
+                } else {
+                    clearInterval(retrieveBackTimer);
+                    retrieveBackTimer = null;
+                    retrieveBackEnabled = true;
+                    if (el) el.textContent = "←";
+                    if (btn) btn.style.opacity = "1";
+                }
+            }, 1000);
+        }
+        function handleRetrieveBack() {
+            if (retrieveBackEnabled) { goHome(); }
+        }
+        function goToRetrieve() {
+            phoneInput = '';
+            passwordInput = '';
+            activeField = 'phone';
+            updateDisplay('phone');
+            updateDisplay('password');
+            updateFieldHighlight();
+            document.getElementById('retrieveBtn').disabled = true;
+            showPage('pageRetrieve');
+            startRetrieveBackCountdown();
+        }
+
+        function setActiveField(field) {
+            activeField = field;
+            updateFieldHighlight();
+        }
+
+        function updateFieldHighlight() {
+            var phoneEl = document.getElementById('phoneDisplay');
+            var pwdEl = document.getElementById('passwordDisplay');
+            phoneEl.style.borderColor = activeField === 'phone' ? '#1a73e8' : '#e0e4e8';
+            phoneEl.style.background = activeField === 'phone' ? '#e8f0fe' : '#f5f7fa';
+            pwdEl.style.borderColor = activeField === 'password' ? '#1a73e8' : '#e0e4e8';
+            pwdEl.style.background = activeField === 'password' ? '#e8f0fe' : '#f5f7fa';
+        }
+
+        function inputDigit(d) {
+            if (activeField === 'phone') {
+                if (phoneInput.length < 11) phoneInput += d;
+                updateDisplay('phone');
+                if (phoneInput.length === 11) {
+                    activeField = 'password';
+                    updateFieldHighlight();
+                }
+            } else {
+                if (passwordInput.length < 4) passwordInput += d;
+                updateDisplay('password');
+            }
+            document.getElementById('retrieveBtn').disabled = !(phoneInput.length === 11 && passwordInput.length === 4);
+        }
+
+        function deleteActiveDigit() {
+            if (activeField === 'phone') {
+                phoneInput = phoneInput.slice(0, -1);
+                updateDisplay('phone');
+            } else {
+                passwordInput = passwordInput.slice(0, -1);
+                updateDisplay('password');
+            }
+            document.getElementById('retrieveBtn').disabled = !(phoneInput.length === 11 && passwordInput.length === 4);
+        }
+
+        function clearActiveInput() {
+            if (activeField === 'phone') {
+                phoneInput = '';
+                updateDisplay('phone');
+            } else {
+                passwordInput = '';
+                updateDisplay('password');
+            }
+            document.getElementById('retrieveBtn').disabled = true;
+        }
+
+        function updateDisplay(type) {
+            var el, input;
+            if (type === 'phone') {
+                el = document.getElementById('phoneDisplay');
+                input = phoneInput;
+            } else {
+                el = document.getElementById('passwordDisplay');
+                input = passwordInput;
+            }
+            if (input.length === 0) {
+                el.innerHTML = '<span class="placeholder">' + (type === 'phone' ? '请输入手机号' : '请输入取物码') + '</span>';
+            } else {
+                var f = '';
+                for (var i = 0; i < input.length; i++) {
+                    f += input[i];
+                    if (type === 'phone' && (i === 2 || i === 6)) f += ' ';
+                }
+                el.textContent = f;
+            }
+        }
+
+        // ==================== 核心取物流程（支持离线） ====================
+        function doRetrieve() {
+            if (passwordInput.length !== 4) {
+                showError('请输入4位取物码');
+                return;
+            }
+
+            showLoading(true, '验证中...');
+
+            // 先尝试在线验证
+            fetch(API_BASE + '/api/deposit/retrieve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    cabinet_code: cabinetCode,
+                    group_code: groupCode,
+                    phone: phoneInput,
+                    access_code: passwordInput
+                })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(result) {
+                showLoading(false);
+                if (result.code === 200) {
+                    // 在线验证成功
+                    handleRetrieveSuccess(result.data, false);
+                } else {
+                    showError(result.message || '验证失败');
+                }
+            })
+            .catch(function() {
+                // 在线验证失败，尝试离线
+                console.log('[Offline] 在线验证失败，尝试离线验证');
+                doOfflineRetrieve();
+            });
+        }
+
+        function doOfflineRetrieve() {
+            // 从本地缓存中查找匹配的订单
+            var cachedOrders = getCachedOrders();
+
+            // 查找匹配的订单
+            var matchedOrder = null;
+            for (var i = 0; i < cachedOrders.length; i++) {
+                var order = cachedOrders[i];
+                // 注意：缓存的订单结构可能不同，需要适配
+                // 假设缓存结构包含 slot_id, slot_number 等
+                if (order.user_phone === phoneInput && order.access_code === passwordInput) {
+                    matchedOrder = order;
+                    break;
+                }
+            }
+
+            if (matchedOrder) {
+                // 离线验证成功
+                handleRetrieveSuccess(matchedOrder, true);
+
+                // 将取物请求加入离线队列
+                addToOfflineQueue({
+                    action: 'retrieve',
+                    endpoint: '/api/deposit/retrieve',
+                    data: {
+                        cabinet_code: cabinetCode,
+                        group_code: groupCode,
+                        phone: phoneInput,
+                        access_code: passwordInput,
+                        offline: true
+                    }
+                });
+
+                // 已在pageSuccess页面显示成功信息，不再弹toast
+            } else {
+                showLoading(false);
+                showError('未找到匹配的订单，请检查手机号和取物码');
+            }
+        }
+
+        function handleRetrieveSuccess(orderData, isOfflineMode) {
+            currentOrder = orderData;
+            document.getElementById('slotNumber').textContent = orderData.compartment_number || orderData.slot_number || '--';
+
+            // 显示离线模式提示
+            if (isOfflineMode) {
+                document.getElementById('offlineHint').style.display = 'inline-block';
+            } else {
+                document.getElementById('offlineHint').style.display = 'none';
+            }
+
+            showPage('pageSuccess');
+        }
+
+        function goToChoice() {
+            showPage('pageChoice');
+            // 20秒倒计时自动返回首页
+            if (countdownTimer) clearInterval(countdownTimer);
+            var cc = 20;
+            var ccEl = document.getElementById('choiceCountdown');
+            countdownTimer = setInterval(function() {
+                cc--;
+                if (ccEl) ccEl.textContent = cc;
+                if (cc <= 0) { clearInterval(countdownTimer); goHome(); }
+            }, 1000);
+        }
+
+        function doContinueStorage() {
+            if (!currentOrder || !currentOrder.order_id) {
+                showError('订单信息异常');
+                goHome();
+                return;
+            }
+
+            showLoading(true, '处理中...');
+
+            fetch(API_BASE + '/api/deposit/continue-storage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ order_id: currentOrder.order_id })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(result) {
+                showLoading(false);
+                if (result.code === 200) {
+                    document.getElementById('completeIcon').textContent = '✅';
+                    document.getElementById('completeTitle').textContent = '继续存放成功';
+                    document.getElementById('refundInfo').style.display = 'none';
+                    document.getElementById('countdownHint').innerHTML = '请关好柜门，保证金将保留在账户中';
+                    startCountdown(20);
+                } else {
+                    showError(result.message || '操作失败');
+                }
+            })
+            .catch(function() {
+                // 离线模式下的继续存放
+                showLoading(false);
+                addToOfflineQueue({
+                    action: 'continue-storage',
+                    endpoint: '/api/deposit/continue-storage',
+                    data: { order_id: currentOrder.order_id }
+                });
+                document.getElementById('completeIcon').textContent = '✅';
+                document.getElementById('completeTitle').textContent = '继续存放成功（已缓存）';
+                document.getElementById('refundInfo').style.display = 'none';
+                document.getElementById('countdownHint').innerHTML = '网络恢复后将自动同步';
+                startCountdown(20);
+            });
+        }
+
+        function doEndStorage() {
+            if (!currentOrder || !currentOrder.order_id) {
+                showError('订单信息异常');
+                goHome();
+                return;
+            }
+
+            showLoading(true, '处理中...');
+
+            fetch(API_BASE + '/api/deposit/end-storage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ order_id: currentOrder.order_id })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(result) {
+                showLoading(false);
+                if (result.code === 200) {
+                    document.getElementById('completeIcon').textContent = '✅';
+                    document.getElementById('completeTitle').textContent = '退款成功';
+                    document.getElementById('refundInfo').style.display = 'block';
+                    document.getElementById('refundAmount').textContent = '¥' + (result.data ? result.data.refund_amount : currentOrder.deposit_amount || 0).toFixed(2);
+                    startCountdown(20);
+                } else {
+                    document.getElementById('completeIcon').textContent = '⚠️';
+                    document.getElementById('completeTitle').textContent = '操作完成';
+                    document.getElementById('refundInfo').style.display = 'block';
+                    document.getElementById('refundAmount').textContent = '¥0.00';
+                    document.getElementById('countdownHint').innerHTML = '退款处理中，请联系客服';
+                    startCountdown(20);
+                }
+            })
+            .catch(function() {
+                // 离线模式下的结束取物
+                showLoading(false);
+                addToOfflineQueue({
+                    action: 'end-storage',
+                    endpoint: '/api/deposit/end-storage',
+                    data: { order_id: currentOrder.order_id }
+                });
+                document.getElementById('completeIcon').textContent = '✅';
+                document.getElementById('completeTitle').textContent = '操作成功（已缓存）';
+                document.getElementById('refundInfo').style.display = 'block';
+                document.getElementById('refundAmount').textContent = '¥' + (currentOrder.deposit_amount || 0).toFixed(2);
+                document.getElementById('countdownHint').innerHTML = '网络恢复后将自动同步退款';
+                startCountdown(20);
+            });
+        }
+
+        function startCountdown(seconds) {
+            var count = seconds;
+            var el = document.getElementById('countdown');
+            if (countdownTimer) clearInterval(countdownTimer);
+            showPage('pageComplete');
+            countdownTimer = setInterval(function() {
+                count--;
+                if (el) el.textContent = count;
+                if (count <= 0) {
+                    clearInterval(countdownTimer);
+                    goHome();
+                }
+            }, 1000);
+        }
+    </script>
+</body>
+</html>

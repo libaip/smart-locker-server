@@ -1,0 +1,48 @@
+*.pyc
+__pycache__/
+venv/
+.env
+*.db
+logs/*.log
+cert/*.pem
+cert/*.p12
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Backups
+*.bak
+*.bak.*
+*.bakv*
+*pre-fix*
+*.new
+*.old
+backups/
+
+# Large binaries
+static/*.apk
+static/*.gz
+static/*.tar.gz
+*jcg-src*
+*.apk
+*.jar
+*.tar.gz
+*.gz
+
+# Temporary
+jcg-src/
+backup/
+backups/
+*.log
+gunicorn.err
+gunicorn.log
+test_*.py
+
+# Static large files
+static/*.apk.idsig
+static/*.apk.bak*
+static/*.html.new
+static/*.jpg
+static/*.png

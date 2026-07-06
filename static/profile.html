@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>个人中心</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #eef1f5; font-family: -apple-system, sans-serif; min-height: 100vh; }
+.header { background: linear-gradient(135deg, #26A69A, #4DB6AC); padding: 40px 20px; text-align: center; color: #fff; position: relative; }
+.header::after { content: ''; position: absolute; bottom: -20px; left: -20px; right: -20px; height: 40px; background: #eef1f5; border-radius: 50% 50% 0 0; }
+.avatar { width: 64px; height: 64px; border-radius: 50%; background: rgba(255,255,255,0.9); margin: 0 auto 10px; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+.avatar svg { width: 36px; height: 36px; fill: #BDBDBD; }
+.phone { font-size: 18px; font-weight: 600; color: #fff; position: relative; z-index: 1; }
+.menu { margin: 30px 16px; }
+.menu-item { background: #fff; display: flex; align-items: center; justify-content: space-between; padding: 16px; margin-bottom: 1px; cursor: pointer; }
+.menu-item:first-child { border-radius: 12px 12px 0 0; }
+.menu-item:last-child { border-radius: 0 0 12px 12px; }
+.menu-left { display: flex; align-items: center; gap: 10px; font-size: 15px; color: #333; }
+.menu-left span { font-size: 18px; }
+.menu-right { color: #ccc; font-size: 14px; }
+.balance-card { background: linear-gradient(135deg, #E3F2FD, #BBDEFB); margin: 16px; border-radius: 16px; padding: 28px 20px; position: relative; overflow: hidden; }
+.balance-card::before { content: '¥'; position: absolute; left: -10px; bottom: -20px; font-size: 120px; color: rgba(255,255,255,0.4); font-weight: 700; }
+.balance-label { font-size: 14px; color: #666; margin-bottom: 8px; position: relative; z-index: 1; }
+.balance-amount { font-size: 42px; font-weight: 900; color: #1976D2; margin-bottom: 16px; position: relative; z-index: 1; }
+.balance-amount small { font-size: 20px; }
+.withdraw-btn { margin-top: 10px; background: linear-gradient(135deg, #FF9800, #FFB74D); color: #fff; border: none; border-radius: 22px; padding: 10px 28px; font-size: 15px; font-weight: 700; cursor: pointer; position: relative; z-index: 1; }
+.withdraw-btn:disabled { background: #ccc; color: #999; cursor: not-allowed; }
+.rules-box { background: #fff; border-radius: 12px; padding: 16px; margin: 16px; }
+.rules-title { font-size: 14px; font-weight: 700; color: #333; margin-bottom: 10px; }
+.rules-row { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid #f5f5f5; }
+.rules-row:last-child { border-bottom: none; }
+.rules-label { font-size: 13px; color: #999; }
+.rules-value { font-size: 13px; color: #333; font-weight: 600; }
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
+.float-btn { width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; color: #fff; cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,0.15); text-align: center; line-height: 1.2; padding: 4px; animation: pulse 2s ease-in-out infinite; }
+.float-btn-service { background: #42A5F5; }
+.float-btn-complaint { background: #FF9800; animation-delay: 0.5s; }
+</style>
+</head>
+<body>
+<div id="profilePage">
+  <div class="header">
+    <div class="avatar">
+      <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+    </div>
+    <div class="phone" id="profilePhone">未登录</div>
+  </div>
+  <div class="menu">
+    <div class="menu-item" onclick="showPage('ordersPage'); loadOrders();"><div class="menu-left"><span>📋</span>我的订单</div><div class="menu-right">›</div></div>
+    <div class="menu-item" onclick="showPage('balancePage'); loadBalance();"><div class="menu-left"><span>💰</span>我的余额</div><div class="menu-right">›</div></div>
+    <div class="menu-item" onclick="callService();"><div class="menu-left"><span>📞</span>联系客服</div><div class="menu-right">›</div></div>
+    <div class="menu-item" onclick="clearCache();"><div class="menu-left"><span>🗑️</span>清除缓存</div><div class="menu-right">›</div></div>
+  </div>
+</div>
+
+<div style="position:fixed;right:12px;bottom:90px;z-index:90;display:flex;flex-direction:column;gap:14px;">
+  <div class="float-btn float-btn-service" onclick="callService();">联系<br>客服</div>
+  <div class="float-btn float-btn-complaint" onclick="showComplaintModal();">订单<br>投诉</div>
+</div>
+<div id="balancePage" style="display:none;background:#eef1f5;min-height:100vh;">
+  <div style="background:#fff;padding:16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #f0f0f0;">
+    <span onclick="showPage('profilePage');" style="font-size:24px;cursor:pointer;">←</span>
+    <span style="font-size:16px;font-weight:600;">我的余额</span>
+  </div>
+  <div class="balance-card">
+    <div class="balance-label">我的余额(元)</div>
+    <div class="balance-amount">¥<span id="balanceAmount">0.00</span></div>
+    <button id="withdrawBtn" class="withdraw-btn" onclick="handleWithdraw()">立即提现</button>
+  </div>
+  <div id="withdrawMsg" style="display:none;margin:0 16px;padding:12px;background:#FFF3E0;border-radius:10px;font-size:13px;color:#E65100;"></div>
+  <div onclick="showPage('rulesPage');" style="background:#fff;margin:16px;padding:14px 16px;border-radius:12px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;">
+    <span style="font-size:14px;color:#666;">提现规则</span>
+    <span style="color:#ccc;font-size:16px;">›</span>
+  </div>
+</div>
+
+<div id="rulesPage" style="display:none;background:#eef1f5;min-height:100vh;">
+  <div style="background:#fff;padding:16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #f0f0f0;">
+    <span onclick="showPage('balancePage');" style="font-size:24px;cursor:pointer;">←</span>
+    <span style="font-size:16px;font-weight:600;">提现规则</span>
+  </div>
+  <div style="background:#fff;border-radius:12px;padding:16px;margin:16px;">
+    <div class="rules-row"><span class="rules-label">到账时间</span><span class="rules-value">0-3个工作日到账</span></div>
+    <div class="rules-row"><span class="rules-label">提现额度</span><span class="rules-value">可提现全额</span></div>
+    <div class="rules-row"><span class="rules-label">提现时间</span><span class="rules-value">00:00-23:59</span></div>
+  </div>
+</div>
+<div id="ordersPage" style="display:none;background:#eef1f5;min-height:100vh;">
+  <div style="background:#fff;padding:16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #f0f0f0;">
+    <span onclick="showPage('profilePage');" style="font-size:24px;cursor:pointer;">←</span>
+    <span style="font-size:16px;font-weight:600;">我的订单</span>
+  </div>
+  <div id="ordersList" style="padding:16px;"></div>
+</div>
+<script>
+var openid = (location.search.match(/openid=([^&]*)/) || [])[1] || '';
+var currentPhone = localStorage.getItem('locker_saved_phone') || '';
+var API_BASE = 'https://locker.cqdyxl.com';
+function showPage(id) {
+  var pages = ['profilePage','balancePage','ordersPage','rulesPage'];
+  for (var i = 0; i < pages.length; i++) {
+    var el = document.getElementById(pages[i]);
+    if (el) el.style.display = (pages[i] === id) ? 'block' : 'none';
+  }
+}
+function loadUserProfile() {
+  if (openid) {
+    document.getElementById('profilePhone').textContent = '微信用户';
+  } else if (currentPhone) {
+    document.getElementById('profilePhone').textContent = currentPhone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2');
+  }
+}
+function getPhone() {
+  return currentPhone || '';
+}
+function loadBalance() {
+  var phone = getPhone();
+  if (!phone && !openid) {
+    document.getElementById('balanceAmount').textContent = '0.00';
+    document.getElementById('withdrawBtn').disabled = true;
+    return;
+  }
+  fetch(API_BASE + '/api/user/balance?phone=' + encodeURIComponent(phone) + '&openid=' + encodeURIComponent(openid))
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    if ((d.code === 0 || d.code === 200) && d.data && d.data.balance != null) {
+      document.getElementById('balanceAmount').textContent = d.data.balance.toFixed(2);
+    }
+  })
+  .catch(function(){});
+}
+function handleWithdraw() {
+  var phone = getPhone();
+  if (!phone) { alert('手机号不能为空'); return; }
+  var amtEl = document.getElementById('balanceAmount');
+  var amount = parseFloat(amtEl ? amtEl.textContent || amtEl.innerText || '0' : '0');
+  if (amount <= 0) { alert('无可提现余额'); return; }
+  var btn = document.getElementById('withdrawBtn');
+  if (btn) btn.disabled = true;
+  fetch(API_BASE + '/api/user/withdraw', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({openid:openid, phone:phone, amount:amount}) })
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    var msg = document.getElementById('withdrawMsg');
+    if (msg) { msg.style.display = 'block'; msg.textContent = d.message || (d.code === 200 ? '提现申请已提交' : '操作失败'); }
+    if (d.code === 200) loadBalance();
+  })
+  .catch(function(){
+    var msg = document.getElementById('withdrawMsg');
+    if (msg) { msg.style.display = 'block'; msg.textContent = '网络错误'; }
+  })
+  .then(function(){ if (btn) btn.disabled = false; });
+}
+function loadOrders() {
+  var container = document.getElementById('ordersList');
+  container.innerHTML = '<div style="text-align:center;padding:30px;color:#999;font-size:13px">加载中...</div>';
+  var phone = getPhone();
+  fetch(API_BASE + '/api/user/orders?openid=' + encodeURIComponent(openid) + '&phone=' + encodeURIComponent(phone) + '&status=3,4&limit=20')
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    var list = Array.isArray(d.data) ? d.data : [];
+    if (!list.length) { container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:#999;font-size:14px">暂无订单</div>'; return; }
+    var html = '';
+    for (var i = 0; i < list.length; i++) {
+      var o = list[i];
+      var st = o.status === 4 ? '已退款' : '可退款';
+      html += '<div style="background:#fff;border-radius:12px;padding:14px 16px;margin-bottom:10px;">';
+      html += '<div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="font-size:13px;color:#999;">' + (o.order_no||'').slice(-8) + '</span><span style="font-size:12px;padding:3px 10px;border-radius:10px;background:' + (o.status===4?'#E3F2FD':'#E8F5E9') + ';color:' + (o.status===4?'#1565C0':'#2E7D32') + ';font-weight:600;">' + st + '</span></div>';
+      if (o.store_time) html += '<div style="font-size:12px;color:#888;">存包：' + o.store_time.substring(0,16) + '</div>';
+      if (o.retrieve_time) html += '<div style="font-size:12px;color:#888;">取包：' + o.retrieve_time.substring(0,16) + '</div>';
+      html += '</div>';
+    }
+    container.innerHTML = html;
+  })
+  .catch(function(){ container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:#999;font-size:14px">加载失败</div>'; });
+}
+function callService() { window.location.href = 'tel:4006981080'; }
+function clearCache() {
+  try { localStorage.clear(); sessionStorage.clear(); } catch(e) {}
+  alert('缓存已清除');
+}
+var complaintModal = null;
+function showComplaintModal() {
+  if (!complaintModal) {
+    complaintModal = document.createElement('div');
+    complaintModal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:200;display:flex;align-items:center;justify-content:center;';
+    complaintModal.innerHTML = '<div style="background:#fff;border-radius:16px;padding:24px 20px;width:85%;max-width:360px;">' +
+      '<div style="font-size:17px;font-weight:700;color:#1a1a1a;margin-bottom:14px;text-align:center;">订单投诉</div>' +
+      '<textarea id="complaintContent" placeholder="请输入投诉内容..." style="width:100%;height:80px;border:1.5px solid #e0e0e0;border-radius:10px;padding:10px;font-size:14px;resize:none;outline:none;"></textarea>' +
+      '<div style="display:flex;gap:12px;margin-top:18px;">' +
+        '<button onclick="hideComplaintModal();" style="flex:1;padding:12px;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;border:none;background:#f0f0f0;color:#666;">取消</button>' +
+        '<button onclick="submitComplaint();" style="flex:1;padding:12px;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;border:none;background:#FF9800;color:#fff;">提交</button>' +
+      '</div></div>';
+    document.body.appendChild(complaintModal);
+  }
+  complaintModal.style.display = 'flex';
+}
+function hideComplaintModal() {
+  if (complaintModal) complaintModal.style.display = 'none';
+}
+function submitComplaint() {
+  var c = document.getElementById('complaintContent');
+  if (!c || !c.value.trim()) { alert('请输入投诉内容'); return; }
+  fetch(API_BASE + '/api/complaints', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({openid: openid, content: c.value.trim()})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    alert(d.message || '提交成功');
+    if (d.code === 200) { c.value = ''; hideComplaintModal(); }
+  })
+  .catch(function(){ alert('网络错误'); });
+}
+document.addEventListener('DOMContentLoaded', function() {
+  showPage('profilePage');
+  loadUserProfile();
+});
+</script>
+</body>
+</html>

@@ -39,8 +39,6 @@ jobs:
             cd /home/ubuntu/smart-locker
             git fetch origin main
             git reset --hard origin/main
-            killall gunicorn 2>/dev/null || true
-            sleep 2
-            nohup /home/ubuntu/.local/bin/gunicorn --env GUNICORN_WORKER_ID=1 --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker --workers 2 --timeout 120 --bind 127.0.0.1:5001 app:app > /tmp/gunicorn_deploy.log 2>&1 &
+            bash restart.sh
             sleep 3
             echo "Deploy OK"

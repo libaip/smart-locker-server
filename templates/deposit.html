@@ -776,7 +776,7 @@
 
 <script>
     
-    try { var s={ssr_cabinet};var DI="{device}";var OI="{openid}";var CI="{cabinet_id}";var DA={deposit_amount}; } catch(e) { var CI='8'; }
+    try { var s={ssr_cabinet};var DI="{device}";var OI="{openid}";var CI="{cabinet_id}";var DA={deposit_amount}; } catch(e) { var s=null;var DI='';var OI='';var CI='8';var DA=20; }
     var params = new URLSearchParams(window.location.search);
     var API_BASE = window.location.origin || window.location.protocol + '//' + window.location.host;
     var currentCabinetId = CI || params.get('cabinet_id') || '';

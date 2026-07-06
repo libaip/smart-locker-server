@@ -15,6 +15,22 @@ def mock_db():
         yield cur
 
 @pytest.fixture
+def client():
+    """Create Flask test client with mocked DB"""
+    with patch("database.get_db") as m:
+        db = MagicMock()
+        cur = MagicMock()
+        cur.fetchone.side_effect = lambda: None
+        cur.fetchall.return_value = []
+        db.cursor.return_value = cur
+        db.execute.return_value = cur
+        cur.execute.return_value = cur
+        m.return_value = db
+        from app import app
+        with app.test_client() as c:
+            yield c
+
+@pytest.fixture
 def mock_wxpay():
     with patch("helpers.get_wxpay") as m:
         wp = MagicMock()

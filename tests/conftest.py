@@ -1,15 +1,15 @@
 import pytest
-from unittest.mock import MagicMock, patch, ANY
+from unittest.mock import MagicMock, patch
 
 @pytest.fixture
 def mock_db():
     with patch("database.get_db") as m:
         db = MagicMock()
         cur = MagicMock()
+        cur.fetchone.side_effect = lambda: None
+        cur.fetchall.return_value = []
         db.cursor.return_value = cur
         cur.execute.return_value = cur
-        cur.fetchone.return_value = None
-        cur.fetchall.return_value = []
         m.return_value = db
         yield cur
 
@@ -17,7 +17,7 @@ def mock_db():
 def mock_wxpay():
     with patch("helpers.get_wxpay") as m:
         wp = MagicMock()
-        wp.refund.return_value = {"return_code": "SUCCESS", "result_code": "SUCCESS", "refund_id": "mock_refund_001"}
+        wp.refund.return_value = {"return_code": "SUCCESS", "result_code": "SUCCESS", "refund_id": "mr1"}
         m.return_value = wp
         yield wp
 

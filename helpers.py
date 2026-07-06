@@ -330,21 +330,6 @@ def send_open_lock(device_id, board_no, lock_no, protocol=None, order_id='', slo
     # 自动从数据库解析协议类型
     if protocol is None:
         protocol = _get_device_protocol(device_id)
-    # ??????????????????????
-    if device_id not in connected_devices:
-        try:
-            from database import get_db
-            _db = get_db()
-            _cur = _db.cursor()
-            _cur.execute("SELECT last_heartbeat FROM cabinets WHERE mainboard_device_id=%s", (device_id,))
-            _r = _cur.fetchone()
-            _cur.close()
-            _db.close()
-            if not _r or not _r[0]:
-                logger.info(f'[SEND_LOCK] device={device_id} has no heartbeat, queuing via HTTP poll')
-                # 不return False，继续排队兜底，设备上线后通过HTTP轮询获取指令
-        except:
-            pass
     logger.info(f'[SEND_LOCK] device={device_id}, protocol={protocol}, id(pending)={id(pending_lock_commands)}, keys_before={list(pending_lock_commands.keys())}')
     command = {
         'type': 'open_lock',
@@ -392,11 +377,10 @@ def send_open_lock(device_id, board_no, lock_no, protocol=None, order_id='', slo
 
     
     # 内存队列兜底（设备离线时用）
-    if not _ws_sent:
-        if device_id not in pending_lock_commands:
-            pending_lock_commands[device_id] = []
-        if command not in pending_lock_commands[device_id]:
-            pending_lock_commands[device_id].append(command)
+    if device_id not in pending_lock_commands:
+        pending_lock_commands[device_id] = []
+    if command not in pending_lock_commands[device_id]:
+        pending_lock_commands[device_id].append(command)
     
     # 数据库操作：始终delivered=0，让HTTP轮询作为可靠兜底（WS可能发送成功但设备未收到）
     _delivered = 1 if _ws_sent else 0
@@ -530,8 +514,6 @@ def update_channel_stats(channel_id, amount):
 
 def get_channel_wxpay(channel, use_mp_appid=False):
     """根据渠道配置创建支付实例"""
-    if not channel.get('is_active', True):
-        return get_wxpay(use_mp_appid=use_mp_appid), None
     from wxpay import WxPay, ThirdPartyPay as TPP
     channel_type = channel.get('channel_type', 'wechat')
     if channel_type == 'wechat':
@@ -838,22 +820,6 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
             if is_merchant_account_error(_ec):
                 _merchant_health_state['consecutive_errors'] += 1
                 _on_merchant_error(_ec, err_msg, result, channel=_alert_channel)
-                # auto-disable channel on merchant errors
-                if payment_channel_id:
-                    try:
-                        _dc = get_db()
-                        _dc_c = _dc.cursor()
-                        _dc_c.execute("UPDATE payment_channels SET failure_count = COALESCE(failure_count, 0) + 1 WHERE id=%s", (payment_channel_id,))
-                        _dc.commit()
-                        _dc_c.execute("SELECT failure_count FROM payment_channels WHERE id=%s", (payment_channel_id,))
-                        _fc = _dc_c.fetchone()
-                        if _fc and _fc[0] >= 3:
-                            _dc_c.execute("UPDATE payment_channels SET auto_disabled=1 WHERE id=%s", (payment_channel_id,))
-                            _dc.commit()
-                            logger.warning('[MERCHANT] auto-disabled channel %s, failure_count=%s' % (payment_channel_id, _fc[0]))
-                        _dc.close()
-                    except Exception as _dx:
-                        logger.error('[MERCHANT] update failure_count error: %s' % _dx)
             elif result.get('return_code') != 'SUCCESS':
                 # return_code 非 SUCCESS 也可能是账户问题
                 _rc = result.get('return_code', '')
@@ -1137,7 +1103,7 @@ def assign_merchant(phone=None, openid=None):
         if row and row[0]:
             c.close()
             return row[0]
-        row = c.execute("SELECT mch_id FROM payment_channels WHERE is_active=TRUE ORDER BY weight DESC, total_users ASC LIMIT 1").fetchone()
+        row = c.execute("SELECT mch_id FROM payment_channels WHERE is_active=TRUE ORDER BY total_users ASC LIMIT 1").fetchone()
         if not row:
             c.close()
             return None

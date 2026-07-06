@@ -8,3 +8,5 @@ Sat Jul  4 03:00:02 AM CST 2026: Backup smart_locker_20260704_030001.sql.gz done
 Sun Jul  5 03:00:02 AM CST 2026: Backup smart_locker_20260705_030001.sql.gz done, size=1.7M
 [20260706_030001] Backup done
 Mon Jul  6 03:00:07 AM CST 2026: Backup smart_locker_20260706_030001.sql.gz done, size=19M
+/bin/sh: 1: /home/ubuntu/smart-locker/backup/auto_backup.sh: Permission denied
+/bin/sh: 1: /home/ubuntu/smart-locker/backup/db_backup.sh: Permission denied

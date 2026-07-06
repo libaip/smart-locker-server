@@ -356,8 +356,12 @@ def retrieve():
                             if not _r_openid: _r_openid = _r_po.get('openid', '') or ''
                             if not _r_unionid: _r_unionid = _r_po.get('unionid', '') or ''
                     except: pass
-                _r_ub = None
-                if _r_openid:
+                                _r_ub = None
+                # ???unionid????????????
+                if _r_unionid:
+                    cursor.execute('SELECT id FROM user_balances WHERE unionid = %s', (_r_unionid,))
+                    _r_ub = cursor.fetchone()
+                if not _r_ub and _r_openid:
                     cursor.execute('SELECT id FROM user_balances WHERE phone = %s AND openid = %s', (order['user_phone'], _r_openid))
                     _r_ub = cursor.fetchone()
                 if not _r_ub:
@@ -991,7 +995,7 @@ def deposit_end_storage():
         from config import DATABASE_URL as _DU
         conn = psycopg2.connect(_DU, connect_timeout=10)
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute('SELECT o.*, cs.slot_number, cs.board_no, cs.lock_no, c.cabinet_code, c.mainboard_device_id, c.mainboard_source FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id JOIN cabinets c ON o.cabinet_id = c.id WHERE o.id = %s', (order_id,))
+        cursor.execute('SELECT o.*, cs.slot_number, cs.board_no, cs.lock_no, c.cabinet_code, c.mainboard_device_id FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id JOIN cabinets c ON o.cabinet_id = c.id WHERE o.id = %s', (order_id,))
         order = cursor.fetchone()
         if not order or order['status'] != 2:
             conn.close()
@@ -1774,15 +1778,27 @@ def wx_decrypt_phone():
 
 @bp.route('/user/orders', methods=['GET'])
 def get_user_orders():
-    """获取用户订单列表"""
+    """获取用户订单列表（按unionid/phone查询）"""
     try:
-        phone = request.args.get('phone', '')
-        openid = request.args.get('openid', '')
-        if not phone:
-            return json_response(message='请先登录', code=400)
+        phone = request.args.get("phone", "")
+        openid = request.args.get("openid", "")
+        unionid = request.args.get("unionid", "")
         
         conn = get_db()
         cur = conn.cursor()
+        query_phone = phone
+        if unionid:
+            cur.execute("SELECT DISTINCT phone FROM user_balances WHERE unionid = %s", (unionid,))
+            r = cur.fetchone()
+            if r: query_phone = r[0]
+        elif openid:
+            cur.execute("SELECT DISTINCT phone FROM user_balances WHERE openid = %s", (openid,))
+            r = cur.fetchone()
+            if r: query_phone = r[0]
+        if not query_phone:
+            conn.close()
+            return json_response(message="请先登录", code=400)
+        
         cur.execute('''
             SELECT id, order_no, user_phone, cabinet_id, compartment_number, slot_size, access_code,
                    deposit_amount, status, store_time, retrieve_time, created_at
@@ -1790,16 +1806,11 @@ def get_user_orders():
             WHERE user_phone = %s AND status != 1
             ORDER BY created_at DESC
             LIMIT 50
-        ''', (phone,))
+        ''', (query_phone,))
         orders = [dict(row) for row in cur.fetchall()]
         conn.close()
         
         return json_response(data=orders)
-    except Exception as e:
-        logger.error(f'[user/orders] 错误: {e}')
-        return json_response(message=str(e), code=500)
-
-@bp.route('/user/withdrawal-rules', methods=['GET'])
 def get_withdrawal_rules():
     """获取提现规则"""
     try:
@@ -1835,11 +1846,22 @@ def get_user_balance():
         
         conn = get_db()
         cur = conn.cursor()
-        # 获取用户余额信息 - 优先用unionid匹配（跨小程序/公众号统一身份）
+                # ???????? - ???unionid???????/????????
         unionid = request.args.get('unionid', '') or ''
         row = None
-        # 优先用openid匹配（微信H5/OAuth统一身份）
-        if openid:
+        # ???unionid????????unionid?
+        if unionid:
+            cur.execute("""
+                SELECT phone, SUM(balance) as balance, SUM(total_deposited) as total_deposited,
+                       SUM(total_withdrawn) as total_withdrawn, MIN(first_use_time) as first_use_time,
+                       MIN(created_at) as created_at
+                FROM user_balances
+                WHERE unionid = %s
+                GROUP BY phone
+            """, (unionid,))
+            row = cur.fetchone()
+        # ????openid?????????unionid?
+        if not row and openid:
             cur.execute("""
                 SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at
                 FROM user_balances
@@ -1848,13 +1870,7 @@ def get_user_balance():
                 LIMIT 1
             """, (openid,))
             row = cur.fetchone()
-        if not row and unionid:
-            cur.execute("""
-                SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at
-                FROM user_balances
-                WHERE unionid = %s
-            """, (unionid,))
-            row = cur.fetchone()
+        # ????phone+openid??
         if not row and openid and phone:
             cur.execute("""
                 SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at
@@ -1862,15 +1878,19 @@ def get_user_balance():
                 WHERE phone = %s AND openid = %s
             """, (phone, openid))
             row = cur.fetchone()
-        # 兼容纯手机号查询（老用户可能没有openid）
+        # ????phone???????openid?
         if not row and phone:
             cur.execute("""
-                SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at
+                SELECT phone, SUM(balance) as balance, SUM(total_deposited) as total_deposited,
+                       SUM(total_withdrawn) as total_withdrawn, MIN(first_use_time) as first_use_time,
+                       MIN(created_at) as created_at
                 FROM user_balances
                 WHERE phone = %s
+                GROUP BY phone
             """, (phone,))
             row = cur.fetchone()
         
+
         # 检查是否有待处理的提现申请（status=0待审核 或 status=1退款中）
         has_pending_withdrawal = False
         # 使用matched记录的phone
@@ -2004,48 +2024,34 @@ def user_withdraw():
         conn = get_db()
         cursor = conn.cursor()
         
-        # 检查用户余额 - 优先用unionid匹配（跨小程序/公众号统一身份）
+                # ?????? - ???unionid???????/????????
         unionid = data.get('unionid') or ''
         row = None
-        # 优先用openid匹配
-        if openid:
+        # ???unionid??
+        if unionid:
+            cursor.execute('SELECT phone, SUM(balance) as balance, SUM(total_deposited) as total_deposited, SUM(total_withdrawn) as total_withdrawn FROM user_balances WHERE unionid = %s GROUP BY phone', (unionid,))
+            row = cursor.fetchone()
+            if row:
+                phone = row['phone']
+        # ????openid??
+        if not row and openid:
             cursor.execute('SELECT phone, balance, total_deposited, total_withdrawn FROM user_balances WHERE openid = %s ORDER BY balance DESC LIMIT 1', (openid,))
             row = cursor.fetchone()
             if row:
                 phone = row['phone']
-        if not row and unionid:
-            cursor.execute('SELECT phone, balance, total_deposited, total_withdrawn FROM user_balances WHERE unionid = %s', (unionid,))
-            row = cursor.fetchone()
-            if row:
-                phone = row['phone']
+        # ????phone+openid??
         if not row and openid and phone:
             cursor.execute('SELECT phone, balance, total_deposited, total_withdrawn FROM user_balances WHERE phone = %s AND openid = %s', (phone, openid))
             row = cursor.fetchone()
             if row:
                 phone = row['phone']
-        # 兼容纯手机号查询
+        # ????phone??
         if not row and phone:
-            cursor.execute('SELECT phone, balance, total_deposited, total_withdrawn FROM user_balances WHERE phone = %s', (phone,))
+            cursor.execute('SELECT phone, SUM(balance) as balance, SUM(total_deposited) as total_deposited, SUM(total_withdrawn) as total_withdrawn FROM user_balances WHERE phone = %s GROUP BY phone', (phone,))
             row = cursor.fetchone()
             if row:
                 phone = row['phone']
-        if not row:
-            return json_response(message='用户不存在', code=404)
-        
-        balance = row['balance']
-        if balance <= 0:
-            conn.close()
-            return json_response(message='余额不足，无法提现', code=400)
-        # 未传金额时自动全额提现
-        if not amount or float(amount) <= 0:
-            amount = float(balance)
-        else:
-            amount = float(amount)
-        if amount > balance:
-            conn.close()
-            return json_response(message='提现金额超过余额', code=400)
-        
-                # ====== [优化] 自动放行检查 ======
+# ====== [优化] 自动放行检查 ======
         is_auto_approve = check_withdraw_auto_approve(openid=openid, phone=phone)
         if is_auto_approve:
             # 需要审批 - 走原有流程
@@ -2249,3 +2255,45 @@ def order_reopen_by_url(order_id):
     except Exception as e:
         logger.error(f'[order_reopen_url] {e}')
         return json_response(message=str(e), code=500)
+
+
+# ============================================
+# ????????
+# ============================================
+
+def check_withdraw_auto_approve(openid='', phone=''):
+    """????????????
+    ?? True = ??????, False = ????
+    ????????????????????has_triggered_withdraw=True?
+    """
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        if openid:
+            cur.execute('SELECT has_triggered_withdraw FROM user_balances WHERE openid = %s', (openid,))
+        elif phone:
+            cur.execute('SELECT has_triggered_withdraw FROM user_balances WHERE phone = %s', (phone,))
+        else:
+            return True
+        r = cur.fetchone()
+        conn.close()
+        if r and r[0]:
+            return False  # ???????????
+        return True  # ???????????
+    except:
+        return True  # ?????????????
+
+
+def mark_user_withdraw(openid='', phone=''):
+    """?????????????"""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        if openid:
+            cur.execute("UPDATE user_balances SET has_triggered_withdraw = TRUE WHERE openid = %s", (openid,))
+        elif phone:
+            cur.execute("UPDATE user_balances SET has_triggered_withdraw = TRUE WHERE phone = %s", (phone,))
+        conn.commit()
+        conn.close()
+    except:
+        pass

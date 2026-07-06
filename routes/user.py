@@ -1846,10 +1846,10 @@ def get_user_balance():
         
         conn = get_db()
         cur = conn.cursor()
-                # ???????? - ???unionid???????/????????
+                # ??????
         unionid = request.args.get('unionid', '') or ''
         row = None
-        # ???unionid????????unionid?
+        # ???unionid??????????????
         if unionid:
             cur.execute("""
                 SELECT phone, SUM(balance) as balance, SUM(total_deposited) as total_deposited,
@@ -1860,7 +1860,7 @@ def get_user_balance():
                 GROUP BY phone
             """, (unionid,))
             row = cur.fetchone()
-        # ????openid?????????unionid?
+        # ?unionid??openid??????????openid??????
         if not row and openid:
             cur.execute("""
                 SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at
@@ -1870,27 +1870,6 @@ def get_user_balance():
                 LIMIT 1
             """, (openid,))
             row = cur.fetchone()
-        # ????phone+openid??
-        if not row and openid and phone:
-            cur.execute("""
-                SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at
-                FROM user_balances
-                WHERE phone = %s AND openid = %s
-            """, (phone, openid))
-            row = cur.fetchone()
-        # ????phone???????openid?
-        if not row and phone:
-            cur.execute("""
-                SELECT phone, SUM(balance) as balance, SUM(total_deposited) as total_deposited,
-                       SUM(total_withdrawn) as total_withdrawn, MIN(first_use_time) as first_use_time,
-                       MIN(created_at) as created_at
-                FROM user_balances
-                WHERE phone = %s
-                GROUP BY phone
-            """, (phone,))
-            row = cur.fetchone()
-        
-
         # 检查是否有待处理的提现申请（status=0待审核 或 status=1退款中）
         has_pending_withdrawal = False
         # 使用matched记录的phone

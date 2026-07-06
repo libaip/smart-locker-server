@@ -847,7 +847,7 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
                         _dc_c.execute("SELECT failure_count FROM payment_channels WHERE id=%s", (payment_channel_id,))
                         _fc = _dc_c.fetchone()
                         if _fc and _fc[0] >= 3:
-                            _dc_c.execute("UPDATE payment_channels SET auto_disabled=1, is_active=0 WHERE id=%s", (payment_channel_id,))
+                            _dc_c.execute("UPDATE payment_channels SET auto_disabled=1 WHERE id=%s", (payment_channel_id,))
                             _dc.commit()
                             logger.warning('[MERCHANT] auto-disabled channel %s, failure_count=%s' % (payment_channel_id, _fc[0]))
                         _dc.close()

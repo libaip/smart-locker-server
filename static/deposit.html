@@ -776,7 +776,7 @@
 
 <script>
     
-    var s={ssr_cabinet};var DI="{device}";var OI="{openid}";var CI="{cabinet_id}";var DA={deposit_amount};
+    try { var s={ssr_cabinet};var DI="{device}";var OI="{openid}";var CI="{cabinet_id}";var DA={deposit_amount}; } catch(e) { var CI='8'; }
     var params = new URLSearchParams(window.location.search);
     var API_BASE = window.location.origin || window.location.protocol + '//' + window.location.host;
     var currentCabinetId = CI || params.get('cabinet_id') || '';
@@ -839,7 +839,7 @@
     var mpOpenedTime = 0;
     var h5RedirectUrl = '';
     var sizeNames = { 'S': '小柜', 'M': '中柜', 'L': '大柜' };
-    var _baseDeposit = (typeof DA !== 'undefined' && DA > 0) ? DA : 20; var depositPrices = { 'S': Math.round(_baseDeposit * 0.5), 'M': _baseDeposit, 'L': Math.round(_baseDeposit * 1.5), 'small': Math.round(_baseDeposit * 0.5), 'medium': _baseDeposit, 'large': Math.round(_baseDeposit * 1.5) };
+    var _baseDeposit = (typeof DA !== 'undefined' && DA > 0) ? DA : 20; var selectedSize = 'M'; var depositPrices = { 'S': Math.round(_baseDeposit * 0.5), 'M': _baseDeposit, 'L': Math.round(_baseDeposit * 1.5), 'small': Math.round(_baseDeposit * 0.5), 'medium': _baseDeposit, 'large': Math.round(_baseDeposit * 1.5) };
     var selectedComplaintType = '设备故障';
     var countdownTimer = null;
     var countdownSeconds = 300;
@@ -1186,10 +1186,7 @@
             }
         }
         })
-        .catch(function() {});
-    }
-
-    function sendSmsCode() {
+                .catch(function() { selectedSize = 'M'; });    function sendSmsCode() {
         var phone = document.getElementById('userPhone').value.trim();
         if (!phone || !/^1[3-9]\d{9}$/.test(phone)) { alert('请输入正确的手机号'); return; }
         var btn = document.getElementById('sendCodeBtn');

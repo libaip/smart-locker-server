@@ -16,7 +16,7 @@ jobs:
       - name: Syntax check
         run: |
           python3 -m py_compile app.py config.py helpers.py
-          for f in routes/*.py; do python3 -m py_compile "" || exit 1; done
+          for f in routes/*.py; do python3 -m py_compile "$f" || exit 1; done
       - name: Pylint
         run: |
           pip install pylint -q 2>/dev/null

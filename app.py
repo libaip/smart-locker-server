@@ -925,7 +925,7 @@ def _process_queue_batch():
         if isinstance(ct, str):
             ct = datetime.datetime.strptime(ct, "%Y-%m-%d %H:%M:%S")
         elapsed = (now - ct).total_seconds() / 60.0
-        if sm <= elapsed <= em:
+        if sm <= elapsed:  # 队列审批：只要超过最小等待时间就处理，不设上限
             if random.randint(1, 100) <= rate:
                 _approve_wd(c, w)
             else:

@@ -341,7 +341,8 @@ def send_open_lock(device_id, board_no, lock_no, protocol=None, order_id='', slo
             _cur.close()
             _db.close()
             if not _r or not _r[0]:
-                return False
+                logger.info(f'[SEND_LOCK] device={device_id} has no heartbeat, queuing via HTTP poll')
+                # 不return False，继续排队兜底，设备上线后通过HTTP轮询获取指令
         except:
             pass
     logger.info(f'[SEND_LOCK] device={device_id}, protocol={protocol}, id(pending)={id(pending_lock_commands)}, keys_before={list(pending_lock_commands.keys())}')

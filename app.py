@@ -270,6 +270,17 @@ def profile():
     return send_from_directory('static', 'profile.html')
 
 
+
+@app.route('/static/deposit.html')
+def deposit_html_redirect():
+    if request.args.get('page') == 'profile':
+        return send_from_directory('static', 'user-h5.html')
+    return send_from_directory('static', 'deposit.html')
+@app.route('/user-center')
+def user_center():
+    return send_from_directory('static', 'user-h5.html')
+
+
 @app.route('/merchant')
 def merchant():
     """商户端"""

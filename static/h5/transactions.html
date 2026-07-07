@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>交易明细</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;background:#f5f6fa;color:#333;min-height:100vh;max-width:500px;margin:0 auto}
+.nav{display:flex;align-items:center;padding:14px 16px;background:#fff;border-bottom:1px solid #f0f0f0}
+.nav-back{font-size:18px;color:#333;cursor:pointer;text-decoration:none;margin-right:auto;display:flex;align-items:center}
+.nav-back svg{width:20px;height:20px;fill:#333}
+.nav-title{font-size:17px;font-weight:500;position:absolute;left:50%;transform:translateX(-50%)}
+.nav-right{margin-left:auto;display:flex;gap:4px}
+.nav-right svg{width:20px;height:20px;fill:#999}
+.content{padding:12px 0}
+.record{background:#fff;margin-bottom:1px;padding:16px 16px}
+.record-row1{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.record-order{font-size:13px;color:#666;display:flex;align-items:center;gap:4px}
+.record-copy{color:#4ECDC4;font-size:12px;cursor:pointer;border:1px solid #4ECDC4;border-radius:3px;padding:1px 5px}
+.record-status-pending{font-size:11px;color:#F0A030;max-width:140px;text-align:right;line-height:1.4}
+.record-row2{display:flex;justify-content:space-between;align-items:center}
+.record-left{display:flex;flex-direction:column;gap:4px}
+.record-type{font-size:14px;color:#333}
+.record-amount{font-size:16px;font-weight:600;color:#4ECDC4}
+.record-amount.neg{color:#FF5252}
+.record-time{font-size:12px;color:#999}
+.empty{text-align:center;padding:80px 20px;color:#ccc}
+.empty-text{font-size:14px;margin-top:12px}
+</style>
+</head>
+<body>
+<div class="nav" style="position:relative">
+  <a class="nav-back" href="wallet.html"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></a>
+  <div class="nav-title">交易明细</div>
+  <div class="nav-right">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+  </div>
+</div>
+<div class="content">
+  <div class="record">
+    <div class="record-row1">
+      <div class="record-order">订单编号: 20260706001 <span class="record-copy">复制</span></div>
+      <div class="record-status-pending">预计1-3个工作日到账<br>请耐心等待… 超时请联系客服</div>
+    </div>
+    <div class="record-row2">
+      <div class="record-left">
+        <div class="record-type">余额提现</div>
+        <div class="record-amount neg">-¥ 20.00</div>
+      </div>
+      <div class="record-time">2026-07-06 15:30</div>
+    </div>
+  </div>
+  <div class="record">
+    <div class="record-row1">
+      <div class="record-order">订单编号: 20260705002 <span class="record-copy">复制</span></div>
+    </div>
+    <div class="record-row2">
+      <div class="record-left">
+        <div class="record-type">退回钱包</div>
+        <div class="record-amount">+¥ 10.00</div>
+      </div>
+      <div class="record-time">2026-07-05 09:20</div>
+    </div>
+  </div>
+  <div class="record">
+    <div class="record-row1">
+      <div class="record-order">订单编号: 20260704003 <span class="record-copy">复制</span></div>
+    </div>
+    <div class="record-row2">
+      <div class="record-left">
+        <div class="record-type">充值</div>
+        <div class="record-amount">+¥ 50.00</div>
+      </div>
+      <div class="record-time">2026-07-04 11:00</div>
+    </div>
+  </div>
+</div>
+<script>
+document.querySelectorAll('.record-copy').forEach(btn=>{
+  btn.addEventListener('click',function(){
+    var text=this.parentElement.textContent.replace('复制','').trim().split(': ')[1];
+    navigator.clipboard?navigator.clipboard.writeText(text):0;
+    this.textContent='已复制';var b=this;setTimeout(()=>{b.textContent='复制'},1500);
+  });
+});
+</script>
+</body>
+</html>

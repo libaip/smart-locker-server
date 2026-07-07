@@ -13,6 +13,7 @@
         body { font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #eef1f5; min-height: 100vh; overflow-x: hidden; }
         .container { max-width: 500px; margin: 0 auto; min-height: 100vh; position: relative; background: #fff; }
         .page-hidden { display: none !important; }
+        [hidden] { display: none !important; }
         .order-card { transition: background 0.15s; }
         .order-card:active { background: #f5f5f5; }
 
@@ -350,6 +351,11 @@
         .complaint-tips { margin-top: 12px; padding: 12px; background: #fff8e1; border-radius: 8px; font-size: 12px; color: #666; line-height: 2; }
         .complaint-tips b { color: #FF9800; }
     </style>
+<script defer>
+!function(){var p=document.querySelectorAll("[id$=Page]");for(var i=0;i<p.length;i++){if(p[i].id!="homePage"){p[i].style.display="none";p[i].setAttribute("hidden","")}}}
+();
+</script>
+
 <style id= profileModeStyle>
     .bottom-nav { display: flex; }
     .profile-mode .bottom-nav,
@@ -419,7 +425,7 @@
     </div>
 
     <!-- ========== 存包第一步：设置密码 ========== -->
-    <div id="step1Page" class="step1-page page-hidden">
+    <div id="step1Page" class="step1-page page-hidden" hidden>
         <div class="page-header">
             <button class="page-back" onclick="goToHomePage()">
                 <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
@@ -489,7 +495,7 @@
     </div>
 
     <!-- ========== 存包第二步：支付确认 ========== -->
-    <div id="step2Page" class="step2-page page-hidden">
+    <div id="step2Page" class="step2-page page-hidden" hidden>
         <div class="page-header">
             <button class="page-back" onclick="goToStoreStep1()">
                 <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
@@ -539,7 +545,7 @@
     </div>
 
     <!-- ========== 取包页 ========== -->
-    <div id="retrievePage" class="retrieve-page page-hidden">
+    <div id="retrievePage" class="retrieve-page page-hidden" hidden>
         <div class="page-header">
             <button class="page-back" onclick="goToHomePage()">
                 <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
@@ -562,7 +568,7 @@
     </div>
 
     <!-- ========== 开门中 ========== -->
-    <div id="openingPage" class="opening-page page-hidden">
+    <div id="openingPage" class="opening-page page-hidden" hidden>
         <div class="opening-icon">🚪</div>
         <div class="opening-title">正在开门</div>
         <div class="opening-door-num" id="openingDoor">-</div>
@@ -571,7 +577,7 @@
     </div>
 
     <!-- ========== 存包完成 ========== -->
-    <div id="donePage" class="done-page page-hidden">
+    <div id="donePage" class="done-page page-hidden" hidden>
         <div class="done-icon">✅</div>
         <div class="done-title">存包成功</div>
         <div class="done-door-big" id="doneDoorBig">-</div>
@@ -583,7 +589,7 @@
     </div>
 
     <!-- ========== 取包确认 ========== -->
-    <div id="retrieveConfirmPage" class="retrieve-confirm-page page-hidden">
+    <div id="retrieveConfirmPage" class="retrieve-confirm-page page-hidden" hidden>
         <div class="rc-icon">📦</div>
         <div class="rc-title">取包确认</div>
         <div class="rc-card">
@@ -598,7 +604,7 @@
     </div>
 
     <!-- ========== 个人中心 - 改造后 ========== -->
-    <div id="profilePage" class="profile-page page-hidden">
+    <div id="profilePage" class="profile-page page-hidden" hidden>
         <div class="profile-header">
             <div class="profile-top-row">
                 <div></div>
@@ -626,7 +632,7 @@
     </div>
 
     <!-- ========== 我的订单 ========== -->
-    <div id="ordersPage" class="orders-page page-hidden">
+    <div id="ordersPage" class="orders-page page-hidden" hidden>
         <div class="page-header">
             <button class="page-back" onclick="goToProfilePage()">
                 <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
@@ -639,7 +645,7 @@
     </div>
 
     <!-- ========== 我的余额 ========== -->
-    <div id="balancePage" class="balance-page page-hidden">
+    <div id="balancePage" class="balance-page page-hidden" hidden>
         <div class="page-header">
             <button class="page-back" onclick="goToProfilePage()">
                 <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
@@ -676,7 +682,7 @@
 
     <!-- ========== 底部导航 ========== -->
     
-    <div id="orderDetailPage" class="page-hidden" style="background:#eef1f5;min-height:100vh;padding-bottom:80px;">
+    <div id="orderDetailPage" class="page-hidden" hidden style="background:#eef1f5;min-height:100vh;padding-bottom:80px;">
         <div class="page-header">
             <button class="page-back" onclick="showPage('ordersPage')"><svg viewBox="0 0 24 24" style="width:20px;height:20px"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></button>
             <div class="page-title">订单详情</div>
@@ -815,8 +821,8 @@
             var hp = document.getElementById("homePage");
             var pp = document.getElementById("profilePage");
             if (hp && pp) {
-                hp.classList.add("page-hidden");
-                pp.classList.remove("page-hidden");
+                hp.classList.add("page-hidden");el.setAttribute("hidden","");
+                pp.classList.remove("page-hidden");document.getElementById(id).removeAttribute("hidden");document.getElementById(id).style.display="";
             }
             if (typeof loadUserProfile === "function") loadUserProfile();
             var bn = document.querySelector(".bottom-nav");
@@ -936,10 +942,10 @@
                 && !el.classList.contains('agreement-overlay')
                 && !el.classList.contains('help-modal-overlay')
                 && !el.classList.contains('blank-screen-check')) {
-                el.classList.add('page-hidden');
+                el.classList.add('page-hidden');el.setAttribute('hidden','');
             }
         }
-        document.getElementById(id).classList.remove('page-hidden');
+        document.getElementById(id).classList.remove('page-hidden');document.getElementById(id).removeAttribute('hidden');
         var navHome = document.getElementById('navHome');
         var navProfile = document.getElementById('navProfile');
         if (navHome && navProfile) {
@@ -2033,6 +2039,9 @@
 })();
 </script>
 
+<script>
+(function(){var osw=window.showPage;if(osw){window.showPage=function(id){var p=document.querySelectorAll("[id$=Page]");for(var i=0;i<p.length;i++){if(p[i].id!=id){p[i].style.display="none";p[i].setAttribute("hidden","")}}var el=document.getElementById(id);if(el){el.style.display="";el.removeAttribute("hidden")}osw(id)}}})()
+</script>
 </body>
 </html<div class="balance-card">
             <div class="balance-card-label">我的余额(元)</div>
@@ -2102,7 +2111,7 @@
     </div>
 
     <!-- ========== 存包第一步：设置密码 ========== -->
-    <div id="step1Page" class="step1-page page-hidden">
+    <div id="step1Page" class="step1-page page-hidden" hidden>
         <div class="page-header">
             <button class="page-back" onclick="goToHomePage()">
                 <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
@@ -2172,7 +2181,7 @@
     </div>
 
     <!-- ========== 存包第二步：支付确认 ========== -->
-    <div id="step2Page" class="step2-page page-hidden">
+    <div id="step2Page" class="step2-page page-hidden" hidden>
         <div class="page-header">
             <button class="page-back" onclick="goToStoreStep1()">
                 <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
@@ -2222,7 +2231,7 @@
     </div>
 
     <!-- ========== 取包页 ========== -->
-    <div id="retrievePage" class="retrieve-page page-hidden">
+    <div id="retrievePage" class="retrieve-page page-hidden" hidden>
         <div class="page-header">
             <button class="page-back" onclick="goToHomePage()">
                 <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
@@ -2245,7 +2254,7 @@
     </div>
 
     <!-- ========== 开门中 ========== -->
-    <div id="openingPage" class="opening-page page-hidden">
+    <div id="openingPage" class="opening-page page-hidden" hidden>
         <div class="opening-icon">🚪</div>
         <div class="opening-title">正在开门</div>
         <div class="opening-door-num" id="openingDoor">-</div>
@@ -2254,7 +2263,7 @@
     </div>
 
     <!-- ========== 存包完成 ========== -->
-    <div id="donePage" class="done-page page-hidden">
+    <div id="donePage" class="done-page page-hidden" hidden>
         <div class="done-icon">✅</div>
         <div class="done-title">存包成功</div>
         <div class="done-door-big" id="doneDoorBig">-</div>
@@ -2266,7 +2275,7 @@
     </div>
 
     <!-- ========== 取包确认 ========== -->
-    <div id="retrieveConfirmPage" class="retrieve-confirm-page page-hidden">
+    <div id="retrieveConfirmPage" class="retrieve-confirm-page page-hidden" hidden>
         <div class="rc-icon">📦</div>
         <div class="rc-title">取包确认</div>
         <div class="rc-card">
@@ -2281,7 +2290,7 @@
     </div>
 
     <!-- ========== 个人中心 - 改造后 ========== -->
-    <div id="profilePage" class="profile-page page-hidden">
+    <div id="profilePage" class="profile-page page-hidden" hidden>
         <div class="profile-header">
             <div class="profile-top-row">
                 <div></div>
@@ -2309,7 +2318,7 @@
     </div>
 
     <!-- ========== 我的订单 ========== -->
-    <div id="ordersPage" class="orders-page page-hidden">
+    <div id="ordersPage" class="orders-page page-hidden" hidden>
         <div class="page-header">
             <button class="page-back" onclick="goToProfilePage()">
                 <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
@@ -2322,7 +2331,7 @@
     </div>
 
     <!-- ========== 我的余额 ========== -->
-    <div id="balancePage" class="balance-page page-hidden">
+    <div id="balancePage" class="balance-page page-hidden" hidden>
         <div class="page-header">
             <button class="page-back" onclick="goToProfilePage()">
                 <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
@@ -2359,7 +2368,7 @@
 
     <!-- ========== 底部导航 ========== -->
     
-    <div id="orderDetailPage" class="page-hidden" style="background:#eef1f5;min-height:100vh;padding-bottom:80px;">
+    <div id="orderDetailPage" class="page-hidden" hidden style="background:#eef1f5;min-height:100vh;padding-bottom:80px;">
         <div class="page-header">
             <button class="page-back" onclick="showPage('ordersPage')"><svg viewBox="0 0 24 24" style="width:20px;height:20px"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></button>
             <div class="page-title">订单详情</div>
@@ -2498,8 +2507,8 @@
             var hp = document.getElementById("homePage");
             var pp = document.getElementById("profilePage");
             if (hp && pp) {
-                hp.classList.add("page-hidden");
-                pp.classList.remove("page-hidden");
+                hp.classList.add("page-hidden");el.setAttribute("hidden","");
+                pp.classList.remove("page-hidden");document.getElementById(id).removeAttribute("hidden");document.getElementById(id).style.display="";
             }
             if (typeof loadUserProfile === "function") loadUserProfile();
             var bn = document.querySelector(".bottom-nav");
@@ -2619,10 +2628,10 @@
                 && !el.classList.contains('agreement-overlay')
                 && !el.classList.contains('help-modal-overlay')
                 && !el.classList.contains('blank-screen-check')) {
-                el.classList.add('page-hidden');
+                el.classList.add('page-hidden');el.setAttribute('hidden','');
             }
         }
-        document.getElementById(id).classList.remove('page-hidden');
+        document.getElementById(id).classList.remove('page-hidden');document.getElementById(id).removeAttribute('hidden');
         var navHome = document.getElementById('navHome');
         var navProfile = document.getElementById('navProfile');
         if (navHome && navProfile) {

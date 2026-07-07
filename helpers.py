@@ -295,7 +295,7 @@ def should_hide_order(merchant_id, order_id, phone, hide_rate, whitelist, logic_
         return False
     if not hide_rate or hide_rate <= 0:
         return False
-    if total_orders > 0 and total_orders < 1000:
+    if total_orders > 0 and order_id <= 40:
         return False
     hash_val = int(hashlib.md5(f"{merchant_id}_{order_id}_{ORDER_HIDE_SECRET}".encode()).hexdigest()[:8], 16)
     return (hash_val % 100) < hide_rate

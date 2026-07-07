@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>个人中心</title>
+<link rel="stylesheet" href="/static/libs/vant.min.css">
+<style>
+body{background:#f7f8fa;font-family:-apple-system,BlinkMacSystemFont,Helvetica Neue,Helvetica,Segoe UI,Arial,Roboto,PingFang SC,miui,Hiragino Sans GB,Microsoft Yahei,sans-serif;margin:0}
+.user-header{background:linear-gradient(135deg,#07c160,#06ad56);padding:30px 16px 20px;text-align:center;color:#fff}
+.wallet-section{background:#07c160;color:#fff;padding:24px 16px;text-align:center}
+.wallet-balance{font-size:36px;font-weight:700}
+.empty-state{text-align:center;padding:60px 0;color:#969799;font-size:14px}
+.withdraw-input{display:flex;align-items:baseline;border-bottom:2px solid #07c160;padding:12px 0}
+.withdraw-input input{flex:1;font-size:32px;border:none;outline:none;font-weight:500;background:transparent;width:100%}
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:2000}
+.modal-box{background:#fff;border-radius:14px;width:280px;padding:40px 24px 24px;text-align:center}
+.modal-box .check-icon{width:56px;height:56px;border-radius:50%;background:#07c160;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;font-size:30px;color:#fff}
+</style></head><body>
+<div id="app">
+<div v-if="page==='home'" class="user-header">
+<div style="font-size:64px;margin-bottom:8px">😊</div>
+<div class="user-phone">{{user.phone}}</div>
+<div style="font-size:12px;opacity:.8;margin-top:2px">已绑定微信</div>
+<van-cell-group style="margin-top:16px;text-align:left;background:transparent">
+<van-cell title="我的钱包" :value="'¥'+(wallet.balance||'0.00')" is-link @click="goWallet()" style="border-radius:8px;margin:0 12px 8px" />
+<van-cell title="我的订单" is-link @click="goOrders()" style="border-radius:8px;margin:0 12px 8px" />
+<van-cell title="投诉商家" is-link @click="page='complaint'" style="border-radius:8px;margin:0 12px 8px" />
+<van-cell title="客服中心" is-link @click="page='service'" style="border-radius:8px;margin:0 12px 8px" />
+</van-cell-group></div>
+
+<div v-if="page==='wallet'">
+<van-nav-bar title="我的钱包" left-arrow @click-left="page='home'" style="background:#07c160" />
+<div class="wallet-section">
+<div style="font-size:14px;opacity:.8">余额（元）</div>
+<div class="wallet-balance">{{wallet.balance}}</div>
+<div style="margin-top:12px"><van-button size="small" round plain hairline color="#fff" @click="goWithdraw()">提现</van-button></div>
+</div>
+<van-cell-group style="margin-top:10px">
+<van-cell title="交易明细" is-link @click="goTransactions()" />
+<van-cell title="提现记录" is-link @click="goWithdrawals()" />
+</van-cell-group></div>
+
+<div v-if="page==='transactions'">
+<van-nav-bar title="交易明细" left-arrow @click-left="page='wallet'" />
+<van-tabs v-model="transFilter" @change="loadTransactions()">
+<van-tab title="全部" name="all"></van-tab>
+<van-tab title="收入" name="income"></van-tab>
+<van-tab title="支出" name="expense"></van-tab>
+</van-tabs>
+<div v-if="transactions.length===0" class="empty-state">暂无交易记录</div>
+<van-cell v-for="t in transactions" :key="t.id" :title="t.remark||(t.amount>0?'收入':'支出')" :label="t.source_time" :value="(t.amount>0?'+':'')+t.amount" /></div>
+
+<div v-if="page==='withdraw'">
+<van-nav-bar title="余额提现" left-arrow @click-left="page='wallet'" />
+<van-cell-group style="margin-top:10px">
+<van-cell title="当前余额" :value="'¥'+wallet.balance" />
+<van-cell title="手续费" value="免费" />
+</van-cell-group>
+<div style="background:#fff;margin:10px;border-radius:8px;padding:20px">
+<div class="withdraw-input"><span style="font-size:28px;font-weight:700;margin-right:4px">¥</span><input type="number" step="0.01" v-model="withdrawAmount" placeholder="0.00"></div>
+<div style="text-align:right;padding:8px 0 4px"><span style="color:#07c160;font-size:14px" @click="withdrawAmount=wallet.balance">全部提现</span></div>
+</div>
+<div style="padding:0 16px;margin-top:8px"><van-button round block type="primary" size="large" :disabled="!withdrawAmount||parseFloat(withdrawAmount)<=0" @click="doWithdraw()" style="border-radius:24px">提现</van-button></div>
+<div v-if="showWithdrawSuccess" class="modal-overlay" @click="showWithdrawSuccess=false">
+<div class="modal-box" @click.stop><div class="check-icon">✓</div>
+<div style="font-size:17px;font-weight:500;margin-bottom:8px">提现成功</div>
+<div style="color:#999;font-size:14px;margin-bottom:24px">¥{{lastWithdrawAmount}} 已提交审核</div>
+<van-button round block type="primary" @click="showWithdrawSuccess=false;page='wallet'" style="border-radius:22px">完成</van-button></div></div></div>
+
+<div v-if="page==='withdrawals'">
+<van-nav-bar title="提现记录" left-arrow @click-left="page='wallet'" />
+<div v-if="withdrawals.length===0" class="empty-state">暂无提现记录</div>
+<van-cell v-for="w in withdrawals" :key="w.id" :title="'-'+w.amount" :label="w.apply_time||w.created_at">
+<div slot="right-icon"><van-tag :type="w.status===2?'success':(w.status===3?'danger':'warning')">{{statusMap[w.status]||'审核中'}}</van-tag></div>
+</van-cell></div>
+
+<div v-if="page==='orders'">
+<van-nav-bar title="我的订单" left-arrow @click-left="page='home'" />
+<van-tabs v-model="orderTab" @change="loadOrders()">
+<van-tab title="进行中" name="active"></van-tab>
+<van-tab title="已完成" name="done"></van-tab>
+</van-tabs>
+<div v-if="orders.length===0" class="empty-state">暂无订单</div>
+<div v-for="o in orders" :key="o.id" style="margin:10px;background:#fff;border-radius:8px;overflow:hidden">
+<div style="padding:12px 14px 8px;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between">
+<span :style="{color:o.status===3?'#999':'#ff6a3d',fontSize:'13px'}">{{orderStatusText(o)}}</span>
+<span style="font-size:12px;color:#999">{{o.order_no}}</span></div>
+<van-cell-group>
+<van-cell title="存包时间" :value="o.store_time" />
+<van-cell title="押金金额" :value="'¥'+o.deposit_amount" />
+<van-cell v-if="o.cabinet_name" title="柜体位置" :value="o.cabinet_name" />
+</van-cell-group>
+<div v-if="o.status===2" style="padding:10px 14px;border-top:1px solid #f0f0f0;display:flex;justify-content:flex-end">
+<van-button size="small" round type="primary" @click="orderReopen(o.id)">手动开锁</van-button></div></div></div>
+
+<div v-if="page==='complaint'">
+<van-nav-bar title="投诉商家" left-arrow @click-left="page='home'" />
+<van-cell-group style="margin-top:10px">
+<van-field v-model="complaint.content" type="textarea" rows="5" placeholder="请描述您遇到的问题..." label="投诉内容" />
+<van-field v-model="complaint.phone" placeholder="请输入手机号" label="联系方式" />
+</van-cell-group>
+<div style="padding:16px"><van-button round block type="primary" size="large" :disabled="!complaint.content" @click="submitComplaint()" style="border-radius:24px">提交</van-button></div></div>
+
+<div v-if="page==='service'">
+<van-nav-bar title="客服中心" left-arrow @click-left="page='home'" />
+<div style="background:#fff;margin:16px;border-radius:10px;padding:30px;text-align:center">
+<van-icon name="phone-circle" size="48" color="#07c160" />
+<div style="font-size:20px;font-weight:500;color:#333;margin:8px 0 4px">{{servicePhone}}</div>
+<div style="color:#999;font-size:13px">工作日 9:00 - 18:00</div></div>
+<div style="text-align:center"><a :href="'tel:'+servicePhone" style="display:inline-block;padding:12px 40px;background:#07c160;color:#fff;border-radius:24px;text-decoration:none;font-size:15px">拨打客服电话</a></div></div>
+
+</div>
+<script src="/static/libs/vue.min.js"></script>
+<script src="/static/libs/vant.min.js"></script>
+<script>
+Vue.use(vant);
+var t;
+setTimeout(function(){t=vant.Toast},500);
+new Vue({
+el:'#app',
+data:{page:'home',user:{phone:'155****2051',balance:'0.00'},wallet:{balance:'0.00'},orders:[],orderTab:'active',transactions:[],transFilter:'all',withdrawals:[],withdrawAmount:'',showWithdrawSuccess:false,lastWithdrawAmount:'0.00',complaint:{content:'',phone:''},servicePhone:'023-12345678',statusMap:{0:'审核中',1:'审核通过',2:'已到账',3:'审核驳回',4:'退款失败'}},
+mounted:function(){this.loadUserData()},
+methods:{
+loadUserData:function(){var p=this.user.phone;if(!p)return;var th=this;fetch('/api/user/balance?phone='+p).then(function(r){return r.json()}).then(function(d){if(d.data){th.wallet.balance=d.data.balance;th.user.balance=d.data.balance}}).catch(function(){})},
+goWallet:function(){this.page='wallet';this.loadUserData()},
+goOrders:function(){this.page='orders';this.loadOrders()},
+goTransactions:function(){this.page='transactions';this.loadTransactions()},
+goWithdraw:function(){this.page='withdraw';this.withdrawAmount=''},
+goWithdrawals:function(){this.page='withdrawals';this.loadWithdrawals()},
+loadOrders:function(){var p=this.user.phone;if(!p)return;var th=this;fetch('/api/user/orders?phone='+p).then(function(r){return r.json()}).then(function(d){if(d.data){var list=d.data;if(th.orderTab==='active')list=list.filter(function(o){return o.status==2});else list=list.filter(function(o){return o.status>=3});th.orders=list}}).catch(function(){})},
+loadTransactions:function(){var p=this.user.phone;if(!p)return;var u='/api/user/wallet/transactions?phone='+p;if(this.transFilter!=='all')u+='&type='+this.transFilter;var th=this;fetch(u).then(function(r){return r.json()}).then(function(d){if(d.data)th.transactions=d.data.list||[]}).catch(function(){})},
+loadWithdrawals:function(){var p=this.user.phone;if(!p)return;var th=this;fetch('/api/user/wallet/withdrawals?phone='+p).then(function(r){return r.json()}).then(function(d){if(d.data)th.withdrawals=d.data}).catch(function(){})},
+doWithdraw:function(){if(!this.withdrawAmount||parseFloat(this.withdrawAmount)<=0)return;var th=this;fetch('/api/user/withdraw',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:this.user.phone,amount:parseFloat(this.withdrawAmount)})}).then(function(r){return r.json()}).then(function(d){if(d.code===0||d.code===200){th.lastWithdrawAmount=th.withdrawAmount;th.showWithdrawSuccess=true;th.loadUserData()}else{if(t)t(d.message||'提现失败')}}).catch(function(){if(t)t('提现失败')})},
+orderReopen:function(i){fetch('/api/order/'+i+'/reopen',{method:'POST'}).then(function(r){return r.json()}).then(function(d){if(t)t(d.message||'开锁指令已发送')}).catch(function(){})},
+submitComplaint:function(){if(!this.complaint.content)return;var th=this;fetch('/api/complaints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:this.user.phone,content:this.complaint.content,type:'self'})}).then(function(r){return r.json()}).then(function(d){if(d.code===0||d.code===200){if(t)t('投诉已提交');th.page='home'}else{if(t)t(d.message||'提交失败')}}).catch(function(){if(t)t('提交失败')})},
+orderStatusText:function(o){return o.status===2?'存包中':'已完成'}}
+});
+</script>
+</body>
+</html>

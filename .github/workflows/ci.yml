@@ -20,7 +20,7 @@ jobs:
           python3 -c "import flask; import psycopg2; print('deps OK')"
       - name: Static checks
         run: |
-          echo "=== Static checks skipped (template paths verified at deploy time) ===
+          echo "=== Static checks skipped (template paths verified at deploy time) ==="
       - name: Syntax check
         run: |
           python3 -m py_compile app.py config.py helpers.py

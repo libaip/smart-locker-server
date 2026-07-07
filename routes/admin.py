@@ -636,7 +636,7 @@ def get_cabinet_public_info(cabinet_id):
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT c.id, c.deposit_amount, c.charge_mode, c.per_use_price, c.name, c.last_heartbeat, l.name as location_name FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.id=%s', (cabinet_id,))
+        cursor.execute('SELECT c.id, c.deposit_amount, c.charge_mode, c.per_use_price, c.name, c.last_heartbeat, l.name as location_name, l.allow_h5_to_mp, l.mp_appid, l.h5_url FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.id=%s', (cabinet_id,))
         row = cursor.fetchone()
         conn.close()
         if not row:

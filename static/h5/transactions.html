@@ -7,83 +7,88 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;background:#f5f6fa;color:#333;min-height:100vh;max-width:500px;margin:0 auto}
-.nav{display:flex;align-items:center;padding:14px 16px;background:#fff;border-bottom:1px solid #f0f0f0}
-.nav-back{font-size:18px;color:#333;cursor:pointer;text-decoration:none;margin-right:auto;display:flex;align-items:center}
+.nav{display:flex;align-items:center;padding:14px 16px;background:#fff;border-bottom:1px solid #f0f0f0;position:relative}
+.nav-back{cursor:pointer;text-decoration:none;display:flex;align-items:center}
 .nav-back svg{width:20px;height:20px;fill:#333}
 .nav-title{font-size:17px;font-weight:500;position:absolute;left:50%;transform:translateX(-50%)}
 .nav-right{margin-left:auto;display:flex;gap:4px}
 .nav-right svg{width:20px;height:20px;fill:#999}
-.content{padding:12px 0}
-.record{background:#fff;margin-bottom:1px;padding:16px 16px}
-.record-row1{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-.record-order{font-size:13px;color:#666;display:flex;align-items:center;gap:4px}
-.record-copy{color:#4ECDC4;font-size:12px;cursor:pointer;border:1px solid #4ECDC4;border-radius:3px;padding:1px 5px}
-.record-status-pending{font-size:11px;color:#F0A030;max-width:140px;text-align:right;line-height:1.4}
-.record-row2{display:flex;justify-content:space-between;align-items:center}
-.record-left{display:flex;flex-direction:column;gap:4px}
-.record-type{font-size:14px;color:#333}
-.record-amount{font-size:16px;font-weight:600;color:#4ECDC4}
-.record-amount.neg{color:#FF5252}
-.record-time{font-size:12px;color:#999}
-.empty{text-align:center;padding:80px 20px;color:#ccc}
-.empty-text{font-size:14px;margin-top:12px}
+.content{padding:16px}
+.tx-card{background:#fff;border-radius:12px;padding:16px;margin-bottom:12px;position:relative}
+.tx-row{display:flex;align-items:center;margin-bottom:8px;line-height:1.6}
+.tx-row:last-child{margin-bottom:0}
+.tx-label{font-size:14px;color:#999;min-width:72px;flex-shrink:0}
+.tx-value{font-size:14px;color:#333;flex:1;display:flex;align-items:center;gap:4px}
+.tx-value .copy-icon{cursor:pointer;opacity:.5;margin-left:4px;flex-shrink:0}
+.tx-value .copy-icon svg{width:16px;height:16px;fill:#999}
+.tx-tip{position:absolute;right:16px;top:50%;transform:translateY(-50%);font-size:11px;color:#E6A700;text-align:right;max-width:120px;line-height:1.4}
 </style>
 </head>
 <body>
-<div class="nav" style="position:relative">
+<div class="nav">
   <a class="nav-back" href="wallet.html"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></a>
   <div class="nav-title">交易明细</div>
-  <div class="nav-right">
-    <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
-  </div>
+  <div class="nav-right"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></div>
 </div>
 <div class="content">
-  <div class="record">
-    <div class="record-row1">
-      <div class="record-order">订单编号: 20260706001 <span class="record-copy">复制</span></div>
-      <div class="record-status-pending">预计1-3个工作日到账<br>请耐心等待… 超时请联系客服</div>
-    </div>
-    <div class="record-row2">
-      <div class="record-left">
-        <div class="record-type">余额提现</div>
-        <div class="record-amount neg">-¥ 20.00</div>
-      </div>
-      <div class="record-time">2026-07-06 15:30</div>
-    </div>
+
+  <!-- 记录1: 余额提现 -->
+  <div class="tx-card">
+    <div class="tx-tip">预计1-3个工作日到账<br>请耐心等待…<br>超时请联系客服</div>
+    <div class="tx-row"><div class="tx-label">订单编号:</div><div class="tx-value">17834116247879646896 <span class="copy-icon" onclick="copyText('17834116247879646896',this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></span></div></div>
+    <div class="tx-row"><div class="tx-label">交易类型:</div><div class="tx-value">余额提现</div></div>
+    <div class="tx-row"><div class="tx-label">交易金额:</div><div class="tx-value">20元</div></div>
+    <div class="tx-row"><div class="tx-label">交易时间:</div><div class="tx-value">2026-07-07 16:07:04</div></div>
   </div>
-  <div class="record">
-    <div class="record-row1">
-      <div class="record-order">订单编号: 20260705002 <span class="record-copy">复制</span></div>
-    </div>
-    <div class="record-row2">
-      <div class="record-left">
-        <div class="record-type">退回钱包</div>
-        <div class="record-amount">+¥ 10.00</div>
-      </div>
-      <div class="record-time">2026-07-05 09:20</div>
-    </div>
+
+  <!-- 记录2: 退回钱包 -->
+  <div class="tx-card">
+    <div class="tx-row"><div class="tx-label">订单编号:</div><div class="tx-value">5890916622260707 <span class="copy-icon" onclick="copyText('5890916622260707',this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></span></div></div>
+    <div class="tx-row"><div class="tx-label">交易类型:</div><div class="tx-value">退回钱包</div></div>
+    <div class="tx-row"><div class="tx-label">交易金额:</div><div class="tx-value">20元</div></div>
+    <div class="tx-row"><div class="tx-label">交易时间:</div><div class="tx-value">2026-07-07 16:02:29</div></div>
   </div>
-  <div class="record">
-    <div class="record-row1">
-      <div class="record-order">订单编号: 20260704003 <span class="record-copy">复制</span></div>
-    </div>
-    <div class="record-row2">
-      <div class="record-left">
-        <div class="record-type">充值</div>
-        <div class="record-amount">+¥ 50.00</div>
-      </div>
-      <div class="record-time">2026-07-04 11:00</div>
-    </div>
+
+  <!-- 记录3: 充值 -->
+  <div class="tx-card">
+    <div class="tx-row"><div class="tx-label">订单编号:</div><div class="tx-value">5890916622260707 <span class="copy-icon" onclick="copyText('5890916622260707',this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></span></div></div>
+    <div class="tx-row"><div class="tx-label">交易类型:</div><div class="tx-value">充值</div></div>
+    <div class="tx-row"><div class="tx-label">交易金额:</div><div class="tx-value">20元</div></div>
+    <div class="tx-row"><div class="tx-label">交易时间:</div><div class="tx-value">2026-07-07 15:57:25</div></div>
   </div>
+
+  <!-- 记录4: 余额提现 -->
+  <div class="tx-card">
+    <div class="tx-tip">预计1-3个工作日到账<br>请耐心等待…<br>超时请联系客服</div>
+    <div class="tx-row"><div class="tx-label">订单编号:</div><div class="tx-value">17833235526057142541 <span class="copy-icon" onclick="copyText('17833235526057142541',this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></span></div></div>
+    <div class="tx-row"><div class="tx-label">交易类型:</div><div class="tx-value">余额提现</div></div>
+    <div class="tx-row"><div class="tx-label">交易金额:</div><div class="tx-value">20元</div></div>
+    <div class="tx-row"><div class="tx-label">交易时间:</div><div class="tx-value">2026-07-06 15:39:12</div></div>
+  </div>
+
+  <!-- 记录5: 退回钱包 -->
+  <div class="tx-card">
+    <div class="tx-row"><div class="tx-label">订单编号:</div><div class="tx-value">5862126495260706 <span class="copy-icon" onclick="copyText('5862126495260706',this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></span></div></div>
+    <div class="tx-row"><div class="tx-label">交易类型:</div><div class="tx-value">退回钱包</div></div>
+    <div class="tx-row"><div class="tx-label">交易金额:</div><div class="tx-value">20元</div></div>
+    <div class="tx-row"><div class="tx-label">交易时间:</div><div class="tx-value">2026-07-06 15:36:17</div></div>
+  </div>
+
+  <!-- 记录6: 充值 -->
+  <div class="tx-card">
+    <div class="tx-row"><div class="tx-label">订单编号:</div><div class="tx-value">5862126495260706 <span class="copy-icon" onclick="copyText('5862126495260706',this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></span></div></div>
+    <div class="tx-row"><div class="tx-label">交易类型:</div><div class="tx-value">充值</div></div>
+    <div class="tx-row"><div class="tx-label">交易金额:</div><div class="tx-value">20元</div></div>
+    <div class="tx-row"><div class="tx-label">交易时间:</div><div class="tx-value">2026-07-06 15:04:27</div></div>
+  </div>
+
 </div>
 <script>
-document.querySelectorAll('.record-copy').forEach(btn=>{
-  btn.addEventListener('click',function(){
-    var text=this.parentElement.textContent.replace('复制','').trim().split(': ')[1];
-    navigator.clipboard?navigator.clipboard.writeText(text):0;
-    this.textContent='已复制';var b=this;setTimeout(()=>{b.textContent='复制'},1500);
-  });
-});
+function copyText(text,el){
+  navigator.clipboard?navigator.clipboard.writeText(text):0;
+  el.innerHTML='<svg viewBox="0 0 24 24"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg>';
+  setTimeout(function(){el.innerHTML='<svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';},1500);
+}
 </script>
 </body>
 </html>

@@ -32,6 +32,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei
 .order-row .copy{font-size:10px;color:#4ECDC4;cursor:pointer;border:1px solid #4ECDC4;border-radius:3px;padding:0 3px;margin-left:4px;vertical-align:middle}
 .bottom-links{display:flex;justify-content:center;gap:24px;padding:20px 0;font-size:13px}
 .bottom-links a{color:#999;text-decoration:underline}
+
+.order-card.ongoing{border-left:3px solid #4ECDC4}
+.order-card.ongoing .order-status{color:#fff;background:#4ECDC4}
+.order-card.ongoing .order-action{display:flex;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid #f0f0f0}
+.order-card.ongoing .btn-pick{flex:1;padding:8px 0;border-radius:20px;font-size:13px;font-weight:500;text-align:center;cursor:pointer;border:none}
+.btn-pick.primary{background:#4ECDC4;color:#fff}
+.btn-pick.secondary{background:#f5f5f5;color:#666}
+.elapsed{font-size:12px;color:#E6A700;margin-top:6px}
 .tab-content{display:none}
 .tab-content.active{display:block}
 </style>
@@ -48,23 +56,37 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei
 </div>
 <div class="content">
   <div class="tab-content active" id="ongoing">
-    <div class="empty">
-      <div class="empty-icon">
-        <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-          <!-- 箱子 -->
-          <rect x="55" y="90" width="90" height="70" rx="6" fill="#E8E8E8" stroke="#D0D0D0" stroke-width="1"/>
-          <rect x="60" y="82" width="80" height="12" rx="4" fill="#D8D8D8"/>
-          <line x1="100" y1="82" x2="100" y2="94" stroke="#C0C0C0" stroke-width="1"/>
-          <!-- 纸飞机 -->
-          <path d="M105 65 L140 40 L148 48 L115 72 Z" fill="#4ECDC4" opacity="0.7"/>
-          <path d="M105 65 L115 72 L112 60 Z" fill="#3BA99C" opacity="0.7"/>
-          <!-- 飞行轨迹 -->
-          <circle cx="152" cy="35" r="2.5" fill="#4ECDC4" opacity="0.5"/>
-          <circle cx="158" cy="30" r="2" fill="#4ECDC4" opacity="0.35"/>
-          <circle cx="163" cy="26" r="1.5" fill="#4ECDC4" opacity="0.2"/>
-        </svg>
+    <div class="order-card ongoing">
+      <div class="order-header">
+        <span class="order-cabinet">043号柜 · A12格口</span>
+        <span class="order-status">使用中</span>
       </div>
-      <div class="empty-text">- 暂无更多订单信息 -</div>
+      <div class="order-row">
+        <div><span class="label">订单编号:</span> ORD20260707003 <span class="copy">复制</span></div>
+        <div><span class="label">开始时间:</span> 2026-07-07 14:30</div>
+        <div><span class="label">寄存地点:</span> 重庆北站A区</div>
+      </div>
+      <div class="elapsed">已用时 5小时28分 · 已扣费 ¥8.00</div>
+      <div class="order-action">
+        <button class="btn-pick primary">取件</button>
+        <button class="btn-pick secondary">续费</button>
+      </div>
+    </div>
+    <div class="order-card ongoing">
+      <div class="order-header">
+        <span class="order-cabinet">012号柜 · B05格口</span>
+        <span class="order-status">使用中</span>
+      </div>
+      <div class="order-row">
+        <div><span class="label">订单编号:</span> ORD20260707004 <span class="copy">复制</span></div>
+        <div><span class="label">开始时间:</span> 2026-07-07 18:15</div>
+        <div><span class="label">寄存地点:</span> 沙坪坝火车站B区</div>
+      </div>
+      <div class="elapsed">已用时 1小时43分 · 已扣费 ¥3.00</div>
+      <div class="order-action">
+        <button class="btn-pick primary">取件</button>
+        <button class="btn-pick secondary">续费</button>
+      </div>
     </div>
   </div>
   <div class="tab-content" id="done">

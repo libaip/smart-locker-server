@@ -7,7 +7,7 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;background:#f0f0f0;}
-.page{min-height:100vh;display:flex;flex-direction:column;background:#fff;}
+.page{min-height:100vh;display:flex;flex-direction:column;background:#fff;max-width:480px;margin:0 auto;box-shadow:0 0 20px rgba(0,0,0,.08);}
 
 /* header */
 .header{position:relative;display:flex;align-items:center;justify-content:center;height:48px;background:#5ec9b4;padding:0 16px;}
@@ -26,8 +26,10 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','P
 .openid{font-size:12px;color:rgba(255,255,255,.75);margin-top:4px;display:flex;align-items:center;gap:8px;word-break:break-all;}
 .copy-btn{flex-shrink:0;font-size:11px;color:#5ec9b4;background:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;border:none;}
 
+/* white card container */
+.content-card{background:#fff;border-radius:16px 16px 0 0;margin-top:-12px;padding:20px 16px 0;position:relative;z-index:2;}
 /* big cards row */
-.big-cards{display:flex;gap:12px;padding:0 16px;margin-top:-8px;}
+.big-cards{display:flex;gap:12px;}
 .big-card{flex:1;border-radius:12px;padding:20px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;min-height:76px;}
 .big-card.orders{background:#5ec9b4;}
 .big-card.wallet{background:#f5c542;}
@@ -46,8 +48,13 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','P
 
 /* floating buttons */
 .floating-btns{position:fixed;right:16px;bottom:80px;display:flex;flex-direction:column;gap:12px;z-index:100;}
-.float-btn{display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;text-decoration:none;}
-.float-icon{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff;font-weight:500;}
+.float-btn{display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;text-decoration:none;animation:floatIn .6s ease backwards;}
+.float-btn:nth-child(1){animation-delay:.3s}
+.float-btn:nth-child(2){animation-delay:.5s}
+@keyframes floatIn{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:translateX(0)}}
+.float-icon{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff;font-weight:500;animation:floatBounce 3s ease-in-out infinite;}
+.float-btn:nth-child(2) .float-icon{animation-delay:.5s}
+@keyframes floatBounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
 .float-icon.robot{background:#5ec9b4;}
 .float-icon.complaint{background:#f5c542;}
 .float-label{font-size:11px;color:#666;}
@@ -59,7 +66,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','P
 <body>
 <div class="page">
   <div class="header">
-    <div class="back"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></div>
+    <div class="back"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M15 18l-6-6 6-6"/></svg></div>
     <div class="title">个人中心</div>
     <div class="menu"><svg viewBox="0 0 20 20"><circle cx="4" cy="10" r="2" fill="#fff"/><circle cx="10" cy="10" r="2" fill="#fff"/><circle cx="16" cy="10" r="2" fill="#fff"/></svg><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg></div>
   </div>
@@ -74,28 +81,31 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','P
     </div>
   </div>
 
-  <div class="big-cards">
-    <div class="big-card orders" onclick="location.href='orders.html'">
-      <div class="card-icon"><svg viewBox="0 0 24 24" fill="#fff"><rect x="4" y="2" width="16" height="20" rx="2" fill="none" stroke="#fff" stroke-width="2"/><path d="M8 6h8M8 10h8M8 14h5" stroke="#fff" stroke-width="1.5"/></svg></div>
-      <div class="card-label">我的订单</div>
+  <div class="content-card">
+    <div class="big-cards">
+      <div class="big-card orders" onclick="location.href='orders.html'">
+        <div class="card-icon"><svg viewBox="0 0 24 24" fill="#fff"><rect x="4" y="2" width="16" height="20" rx="2" fill="none" stroke="#fff" stroke-width="2"/><path d="M8 6h8M8 10h8M8 14h5" stroke="#fff" stroke-width="1.5"/></svg></div>
+        <div class="card-label">我的订单</div>
+      </div>
+      <div class="big-card wallet" onclick="location.href='wallet.html'">
+        <div class="card-icon"><svg viewBox="0 0 24 24" fill="#fff"><rect x="2" y="5" width="20" height="14" rx="2" fill="none" stroke="#fff" stroke-width="2"/><path d="M16 12h4M18 10v4" stroke="#fff" stroke-width="2"/></svg></div>
+        <div class="card-label">我的钱包</div>
+      </div>
     </div>
-    <div class="big-card wallet" onclick="location.href='wallet.html'">
-      <div class="card-icon"><svg viewBox="0 0 24 24" fill="#fff"><rect x="2" y="5" width="20" height="14" rx="2" fill="none" stroke="#fff" stroke-width="2"/><path d="M16 12h4M18 10v4" stroke="#fff" stroke-width="2"/></svg></div>
-      <div class="card-label">我的钱包</div>
-    </div>
-  </div>
 
-  <div class="list-section">
-    <div class="list-item" onclick="location.href='complaint.html'">
-      <div class="list-icon"><svg viewBox="0 0 24 24" fill="#f5c542"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div>
-      <div class="label">投诉反馈</div>
-      <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+    <div class="list-section">
+      <div class="list-item" onclick="location.href='complaint.html'">
+        <div class="list-icon"><svg viewBox="0 0 24 24" fill="#f5c542"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div>
+        <div class="label">投诉反馈</div>
+        <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="list-item" onclick="location.href='customer_service.html'">
+        <div class="list-icon"><svg viewBox="0 0 24 24" fill="#f5c542"><rect x="6" y="8" width="12" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><rect x="9" y="12" width="2" height="3" rx="1" fill="#fff"/><rect x="13" y="12" width="2" height="3" rx="1" fill="#fff"/></svg></div>
+        <div class="label">联系客服</div>
+        <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
     </div>
-    <div class="list-item" onclick="location.href='customer_service.html'">
-      <div class="list-icon"><svg viewBox="0 0 24 24" fill="#f5c542"><rect x="6" y="8" width="12" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><rect x="9" y="12" width="2" height="3" rx="1" fill="#fff"/><rect x="13" y="12" width="2" height="3" rx="1" fill="#fff"/></svg></div>
-      <div class="label">联系客服</div>
-      <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
+
   </div>
 
   <div class="common-q" onclick="alert('常见问题')">
@@ -104,15 +114,6 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','P
   </div>
 </div>
 
-<div class="floating-btns">
-  <a class="float-btn" href="customer_service.html">
-    <div class="float-icon robot"><svg viewBox="0 0 28 28" width="28" height="28"><circle cx="14" cy="14" r="10" fill="#fff" opacity=".3"/><path d="M9 14c0-3 2.5-5 5-5s5 2 5 5v3c0 1-1 2-2 2H11c-1 0-2-1-2-2z" fill="#fff"/><circle cx="11" cy="13" r="1.5" fill="#5ec9b4"/><circle cx="17" cy="13" r="1.5" fill="#5ec9b4"/><path d="M14 8V5" stroke="#fff" stroke-width="1.5"/><circle cx="14" cy="4" r="1" fill="#fff"/></svg></div>
-    <div class="float-label">联系客服</div>
-  </a>
-  <a class="float-btn" href="complaint.html">
-    <div class="float-icon complaint"><svg viewBox="0 0 28 28" width="28" height="28"><circle cx="14" cy="14" r="10" fill="#fff" opacity=".3"/><path d="M9 10h10l-1 8H10z" fill="#fff"/><path d="M12 18v2M16 18v2" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg></div>
-    <div class="float-label">投诉商家</div>
-  </a>
-</div>
+
 </body>
 </html>

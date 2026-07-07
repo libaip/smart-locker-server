@@ -7,7 +7,7 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;background:#f0f0f0;}
-.page{min-height:100vh;display:flex;flex-direction:column;background:#fff;}
+.page{min-height:100vh;display:flex;flex-direction:column;background:#fff;max-width:480px;margin:0 auto;box-shadow:0 0 20px rgba(0,0,0,.08);}
 
 .header{position:relative;display:flex;align-items:center;justify-content:center;height:48px;background:#fff;border-bottom:1px solid #f0f0f0;padding:0 16px;}
 .header .back{position:absolute;left:16px;cursor:pointer;}
@@ -33,20 +33,26 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','P
 .list-item .label{margin-left:14px;font-size:16px;color:#333;flex:1;}
 .list-item .arrow{width:16px;height:16px;flex-shrink:0;}
 
-.floating-btns{position:fixed;right:16px;bottom:80px;display:flex;flex-direction:column;gap:12px;z-index:100;}
-.float-btn{display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;text-decoration:none;}
-.float-icon{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;}
-.float-icon.robot{background:#5ec9b4;}
-.float-icon.complaint{background:#f5c542;}
-.float-label{font-size:11px;color:#666;}
-
 .common-q{text-align:center;padding:20px;font-size:14px;color:#5ec9b4;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;margin-top:auto;}
+
+.floating-btns{position:fixed;right:16px;bottom:80px;display:flex;flex-direction:column;gap:16px;z-index:100;}
+.float-btn{display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;text-decoration:none;animation:floatIn .6s ease backwards;}
+.float-btn:nth-child(1){animation-delay:.3s}
+.float-btn:nth-child(2){animation-delay:.5s}
+@keyframes floatIn{from{opacity:0;transform:translateX(40px) scale(.5)}to{opacity:1;transform:translateX(0) scale(1)}}
+.float-icon{width:72px;height:72px;border-radius:50%;display:flex;align-items:center;justify-content:center;animation:floatBounce 2.5s ease-in-out infinite;box-shadow:0 4px 16px rgba(0,0,0,.15);transition:transform .2s;}
+.float-btn:nth-child(2) .float-icon{animation-delay:.4s}
+.float-icon:active{transform:scale(.9)}
+@keyframes floatBounce{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-8px) scale(1.05)}}
+.float-icon.robot{background:linear-gradient(135deg,#5ec9b4,#45b89e);}
+.float-icon.complaint{background:linear-gradient(135deg,#f5c542,#e6b530);}
+.float-label{font-size:12px;color:#666;font-weight:500;}
 </style>
 </head>
 <body>
 <div class="page">
   <div class="header">
-    <div class="back" onclick="location.href='index.html'"><svg viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></div>
+    <div class="back" onclick="location.href='index.html'"><svg viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="3"><path d="M15 18l-6-6 6-6"/></svg></div>
     <div class="title">我的钱包</div>
     <div class="menu"><svg viewBox="0 0 20 20"><circle cx="4" cy="10" r="2" fill="#333"/><circle cx="10" cy="10" r="2" fill="#333"/><circle cx="16" cy="10" r="2" fill="#333"/></svg><svg viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg></div>
   </div>
@@ -84,11 +90,38 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','P
 
 <div class="floating-btns">
   <a class="float-btn" href="customer_service.html">
-    <div class="float-icon robot"><svg viewBox="0 0 28 28" width="28" height="28"><circle cx="14" cy="14" r="10" fill="#fff" opacity=".3"/><path d="M9 14c0-3 2.5-5 5-5s5 2 5 5v3c0 1-1 2-2 2H11c-1 0-2-1-2-2z" fill="#fff"/><circle cx="11" cy="13" r="1.5" fill="#5ec9b4"/><circle cx="17" cy="13" r="1.5" fill="#5ec9b4"/><path d="M14 8V5" stroke="#fff" stroke-width="1.5"/><circle cx="14" cy="4" r="1" fill="#fff"/></svg></div>
+    <div class="float-icon robot"><svg viewBox="0 0 52 52" width="52" height="52">
+      <!-- Head -->
+      <circle cx="26" cy="22" r="12" fill="#fff"/>
+      <!-- Eyes -->
+      <circle cx="21" cy="20" r="2.5" fill="#45b89e"/>
+      <circle cx="31" cy="20" r="2.5" fill="#45b89e"/>
+      <!-- Smile -->
+      <path d="M21 26 Q26 31 31 26" stroke="#45b89e" stroke-width="2" fill="none" stroke-linecap="round"/>
+      <!-- Antenna -->
+      <line x1="26" y1="10" x2="26" y2="5" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+      <circle cx="26" cy="4" r="2.5" fill="#fff"/>
+      <!-- Headset left -->
+      <path d="M13 18 Q10 22 13 26" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+      <!-- Headset right -->
+      <path d="M39 18 Q42 22 39 26" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+      <!-- Body -->
+      <path d="M18 34 Q18 38 26 38 Q34 38 34 34 L34 32 Q34 30 26 30 Q18 30 18 32 Z" fill="#fff" opacity="0.85"/>
+    </svg></div>
     <div class="float-label">联系客服</div>
   </a>
   <a class="float-btn" href="complaint.html">
-    <div class="float-icon complaint"><svg viewBox="0 0 28 28" width="28" height="28"><circle cx="14" cy="14" r="10" fill="#fff" opacity=".3"/><path d="M9 10h10l-1 8H10z" fill="#fff"/><path d="M12 18v2M16 18v2" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg></div>
+    <div class="float-icon complaint"><svg viewBox="0 0 52 52" width="52" height="52">
+      <!-- Megaphone body -->
+      <path d="M14 20 L14 34 L22 32 L38 38 L38 16 L22 22 Z" fill="#fff"/>
+      <!-- Megaphone bell -->
+      <ellipse cx="38" cy="27" rx="4" ry="12" fill="#fff" opacity="0.7"/>
+      <!-- Handle -->
+      <rect x="10" y="23" width="5" height="8" rx="2" fill="#fff" opacity="0.85"/>
+      <!-- Sound waves -->
+      <path d="M43 21 Q47 27 43 33" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.6"/>
+      <path d="M46 18 Q51 27 46 36" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.4"/>
+    </svg></div>
     <div class="float-label">投诉商家</div>
   </a>
 </div>

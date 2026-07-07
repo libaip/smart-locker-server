@@ -65,7 +65,13 @@ def do_refund(order_no, total_fee, mch_id):
         conn.close()
         return True, "已退款"
     ch_id = order["payment_channel_id"]
-    wx, ch_type = get_channel_wxpay(conn, channel_id=ch_id)
+    ch_cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    ch_cur.execute("SELECT * FROM payment_channels WHERE id=%s", (ch_id,))
+    ch_row = ch_cur.fetchone()
+    if not ch_row:
+        conn.close()
+        return False, "支付渠道不存在"
+    wx, ch_type = get_channel_wxpay(ch_row)
     if not wx:
         conn.close()
         return False, f"无法获取WxPay(channel={ch_id})"
@@ -109,7 +115,7 @@ def process_complaint(complaint, mch_id, key_path, cert_path):
     print(f"    回复: HTTP {rr.status_code}")
     
     # 3. 结案
-    complete_body = {"complainted_mchid": mch_id, "remark": "已退款"}
+    complete_body = {"complainted_mchid": mch_id}
     cr = v3_post(f"/v3/merchant-service/complaints-v2/{cid}/complete", complete_body, mch_id, key_path, cert_path)
     print(f"    结案: HTTP {cr.status_code}")
     

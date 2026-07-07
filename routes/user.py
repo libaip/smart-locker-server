@@ -401,20 +401,20 @@ def retrieve():
                 try:
                     from helpers import send_wx_subscribe_message
                     subscribe_data = {
-                        "thing1": {"value": str(order.get("compartment_number", "")) + "号柜门"},
-                        "thing2": {"value": "智能寄存柜"},
-                        "time3": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
-                        "time4": {"value": datetime.now().strftime("%H:%M")}
+                        "amount6": {"value": "¥{:.2f}".format(order.get("deposit_amount", 0))},
+                        "thing7": {"value": "已退还至小程序用户钱包"},
+                        "time4": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
+                        "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}
                     }
-                    send_wx_subscribe_message(_openid, "UT0PehBf71OaahgZbqFfLPQt55BWc7tSz4D4NqCPDhE", subscribe_data)
+                    send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data)
                     try:
                         refund_data = {
-                            "character_string1": {"value": order.get("order_no", "")},
-                            "amount2": {"value": str(order.get("deposit_amount", 0)) + "元"},
-                            "thing4": {"value": "预付款已退至余额"},
-                            "time5": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}
+
+                            "amount8": {"value": "¥{:.2f}".format(order.get("deposit_amount", 0))},
+                            "thing3": {"value": "原路退回支付账户"},
+                            "time6": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                         }
-                        send_wx_subscribe_message(_openid, "nG8Cdhn-Nym9ml4LatE9CdGXoJyyoi227vNzLMX9i8w", refund_data)
+                        send_wx_subscribe_message(_openid, "YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE", refund_data)
                     except Exception as ee:
                         logger.error("[发送退款通知失败] " + str(ee))
                 except Exception as e:
@@ -565,21 +565,20 @@ def retrieve_confirm():
             try:
                 from helpers import send_wx_subscribe_message
                 subscribe_data = {
-                    "thing1": {"value": str(order.get("compartment_number", "")) + "号柜门"},
-                    "thing2": {"value": "智能寄存柜"},
-                    "time3": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
-                    "time4": {"value": datetime.now().strftime("%H:%M")}
+                    "amount6": {"value": "¥{:.2f}".format(order.get("deposit_amount", 0))},
+                    "thing7": {"value": "已退还至小程序用户钱包"},
+                    "time4": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
+                    "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}
                 }
-                send_wx_subscribe_message(_openid, "UT0PehBf71OaahgZbqFfLPQt55BWc7tSz4D4NqCPDhE", subscribe_data)
+                send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data)
                 # 发送退款通知
                 try:
                     refund_data = {
-                        "character_string1": {"value": order.get("order_no", "")},
-                        "amount2": {"value": str(order.get("deposit_amount", 0)) + "元"},
-                        "thing4": {"value": "预付款已退至余额"},
-                        "time5": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}
+                        "amount8": {"value": "¥{:.2f}".format(order.get("deposit_amount", 0))},
+                        "thing3": {"value": "原路退回支付账户"},
+                        "time6": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                     }
-                    send_wx_subscribe_message(_openid, "nG8Cdhn-Nym9ml4LatE9CdGXoJyyoi227vNzLMX9i8w", refund_data)
+                    send_wx_subscribe_message(_openid, "YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE", refund_data)
                 except Exception as ee:
                     logger.error("[发送退款通知失败] " + str(ee))
             except Exception as e:
@@ -1098,17 +1097,16 @@ def deposit_end_storage():
         if _openid:
             try:
                 from helpers import send_wx_subscribe_message
-                subscribe_data = {"thing1": {"value": str(order.get("compartment_number", "")) + "号柜门"}, "thing2": {"value": "智能寄存柜"}, "time3": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}, "time4": {"value": datetime.now().strftime("%H:%M")}, "time5": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}}
-                send_wx_subscribe_message(_openid, "UT0PehBf71OaahgZbqFfLPQt55BWc7tSz4D4NqCPDhE", subscribe_data)
+                subscribe_data = {"amount6": {"value": "¥{:.2f}".format(order.get("deposit_amount", 0))}, "time4": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}, "thing7": {"value": "已退还至小程序用户钱包"}, "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}}
+                send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data)
                 # 发送退款通知
                 try:
                     refund_data = {
-                        "character_string1": {"value": order.get("order_no", "")},
-                        "amount2": {"value": str(order.get("deposit_amount", 0)) + "元"},
-                        "thing4": {"value": "预付款已退至余额"},
-                        "time5": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}
+                        "amount8": {"value": "¥{:.2f}".format(order.get("deposit_amount", 0))},
+                        "thing3": {"value": "原路退回支付账户"},
+                        "time6": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                     }
-                    send_wx_subscribe_message(_openid, "nG8Cdhn-Nym9ml4LatE9CdGXoJyyoi227vNzLMX9i8w", refund_data)
+                    send_wx_subscribe_message(_openid, "YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE", refund_data)
                 except Exception as ee:
                     logger.error("[发送退款通知失败] " + str(ee))
                 logger.info(f"[deposit_end_storage] 订阅消息已发送: order={order_id}")

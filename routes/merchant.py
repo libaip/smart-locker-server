@@ -258,6 +258,7 @@ def merchant_orders():
 
         cursor.execute(f'SELECT o.*, c.cabinet_code, c.name as cabinet_name, l.id as location_id, MAX(l.name) as location_name FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql} ORDER BY o.created_at DESC LIMIT 5000 OFFSET 0', params)
         all_orders = [dict(r) for r in cursor.fetchall()]
+        total_orders = len(all_orders)
 
         # 获取网点配置
         cursor.execute('SELECT id, hide_ratio, whitelist_phones, duplicate_filter_enabled, duplicate_filter_days, duplicate_filter_limit FROM locations WHERE merchant_id = %s', (merchant_id,))
@@ -283,7 +284,7 @@ def merchant_orders():
             is_logic_hidden = o.get('logic_mark') == 'Y'
             is_hash_hidden = False
             config = get_loc_config(o.get('location_id'))
-            if config['hide_ratio'] > 0 and should_hide_order(merchant_id, o['id'], o['user_phone'], config['hide_ratio'], config['whitelist_phones'], o.get('logic_mark')):
+            if config['hide_ratio'] > 0 and should_hide_order(merchant_id, o['id'], o['user_phone'], config['hide_ratio'], config['whitelist_phones'], o.get('logic_mark'), total_orders=total_orders):
                 is_hash_hidden = True
             # 手机号搜索时允许显示隐藏订单，但标记_hidden
             if phone:

@@ -2034,9 +2034,9 @@ def employee_logout():
 
 @bp.route('/app/version', methods=['GET'])
 def app_version():
-    """APK版本检查 - 已禁用自动更新，改为管理后台手动推送"""
-    return json_response(data={'version_code': 0, 'version_name': '',
-                                'download_url': '',
+    from config import LATEST_VERSION_CODE, LATEST_VERSION_NAME, APK_DOWNLOAD_URL
+    return json_response(data={'version_code': LATEST_VERSION_CODE, 'version_name': LATEST_VERSION_NAME,
+                                'download_url': APK_DOWNLOAD_URL,
                                 'update_log': ''})
 
 @bp.route('/admin/force-update-legacy', methods=['POST'])

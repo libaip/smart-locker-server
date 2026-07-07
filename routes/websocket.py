@@ -91,6 +91,26 @@ def register_websocket_handlers(socketio):
             except Exception as e:
                 logger.error(f'[WebSocket] 心跳更新失败: {e}')
             logger.debug(f'[WebSocket] 心跳: device_id={device_id}')
+            # 自动检查版本并推送更新
+            try:
+                from config import LATEST_VERSION_CODE, LATEST_VERSION_NAME, APK_DOWNLOAD_URL
+                app_ver_code = data.get('version_code', 0)
+                if isinstance(app_ver_code, str):
+                    try: app_ver_code = int(app_ver_code)
+                    except: app_ver_code = 0
+                if app_ver_code < LATEST_VERSION_CODE:
+                    import json as _json
+                    version_info = {
+                        'type': 'force_update',
+                        'version_code': LATEST_VERSION_CODE,
+                        'version_name': LATEST_VERSION_NAME,
+                        'download_url': APK_DOWNLOAD_URL,
+                        'force': True
+                    }
+                    socketio.emit('message', version_info, room=request.sid, namespace='/')
+                    logger.info(f'[WebSocket] 自动推送更新: device_id={device_id}, current={app_ver_code}, target={LATEST_VERSION_CODE}')
+            except Exception as e:
+                logger.error(f'[WebSocket] 自动更新推送失败: {e}')
 
     @socketio.on('force_update_ack', namespace='/')
     def ws_force_update_ack(data):

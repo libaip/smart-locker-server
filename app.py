@@ -686,6 +686,17 @@ def wx_generate_scheme():
         return jsonify({'code': -1, 'msg': str(e)}), 500
 
 @app.route('/api/app/version', methods=['GET'])
+@app.route('/api/app/version', methods=['GET'])
+def api_app_version():
+    from config import LATEST_VERSION_CODE, LATEST_VERSION_NAME, APK_DOWNLOAD_URL
+    return jsonify({
+        'data': {
+            'version_code': LATEST_VERSION_CODE,
+            'version_name': LATEST_VERSION_NAME,
+            'download_url': APK_DOWNLOAD_URL,
+        }
+    })
+
 
 
 

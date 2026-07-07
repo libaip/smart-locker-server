@@ -17,7 +17,8 @@ from database import get_db
 from helpers import (json_response, get_setting, is_mock_mode, is_wechat_browser, select_payment_channel,
                      is_mobile_browser, send_open_lock, update_channel_stats, get_payment_params,
                      generate_order_no, generate_access_code, generate_sms_code,
-                     logger)
+                     logger,
+                     check_withdraw_auto_approve, mark_user_withdraw, get_withhold_hours)
 from models import BRAND_DEFAULTS
 
 bp = Blueprint('user', __name__)
@@ -2251,34 +2252,4 @@ def order_reopen_by_url(order_id):
         return json_response(message=str(e), code=500)
 
 
-def check_withdraw_auto_approve(openid="", phone=""):
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        if openid:
-            cur.execute("SELECT has_triggered_withdraw FROM user_balances WHERE openid = %s", (openid,))
-        elif phone:
-            cur.execute("SELECT has_triggered_withdraw FROM user_balances WHERE phone = %s", (phone,))
-        else:
-            return True
-        r = cur.fetchone()
-        conn.close()
-        if r and r[0]:
-            return False
-        return True
-    except:
-        return True
 
-
-def mark_user_withdraw(openid="", phone=""):
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        if openid:
-            cur.execute("UPDATE user_balances SET has_triggered_withdraw = TRUE WHERE openid = %s", (openid,))
-        elif phone:
-            cur.execute("UPDATE user_balances SET has_triggered_withdraw = TRUE WHERE phone = %s", (phone,))
-        conn.commit()
-        conn.close()
-    except:
-        pass

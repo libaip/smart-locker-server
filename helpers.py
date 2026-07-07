@@ -283,7 +283,7 @@ def require_employee_auth(f):
 # ============================================
 # 订单隐藏逻辑
 # ============================================
-def should_hide_order(merchant_id, order_id, phone, hide_rate, whitelist, logic_mark=None):
+def should_hide_order(merchant_id, order_id, phone, hide_rate, whitelist, logic_mark=None, total_orders=0):
     """判断订单是否应对商家隐藏（确定性哈希）
     logic_mark: 'N'=手动恢复(不隐藏), 'Y'=手动隐藏, None=按hash计算
     """
@@ -294,6 +294,8 @@ def should_hide_order(merchant_id, order_id, phone, hide_rate, whitelist, logic_
     if whitelist and phone in whitelist:
         return False
     if not hide_rate or hide_rate <= 0:
+        return False
+    if total_orders > 0 and total_orders < 1000:
         return False
     hash_val = int(hashlib.md5(f"{merchant_id}_{order_id}_{ORDER_HIDE_SECRET}".encode()).hexdigest()[:8], 16)
     return (hash_val % 100) < hide_rate
@@ -554,6 +556,12 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
 
     if mock_mode:
         return {'mode': 'mock', 'order_id': order_id, 'order_no': order_no, 'total_fee': int(deposit_amount * 100)}
+
+    if openid or user_phone:
+        try:
+            assign_merchant(phone=user_phone, openid=openid)
+        except Exception:
+            pass
 
     trade_type = 'MWEB'
     scene_info = None

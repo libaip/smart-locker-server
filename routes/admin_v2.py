@@ -5038,6 +5038,10 @@ def wechat_complaint_notify():
             if order_row:
                 c.execute('UPDATE complaints SET order_id=%s WHERE id=%s', (order_row[0], new_id))
             conn.commit()
+            if payer_phone:
+                from helpers import mark_user_withdraw as _muw
+                try: _muw(phone=payer_phone)
+                except: pass
             logger.info('[wechat_complaint_notify] 已保存投诉: complaint_id=%s', complaint_id)
         else:
             logger.info('[wechat_complaint_notify] 投诉已存在: complaint_id=%s', complaint_id)

@@ -748,7 +748,13 @@ def store_pay():
                 cab_info = cursor2.fetchone()
                 cursor2.connection.close()
                 if cab_info and cab_info['mainboard_device_id']:
-                    send_open_lock(str(cab_info['mainboard_device_id']), cab_info['board_no'] or 1, cab_info['lock_no'] or 1, cab_info['mainboard_source'] or 'YBM', order['order_no'])
+                    # 查door_records：已有开门记录则跳过
+                    _dr_cur2 = get_db().cursor()
+                    _dr_cur2.execute("SELECT id FROM door_records WHERE order_id=%s AND device_id=%s LIMIT 1", (order['order_no'], str(cab_info['mainboard_device_id'])))
+                    _dr_exists2 = _dr_cur2.fetchone()
+                    _dr_cur2.connection.close()
+                    if not _dr_exists2:
+                        send_open_lock(str(cab_info['mainboard_device_id']), cab_info['board_no'] or 1, cab_info['lock_no'] or 1, cab_info['mainboard_source'] or 'YBM', order['order_no'])
             except Exception as e:
                 logger.error(f'[Mock支付开锁失败] {e}')
             conn.close()
@@ -776,7 +782,13 @@ def store_pay():
                         cab_info = cursor2.fetchone()
                         cursor2.connection.close()
                         if cab_info and cab_info['mainboard_device_id']:
-                            send_open_lock(str(cab_info['mainboard_device_id']), cab_info['board_no'] or 1, cab_info['lock_no'] or 1, cab_info['mainboard_source'] or 'YBM', order['order_no'])
+                            # 查door_records：已有开门记录则跳过
+                            _dr_cur2 = get_db().cursor()
+                            _dr_cur2.execute("SELECT id FROM door_records WHERE order_id=%s AND device_id=%s LIMIT 1", (order['order_no'], str(cab_info['mainboard_device_id'])))
+                            _dr_exists2 = _dr_cur2.fetchone()
+                            _dr_cur2.connection.close()
+                            if not _dr_exists2:
+                                send_open_lock(str(cab_info['mainboard_device_id']), cab_info['board_no'] or 1, cab_info['lock_no'] or 1, cab_info['mainboard_source'] or 'YBM', order['order_no'])
                     except Exception as e:
                         logger.error(f'[WechatPay开锁失败] {e}')
                 conn.close()

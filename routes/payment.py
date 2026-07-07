@@ -275,10 +275,19 @@ def pay_notify():
         # 先在DB提交前发送开门指令（先commit释放DB锁，再发开门指令）（WebSocket立即发出，独立DB连接不冲突）
         if trade_state == 'SUCCESS' or result.get('result_code') == 'SUCCESS':
             if _open_lock_info:
-                try:
-                    send_open_lock(_open_lock_info['device_id'], _open_lock_info['board_no'],
-                                   _open_lock_info['lock_no'], _open_lock_info['protocol'],
-                                   _open_lock_info['order_id'])
+                # 查door_records：已有开门记录则跳过（防止与store_pay重复发送）
+                _dr_cur = conn.cursor()
+                _dr_cur.execute("SELECT id FROM door_records WHERE order_id=%s AND device_id=%s LIMIT 1", (_open_lock_info['order_id'], _open_lock_info['device_id']))
+                _dr_exists = _dr_cur.fetchone()
+                if not _dr_exists:
+                    try:
+                        send_open_lock(_open_lock_info['device_id'], _open_lock_info['board_no'],
+                                       _open_lock_info['lock_no'], _open_lock_info['protocol'],
+                                       _open_lock_info['order_id'])
+                    except Exception as e:
+                        logger.error(f'[支付回调开锁失败] {e}')
+                else:
+                    logger.info(f'[支付回调] door_records已有记录，跳过开门: order_id={_open_lock_info["order_id"]}')
                 except Exception as e:
                     logger.error(f'[支付回调开锁失败] {e}')
             if _channel_id:

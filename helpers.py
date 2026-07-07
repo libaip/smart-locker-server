@@ -9,6 +9,7 @@ import hashlib
 import sqlite3
 from datetime import datetime, timedelta
 from functools import wraps
+import time
 from flask import session, jsonify, request
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -640,6 +641,16 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
         next_ch = select_payment_channel()
         if next_ch and next_ch.get('id') and next_ch['id'] != current_channel['id']:
             logger.info(f'[渠道] 切换到下一个渠道重试: {next_ch["name"]}')
+            # ????????????????????????
+            try:
+                from database import get_db as _gdb3
+                _db3 = _gdb3()
+                _db3.execute('UPDATE orders SET payment_channel_id=%s WHERE id=%s', (next_ch['id'], order_id))
+                _db3.commit()
+                _db3.close()
+                logger.info(f'[渠道] 已更新订单#{order_id}支付渠道为{next_ch["name"]}')
+            except Exception as _e:
+                logger.error(f'[渠道] 更新订单渠道失败: {_e}')
             return get_payment_params(order_id, order_no, deposit_amount, user_phone, openid, payment_channel=next_ch, payment_channel_id=next_ch['id'], _retry_count=_retry_count+1)
     
     if current_channel:
@@ -1111,7 +1122,7 @@ def assign_merchant(phone=None, openid=None):
         if row and row[0]:
             c.close()
             return row[0]
-        row = c.execute("SELECT mch_id FROM payment_channels WHERE is_active=TRUE ORDER BY total_users ASC LIMIT 1").fetchone()
+        row = c.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 ORDER BY total_users ASC LIMIT 1").fetchone()
         if not row:
             c.close()
             return None

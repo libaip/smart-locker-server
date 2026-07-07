@@ -228,6 +228,9 @@ def admin_cabinet_save():
                  float(data.get("per_use_price") or 0),
                  data.get("usage_rules") or "24h"))
             data['id'] = c.fetchone()[0]
+        _sp = data.get('serial_port') or ''
+        _br = data.get('baud_rate') or ''
+        _pr = data.get('mainboard_source') or ''
         if data.get('id') and (_sp or _br or _pr):
             c.execute('SELECT id FROM mainboards WHERE cabinet_id=%s', (data['id'],))
             row = c.fetchone()
@@ -864,13 +867,12 @@ def admin_order_refund():
             try:
                 from helpers import send_wx_subscribe_message
                 subscribe_data = {
-                    'character_string1': {'value': order_dict.get('order_no', '')},
-                    'thing1': {'value': f'¥{amount:.2f}'},
-                    'thing2': {'value': '智能寄存柜押金退款'},
-                    'time3': {'value': datetime.now().strftime('%Y-%m-%d %H:%M')},
-                    'thing4': {'value': '退款将原路返回'}
+                    'amount8': {'value': f'¥{amount:.2f}'},
+                    'time6': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
+                    'thing3': {'value': '原路退回支付账户'},
+                    'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
                 }
-                send_wx_subscribe_message(order_dict['openid'], 'nG8Cdhn-Nym9ml4LatE9CdGXoJyyoi227vNzLMX9i8w', subscribe_data)
+                send_wx_subscribe_message(order_dict['openid'], 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', subscribe_data)
             except Exception as e:
                 logger.error(f'[order_refund发送订阅消息失败] {e}')
         
@@ -934,22 +936,13 @@ def admin_order_close():
             try:
                 from helpers import send_wx_subscribe_message
                 subscribe_data = {
-                    'character_string1': {'value': str(order_dict.get('compartment_number', '')) + '号柜门'},
-                    'thing2': {'value': '智能寄存柜'},
-                    'time3': {'value': now},
-                    'time5': {'value': '订单已结束，押金已退回余额'}
+                    'amount6': {'value': '¥{:.2f}'.format(deposit_amount)},
+                    'time4': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
+                    'thing7': {'value': '已退还至小程序用户钱包'},
+                    'thing2': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                 }
-                send_wx_subscribe_message(order_dict['openid'], 'UT0PehBf71OaahgZbqFfLPQt55BWc7tSz4D4NqCPDhE', subscribe_data)
-                # 同时发送退款通知
-                if deposit_amount > 0:
-                    refund_data = {
-                        "character_string1": {"value": order_dict.get("order_no", "")},
-                        "thing1": {"value": "¥{:.2f}".format(deposit_amount)},
-                        "thing2": {"value": "智能寄存柜押金退款"},
-                        "time3": {"value": now},
-                        "thing4": {"value": "预付款已退至个人中心余额，可自行退款"}
-                    }
-                    send_wx_subscribe_message(order_dict["openid"], "nG8Cdhn-Nym9ml4LatE9CdGXoJyyoi227vNzLMX9i8w", refund_data)
+                send_wx_subscribe_message(order_dict['openid'], '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data)
+
             except Exception as e:
                 logger.error(f"[order_close发送订阅消息失败] {e}")
         
@@ -4548,21 +4541,13 @@ def admin_device_clear_all():
                 try:
                     from helpers import send_wx_subscribe_message
                     subscribe_data = {
-                        'character_string1': {'value': str(o_dict.get('compartment_number', '')) + '号柜门'},
-                        'thing2': {'value': '智能寄存柜'},
-                        'time3': {'value': now},
-                        'time5': {'value': '清柜操作，订单已强制结束'}
+                        'amount6': {'value': '¥{:.2f}'.format(o_dict.get('deposit_amount', 0))},
+                        'time4': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
+                        'thing7': {'value': '已退还至小程序用户钱包'},
+                        'thing2': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                     }
-                    send_wx_subscribe_message(o_dict['openid'], 'UT0PehBf71OaahgZbqFfLPQt55BWc7tSz4D4NqCPDhE', subscribe_data)
-                    if deposit_amount > 0 and o_dict.get('status') == 2:
-                        refund_data = {
-                            "character_string1": {"value": o_dict.get("order_no", "")},
-                            "thing1": {"value": "¥{:.2f}".format(deposit_amount)},
-                            "thing2": {"value": "智能寄存柜押金退款"},
-                            "time3": {"value": now},
-                            "thing4": {"value": "预付款已退至个人中心余额，可自行退款"}
-                        }
-                        send_wx_subscribe_message(o_dict["openid"], "nG8Cdhn-Nym9ml4LatE9CdGXoJyyoi227vNzLMX9i8w", refund_data)
+                    send_wx_subscribe_message(o_dict['openid'], '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data)
+
                     notified += 1
                 except Exception as e:
                     logger.error(f'[clear_all] 发送订阅消息失败 order={o_dict["id"]}: {e}')

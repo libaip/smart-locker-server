@@ -1800,6 +1800,17 @@ def get_user_orders():
         logger.error(f'[user/orders] 错误: {e}')
         return json_response(message=str(e), code=500)
 
+
+@bp.route('/user/subscribe-templates', methods=['GET'])
+def get_subscribe_templates():
+    """返回订阅消息模板ID列表"""
+    return json_response(data={
+        'templates': [
+            '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A',
+            'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE'
+        ]
+    })
+
 @bp.route('/user/withdrawal-rules', methods=['GET'])
 def get_withdrawal_rules():
     """获取提现规则"""
@@ -2136,6 +2147,18 @@ def user_withdraw():
             conn.commit()
             conn.close()
             if all_ok:
+                if openid:
+                    try:
+                        from helpers import send_wx_subscribe_message
+                        wd_data = {
+                            'amount8': {'value': '¥{:.2f}'.format(actual_amount)},
+                            'time6': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
+                            'thing3': {'value': '原路退回支付账户'},
+                            'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
+                        }
+                        send_wx_subscribe_message(openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data)
+                    except Exception as e:
+                        logger.error(f'[提现通知失败] {e}')
                 return json_response(data={
                     'withdrawal_id': first_wid,
                     'status': 'refunded',
@@ -2253,3 +2276,63 @@ def order_reopen_by_url(order_id):
 
 
 
+@bp.route('/user/wallet/transactions', methods=['GET'])
+def get_user_transactions():
+    """????????"""
+    try:
+        phone = request.args.get('phone', '')
+        openid = request.args.get('openid', '')
+        tp = request.args.get('type', '')  # all, income, expense
+        page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 50))
+        offset = (page - 1) * limit
+        if not phone:
+            return json_response(message='????', code=400)
+        conn = get_db()
+        cur = conn.cursor()
+        if tp == 'income':
+            where_extra = "AND d.amount > 0"
+        elif tp == 'expense':
+            where_extra = "AND d.amount < 0"
+        else:
+            where_extra = ""
+        cur.execute(f'''
+            SELECT d.id, d.amount, d.source_time, d.status, d.remark, d.order_id,
+                   o.order_no
+            FROM user_balance_details d
+            LEFT JOIN orders o ON d.order_id = o.id
+            WHERE d.user_phone = %s {where_extra}
+            ORDER BY d.source_time DESC
+            LIMIT %s OFFSET %s
+        ''', (phone, limit, offset))
+        rows = [dict(r) for r in cur.fetchall()]
+        cur.execute(f"SELECT COUNT(*) FROM user_balance_details d WHERE d.user_phone = %s {where_extra}", (phone,))
+        total = cur.fetchone()[0]
+        conn.close()
+        return json_response(data={'list': rows, 'total': total})
+    except Exception as e:
+        logger.error(f'[user/transactions] ??: {e}')
+        return json_response(message=str(e), code=500)
+
+@bp.route('/user/wallet/withdrawals', methods=['GET'])
+def get_user_withdrawals():
+    """????????"""
+    try:
+        phone = request.args.get('phone', '')
+        if not phone:
+            return json_response(message='????', code=400)
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute('''
+            SELECT w.id, w.amount, w.status, w.apply_time, w.approve_time, w.error_msg
+            FROM withdrawal_records w
+            WHERE w.user_phone = %s
+            ORDER BY w.created_at DESC
+            LIMIT 50
+        ''', (phone,))
+        rows = [dict(r) for r in cur.fetchall()]
+        conn.close()
+        return json_response(data=rows)
+    except Exception as e:
+        logger.error(f'[user/withdrawals] ??: {e}')
+        return json_response(message=str(e), code=500)

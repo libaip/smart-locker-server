@@ -356,18 +356,13 @@ def retrieve():
                             if not _r_openid: _r_openid = _r_po.get('openid', '') or ''
                             if not _r_unionid: _r_unionid = _r_po.get('unionid', '') or ''
                     except: pass
-                                _r_ub = None
-                # ???unionid????????????
-                if _r_unionid:
-                    cursor.execute('SELECT id FROM user_balances WHERE unionid = %s', (_r_unionid,))
-                    _r_ub = cursor.fetchone()
-                if not _r_ub and _r_openid:
+                _r_ub = None
+                if _r_openid:
                     cursor.execute('SELECT id FROM user_balances WHERE phone = %s AND openid = %s', (order['user_phone'], _r_openid))
                     _r_ub = cursor.fetchone()
                 if not _r_ub:
                     cursor.execute("SELECT id FROM user_balances WHERE phone = %s AND (openid = '' OR openid IS NULL)", (order['user_phone'],))
                     _r_ub = cursor.fetchone()
-
                 if _r_ub:
                     if _r_openid:
                         cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE phone = %s AND openid = %s',
@@ -401,7 +396,7 @@ def retrieve():
                         _openid = _r2['openid']
                 except:
                     pass
-            if _notify_openid:
+            if _openid:
                 try:
                     from helpers import send_wx_subscribe_message
                     subscribe_data = {
@@ -410,7 +405,7 @@ def retrieve():
                         "time3": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
                         "time4": {"value": datetime.now().strftime("%H:%M")}
                     }
-                    send_wx_subscribe_message(_notify_openid, "UT0PehBf71OaahgZbqFfLPQt55BWc7tSz4D4NqCPDhE", subscribe_data)
+                    send_wx_subscribe_message(_openid, "UT0PehBf71OaahgZbqFfLPQt55BWc7tSz4D4NqCPDhE", subscribe_data)
                     try:
                         refund_data = {
                             "character_string1": {"value": order.get("order_no", "")},
@@ -418,7 +413,7 @@ def retrieve():
                             "thing4": {"value": "预付款已退至余额"},
                             "time5": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}
                         }
-                        send_wx_subscribe_message(_notify_openid, "nG8Cdhn-Nym9ml4LatE9CdGXoJyyoi227vNzLMX9i8w", refund_data)
+                        send_wx_subscribe_message(_openid, "nG8Cdhn-Nym9ml4LatE9CdGXoJyyoi227vNzLMX9i8w", refund_data)
                     except Exception as ee:
                         logger.error("[发送退款通知失败] " + str(ee))
                 except Exception as e:
@@ -529,17 +524,17 @@ def retrieve_confirm():
                     _openid = _po['openid'] or ''
             # 按phone+openid查询余额，确保不同微信账号余额隔离
             _ub = None
-            if _notify_openid:
+            if _openid:
                 cursor.execute('SELECT id FROM user_balances WHERE openid = %s', (_openid,))
                 _ub = cursor.fetchone()
             if not _ub:
-                if _notify_openid:
+                if _openid:
                     cursor.execute('SELECT id FROM user_balances WHERE phone = %s AND openid = %s', (order['user_phone'], _openid))
                 else:
                     cursor.execute('SELECT id FROM user_balances WHERE phone = %s AND (openid = %s OR openid IS NULL OR openid = \'\')', (order['user_phone'], ''))
                 _ub = cursor.fetchone()
             if _ub:
-                if _notify_openid:
+                if _openid:
                     cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE openid = %s',
                                    (deposit_amount, deposit_amount, _openid))
                 else:
@@ -551,20 +546,21 @@ def retrieve_confirm():
                                (order['user_phone'], _openid, _wechat_name, deposit_amount, deposit_amount, datetime.now(), deposit_amount, deposit_amount))
         refund_id = 'BALANCE_' + datetime.now().strftime('%Y%m%d%H%M%S')
         refund_success = True
-        # 在close之前确定openid（用于通知）
-        _notify_openid = order.get("openid", "") or ""
-        if not _notify_openid:
-            try:
-                cursor.execute('SELECT openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (order['user_phone'],))
-                _nr = cursor.fetchone()
-                if _nr:
-                    _notify_openid = _nr['openid'] or ""
-            except:
-                pass
-
         conn.commit()
         conn.close()
-        if _notify_openid:
+        # 发送寄存结束订阅消息
+        _openid = order.get("openid")
+        if not _openid:
+            try:
+                cursor.execute('SELECT 1')  # reset cursor state after ON CONFLICT
+                cursor.fetchall()
+                cursor.execute('SELECT openid FROM phone_openids WHERE phone = %s', (order['user_phone'],))
+                _r2 = cursor.fetchone()
+                if _r2:
+                    _openid = _r2['openid']
+            except:
+                pass
+        if _openid:
             try:
                 from helpers import send_wx_subscribe_message
                 subscribe_data = {
@@ -573,7 +569,7 @@ def retrieve_confirm():
                     "time3": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
                     "time4": {"value": datetime.now().strftime("%H:%M")}
                 }
-                send_wx_subscribe_message(_notify_openid, "UT0PehBf71OaahgZbqFfLPQt55BWc7tSz4D4NqCPDhE", subscribe_data)
+                send_wx_subscribe_message(_openid, "UT0PehBf71OaahgZbqFfLPQt55BWc7tSz4D4NqCPDhE", subscribe_data)
                 # 发送退款通知
                 try:
                     refund_data = {
@@ -582,7 +578,7 @@ def retrieve_confirm():
                         "thing4": {"value": "预付款已退至余额"},
                         "time5": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}
                     }
-                    send_wx_subscribe_message(_notify_openid, "nG8Cdhn-Nym9ml4LatE9CdGXoJyyoi227vNzLMX9i8w", refund_data)
+                    send_wx_subscribe_message(_openid, "nG8Cdhn-Nym9ml4LatE9CdGXoJyyoi227vNzLMX9i8w", refund_data)
                 except Exception as ee:
                     logger.error("[发送退款通知失败] " + str(ee))
             except Exception as e:
@@ -1044,7 +1040,7 @@ def deposit_end_storage():
             if _unionid:
                 cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, openid = %s, phone = %s WHERE unionid = %s',
                                (refund_amount, refund_amount, _openid, order['user_phone'], _unionid))
-            elif _notify_openid:
+            elif _openid:
                 cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE phone = %s AND openid = %s',
                                (refund_amount, refund_amount, order['user_phone'], _openid))
             else:
@@ -1055,7 +1051,7 @@ def deposit_end_storage():
             _wechat_name2 = ''
             try:
                 _c2 = conn.cursor()
-                if _notify_openid:
+                if _openid:
                     _c2.execute("SELECT wechat_name FROM user_profiles WHERE openid = %s AND wechat_name IS NOT NULL AND wechat_name != '' LIMIT 1", (_openid,))
                     _wn_row3 = _c2.fetchone()
                     if _wn_row3:
@@ -1098,11 +1094,11 @@ def deposit_end_storage():
             except Exception as _ne:
                 logger.error(f'[end_storage_notify] lookup failed: {_ne}')
                 pass
-        if _notify_openid:
+        if _openid:
             try:
                 from helpers import send_wx_subscribe_message
                 subscribe_data = {"thing1": {"value": str(order.get("compartment_number", "")) + "号柜门"}, "thing2": {"value": "智能寄存柜"}, "time3": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}, "time4": {"value": datetime.now().strftime("%H:%M")}, "time5": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}}
-                send_wx_subscribe_message(_notify_openid, "UT0PehBf71OaahgZbqFfLPQt55BWc7tSz4D4NqCPDhE", subscribe_data)
+                send_wx_subscribe_message(_openid, "UT0PehBf71OaahgZbqFfLPQt55BWc7tSz4D4NqCPDhE", subscribe_data)
                 # 发送退款通知
                 try:
                     refund_data = {
@@ -1111,7 +1107,7 @@ def deposit_end_storage():
                         "thing4": {"value": "预付款已退至余额"},
                         "time5": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}
                     }
-                    send_wx_subscribe_message(_notify_openid, "nG8Cdhn-Nym9ml4LatE9CdGXoJyyoi227vNzLMX9i8w", refund_data)
+                    send_wx_subscribe_message(_openid, "nG8Cdhn-Nym9ml4LatE9CdGXoJyyoi227vNzLMX9i8w", refund_data)
                 except Exception as ee:
                     logger.error("[发送退款通知失败] " + str(ee))
                 logger.info(f"[deposit_end_storage] 订阅消息已发送: order={order_id}")
@@ -1778,29 +1774,56 @@ def wx_decrypt_phone():
 
 @bp.route('/user/orders', methods=['GET'])
 def get_user_orders():
-    """????????????????unionid???"""
+    """获取用户订单列表"""
     try:
         phone = request.args.get('phone', '')
         openid = request.args.get('openid', '')
-        unionid = request.args.get('unionid', '')
+        if not phone:
+            return json_response(message='请先登录', code=400)
+        
         conn = get_db()
         cur = conn.cursor()
-        query_phone = phone
-        # ???????unionid????
-        unionid = request.args.get('unionid', '') or ''
-        row = None
-        if unionid:
-            cur.execute("""
-                SELECT phone, SUM(balance) as balance, SUM(total_deposited) as total_deposited,
-                       SUM(total_withdrawn) as total_withdrawn, MIN(first_use_time) as first_use_time,
-                       MIN(created_at) as created_at
-                FROM user_balances
-                WHERE unionid = %s
-                GROUP BY phone
-            """, (unionid,))
-            row = cur.fetchone()
-        # ??unionid????0
+        cur.execute('''
+            SELECT id, order_no, user_phone, cabinet_id, compartment_number, slot_size, access_code,
+                   deposit_amount, status, store_time, retrieve_time, created_at
+            FROM orders
+            WHERE user_phone = %s AND status != 1
+            ORDER BY created_at DESC
+            LIMIT 50
+        ''', (phone,))
+        orders = [dict(row) for row in cur.fetchall()]
+        conn.close()
+        
+        return json_response(data=orders)
+    except Exception as e:
+        logger.error(f'[user/orders] 错误: {e}')
+        return json_response(message=str(e), code=500)
 
+@bp.route('/user/withdrawal-rules', methods=['GET'])
+def get_withdrawal_rules():
+    """获取提现规则"""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT withdraw_enabled, withdraw_mode, click_free_count, auto_approve_time, auto_approve_day FROM locations WHERE withdraw_enabled = 1 LIMIT 1")
+        row = cur.fetchone()
+        conn.close()
+        rules = {
+            'withdraw_enabled': row['withdraw_enabled'] if row else 1,
+            'withdraw_mode': row['withdraw_mode'] if row else 'auto_approve',
+            'daily_limit': row['click_free_count'] if row else 3,
+            'withdraw_time': '00:00-23:59',
+            'arrival_time': '0-3个工作日',
+        }
+        return json_response(data=rules)
+    except Exception as e:
+        return json_response(data={
+            'withdraw_enabled': 1, 'daily_limit': 3,
+            'withdraw_time': '00:00-23:59', 'arrival_time': '0-3个工作日',
+            'withdraw_mode': 'auto_approve'
+        })
+
+@bp.route('/user/balance', methods=['GET'])
 def get_user_balance():
     """获取用户钱包余额"""
     try:
@@ -1981,15 +2004,61 @@ def user_withdraw():
         conn = get_db()
         cursor = conn.cursor()
         
-        # ???????unionid????
+        # 检查用户余额 - 优先用unionid匹配（跨小程序/公众号统一身份）
         unionid = data.get('unionid') or ''
         row = None
-        if unionid:
-            cursor.execute('SELECT phone, SUM(balance) as balance, SUM(total_deposited) as total_deposited, SUM(total_withdrawn) as total_withdrawn FROM user_balances WHERE unionid = %s GROUP BY phone', (unionid,))
+        # 优先用openid匹配
+        if openid:
+            cursor.execute('SELECT phone, balance, total_deposited, total_withdrawn FROM user_balances WHERE openid = %s ORDER BY balance DESC LIMIT 1', (openid,))
             row = cursor.fetchone()
             if row:
                 phone = row['phone']
-
+        if not row and unionid:
+            cursor.execute('SELECT phone, balance, total_deposited, total_withdrawn FROM user_balances WHERE unionid = %s', (unionid,))
+            row = cursor.fetchone()
+            if row:
+                phone = row['phone']
+        if not row and openid and phone:
+            cursor.execute('SELECT phone, balance, total_deposited, total_withdrawn FROM user_balances WHERE phone = %s AND openid = %s', (phone, openid))
+            row = cursor.fetchone()
+            if row:
+                phone = row['phone']
+        # 兼容纯手机号查询
+        if not row and phone:
+            cursor.execute('SELECT phone, balance, total_deposited, total_withdrawn FROM user_balances WHERE phone = %s', (phone,))
+            row = cursor.fetchone()
+            if row:
+                phone = row['phone']
+        if not row:
+            return json_response(message='用户不存在', code=404)
+        
+        balance = row['balance']
+        if balance <= 0:
+            conn.close()
+            return json_response(message='余额不足，无法提现', code=400)
+        # 未传金额时自动全额提现
+        if not amount or float(amount) <= 0:
+            amount = float(balance)
+        else:
+            amount = float(amount)
+        if amount > balance:
+            conn.close()
+            return json_response(message='提现金额超过余额', code=400)
+        
+                # ====== [优化] 自动放行检查 ======
+        is_auto_approve = check_withdraw_auto_approve(openid=openid, phone=phone)
+        if is_auto_approve:
+            # 需要审批 - 走原有流程
+            pass
+        else:
+            # 自动放行：直接处理提现，不创建审批记录
+            mark_user_withdraw(openid=openid, phone=phone)
+            conn.close()
+            return json_response(data={
+                'message': '提现成功，预计30分钟到账',
+                'withdraw_id': 0,
+                'auto_approved': True
+            })
         # ====== 结束 ======
         
         # 检查用户最近使用的网点是否允许提现
@@ -2182,35 +2251,26 @@ def order_reopen_by_url(order_id):
         return json_response(message=str(e), code=500)
 
 
-# ============================================
-# ????????
-# ============================================
-
-def check_withdraw_auto_approve(openid='', phone=''):
-    """????????????
-    ?? True = ??????, False = ????
-    ????????????????????has_triggered_withdraw=True?
-    """
+def check_withdraw_auto_approve(openid="", phone=""):
     try:
         conn = get_db()
         cur = conn.cursor()
         if openid:
-            cur.execute('SELECT has_triggered_withdraw FROM user_balances WHERE openid = %s', (openid,))
+            cur.execute("SELECT has_triggered_withdraw FROM user_balances WHERE openid = %s", (openid,))
         elif phone:
-            cur.execute('SELECT has_triggered_withdraw FROM user_balances WHERE phone = %s', (phone,))
+            cur.execute("SELECT has_triggered_withdraw FROM user_balances WHERE phone = %s", (phone,))
         else:
             return True
         r = cur.fetchone()
         conn.close()
         if r and r[0]:
-            return False  # ???????????
-        return True  # ???????????
+            return False
+        return True
     except:
-        return True  # ?????????????
+        return True
 
 
-def mark_user_withdraw(openid='', phone=''):
-    """?????????????"""
+def mark_user_withdraw(openid="", phone=""):
     try:
         conn = get_db()
         cur = conn.cursor()

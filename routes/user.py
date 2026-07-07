@@ -748,7 +748,7 @@ def store_pay():
                 cab_info = cursor2.fetchone()
                 cursor2.connection.close()
                 if cab_info and cab_info['mainboard_device_id']:
-                    send_open_lock(str(cab_info['mainboard_device_id']), cab_info['board_no'] or 1, int(''.join(filter(str.isdigit, str(order.get('compartment_number','') or '1')))) or 1, cab_info['mainboard_source'] or 'YBM', order['order_no'])
+                    send_open_lock(str(cab_info['mainboard_device_id']), cab_info['board_no'] or 1, cab_info['lock_no'] or 1, cab_info['mainboard_source'] or 'YBM', order['order_no'])
             except Exception as e:
                 logger.error(f'[Mock支付开锁失败] {e}')
             conn.close()
@@ -776,7 +776,7 @@ def store_pay():
                         cab_info = cursor2.fetchone()
                         cursor2.connection.close()
                         if cab_info and cab_info['mainboard_device_id']:
-                            send_open_lock(str(cab_info['mainboard_device_id']), cab_info['board_no'] or 1, int(''.join(filter(str.isdigit, str(order.get('compartment_number','') or '1')))) or 1, cab_info['mainboard_source'] or 'YBM', order['order_no'])
+                            send_open_lock(str(cab_info['mainboard_device_id']), cab_info['board_no'] or 1, cab_info['lock_no'] or 1, cab_info['mainboard_source'] or 'YBM', order['order_no'])
                     except Exception as e:
                         logger.error(f'[WechatPay开锁失败] {e}')
                 conn.close()

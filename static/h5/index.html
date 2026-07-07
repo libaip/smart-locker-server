@@ -8,58 +8,44 @@
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;background:#f0f0f0;}
 .page{min-height:100vh;display:flex;flex-direction:column;background:#fff;max-width:480px;margin:0 auto;box-shadow:0 0 20px rgba(0,0,0,.08);}
-
-/* header */
 .header{position:relative;display:flex;align-items:center;justify-content:center;height:48px;background:#5ec9b4;padding:0 16px;}
 .header .back{position:absolute;left:16px;cursor:pointer;}
 .header .back svg{width:20px;height:20px;}
 .header .title{font-size:18px;color:#fff;font-weight:500;}
 .header .menu{position:absolute;right:16px;display:flex;align-items:center;gap:6px;cursor:pointer;}
 .header .menu svg{width:20px;height:20px;}
-
-/* user card */
 .user-card{background:#5ec9b4;padding:16px 20px 24px;display:flex;align-items:center;}
 .avatar{width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,.25);border:3px solid rgba(255,255,255,.5);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 .avatar svg{width:36px;height:36px;}
 .user-info{margin-left:14px;flex:1;}
 .phone{font-size:20px;color:#fff;font-weight:500;letter-spacing:.5px;}
-.openid{font-size:12px;color:rgba(255,255,255,.75);margin-top:4px;display:flex;align-items:center;gap:8px;word-break:break-all;}
-.copy-btn{flex-shrink:0;font-size:11px;color:#5ec9b4;background:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;border:none;}
-
-/* white card container */
 .content-card{background:#fff;border-radius:16px 16px 0 0;margin-top:-12px;padding:20px 16px 0;position:relative;z-index:2;}
-/* big cards row */
 .big-cards{display:flex;gap:12px;}
-.big-card{flex:1;border-radius:12px;padding:20px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;min-height:76px;}
+.big-card{flex:1;border-radius:12px;padding:20px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;min-height:76px;text-decoration:none;}
 .big-card.orders{background:#5ec9b4;}
 .big-card.wallet{background:#f5c542;}
 .big-card .card-icon{width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 .big-card .card-icon svg{width:22px;height:22px;}
+.big-card .card-text{flex:1;}
 .big-card .card-label{font-size:18px;color:#fff;font-weight:600;}
-
-/* list items */
+.big-card .card-sub{font-size:12px;color:rgba(255,255,255,.8);margin-top:4px;}
 .list-section{padding:16px 0;}
-.list-item{display:flex;align-items:center;padding:14px 20px;cursor:pointer;}
+.list-item{display:flex;align-items:center;padding:14px 20px;cursor:pointer;text-decoration:none;}
 .list-item:active{background:#f5f5f5;}
 .list-icon{width:36px;height:36px;border-radius:50%;background:#fdf3e0;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 .list-icon svg{width:20px;height:20px;}
 .list-item .label{margin-left:14px;font-size:16px;color:#333;flex:1;}
 .list-item .arrow{width:16px;height:16px;flex-shrink:0;}
-
-/* floating buttons */
 .floating-btns{position:fixed;right:16px;bottom:80px;display:flex;flex-direction:column;gap:12px;z-index:100;}
 .float-btn{display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;text-decoration:none;animation:floatIn .6s ease backwards;}
 .float-btn:nth-child(1){animation-delay:.3s}
 .float-btn:nth-child(2){animation-delay:.5s}
 @keyframes floatIn{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:translateX(0)}}
 .float-icon{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff;font-weight:500;animation:floatBounce 3s ease-in-out infinite;}
-.float-btn:nth-child(2) .float-icon{animation-delay:.5s}
 @keyframes floatBounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
 .float-icon.robot{background:#5ec9b4;}
 .float-icon.complaint{background:#f5c542;}
 .float-label{font-size:11px;color:#666;}
-
-/* common question link */
 .common-q{text-align:center;padding:20px;font-size:14px;color:#5ec9b4;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;}
 </style>
 </head>
@@ -70,50 +56,112 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','P
     <div class="title">个人中心</div>
     <div class="menu"><svg viewBox="0 0 20 20"><circle cx="4" cy="10" r="2" fill="#fff"/><circle cx="10" cy="10" r="2" fill="#fff"/><circle cx="16" cy="10" r="2" fill="#fff"/></svg><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg></div>
   </div>
-
   <div class="user-card">
-    <div class="avatar">
-      <svg viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-7 8-7s8 3 8 7"/></svg>
-    </div>
-    <div class="user-info">
-      <div class="phone">189****3393</div>
-      <div class="openid"><span>6a275d401b7ba6003184399b</span><button class="copy-btn">复制</button></div>
-    </div>
+    <div class="avatar"><svg viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-7 8-7s8 3 8 7"/></svg></div>
+    <div class="user-info"><div class="phone" id="userName">加载中...</div></div>
   </div>
-
   <div class="content-card">
     <div class="big-cards">
-      <div class="big-card orders" onclick="location.href='orders.html'">
+      <a class="big-card orders" id="linkOrders">
         <div class="card-icon"><svg viewBox="0 0 24 24" fill="#fff"><rect x="4" y="2" width="16" height="20" rx="2" fill="none" stroke="#fff" stroke-width="2"/><path d="M8 6h8M8 10h8M8 14h5" stroke="#fff" stroke-width="1.5"/></svg></div>
-        <div class="card-label">我的订单</div>
-      </div>
-      <div class="big-card wallet" onclick="location.href='wallet.html'">
+        <div class="card-text"><div class="card-label">我的订单</div><div class="card-sub" id="orderCount"></div></div>
+      </a>
+      <a class="big-card wallet" id="linkWallet">
         <div class="card-icon"><svg viewBox="0 0 24 24" fill="#fff"><rect x="2" y="5" width="20" height="14" rx="2" fill="none" stroke="#fff" stroke-width="2"/><path d="M16 12h4M18 10v4" stroke="#fff" stroke-width="2"/></svg></div>
-        <div class="card-label">我的钱包</div>
-      </div>
+        <div class="card-text"><div class="card-label">我的钱包</div><div class="card-sub" id="balanceSub">¥0.00</div></div>
+      </a>
     </div>
-
     <div class="list-section">
-      <div class="list-item" onclick="location.href='complaint.html'">
+      <a class="list-item" id="linkComplaint">
         <div class="list-icon"><svg viewBox="0 0 24 24" fill="#f5c542"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div>
         <div class="label">投诉反馈</div>
         <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-      </div>
-      <div class="list-item" onclick="location.href='customer_service.html'">
+      </a>
+      <a class="list-item" id="linkService">
         <div class="list-icon"><svg viewBox="0 0 24 24" fill="#f5c542"><rect x="6" y="8" width="12" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><rect x="9" y="12" width="2" height="3" rx="1" fill="#fff"/><rect x="13" y="12" width="2" height="3" rx="1" fill="#fff"/></svg></div>
         <div class="label">联系客服</div>
         <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-      </div>
+      </a>
     </div>
-
   </div>
-
-  <div class="common-q" onclick="alert('常见问题')">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5ec9b4" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9 9a3 3 0 115.12 2.13c-.67.57-1.12 1.06-1.12 1.87"/><circle cx="12" cy="17" r=".5" fill="#5ec9b4"/></svg>
-    常见问题
-  </div>
+  <div class="common-q"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5ec9b4" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9 9a3 3 0 115.12 2.13c-.67.57-1.12 1.06-1.12 1.87"/><circle cx="12" cy="17" r=".5" fill="#5ec9b4"/></svg>常见问题</div>
 </div>
+<div class="floating-btns">
+  <a class="float-btn" id="floatService"><div class="float-icon robot"><svg viewBox="0 0 52 52" width="52" height="52"><circle cx="26" cy="22" r="12" fill="#fff"/><circle cx="21" cy="20" r="2.5" fill="#45b89e"/><circle cx="31" cy="20" r="2.5" fill="#45b89e"/><path d="M21 26 Q26 31 31 26" stroke="#45b89e" stroke-width="2" fill="none" stroke-linecap="round"/><line x1="26" y1="10" x2="26" y2="5" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/><circle cx="26" cy="4" r="2.5" fill="#fff"/><path d="M13 18 Q10 22 13 26" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/><path d="M39 18 Q42 22 39 26" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/><path d="M18 34 Q18 38 26 38 Q34 38 34 34 L34 32 Q34 30 26 30 Q18 30 18 32 Z" fill="#fff" opacity="0.85"/></svg></div><div class="float-label">联系客服</div></a>
+  <a class="float-btn" id="floatComplaint"><div class="float-icon complaint"><svg viewBox="0 0 52 52" width="52" height="52"><path d="M14 20 L14 34 L22 32 L38 38 L38 16 L22 22 Z" fill="#fff"/><ellipse cx="38" cy="27" rx="4" ry="12" fill="#fff" opacity="0.7"/><rect x="10" y="23" width="5" height="8" rx="2" fill="#fff" opacity="0.85"/><path d="M43 21 Q47 27 43 33" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.6"/><path d="M46 18 Q51 27 46 36" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.4"/></svg></div><div class="float-label">投诉商家</div></a>
+</div>
+<script>
+function getPhone(){
+  var params=new URLSearchParams(window.location.search);
+  var p=params.get('phone')||localStorage.getItem('phone')||'';
+  var openid=params.get('openid')||localStorage.getItem('openid')||'';
+  if(openid) localStorage.setItem('openid',openid);
+  if(p){localStorage.setItem('phone',p);return p;}
+  // If no phone but have openid, try to get phone from backend
+  if(openid && !p){
+    fetch("https://locker.cqdyxl.com/api/user/balance?openid="+encodeURIComponent(openid))
+      .then(function(r){return r.json();})
+      .then(function(d){
+        var phone=(d.data||{}).phone||'';
+        if(phone){localStorage.setItem('phone',phone);location.reload();}
+      }).catch(function(){});
+  }
+  return p;
+}
+function maskPhone(phone){
+  if(!phone||phone.length<7) return phone||'未登录';
+  return phone.substring(0,3)+'****'+phone.substring(phone.length-4);
+}
+function apiGet(url){
+  var phone=getPhone();
+  var sep=url.indexOf('?')>-1?'&':'?';
+  return fetch(url+sep+'phone='+encodeURIComponent(phone))
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.code===0||d.code===200) return d.data;
+      throw new Error(d.message||'请求失败');
+    });
+}
+function apiPost(url,body){
+  var phone=getPhone();
+  body.phone=phone;
+  return fetch(url,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)
+  }).then(function(r){return r.json();})
+  .then(function(d){
+    if(d.code===0||d.code===200) return d.data;
+    throw new Error(d.message||'请求失败');
+  });
+}
+function withPhone(href){
+  var phone=getPhone();
+  if(!phone) return href;
+  var sep=href.indexOf('?')>-1?'&':'?';
+  return href+sep+'phone='+encodeURIComponent(phone);
+}
+var API_BASE='https://locker.cqdyxl.com/api';
 
-
+(function(){
+  var phone=getPhone();
+  document.getElementById('userName').textContent=maskPhone(phone);
+  document.getElementById('linkOrders').href=withPhone('orders.html');
+  document.getElementById('linkWallet').href=withPhone('wallet.html');
+  document.getElementById('linkComplaint').href=withPhone('complaint.html');
+  document.getElementById('linkService').href=withPhone('customer_service.html');
+  document.getElementById('floatService').href=withPhone('customer_service.html');
+  document.getElementById('floatComplaint').href=withPhone('complaint.html');
+  apiGet(API_BASE+'/user/balance').then(function(data){
+    var balance=parseFloat(data.balance||data.available_balance||0);
+    document.getElementById('balanceSub').textContent='¥'+balance.toFixed(2);
+  }).catch(function(e){console.log('balance err',e);});
+  apiGet(API_BASE+'/user/orders').then(function(orders){
+    var active=0;
+    if(Array.isArray(orders)){orders.forEach(function(o){if(o.status==2) active++;});}
+    if(active>0) document.getElementById('orderCount').textContent=active+'个进行中';
+  }).catch(function(e){console.log('orders err',e);});
+})();
+</script>
 </body>
 </html>

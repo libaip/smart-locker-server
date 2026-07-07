@@ -5028,6 +5028,13 @@ def wechat_complaint_notify():
                 from helpers import mark_user_withdraw as _muw
                 try: _muw(phone=payer_phone)
                 except: pass
+            # [??: routes/admin_v2.py.bak.20260707] 2026-07-07 ?? complaint_count +1
+            if payer_phone:
+                try:
+                    c.execute("UPDATE user_balances SET complaint_count = complaint_count + 1 WHERE phone=%s", (payer_phone,))
+                    conn.commit()
+                except Exception as _ce:
+                    logger.error(f"[complaint_count] 更新失败: {_ce}")
             logger.info('[wechat_complaint_notify] 已保存投诉: complaint_id=%s', complaint_id)
         else:
             logger.info('[wechat_complaint_notify] 投诉已存在: complaint_id=%s', complaint_id)

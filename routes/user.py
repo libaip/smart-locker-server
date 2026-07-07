@@ -106,18 +106,22 @@ def store_init():
         if not all([cabinet_id, user_phone]):
             return json_response(message='参数不完整', code=400)
 
-        # 检查设备是否在线
-        from helpers import connected_devices
+        # 检查设备是否在线（查 last_heartbeat，5分钟内算在线）
+        # 备份位置：user.py.bak.onlinecheck
         conn0 = get_db()
         cur0 = conn0.cursor()
-        cur0.execute('SELECT mainboard_device_id FROM cabinets WHERE id=%s', (cabinet_id,))
+        cur0.execute("SELECT mainboard_device_id, last_heartbeat FROM cabinets WHERE id = %s", (cabinet_id,))
         cab0 = cur0.fetchone()
         conn0.close()
-        device_online = False
         if cab0 and cab0['mainboard_device_id']:
-            device_online = cab0['mainboard_device_id'] in connected_devices
-        # 如果没有绑定设备ID，允许仅从数据库分配（柜门分配不依赖设备在线）
-        # 如果绑定了设备ID但设备不在线，仍然允许分配，支付成功后再开柜
+            hb = cab0['last_heartbeat']
+            if not hb:
+                return json_response(message='设备离线，请稍后再试', code=400)
+            from datetime import datetime as _dt
+            if (_dt.now() - hb).total_seconds() > 300:
+                return json_response(message='设备离线，请稍后再试', code=400)
+        # 如果没有绑定设备ID，允许仅从数据库分配
+
 
         sms_enabled = get_setting('sms_enabled', 'false').lower() == 'true'
         if sms_enabled and not sms_code:
@@ -628,6 +632,16 @@ def create_deposit_order():
             conn.close()
         conn = get_db()
         cursor = conn.cursor()
+        # ===== 设备在线检测：检查 last_heartbeat（5分钟内） =====
+        # 备份位置：user.py.bak.onlinecheck
+        cursor.execute("SELECT mainboard_device_id, last_heartbeat FROM cabinets WHERE id = %s", (cabinet_id,))
+        cab = cursor.fetchone()
+        if cab and cab['mainboard_device_id']:
+            hb = cab['last_heartbeat']
+            if not hb or (datetime.now() - hb).total_seconds() > 300:
+                conn.close()
+                return json_response(message='设备离线，请稍后再试', code=400)
+        # ===== 设备在线检测结束 =====
         # 清理超过15分钟的未支付订单，释放柜门
         from datetime import timedelta
         expire_time = datetime.now() - timedelta(minutes=15)
@@ -1555,6 +1569,45 @@ def cabinet_screen_info():
 # 投诉
 # ============================================
 
+
+@bp.route('/user/info', methods=['GET'])
+def get_user_info():
+    """获取用户信息（个人中心页）"""
+    try:
+        phone = request.args.get('phone', '')
+        if not phone:
+            return json_response(message='请先登录', code=400)
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT balance FROM user_balances WHERE phone = %s LIMIT 1", (phone,))
+        bal_row = cur.fetchone()
+        balance = float(bal_row['balance'] or 0) if bal_row else 0
+        cur.execute("""
+            SELECT c.name as cabinet_name, c.withdrawal_rules
+            FROM orders o
+            LEFT JOIN cabinets c ON o.cabinet_id = c.id
+            WHERE o.user_phone = %s AND o.status != 1
+            ORDER BY o.created_at DESC LIMIT 1
+        """, (phone,))
+        order_row = cur.fetchone()
+        cabinet_name = order_row['cabinet_name'] if order_row else ''
+        withdrawal_rules = order_row['withdrawal_rules'] if order_row and order_row.get('withdrawal_rules') else ''
+        if not withdrawal_rules:
+            cur.execute("SELECT withdrawal_rules FROM cabinets WHERE withdrawal_rules IS NOT NULL AND withdrawal_rules != '' LIMIT 1")
+            wr_row = cur.fetchone()
+            if wr_row:
+                withdrawal_rules = wr_row['withdrawal_rules'] or ''
+        conn.close()
+        return json_response(data={
+            'phone': phone,
+            'balance': balance,
+            'cabinet_name': cabinet_name,
+            'withdrawal_rules': withdrawal_rules
+        })
+    except Exception as e:
+        logger.error(f'[user/info] 错误: {e}')
+        return json_response(message=str(e), code=500)
+
 @bp.route('/complaints', methods=['POST'])
 def create_complaint():
     """用户提交投诉"""
@@ -1785,11 +1838,15 @@ def get_user_orders():
         conn = get_db()
         cur = conn.cursor()
         cur.execute('''
-            SELECT id, order_no, user_phone, cabinet_id, compartment_number, slot_size, access_code,
-                   deposit_amount, status, store_time, retrieve_time, created_at
-            FROM orders
-            WHERE user_phone = %s AND status != 1
-            ORDER BY created_at DESC
+            SELECT o.id, o.order_no, o.user_phone, o.cabinet_id, o.compartment_number, o.slot_size, o.access_code,
+                   o.deposit_amount, o.status, o.store_time, o.retrieve_time, o.created_at,
+                   c.name as cabinet_name,
+                   l.name as location_name
+            FROM orders o
+            LEFT JOIN cabinets c ON o.cabinet_id = c.id
+            LEFT JOIN locations l ON c.location_id = l.id
+            WHERE o.user_phone = %s AND o.status != 1
+            ORDER BY o.created_at DESC
             LIMIT 50
         ''', (phone,))
         orders = [dict(row) for row in cur.fetchall()]

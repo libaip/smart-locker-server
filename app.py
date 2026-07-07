@@ -274,7 +274,8 @@ def profile():
 @app.route('/static/deposit.html')
 def deposit_html_redirect():
     if request.args.get('page') == 'profile':
-        return send_from_directory('static', 'user-h5.html')
+        qs = request.query_string.decode() if request.query_string else ''
+        return redirect('/static/h5/index.html' + ('?' + qs if qs else ''))
     return send_from_directory('static', 'deposit.html')
 @app.route('/user-center')
 def user_center():
@@ -348,16 +349,13 @@ def store_page():
             _ssr["charge_mode"] = row["charge_mode"] or "deposit"
             _ssr["per_use_price"] = row["per_use_price"] or 0
             _ssr["allow_h5_to_mp"] = row["allow_h5_to_mp"] or 0
-            if row["allow_h5_to_mp"]:
-                _ssr["mp_appid"] = config.WX_MP_APP_ID
-                _ssr["mp_path"] = "pages/subscribe/subscribe"
-            # 每次有人扫码加载存包页面就刷新心跳
-            try:
-                _up = conn.cursor()
-                _up.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE id=%s", (row["id"],))
-                conn.commit()
-            except:
-                pass
+#            if row["allow_h5_to_mp"]:
+#                _ssr["mp_appid"] = config.WX_MP_APP_ID
+#                _ssr["mp_path"] = "pages/subscribe/subscribe"
+#            # 每次有人扫码加载存包页面就刷新心跳
+#            try:
+#                _up = conn.cursor()
+# _up.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE id=%s", (row["id"],))
             # 计算设备在线状态
             if row.get("last_heartbeat"):
                 try:

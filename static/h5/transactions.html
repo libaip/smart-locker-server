@@ -11,84 +11,95 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei
 .nav-back{cursor:pointer;text-decoration:none;display:flex;align-items:center}
 .nav-back svg{width:20px;height:20px;fill:#333}
 .nav-title{font-size:17px;font-weight:500;position:absolute;left:50%;transform:translateX(-50%)}
-.nav-right{margin-left:auto;display:flex;gap:4px}
-.nav-right svg{width:20px;height:20px;fill:#999}
 .content{padding:16px}
 .tx-card{background:#fff;border-radius:12px;padding:16px;margin-bottom:12px;position:relative}
 .tx-row{display:flex;align-items:center;margin-bottom:8px;line-height:1.6}
 .tx-row:last-child{margin-bottom:0}
 .tx-label{font-size:14px;color:#999;min-width:72px;flex-shrink:0}
 .tx-value{font-size:14px;color:#333;flex:1;display:flex;align-items:center;gap:4px}
-.tx-value .copy-icon{cursor:pointer;opacity:.5;margin-left:4px;flex-shrink:0}
-.tx-value .copy-icon svg{width:16px;height:16px;fill:#999}
 .tx-tip{position:absolute;right:16px;top:50%;transform:translateY(-50%);font-size:11px;color:#E6A700;text-align:right;max-width:120px;line-height:1.4}
+.empty,.loading{text-align:center;padding:60px 20px;color:#ccc;font-size:14px}
 </style>
 </head>
 <body>
 <div class="nav">
-  <a class="nav-back" href="wallet.html"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></a>
+  <a class="nav-back" id="linkBack"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></a>
   <div class="nav-title">交易明细</div>
-  <div class="nav-right"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></div>
 </div>
-<div class="content">
-
-  <!-- 记录1: 余额提现 -->
-  <div class="tx-card">
-    <div class="tx-tip">预计1-3个工作日到账<br>请耐心等待…<br>超时请联系客服</div>
-    <div class="tx-row"><div class="tx-label">订单编号:</div><div class="tx-value">17834116247879646896 <span class="copy-icon" onclick="copyText('17834116247879646896',this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></span></div></div>
-    <div class="tx-row"><div class="tx-label">交易类型:</div><div class="tx-value">余额提现</div></div>
-    <div class="tx-row"><div class="tx-label">交易金额:</div><div class="tx-value">20元</div></div>
-    <div class="tx-row"><div class="tx-label">交易时间:</div><div class="tx-value">2026-07-07 16:07:04</div></div>
-  </div>
-
-  <!-- 记录2: 退回钱包 -->
-  <div class="tx-card">
-    <div class="tx-row"><div class="tx-label">订单编号:</div><div class="tx-value">5890916622260707 <span class="copy-icon" onclick="copyText('5890916622260707',this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></span></div></div>
-    <div class="tx-row"><div class="tx-label">交易类型:</div><div class="tx-value">退回钱包</div></div>
-    <div class="tx-row"><div class="tx-label">交易金额:</div><div class="tx-value">20元</div></div>
-    <div class="tx-row"><div class="tx-label">交易时间:</div><div class="tx-value">2026-07-07 16:02:29</div></div>
-  </div>
-
-  <!-- 记录3: 充值 -->
-  <div class="tx-card">
-    <div class="tx-row"><div class="tx-label">订单编号:</div><div class="tx-value">5890916622260707 <span class="copy-icon" onclick="copyText('5890916622260707',this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></span></div></div>
-    <div class="tx-row"><div class="tx-label">交易类型:</div><div class="tx-value">充值</div></div>
-    <div class="tx-row"><div class="tx-label">交易金额:</div><div class="tx-value">20元</div></div>
-    <div class="tx-row"><div class="tx-label">交易时间:</div><div class="tx-value">2026-07-07 15:57:25</div></div>
-  </div>
-
-  <!-- 记录4: 余额提现 -->
-  <div class="tx-card">
-    <div class="tx-tip">预计1-3个工作日到账<br>请耐心等待…<br>超时请联系客服</div>
-    <div class="tx-row"><div class="tx-label">订单编号:</div><div class="tx-value">17833235526057142541 <span class="copy-icon" onclick="copyText('17833235526057142541',this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></span></div></div>
-    <div class="tx-row"><div class="tx-label">交易类型:</div><div class="tx-value">余额提现</div></div>
-    <div class="tx-row"><div class="tx-label">交易金额:</div><div class="tx-value">20元</div></div>
-    <div class="tx-row"><div class="tx-label">交易时间:</div><div class="tx-value">2026-07-06 15:39:12</div></div>
-  </div>
-
-  <!-- 记录5: 退回钱包 -->
-  <div class="tx-card">
-    <div class="tx-row"><div class="tx-label">订单编号:</div><div class="tx-value">5862126495260706 <span class="copy-icon" onclick="copyText('5862126495260706',this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></span></div></div>
-    <div class="tx-row"><div class="tx-label">交易类型:</div><div class="tx-value">退回钱包</div></div>
-    <div class="tx-row"><div class="tx-label">交易金额:</div><div class="tx-value">20元</div></div>
-    <div class="tx-row"><div class="tx-label">交易时间:</div><div class="tx-value">2026-07-06 15:36:17</div></div>
-  </div>
-
-  <!-- 记录6: 充值 -->
-  <div class="tx-card">
-    <div class="tx-row"><div class="tx-label">订单编号:</div><div class="tx-value">5862126495260706 <span class="copy-icon" onclick="copyText('5862126495260706',this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></span></div></div>
-    <div class="tx-row"><div class="tx-label">交易类型:</div><div class="tx-value">充值</div></div>
-    <div class="tx-row"><div class="tx-label">交易金额:</div><div class="tx-value">20元</div></div>
-    <div class="tx-row"><div class="tx-label">交易时间:</div><div class="tx-value">2026-07-06 15:04:27</div></div>
-  </div>
-
-</div>
+<div class="content" id="txList"><div class="loading">加载中...</div></div>
 <script>
-function copyText(text,el){
-  navigator.clipboard?navigator.clipboard.writeText(text):0;
-  el.innerHTML='<svg viewBox="0 0 24 24"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg>';
-  setTimeout(function(){el.innerHTML='<svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';},1500);
+function getPhone(){
+  var params=new URLSearchParams(window.location.search);
+  var p=params.get('phone')||localStorage.getItem('phone')||'';
+  var openid=params.get('openid')||localStorage.getItem('openid')||'';
+  if(openid) localStorage.setItem('openid',openid);
+  if(p){localStorage.setItem('phone',p);return p;}
+  // If no phone but have openid, try to get phone from backend
+  if(openid && !p){
+    fetch("https://locker.cqdyxl.com/api/user/balance?openid="+encodeURIComponent(openid))
+      .then(function(r){return r.json();})
+      .then(function(d){
+        var phone=(d.data||{}).phone||'';
+        if(phone){localStorage.setItem('phone',phone);location.reload();}
+      }).catch(function(){});
+  }
+  return p;
 }
+function maskPhone(phone){
+  if(!phone||phone.length<7) return phone||'未登录';
+  return phone.substring(0,3)+'****'+phone.substring(phone.length-4);
+}
+function apiGet(url){
+  var phone=getPhone();
+  var sep=url.indexOf('?')>-1?'&':'?';
+  return fetch(url+sep+'phone='+encodeURIComponent(phone))
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.code===0||d.code===200) return d.data;
+      throw new Error(d.message||'请求失败');
+    });
+}
+function apiPost(url,body){
+  var phone=getPhone();
+  body.phone=phone;
+  return fetch(url,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)
+  }).then(function(r){return r.json();})
+  .then(function(d){
+    if(d.code===0||d.code===200) return d.data;
+    throw new Error(d.message||'请求失败');
+  });
+}
+function withPhone(href){
+  var phone=getPhone();
+  if(!phone) return href;
+  var sep=href.indexOf('?')>-1?'&':'?';
+  return href+sep+'phone='+encodeURIComponent(phone);
+}
+var API_BASE='https://locker.cqdyxl.com/api';
+
+function fmtTime(t){if(!t)return '';return String(t).replace('T',' ').substring(0,19);}
+(function(){
+  document.getElementById('linkBack').href=withPhone('wallet.html');
+  apiGet(API_BASE+'/user/wallet/transactions?type=all&page=1&limit=50').then(function(data){
+    var list=data.list||[],c=document.getElementById('txList');
+    if(!list.length){c.innerHTML='<div class="empty">暂无交易记录</div>';return;}
+    var h='';
+    list.forEach(function(item){
+      var amt=parseFloat(item.amount||0),exp=amt<0,abs=Math.abs(amt).toFixed(2),tip='';
+      if(exp) tip='<div class="tx-tip">预计1-3个工作日到账<br>请耐心等待…<br>超时请联系客服</div>';
+      h+='<div class="tx-card">'+tip
+        +'<div class="tx-row"><div class="tx-label">订单编号:</div><div class="tx-value">'+(item.order_no||'')+'</div></div>'
+        +'<div class="tx-row"><div class="tx-label">交易类型:</div><div class="tx-value">'+(exp?'余额提现':'退回钱包')+'</div></div>'
+        +'<div class="tx-row"><div class="tx-label">交易金额:</div><div class="tx-value">'+abs+'元</div></div>'
+        +'<div class="tx-row"><div class="tx-label">交易时间:</div><div class="tx-value">'+fmtTime(item.source_time)+'</div></div>'
+        +'</div>';
+    });
+    c.innerHTML=h;
+  }).catch(function(e){document.getElementById('txList').innerHTML='<div class="empty">加载失败</div>';});
+})();
 </script>
 </body>
 </html>

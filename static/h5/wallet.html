@@ -8,13 +8,11 @@
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;background:#f0f0f0;}
 .page{min-height:100vh;display:flex;flex-direction:column;background:#fff;max-width:480px;margin:0 auto;box-shadow:0 0 20px rgba(0,0,0,.08);}
-
 .header{position:relative;display:flex;align-items:center;justify-content:center;height:48px;background:#fff;border-bottom:1px solid #f0f0f0;padding:0 16px;}
-.header .back{position:absolute;left:16px;cursor:pointer;}
+.header .back{position:absolute;left:16px;cursor:pointer;text-decoration:none;display:flex;}
 .header .back svg{width:20px;height:20px;}
 .header .title{font-size:18px;color:#333;font-weight:500;}
 .header .menu{position:absolute;right:16px;display:flex;align-items:center;gap:6px;cursor:pointer;}
-
 .balance-card{background:linear-gradient(135deg,#5ec9b4 0%,#4ec9a8 100%);border-radius:12px;margin:16px;padding:24px 20px;position:relative;min-height:140px;overflow:hidden;}
 .balance-card::before{content:'';position:absolute;top:-30px;right:-30px;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,.08);}
 .balance-label{font-size:14px;color:rgba(255,255,255,.85);margin-bottom:8px;}
@@ -22,27 +20,22 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','P
 .balance-currency{font-size:20px;color:#fff;font-weight:500;line-height:40px;}
 .balance-amount{font-size:48px;color:#fff;font-weight:700;line-height:52px;}
 .balance-actions{display:flex;gap:10px;margin-top:16px;}
-.btn-withdraw{background:#fff;color:#5ec9b4;border:none;padding:8px 24px;border-radius:20px;font-size:14px;font-weight:500;cursor:pointer;}
+.btn-withdraw{background:#fff;color:#5ec9b4;border:none;padding:8px 24px;border-radius:20px;font-size:14px;font-weight:500;cursor:pointer;text-decoration:none;}
 .btn-rule{background:rgba(255,255,255,.2);color:#fff;border:none;padding:8px 24px;border-radius:20px;font-size:14px;cursor:pointer;}
-
 .list-section{padding:16px 0;}
-.list-item{display:flex;align-items:center;padding:14px 20px;cursor:pointer;background:#fff;}
+.list-item{display:flex;align-items:center;padding:14px 20px;cursor:pointer;text-decoration:none;background:#fff;}
 .list-item:active{background:#f5f5f5;}
 .list-icon{width:44px;height:44px;border-radius:50%;background:#fdf3e0;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 .list-icon svg{width:22px;height:22px;}
 .list-item .label{margin-left:14px;font-size:16px;color:#333;flex:1;}
 .list-item .arrow{width:16px;height:16px;flex-shrink:0;}
-
 .common-q{text-align:center;padding:20px;font-size:14px;color:#5ec9b4;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;margin-top:auto;}
-
 .floating-btns{position:fixed;right:16px;bottom:80px;display:flex;flex-direction:column;gap:16px;z-index:100;}
 .float-btn{display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;text-decoration:none;animation:floatIn .6s ease backwards;}
 .float-btn:nth-child(1){animation-delay:.3s}
 .float-btn:nth-child(2){animation-delay:.5s}
 @keyframes floatIn{from{opacity:0;transform:translateX(40px) scale(.5)}to{opacity:1;transform:translateX(0) scale(1)}}
 .float-icon{width:72px;height:72px;border-radius:50%;display:flex;align-items:center;justify-content:center;animation:floatBounce 2.5s ease-in-out infinite;box-shadow:0 4px 16px rgba(0,0,0,.15);transition:transform .2s;}
-.float-btn:nth-child(2) .float-icon{animation-delay:.4s}
-.float-icon:active{transform:scale(.9)}
 @keyframes floatBounce{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-8px) scale(1.05)}}
 .float-icon.robot{background:linear-gradient(135deg,#5ec9b4,#45b89e);}
 .float-icon.complaint{background:linear-gradient(135deg,#f5c542,#e6b530);}
@@ -52,78 +45,97 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','P
 <body>
 <div class="page">
   <div class="header">
-    <div class="back" onclick="location.href='index.html'"><svg viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="3"><path d="M15 18l-6-6 6-6"/></svg></div>
+    <a class="back" id="linkBack"><svg viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="3"><path d="M15 18l-6-6 6-6"/></svg></a>
     <div class="title">我的钱包</div>
-    <div class="menu"><svg viewBox="0 0 20 20"><circle cx="4" cy="10" r="2" fill="#333"/><circle cx="10" cy="10" r="2" fill="#333"/><circle cx="16" cy="10" r="2" fill="#333"/></svg><svg viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg></div>
   </div>
-
   <div class="balance-card">
     <div class="balance-label">可用余额</div>
-    <div class="balance-row">
-      <span class="balance-currency">¥</span>
-      <span class="balance-amount">0</span>
-    </div>
+    <div class="balance-row"><span class="balance-currency">¥</span><span class="balance-amount" id="balanceAmount">0.00</span></div>
     <div class="balance-actions">
-      <button class="btn-withdraw" onclick="location.href='withdraw.html'">提现</button>
-      <button class="btn-rule" onclick="alert('提现规则')">提现规则</button>
+      <a class="btn-withdraw" id="linkWithdraw">提现</a>
+      <button class="btn-rule" id="btnRule">提现规则</button>
     </div>
   </div>
-
   <div class="list-section">
-    <div class="list-item" onclick="location.href='withdraw_record.html'">
-      <div class="list-icon"><svg viewBox="0 0 24 24" fill="#f5c542"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M12 12v4M8 12l4-4 4 4" stroke="#fff" stroke-width="1.5"/></svg></div>
-      <div class="label">提现记录</div>
-      <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
-    <div class="list-item" onclick="location.href='transactions.html'">
-      <div class="list-icon"><svg viewBox="0 0 24 24" fill="#f5c542"><path d="M20 12V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2h6" /><circle cx="18" cy="16" r="4"/></svg></div>
-      <div class="label">交易明细</div>
-      <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
-  </div>
-
-  <div class="common-q" onclick="alert('常见问题')">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5ec9b4" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9 9a3 3 0 115.12 2.13c-.67.57-1.12 1.06-1.12 1.87"/><circle cx="12" cy="17" r=".5" fill="#5ec9b4"/></svg>
-    常见问题
+    <a class="list-item" id="linkWithdrawRecord"><div class="list-icon"><svg viewBox="0 0 24 24" fill="#f5c542"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M12 12v4M8 12l4-4 4 4" stroke="#fff" stroke-width="1.5"/></svg></div><div class="label">提现记录</div><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></a>
+    <a class="list-item" id="linkTransactions"><div class="list-icon"><svg viewBox="0 0 24 24" fill="#f5c542"><path d="M20 12V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2h6"/><circle cx="18" cy="16" r="4"/></svg></div><div class="label">交易明细</div><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></a>
   </div>
 </div>
-
 <div class="floating-btns">
-  <a class="float-btn" href="customer_service.html">
-    <div class="float-icon robot"><svg viewBox="0 0 52 52" width="52" height="52">
-      <!-- Head -->
-      <circle cx="26" cy="22" r="12" fill="#fff"/>
-      <!-- Eyes -->
-      <circle cx="21" cy="20" r="2.5" fill="#45b89e"/>
-      <circle cx="31" cy="20" r="2.5" fill="#45b89e"/>
-      <!-- Smile -->
-      <path d="M21 26 Q26 31 31 26" stroke="#45b89e" stroke-width="2" fill="none" stroke-linecap="round"/>
-      <!-- Antenna -->
-      <line x1="26" y1="10" x2="26" y2="5" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
-      <circle cx="26" cy="4" r="2.5" fill="#fff"/>
-      <!-- Headset left -->
-      <path d="M13 18 Q10 22 13 26" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-      <!-- Headset right -->
-      <path d="M39 18 Q42 22 39 26" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-      <!-- Body -->
-      <path d="M18 34 Q18 38 26 38 Q34 38 34 34 L34 32 Q34 30 26 30 Q18 30 18 32 Z" fill="#fff" opacity="0.85"/>
-    </svg></div>
-    <div class="float-label">联系客服</div>
-  </a>
-  <a class="float-btn" href="complaint.html">
-    <div class="float-icon complaint"><svg viewBox="0 0 52 52" width="52" height="52">
-      <!-- Megaphone body -->
-      <path d="M14 20 L14 34 L22 32 L38 38 L38 16 L22 22 Z" fill="#fff"/>
-      <!-- Megaphone bell -->
-      <ellipse cx="38" cy="27" rx="4" ry="12" fill="#fff" opacity="0.7"/>
-      <!-- Handle -->
-      <rect x="10" y="23" width="5" height="8" rx="2" fill="#fff" opacity="0.85"/>
-      <!-- Sound waves -->
-      <path d="M43 21 Q47 27 43 33" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.6"/>
-      <path d="M46 18 Q51 27 46 36" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.4"/>
-    </svg></div>
-    <div class="float-label">投诉商家</div>
-  </a>
+  <a class="float-btn" id="floatService"><div class="float-icon robot"><svg viewBox="0 0 52 52" width="52" height="52"><circle cx="26" cy="22" r="12" fill="#fff"/><circle cx="21" cy="20" r="2.5" fill="#45b89e"/><circle cx="31" cy="20" r="2.5" fill="#45b89e"/><path d="M21 26 Q26 31 31 26" stroke="#45b89e" stroke-width="2" fill="none" stroke-linecap="round"/><line x1="26" y1="10" x2="26" y2="5" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/><circle cx="26" cy="4" r="2.5" fill="#fff"/><path d="M13 18 Q10 22 13 26" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/><path d="M39 18 Q42 22 39 26" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/><path d="M18 34 Q18 38 26 38 Q34 38 34 34 L34 32 Q34 30 26 30 Q18 30 18 32 Z" fill="#fff" opacity="0.85"/></svg></div><div class="float-label">联系客服</div></a>
+  <a class="float-btn" id="floatComplaint"><div class="float-icon complaint"><svg viewBox="0 0 52 52" width="52" height="52"><path d="M14 20 L14 34 L22 32 L38 38 L38 16 L22 22 Z" fill="#fff"/><ellipse cx="38" cy="27" rx="4" ry="12" fill="#fff" opacity="0.7"/><rect x="10" y="23" width="5" height="8" rx="2" fill="#fff" opacity="0.85"/><path d="M43 21 Q47 27 43 33" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.6"/><path d="M46 18 Q51 27 46 36" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.4"/></svg></div><div class="float-label">投诉商家</div></a>
 </div>
+<script>
+function getPhone(){
+  var params=new URLSearchParams(window.location.search);
+  var p=params.get('phone')||localStorage.getItem('phone')||'';
+  var openid=params.get('openid')||localStorage.getItem('openid')||'';
+  if(openid) localStorage.setItem('openid',openid);
+  if(p){localStorage.setItem('phone',p);return p;}
+  // If no phone but have openid, try to get phone from backend
+  if(openid && !p){
+    fetch("https://locker.cqdyxl.com/api/user/balance?openid="+encodeURIComponent(openid))
+      .then(function(r){return r.json();})
+      .then(function(d){
+        var phone=(d.data||{}).phone||'';
+        if(phone){localStorage.setItem('phone',phone);location.reload();}
+      }).catch(function(){});
+  }
+  return p;
+}
+function maskPhone(phone){
+  if(!phone||phone.length<7) return phone||'未登录';
+  return phone.substring(0,3)+'****'+phone.substring(phone.length-4);
+}
+function apiGet(url){
+  var phone=getPhone();
+  var sep=url.indexOf('?')>-1?'&':'?';
+  return fetch(url+sep+'phone='+encodeURIComponent(phone))
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.code===0||d.code===200) return d.data;
+      throw new Error(d.message||'请求失败');
+    });
+}
+function apiPost(url,body){
+  var phone=getPhone();
+  body.phone=phone;
+  return fetch(url,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)
+  }).then(function(r){return r.json();})
+  .then(function(d){
+    if(d.code===0||d.code===200) return d.data;
+    throw new Error(d.message||'请求失败');
+  });
+}
+function withPhone(href){
+  var phone=getPhone();
+  if(!phone) return href;
+  var sep=href.indexOf('?')>-1?'&':'?';
+  return href+sep+'phone='+encodeURIComponent(phone);
+}
+var API_BASE='https://locker.cqdyxl.com/api';
+
+(function(){
+  document.getElementById('linkBack').href=withPhone('index.html');
+  document.getElementById('linkWithdraw').href=withPhone('withdraw.html');
+  document.getElementById('linkWithdrawRecord').href=withPhone('withdraw_record.html');
+  document.getElementById('linkTransactions').href=withPhone('transactions.html');
+  document.getElementById('floatService').href=withPhone('customer_service.html');
+  document.getElementById('floatComplaint').href=withPhone('complaint.html');
+  var withdrawalRules='';
+  apiGet(API_BASE+'/user/balance').then(function(data){
+    document.getElementById('balanceAmount').textContent=parseFloat(data.balance||data.available_balance||0).toFixed(2);
+  }).catch(function(e){console.log(e);});
+  apiGet(API_BASE+'/user/info').then(function(data){
+    withdrawalRules=data.withdrawal_rules||'';
+  }).catch(function(e){});
+  document.getElementById('btnRule').addEventListener('click',function(){
+    alert(withdrawalRules||'提现规则：\n提现金额最低1元起\n提现将在1-3个工作日内原路退回支付账户\n如有疑问请联系客服');
+  });
+})();
+</script>
 </body>
 </html>

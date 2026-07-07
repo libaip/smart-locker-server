@@ -11,128 +11,177 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei
 .nav-back{cursor:pointer;text-decoration:none;display:flex;align-items:center}
 .nav-back svg{width:20px;height:20px;fill:#333}
 .nav-title{font-size:17px;font-weight:500;position:absolute;left:50%;transform:translateX(-50%)}
-.nav-right{margin-left:auto;display:flex}
-.nav-right svg{width:20px;height:20px;fill:#999}
 .tabs{display:flex;background:#fff;border-bottom:1px solid #f0f0f0}
 .tab{flex:1;text-align:center;padding:12px 0;font-size:14px;color:#999;cursor:pointer;position:relative}
 .tab.active{color:#4ECDC4;font-weight:600}
 .tab.active::after{content:'';position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:24px;height:2px;background:#4ECDC4;border-radius:1px}
 .content{padding:0}
-/* 空状态 */
 .empty{text-align:center;padding:80px 20px}
-.empty-icon svg{width:140px;height:140px}
 .empty-text{font-size:13px;color:#ccc;margin-top:16px}
-/* 订单卡片 */
 .order-card{background:#fff;border-radius:12px;margin:12px 16px;padding:16px;box-shadow:0 1px 6px rgba(0,0,0,0.04)}
 .order-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
 .order-cabinet{font-size:15px;font-weight:600}
 .order-status{font-size:11px;color:#4ECDC4;background:#E8F8F7;padding:3px 10px;border-radius:10px}
 .order-row{font-size:13px;color:#666;line-height:2.2}
 .order-row .label{color:#999;margin-right:4px}
-.order-row .copy{font-size:10px;color:#4ECDC4;cursor:pointer;border:1px solid #4ECDC4;border-radius:3px;padding:0 3px;margin-left:4px;vertical-align:middle}
-.bottom-links{display:flex;justify-content:center;gap:24px;padding:20px 0;font-size:13px}
-.bottom-links a{color:#999;text-decoration:underline}
-
 .order-card.ongoing{border-left:3px solid #4ECDC4}
 .order-card.ongoing .order-status{color:#fff;background:#4ECDC4}
-.order-card.ongoing .order-action{display:flex;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid #f0f0f0}
-.order-card.ongoing .btn-pick{flex:1;padding:8px 0;border-radius:20px;font-size:13px;font-weight:500;text-align:center;cursor:pointer;border:none}
-.btn-pick.primary{background:#4ECDC4;color:#fff}
-.btn-pick.secondary{background:#f5f5f5;color:#666}
 .elapsed{font-size:12px;color:#E6A700;margin-top:6px}
 .tab-content{display:none}
 .tab-content.active{display:block}
+.loading{text-align:center;padding:60px 20px;color:#999;font-size:14px}
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;display:none;align-items:center;justify-content:center}
+.modal-overlay.active{display:flex}
+.modal-box{background:#fff;border-radius:12px;width:85%;max-width:360px;padding:24px;position:relative}
+.modal-close{position:absolute;top:12px;right:16px;font-size:20px;color:#999;cursor:pointer;line-height:1}
+.modal-title{font-size:16px;font-weight:600;color:#333;margin-bottom:16px;text-align:center}
+.modal-info{background:#f8f9fa;border-radius:8px;padding:16px;margin-bottom:16px}
+.modal-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;font-size:14px}
+.modal-row:not(:last-child){border-bottom:1px solid #eee}
+.modal-row .label{color:#999}
+.modal-row .value{color:#333;font-weight:500}
+.modal-row .value.phone{font-size:16px;color:#4ECDC4}
+.modal-row .value.code{font-size:20px;font-weight:700;color:#ff4757;letter-spacing:2px}
+.modal-btn{width:100%;padding:12px;border-radius:24px;border:none;background:#4ECDC4;color:#fff;font-size:15px;font-weight:500;cursor:pointer}
 </style>
 </head>
 <body>
 <div class="nav">
-  <a class="nav-back" href="index.html"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></a>
+  <a class="nav-back" id="linkBack"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></a>
   <div class="nav-title">我的订单</div>
-  <div class="nav-right"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></div>
 </div>
 <div class="tabs">
   <div class="tab active" onclick="switchTab(this,'ongoing')">进行中</div>
   <div class="tab" onclick="switchTab(this,'done')">已完成</div>
 </div>
 <div class="content">
-  <div class="tab-content active" id="ongoing">
-    <div class="order-card ongoing">
-      <div class="order-header">
-        <span class="order-cabinet">043号柜 · A12格口</span>
-        <span class="order-status">使用中</span>
-      </div>
-      <div class="order-row">
-        <div><span class="label">订单编号:</span> ORD20260707003 <span class="copy">复制</span></div>
-        <div><span class="label">开始时间:</span> 2026-07-07 14:30</div>
-        <div><span class="label">寄存地点:</span> 重庆北站A区</div>
-      </div>
-      <div class="elapsed">已用时 5小时28分 · 已扣费 ¥8.00</div>
-      <div class="order-action">
-        <button class="btn-pick primary">取件</button>
-        <button class="btn-pick secondary">续费</button>
-      </div>
+  <div class="tab-content active" id="ongoing"><div class="loading">加载中...</div></div>
+  <div class="tab-content" id="done"><div class="loading">加载中...</div></div>
+</div>
+<div class="modal-overlay" id="orderModal">
+  <div class="modal-box">
+    <span class="modal-close" onclick="closeModal()">&times;</span>
+    <div class="modal-title">存包信息</div>
+    <div class="modal-info">
+      <div class="modal-row"><span class="label">存包手机号</span><span class="value phone" id="modalPhone">--</span></div>
+      <div class="modal-row"><span class="label">取件码</span><span class="value code" id="modalCode">--</span></div>
     </div>
-    <div class="order-card ongoing">
-      <div class="order-header">
-        <span class="order-cabinet">012号柜 · B05格口</span>
-        <span class="order-status">使用中</span>
-      </div>
-      <div class="order-row">
-        <div><span class="label">订单编号:</span> ORD20260707004 <span class="copy">复制</span></div>
-        <div><span class="label">开始时间:</span> 2026-07-07 18:15</div>
-        <div><span class="label">寄存地点:</span> 沙坪坝火车站B区</div>
-      </div>
-      <div class="elapsed">已用时 1小时43分 · 已扣费 ¥3.00</div>
-      <div class="order-action">
-        <button class="btn-pick primary">取件</button>
-        <button class="btn-pick secondary">续费</button>
-      </div>
-    </div>
-  </div>
-  <div class="tab-content" id="done">
-    <div class="order-card">
-      <div class="order-header">
-        <span class="order-cabinet">043号柜</span>
-        <span class="order-status">使用完成</span>
-      </div>
-      <div class="order-row">
-        <div><span class="label">订单编号:</span> ORD20260706001 <span class="copy">复制</span></div>
-        <div><span class="label">下单时间:</span> 2026-07-06 10:30</div>
-        <div><span class="label">下单地点:</span> 重庆北站A区</div>
-      </div>
-    </div>
-    <div class="order-card">
-      <div class="order-header">
-        <span class="order-cabinet">012号柜</span>
-        <span class="order-status">使用完成</span>
-      </div>
-      <div class="order-row">
-        <div><span class="label">订单编号:</span> ORD20260705002 <span class="copy">复制</span></div>
-        <div><span class="label">下单时间:</span> 2026-07-05 14:20</div>
-        <div><span class="label">下单地点:</span> 沙坪坝火车站B区</div>
-      </div>
-    </div>
-    <div class="bottom-links">
-      <a href="#">找不到订单？</a>
-      <a href="#">还有包未取？</a>
-    </div>
+    <button class="modal-btn" onclick="closeModal()">知道了</button>
   </div>
 </div>
 <script>
+function getPhone(){
+  var params=new URLSearchParams(window.location.search);
+  var p=params.get('phone')||localStorage.getItem('phone')||'';
+  var openid=params.get('openid')||localStorage.getItem('openid')||'';
+  if(openid) localStorage.setItem('openid',openid);
+  if(p){localStorage.setItem('phone',p);return p;}
+  // If no phone but have openid, try to get phone from backend
+  if(openid && !p){
+    fetch("https://locker.cqdyxl.com/api/user/balance?openid="+encodeURIComponent(openid))
+      .then(function(r){return r.json();})
+      .then(function(d){
+        var phone=(d.data||{}).phone||'';
+        if(phone){localStorage.setItem('phone',phone);location.reload();}
+      }).catch(function(){});
+  }
+  return p;
+}
+function maskPhone(phone){
+  if(!phone||phone.length<7) return phone||'未登录';
+  return phone.substring(0,3)+'****'+phone.substring(phone.length-4);
+}
+function apiGet(url){
+  var phone=getPhone();
+  var sep=url.indexOf('?')>-1?'&':'?';
+  return fetch(url+sep+'phone='+encodeURIComponent(phone))
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.code===0||d.code===200) return d.data;
+      throw new Error(d.message||'请求失败');
+    });
+}
+function apiPost(url,body){
+  var phone=getPhone();
+  body.phone=phone;
+  return fetch(url,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)
+  }).then(function(r){return r.json();})
+  .then(function(d){
+    if(d.code===0||d.code===200) return d.data;
+    throw new Error(d.message||'请求失败');
+  });
+}
+function withPhone(href){
+  var phone=getPhone();
+  if(!phone) return href;
+  var sep=href.indexOf('?')>-1?'&':'?';
+  return href+sep+'phone='+encodeURIComponent(phone);
+}
+var API_BASE='https://locker.cqdyxl.com/api';
+
 function switchTab(el,id){
-  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');});
   el.classList.add('active');
-  document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(function(c){c.classList.remove('active');});
   document.getElementById(id).classList.add('active');
 }
-document.querySelectorAll('.copy').forEach(btn=>{
-  btn.addEventListener('click',function(){
-    var row=this.parentElement;
-    var text=row.textContent.replace('复制','').replace('订单编号:','').trim();
-    navigator.clipboard?navigator.clipboard.writeText(text):0;
-    this.textContent='已复制';var b=this;setTimeout(()=>{b.textContent='复制'},1500);
+function showOrderModal(phone,code){
+  document.getElementById('modalPhone').textContent=phone;
+  document.getElementById('modalCode').textContent=code;
+  document.getElementById('orderModal').classList.add('active');
+}
+function closeModal(){document.getElementById('orderModal').classList.remove('active');}
+document.getElementById('orderModal').addEventListener('click',function(e){if(e.target===this)closeModal();});
+function fmtTime(t){if(!t)return '';return String(t).replace('T',' ').substring(0,16);}
+function calcElapsed(st){
+  if(!st)return '';
+  var d=Date.now()-new Date(st).getTime();if(d<0)return '';
+  var h=Math.floor(d/3600000),m=Math.floor((d%3600000)/60000);
+  var p=[];if(h>0)p.push(h+'小时');p.push(m+'分');return p.join('');
+}
+(function(){
+  var phone=getPhone();
+  document.getElementById('linkBack').href=withPhone('index.html');
+  apiGet(API_BASE+'/user/orders').then(function(orders){
+    var list=orders||[],ongoing=[],done=[];
+    list.forEach(function(o){if(parseInt(o.status)===2)ongoing.push(o);else done.push(o);});
+    var oe=document.getElementById('ongoing');
+    if(!ongoing.length){oe.innerHTML='<div class="empty"><div class="empty-text">暂无进行中的订单</div></div>';}
+    else{
+      var h='';
+      ongoing.forEach(function(o){
+        var cn=o.cabinet_name||('柜'+o.cabinet_id),cp=o.compartment_number||'',el=calcElapsed(o.store_time);
+        h+='<div class="order-card ongoing" onclick="showOrderModal(\''+maskPhone(o.user_phone||phone)+'\',\''+(o.access_code||'')+'\')">'
+          +'<div class="order-header"><span class="order-cabinet">'+cn+(cp?' · '+cp+'格口':'')+'</span><span class="order-status">使用中</span></div>'
+          +'<div class="order-row"><div><span class="label">订单编号:</span> '+(o.order_no||'')+'</div>'
+          +'<div><span class="label">开始时间:</span> '+fmtTime(o.store_time)+'</div>'
+          +(o.location_name?'<div><span class="label">寄存地点:</span> '+o.location_name+'</div>':'')
+          +'</div>'+(el?'<div class="elapsed">已用时 '+el+'</div>':'')+'</div>';
+      });
+      oe.innerHTML=h;
+    }
+    var de=document.getElementById('done');
+    if(!done.length){de.innerHTML='<div class="empty"><div class="empty-text">暂无已完成的订单</div></div>';}
+    else{
+      var h2='';
+      done.forEach(function(o){
+        var cn=o.cabinet_name||('柜'+o.cabinet_id);
+        h2+='<div class="order-card"><div class="order-header"><span class="order-cabinet">'+cn+'</span><span class="order-status">使用完成</span></div>'
+          +'<div class="order-row"><div><span class="label">订单编号:</span> '+(o.order_no||'')+'</div>'
+          +'<div><span class="label">下单时间:</span> '+fmtTime(o.store_time||o.created_at)+'</div>'
+          +(o.location_name?'<div><span class="label">下单地点:</span> '+o.location_name+'</div>':'')
+          +'</div></div>';
+      });
+      de.innerHTML=h2;
+    }
+  }).catch(function(e){
+    document.getElementById('ongoing').innerHTML='<div class="empty"><div class="empty-text">加载失败</div></div>';
+    document.getElementById('done').innerHTML='<div class="empty"><div class="empty-text">加载失败</div></div>';
   });
-});
+})();
 </script>
 </body>
 </html>

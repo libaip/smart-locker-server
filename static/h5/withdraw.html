@@ -11,29 +11,99 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei
 .nav-back{cursor:pointer;text-decoration:none;display:flex;align-items:center}
 .nav-back svg{width:20px;height:20px;fill:#333}
 .nav-title{font-size:17px;font-weight:500;position:absolute;left:50%;transform:translateX(-50%)}
-.nav-right{margin-left:auto;display:flex}
-.nav-right svg{width:20px;height:20px;fill:#999}
 .content{padding:50px 24px;text-align:center}
 .label{font-size:18px;color:#333;margin-bottom:20px;font-weight:500}
 .amount{font-size:60px;font-weight:bold;color:#333;margin-bottom:12px}
 .available{font-size:13px;color:#999;margin-bottom:50px}
 .available span{color:#F0B429}
 .withdraw-btn{display:block;width:100%;background:linear-gradient(135deg,#FAD36D,#F0B429);color:#fff;font-size:16px;font-weight:600;padding:14px;border-radius:26px;border:none;cursor:pointer;box-shadow:0 4px 16px rgba(240,180,41,0.25)}
+.withdraw-btn:disabled{opacity:.6;cursor:not-allowed}
 .warning{background:#FFF8E1;border-radius:8px;padding:12px 16px;font-size:12px;color:#E6A700;margin-top:20px;text-align:left;line-height:1.5}
 </style>
 </head>
 <body>
 <div class="nav">
-  <a class="nav-back" href="wallet.html"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></a>
+  <a class="nav-back" id="linkBack"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></a>
   <div class="nav-title">余额提现</div>
-  <div class="nav-right"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></div>
 </div>
 <div class="content">
   <div class="label">提现金额</div>
-  <div class="amount">¥ 20</div>
-  <div class="available">可提现余额 ¥ 20</div>
-  <button class="withdraw-btn" onclick="location.href='withdraw_progress.html'">立即提现</button>
+  <div class="amount" id="amountDisplay">¥ --</div>
+  <div class="available">可提现余额 ¥ <span id="availBalance">--</span></div>
+  <button class="withdraw-btn" id="btnWithdraw" disabled>立即提现</button>
   <div class="warning">⚠ 请注意提现后到账时间提示</div>
 </div>
+<script>
+function getPhone(){
+  var params=new URLSearchParams(window.location.search);
+  var p=params.get('phone')||localStorage.getItem('phone')||'';
+  var openid=params.get('openid')||localStorage.getItem('openid')||'';
+  if(openid) localStorage.setItem('openid',openid);
+  if(p){localStorage.setItem('phone',p);return p;}
+  // If no phone but have openid, try to get phone from backend
+  if(openid && !p){
+    fetch("https://locker.cqdyxl.com/api/user/balance?openid="+encodeURIComponent(openid))
+      .then(function(r){return r.json();})
+      .then(function(d){
+        var phone=(d.data||{}).phone||'';
+        if(phone){localStorage.setItem('phone',phone);location.reload();}
+      }).catch(function(){});
+  }
+  return p;
+}
+function maskPhone(phone){
+  if(!phone||phone.length<7) return phone||'未登录';
+  return phone.substring(0,3)+'****'+phone.substring(phone.length-4);
+}
+function apiGet(url){
+  var phone=getPhone();
+  var sep=url.indexOf('?')>-1?'&':'?';
+  return fetch(url+sep+'phone='+encodeURIComponent(phone))
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.code===0||d.code===200) return d.data;
+      throw new Error(d.message||'请求失败');
+    });
+}
+function apiPost(url,body){
+  var phone=getPhone();
+  body.phone=phone;
+  return fetch(url,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)
+  }).then(function(r){return r.json();})
+  .then(function(d){
+    if(d.code===0||d.code===200) return d.data;
+    throw new Error(d.message||'请求失败');
+  });
+}
+function withPhone(href){
+  var phone=getPhone();
+  if(!phone) return href;
+  var sep=href.indexOf('?')>-1?'&':'?';
+  return href+sep+'phone='+encodeURIComponent(phone);
+}
+var API_BASE='https://locker.cqdyxl.com/api';
+
+(function(){
+  document.getElementById('linkBack').href=withPhone('wallet.html');
+  var userBalance=0;
+  apiGet(API_BASE+'/user/balance').then(function(data){
+    userBalance=parseFloat(data.balance||data.available_balance||0);
+    document.getElementById('amountDisplay').textContent='¥ '+userBalance.toFixed(2);
+    document.getElementById('availBalance').textContent=userBalance.toFixed(2);
+    document.getElementById('btnWithdraw').disabled=false;
+  }).catch(function(e){document.getElementById('availBalance').textContent='0.00';});
+  document.getElementById('btnWithdraw').addEventListener('click',function(){
+    var btn=this;if(btn.disabled)return;
+    btn.disabled=true;btn.textContent='提交中...';
+    apiPost(API_BASE+'/user/withdraw',{amount:userBalance}).then(function(){
+      btn.textContent='提现成功';
+      setTimeout(function(){location.href=withPhone('withdraw_progress.html');},800);
+    }).catch(function(e){alert(e.message||'提现失败');btn.disabled=false;btn.textContent='立即提现';});
+  });
+})();
+</script>
 </body>
 </html>

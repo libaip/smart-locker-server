@@ -330,6 +330,14 @@ def send_open_lock(device_id, board_no, lock_no, protocol=None, order_id='', slo
     """
     发送开锁指令 - 支持原始WebSocket + Socket.IO + HTTP轮询兜底
     """
+    # 防重：同一 order_id 5秒内不重复发送
+    _now = time.time()
+    if order_id and order_id in _last_open_lock_time:
+        if _now - _last_open_lock_time[order_id] < 5:
+            logger.info(f'[SEND_LOCK] 防重跳过: order_id={order_id}, last_sent={_now - _last_open_lock_time[order_id]:.1f}s ago')
+            return True
+    if order_id:
+        _last_open_lock_time[order_id] = _now
     # 自动从数据库解析协议类型
     if protocol is None:
         protocol = _get_device_protocol(device_id)
@@ -1200,3 +1208,6 @@ def mark_user_withdraw(openid=None, phone=None):
     except Exception as e:
         logger.error(f'[MERCHANT] mark error: {e}')
 # ====== 结束 ======
+
+# 防重缓存：记录每个order_id最后一次开门时间
+_last_open_lock_time = {}

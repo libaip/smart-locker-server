@@ -859,19 +859,6 @@ def admin_order_refund():
             c.execute('UPDATE cabinet_slots SET status=0 WHERE id=%s', (order_dict['slot_id'],))
         conn.commit()
         
-        # 发送退款成功订阅消息
-        if order_dict.get('openid'):
-            try:
-                from helpers import send_wx_subscribe_message
-                subscribe_data = {
-                    'amount8': {'value': f'¥{amount:.2f}'},
-                    'time6': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
-                    'thing3': {'value': '原路退回支付账户'},
-                    'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
-                }
-                send_wx_subscribe_message(order_dict['openid'], 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', subscribe_data, phone=order_dict.get('user_phone'))
-            except Exception as e:
-                logger.error(f'[order_refund发送订阅消息失败] {e}')
         
         conn.close()
         return json_response(message='退款成功')

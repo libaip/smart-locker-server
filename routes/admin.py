@@ -1335,7 +1335,7 @@ def withdrawal_apply():
                     from helpers import do_real_refund
                     success, refund_id, msg = do_real_refund(order_id=order_id, order_no=eligible['order_no'], amount=amount, payment_channel_id=eligible['payment_channel_id'])
                     # 无论成功失败，先扣余额并创建记录
-                    cursor.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE openid = %s', (amount, amount, user_phone, _real_openid))
+                    cursor.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s AND openid = %s', (amount, amount, user_phone, _real_openid))
                     if success:
                         # 退款成功
                         cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, auto_approve_time, openid) VALUES (%s, %s, %s, 2, %s, 'system', NOW(), %s, %s)",
@@ -1521,7 +1521,7 @@ def approve_withdrawal(withdrawal_id):
         bal = cursor.fetchone()
         _wd_real_openid = bal['rec_openid'] if bal else _wd_openid
         if bal and bal['balance'] >= amount:
-            cursor.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE openid = %s', (amount, amount, phone, _wd_real_openid))
+            cursor.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s AND openid = %s', (amount, amount, phone, _wd_real_openid))
         # 真正退款
         if order_id:
             from helpers import do_real_refund
@@ -1576,7 +1576,7 @@ def reject_withdrawal(withdrawal_id):
         balance = cursor.fetchone()
         _rj_real_openid = balance['rec_openid'] if balance else _rj_openid
         if balance:
-            cursor.execute('UPDATE user_balances SET balance = balance + %s WHERE openid = %s', (record['amount'], record['user_phone'], _rj_real_openid))
+            cursor.execute('UPDATE user_balances SET balance = balance + %s WHERE phone = %s AND openid = %s', (record['amount'], record['user_phone'], _rj_real_openid))
         else:
             cursor.execute('INSERT INTO user_balances (phone, openid, balance, total_deposited) VALUES (%s, %s, %s, 0)', (record['user_phone'], _rj_openid, record['amount']))
         conn.commit()

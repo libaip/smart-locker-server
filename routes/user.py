@@ -2365,3 +2365,73 @@ def order_reopen_by_url(order_id):
 
 
 @bp.route('/user/wallet/transactions', methods=['GET'])
+
+@bp.route('/user/wallet/transactions', methods=['GET'])
+def get_user_transactions():
+    """用户交易记录"""
+    try:
+        phone = request.args.get('phone', '')
+        openid = request.args.get('openid', '')
+        tp = request.args.get('type', '')  # all, income, expense
+        page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 50))
+        offset = (page - 1) * limit
+        if not phone:
+            return json_response(message='????', code=400)
+        conn = get_db()
+        cur = conn.cursor()
+        if tp == 'income':
+            where_extra = 'AND d.amount > 0'
+        elif tp == 'expense':
+            where_extra = 'AND d.amount < 0'
+        else:
+            where_extra = ''
+        cur.execute(f'''
+            SELECT d.id, d.amount, d.source_time, d.status, d.remark, d.order_id,
+                   o.order_no
+            FROM user_balance_details d
+            LEFT JOIN orders o ON d.order_id = o.id
+            WHERE d.user_phone = %s {where_extra}
+            ORDER BY d.source_time DESC
+            LIMIT %s OFFSET %s
+        ''', (phone, limit, offset))
+        rows = [dict(r) for r in cur.fetchall()]
+        cur.execute(f'SELECT COUNT(*) FROM user_balance_details d WHERE d.user_phone = %s {where_extra}', (phone,))
+        total = cur.fetchone()[0]
+        conn.close()
+        return json_response(data={'list': rows, 'total': total})
+    except Exception as e:
+        logger.error(f'[user/transactions] 错误: {e}')
+        return json_response(message=str(e), code=500)
+
+@bp.route('/user/wallet/withdrawals', methods=['GET'])
+def get_user_withdrawals():
+    """用户提现记录"""
+    try:
+        phone = request.args.get('phone', '')
+        openid = request.args.get('openid', '')
+        if phone and not openid:
+            conn_temp = get_db()
+            cur_temp = conn_temp.cursor()
+            cur_temp.execute('SELECT openid FROM phone_openids WHERE phone = %s ORDER BY created_at DESC LIMIT 1', (phone,))
+            row_temp = cur_temp.fetchone()
+            conn_temp.close()
+            if row_temp and row_temp['openid']:
+                openid = row_temp['openid']
+        if not phone:
+            return json_response(message='????', code=400)
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute('''
+            SELECT w.id, w.amount, w.status, w.apply_time, w.approve_time, w.error_msg
+            FROM withdrawal_records w
+            WHERE w.user_phone = %s
+            ORDER BY w.created_at DESC
+            LIMIT 50
+        ''', (phone,))
+        rows = [dict(r) for r in cur.fetchall()]
+        conn.close()
+        return json_response(data=rows)
+    except Exception as e:
+        logger.error(f'[user/withdrawals] 错误: {e}')
+        return json_response(message=str(e), code=500)

@@ -2367,8 +2367,15 @@ def link_openid():
         from helpers import get_db
         conn = get_db()
         cursor = conn.cursor()
-        # Update phone_openids with openid and unionid
-        cursor.execute('INSERT INTO phone_openids (phone, openid, wechat_name, unionid) VALUES (%s, %s, %s, %s) ON CONFLICT(phone) DO UPDATE SET openid=excluded.openid, wechat_name=excluded.wechat_name, unionid=excluded.unionid, updated_at=CURRENT_TIMESTAMP', (phone, openid, wechat_name, unionid))
+        # 先检查该openid是否已有手机号映射，防止同一openid绑定多个手机号
+        cursor.execute('SELECT phone FROM phone_openids WHERE openid = %s LIMIT 1', (openid,))
+        existing = cursor.fetchone()
+        if existing:
+            # openid已有映射，保留原始手机号，只更新wechat_name和unionid
+            cursor.execute('UPDATE phone_openids SET wechat_name=%s, unionid=%s, updated_at=CURRENT_TIMESTAMP WHERE openid=%s', (wechat_name, unionid, openid))
+        else:
+            # openid无映射，正常插入
+            cursor.execute('INSERT INTO phone_openids (phone, openid, wechat_name, unionid) VALUES (%s, %s, %s, %s) ON CONFLICT(phone) DO UPDATE SET openid=excluded.openid, wechat_name=excluded.wechat_name, unionid=excluded.unionid, updated_at=CURRENT_TIMESTAMP', (phone, openid, wechat_name, unionid))
         # Also update user_balances with unionid if it exists
         if unionid:
             cursor.execute('UPDATE user_balances SET unionid=%s WHERE phone=%s', (unionid, phone))

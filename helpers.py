@@ -638,7 +638,7 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
                     'mweb_url': result.get('mweb_url')}
     
     # 商户被封/异常自动检测：禁用渠道并切换到下一个
-    _dead_errors = {'NOAUTH', 'NO_AUTH', 'MCH_NOT_EXIST', 'APPID_MCHID_NOT_MATCH', 'ACCOUNT_ERROR', 'BANK_ERROR'}
+    _dead_errors = {'MCH_NOT_EXIST', 'APPID_MCHID_NOT_MATCH', 'ACCOUNT_ERROR', 'BANK_ERROR'}  # NOAUTH/NO_AUTH removed: 权限问题不会自动恢复，禁用无意义
     if current_channel and result.get('err_code') in _dead_errors and _retry_count < 3:
         try:
             from database import get_db as _gdb2
@@ -965,7 +965,7 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None):
 # ============================================
 
 # 商户号异常的错误码
-_MERCHANT_ERROR_CODES = {'SIGN_ERROR', 'MCH_NOT_EXIST', 'MCH_ID_INVALID', 'NO_AUTH', 'SYSTEMERROR', 'FREQUENCY_LIMITED'}
+_MERCHANT_ERROR_CODES = {'SIGN_ERROR', 'MCH_NOT_EXIST', 'MCH_ID_INVALID', 'SYSTEMERROR', 'FREQUENCY_LIMITED'}  # NO_AUTH removed
 _merchant_health_state = {'last_alert_time': 0, 'consecutive_errors': 0}
 _failover_standby_id = 8
 _failover_consecutive_fails = 0

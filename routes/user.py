@@ -1887,8 +1887,8 @@ def get_user_orders():
         
         # 优先按 openid 查询，fallback 到 phone
         if openid:
-            query_condition = 'o.openid = %s AND o.status != 1'
-            query_param = (openid,)
+            query_condition = '(o.openid = %s OR o.user_phone = %s) AND o.status != 1'
+            query_param = (openid, phone)
         elif phone:
             query_condition = 'o.user_phone = %s AND o.status != 1'
             query_param = (phone,)

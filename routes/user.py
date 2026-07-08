@@ -2073,7 +2073,6 @@ def get_user_balance():
                 result['has_triggered_withdraw'] = row['has_triggered_withdraw'] if row and 'has_triggered_withdraw' in row.keys() else False
             except:
                 result['has_triggered_withdraw'] = False
-            # ====== 结束 ======
             return json_response(data=result)
         else:
             # 用户余额记录不存在，返回默认值
@@ -2199,21 +2198,6 @@ def user_withdraw():
             conn.close()
             return json_response(message='提现金额超过余额', code=400)
         
-                # ====== [优化] 自动放行检查 ======
-        is_auto_approve = check_withdraw_auto_approve(openid=openid, phone=phone)
-        if is_auto_approve:
-            # 需要审批 - 走原有流程
-            pass
-        else:
-            # 自动放行：直接处理提现，不创建审批记录
-            mark_user_withdraw(openid=openid, phone=phone)
-            conn.close()
-            return json_response(data={
-                'message': '提现成功，预计30分钟到账',
-                'withdraw_id': 0,
-                'auto_approved': True
-            })
-        # ====== 结束 ======
         
         # 检查用户最近使用的网点是否允许提现
         cursor.execute("""

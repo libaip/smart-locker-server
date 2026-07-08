@@ -504,7 +504,7 @@ def retrieve_confirm():
         transaction_id = order['transaction_id']
         orig_status = order['status']
         # 结束订单，更新状态和退款信息
-        cursor.execute('UPDATE orders SET status = 3, retrieve_time = NOW(), refund_mark = 1 WHERE id = %s', 
+        cursor.execute('UPDATE orders SET status = 3, retrieve_time = NOW(), refund_amount = %s, refund_mark = 1 WHERE id = %s', 
                        (deposit_amount, order_id))
         cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (order['slot_id'],))
         # 结束订单，保证金退到用户余额（不直接退微信）
@@ -939,7 +939,7 @@ def deposit_retrieve():
                 # 取物即结束订单
                 conn2 = get_db()
                 c2 = conn2.cursor()
-                c2.execute("UPDATE orders SET status=3, retrieve_time=NOW(), refund_mark=1 WHERE id=%s AND status=2",
+                c2.execute("UPDATE orders SET status=3, retrieve_time=NOW(), refund_amount=%s, refund_mark=1 WHERE id=%s AND status=2",
                           (order_dict['deposit_amount'], order_dict['id']))
                 if order_dict.get('slot_id'):
                     c2.execute("UPDATE cabinet_slots SET status=1 WHERE id=%s", (order_dict['slot_id'],))
@@ -1022,7 +1022,7 @@ def deposit_end_storage():
         if not order or order['status'] != 2:
             conn.close()
             return json_response(message='订单不存在或状态异常', code=404 if not order else 400)
-        # refund_amount not set for status 3
+        refund_amount = order['deposit_amount']
         compartment_number = order['slot_number'] or order['compartment_number']
         cursor.execute('INSERT INTO storage_records (cabinet_id, compartment_number, user_phone, access_code, status, store_time, retrieve_time) VALUES (%s, %s, %s, %s, 1, %s, %s)',
                        (order['cabinet_id'], order['compartment_number'], order['user_phone'], order['access_code'], order['store_time'], datetime.now()))
@@ -1034,7 +1034,7 @@ def deposit_end_storage():
             cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (order['slot_id'],))
         # 结束订单，保证金退到用户余额
         new_status = 3
-        cursor.execute('UPDATE orders SET status = %s, retrieve_time = NOW(), refund_mark = 1 WHERE id = %s', 
+        cursor.execute('UPDATE orders SET status = %s, retrieve_time = NOW(), refund_amount = %s, refund_mark = 1 WHERE id = %s', 
                        (new_status, refund_amount, order_id))
         _openid = order.get('openid', '') or ''
         _openid = order.get('openid', '') or ''

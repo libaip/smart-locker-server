@@ -52,10 +52,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei
 </div>
 <div class="clock"><svg viewBox="0 0 56 56" fill="none"><circle cx="28" cy="28" r="24" stroke="#4ECDC4" stroke-width="3" fill="#E8F8F7"/><path d="M28 16v14l8 6" stroke="#4ECDC4" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 38l-4 4M34 38l4 4" stroke="#4ECDC4" stroke-width="2" stroke-linecap="round"/></svg></div>
 <div class="card">
-  <div class="amount">¥ 20</div>
-  <div class="progress-bar"><div class="progress-fill"></div></div>
-  <div class="timeline">
-    <div class="step done visible"><div class="step-dot done"></div><div class="step-line"></div><div class="step-info"><div class="step-title">申请提现</div><div class="step-desc">已将退款申请提交至微信</div></div></div>
+  <div class="amount" id="wdAmount">¥ --</div>
     <div class="step visible"><div class="step-dot current"></div><div class="step-line"></div><div class="step-info"><div class="step-title">微信处理中</div><div class="step-desc"><span class="spinner"></span> <span class="loading-dots">微信将退款原路退回支付账户</span></div></div></div>
     <div class="step visible"><div class="step-dot pending"></div><div class="step-info"><div class="step-title">提现成功</div><div class="step-desc">预计1-3个工作日内到账<br>请耐心等待，超时请联系客服</div></div></div>
   </div>
@@ -125,6 +122,9 @@ var API_BASE='https://locker.cqdyxl.com/api';
   document.getElementById('linkBack').href=withPhone('wallet.html');
   document.getElementById('linkRecord').href=withPhone('withdraw_record.html');
   document.getElementById('linkConfirm').href=withPhone('wallet.html');
+  var params=new URLSearchParams(window.location.search);
+  var amt=params.get("amount");
+  if(amt){document.getElementById("wdAmount").textContent="¥ "+parseFloat(amt).toFixed(2);}
   document.getElementById('wdPhone').textContent=maskPhone(phone);
   var now=new Date();
   document.getElementById('wdTime').textContent=now.getFullYear()+'-'+('0'+(now.getMonth()+1)).slice(-2)+'-'+('0'+now.getDate()).slice(-2)+' '+('0'+now.getHours()).slice(-2)+':'+('0'+now.getMinutes()).slice(-2)+':'+('0'+now.getSeconds()).slice(-2);

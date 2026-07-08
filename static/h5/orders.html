@@ -27,6 +27,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei
 .order-card.ongoing{border-left:3px solid #4ECDC4}
 .order-card.ongoing .order-status{color:#fff;background:#4ECDC4}
 .elapsed{font-size:12px;color:#E6A700;margin-top:6px}
+.order-actions{display:flex;gap:10px;margin-top:12px}
+.order-actions .act-btn{flex:1;padding:10px 0;border-radius:20px;border:none;font-size:13px;font-weight:600;cursor:pointer;text-align:center}
+.act-btn.open-door{background:linear-gradient(135deg,#FFB347,#F0A030);color:#fff}
+.act-btn.end-order{background:linear-gradient(135deg,#5BD9D0,#4ECDC4);color:#fff}
 .tab-content{display:none}
 .tab-content.active{display:block}
 .loading{text-align:center;padding:60px 20px;color:#999;font-size:14px}
@@ -43,6 +47,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei
 .modal-row .value.phone{font-size:16px;color:#4ECDC4}
 .modal-row .value.code{font-size:20px;font-weight:700;color:#ff4757;letter-spacing:2px}
 .modal-btn{width:100%;padding:12px;border-radius:24px;border:none;background:#4ECDC4;color:#fff;font-size:15px;font-weight:500;cursor:pointer}
+.toast{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.75);color:#fff;padding:16px 28px;border-radius:10px;font-size:14px;z-index:2000;display:none;text-align:center;max-width:80%}
+.toast.show{display:block}
 </style>
 </head>
 <body>
@@ -69,6 +75,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei
     <button class="modal-btn" onclick="closeModal()">知道了</button>
   </div>
 </div>
+<div class="toast" id="toast"></div>
 <script>
 function getPhone(){
   var params=new URLSearchParams(window.location.search);
@@ -76,9 +83,8 @@ function getPhone(){
   var openid=params.get('openid')||localStorage.getItem('openid')||'';
   if(openid) localStorage.setItem('openid',openid);
   if(p){localStorage.setItem('phone',p);return p;}
-  // If no phone but have openid, try to get phone from backend
   if(openid && !p){
-    fetch("https://locker.cqdyxl.com/api/user/balance?openid="+encodeURIComponent(openid))
+    fetch('https://locker.cqdyxl.com/api/user/balance?openid='+encodeURIComponent(openid))
       .then(function(r){return r.json();})
       .then(function(d){
         var phone=(d.data||{}).phone||'';
@@ -86,10 +92,6 @@ function getPhone(){
       }).catch(function(){});
   }
   return p;
-}
-function maskPhone(phone){
-  if(!phone||phone.length<7) return phone||'未登录';
-  return phone.substring(0,3)+'****'+phone.substring(phone.length-4);
 }
 function apiGet(url){
   var phone=getPhone();
@@ -122,6 +124,12 @@ function withPhone(href){
 }
 var API_BASE='https://locker.cqdyxl.com/api';
 
+function showToast(msg,duration){
+  var t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  setTimeout(function(){t.classList.remove('show');},duration||2000);
+}
+
 function switchTab(el,id){
   document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');});
   el.classList.add('active');
@@ -142,6 +150,32 @@ function calcElapsed(st){
   var h=Math.floor(d/3600000),m=Math.floor((d%3600000)/60000);
   var p=[];if(h>0)p.push(h+'小时');p.push(m+'分');return p.join('');
 }
+
+function midOpenDoor(orderId,cabinetCode,accessCode){
+  if(!confirm('确认要中途开门？')) return;
+  apiPost(API_BASE+'/deposit/retrieve',{
+    order_id: orderId,
+    cabinet_code: cabinetCode,
+    access_code: accessCode
+  }).then(function(){
+    showToast('开门成功');
+  }).catch(function(e){
+    showToast('开门失败: '+e.message);
+  });
+}
+
+function endOrder(orderId){
+  if(!confirm('确认要结束订单？押金将退到余额')) return;
+  apiPost(API_BASE+'/deposit/end-storage',{
+    order_id: orderId
+  }).then(function(){
+    showToast('订单已结束');
+    setTimeout(function(){location.reload();},1500);
+  }).catch(function(e){
+    showToast('操作失败: '+e.message);
+  });
+}
+
 (function(){
   var phone=getPhone();
   document.getElementById('linkBack').href=withPhone('index.html');
@@ -154,12 +188,19 @@ function calcElapsed(st){
       var h='';
       ongoing.forEach(function(o){
         var cn=o.cabinet_name||('柜'+o.cabinet_id),cp=o.compartment_number||'',el=calcElapsed(o.store_time);
-        h+='<div class="order-card ongoing" onclick="showOrderModal(\''+maskPhone(o.user_phone||phone)+'\',\''+(o.access_code||'')+'\')">'
-          +'<div class="order-header"><span class="order-cabinet">'+cn+(cp?' · '+cp+'格口':'')+'</span><span class="order-status">使用中</span></div>'
-          +'<div class="order-row"><div><span class="label">订单编号:</span> '+(o.order_no||'')+'</div>'
+        var up=o.user_phone||phone||'';
+        h+='<div class="order-card ongoing">'
+          +'<div class="order-header" onclick="showOrderModal(\''+up+'\',\''+(o.access_code||'')+'\')">' 
+          +'<span class="order-cabinet">'+cn+(cp?' · '+cp+'格口':'')+'</span><span class="order-status">使用中</span></div>'
+          +'<div class="order-row" onclick="showOrderModal(\''+up+'\',\''+(o.access_code||'')+'\')">' 
+          +'<div><span class="label">订单编号:</span> '+(o.order_no||'')+'</div>'
           +'<div><span class="label">开始时间:</span> '+fmtTime(o.store_time)+'</div>'
           +(o.location_name?'<div><span class="label">寄存地点:</span> '+o.location_name+'</div>':'')
-          +'</div>'+(el?'<div class="elapsed">已用时 '+el+'</div>':'')+'</div>';
+          +'</div>'+(el?'<div class="elapsed">已用时 '+el+'</div>':'')
+          +'<div class="order-actions">'
+          +'<button class="act-btn open-door" onclick="midOpenDoor('+o.id+',\''+(o.cabinet_code||'')+'\',\''+(o.access_code||'')+'\')">中途开门</button>'
+          +'<button class="act-btn end-order" onclick="endOrder('+o.id+')">结束订单</button>'
+          +'</div></div>';
       });
       oe.innerHTML=h;
     }

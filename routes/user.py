@@ -1871,6 +1871,7 @@ def get_user_orders():
             SELECT o.id, o.order_no, o.user_phone, o.cabinet_id, o.compartment_number, o.slot_size, o.access_code,
                    o.deposit_amount, o.status, o.store_time, o.retrieve_time, o.created_at,
                    c.name as cabinet_name,
+                   c.cabinet_code,
                    l.name as location_name
             FROM orders o
             LEFT JOIN cabinets c ON o.cabinet_id = c.id

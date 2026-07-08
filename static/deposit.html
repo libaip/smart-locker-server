@@ -1031,8 +1031,7 @@
                 currentAccessCode = d.data.access_code || code;
                 document.getElementById('s1DoorNum').textContent = (d.data.compartment_number || '') + '号';
                 document.getElementById('payDoorNum').textContent = (d.data.compartment_number || '') + '号';
-                if (allowH5ToMp === 1 && mpAppId) {
-                    // 直接跳转小程序，不再弹窗确认
+                if (allowH5ToMp === 1) {
                     launchMp();
                 } else {
                     goToStep2Direct();
@@ -1054,7 +1053,7 @@
 
     function launchMp() {
         document.getElementById('mpTipModal').classList.remove('show');
-        if (!mpAppId) { goToStep2Direct(); return; }
+        if (!mpAppId) { mpAppId = 'wx57eaea52dcfff4e8'; }
         var phone = currentPhone || document.getElementById('userPhone').value.trim();
         var code = currentAccessCode || document.getElementById('accessCode').value.trim();
         var g = phone.substring(0, 3);

@@ -19,7 +19,7 @@ PORT = 5001
 # ============================================
 # 微信支付配置
 # ============================================
-# WX_MCH_ID = '1747762575'  # 已废弃，使用数据库动态选择
+WX_MCH_ID = '1747762575'  # 默认回退商户号（已受限），优先使用数据库动态选择
 WX_API_KEY = 'lichengju0904LICHENGJU0904libaiP'
 WX_API_V3_KEY = 'lichengju0904LICHENGJU0904libaip'
 WX_CERT_SERIAL_NO = '73AB063E7593B2FC5DDF37C0F6A269826675D119'

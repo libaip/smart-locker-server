@@ -1520,31 +1520,51 @@ def batch_auto_withdrawal():
         locations = cursor.fetchall()
         for location in locations:
             auto_approve_time = location.get('auto_approve_time', '12:00')
+            auto_approve_day = location.get('auto_approve_day', 1)
+            withdraw_mode = location.get('withdraw_mode', 'auto_approve')
+            
             if now.strftime('%H:%M') < auto_approve_time:
                 continue
-            cursor.execute('SELECT wr.*, o.order_no, o.slot_id FROM withdrawal_records wr JOIN orders o ON wr.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id WHERE c.location_id = %s AND wr.status = 0', (location['id'],))
-            pending = cursor.fetchall()
-            for record in pending:
-                if random.random() < (location.get('auto_approve_rate', 80) / 100.0):
-                    # queue approval: real refund
-                    from helpers import do_real_refund
-                    refund_ok, refund_rid, refund_msg = do_real_refund(order_id=record['order_id'], amount=record['amount'])
-                    if refund_ok:
-                        cursor.execute('UPDATE orders SET status = 4, refund_id = %s, refund_time = %s WHERE id = %s', (refund_rid, now, record['order_id']))
-                        if record['slot_id']:
-                            cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (record['slot_id'],))
-                        cursor.execute('INSERT INTO payments (order_id, type, amount, refund_transaction_id, status) VALUES (%s, 2, %s, %s, 1)', (record['order_id'], record['amount'], refund_rid))
-                        cursor.execute('UPDATE withdrawal_records SET status = 2, approver = %s, auto_approve_time = %s, refund_id = %s WHERE id = %s', ('system', now.strftime('%Y-%m-%d %H:%M:%S'), refund_rid, record['id']))
-                        processed_count += 1
-                    else:
-                        cursor.execute('UPDATE withdrawal_records SET status = 1, approver = %s, auto_approve_time = %s WHERE id = %s', ('system', now.strftime('%Y-%m-%d %H:%M:%S'), record['id']))
+            
+            if withdraw_mode == 'queue_approve':
+                cursor.execute('SELECT wr.*, o.order_no, o.slot_id FROM withdrawal_records wr JOIN orders o ON wr.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id WHERE c.location_id = %s AND wr.status = 0', (location['id'],))
+                pending = cursor.fetchall()
+                for record in pending:
+                    if random.random() < (location.get('auto_approve_rate', 80) / 100.0):
+                        from helpers import do_real_refund
+                        refund_ok, refund_rid, refund_msg = do_real_refund(order_id=record['order_id'], amount=record['amount'])
+                        if refund_ok:
+                            cursor.execute('UPDATE orders SET status = 4, refund_id = %s, refund_time = %s WHERE id = %s', (refund_rid, now, record['order_id']))
+                            if record['slot_id']:
+                                cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (record['slot_id'],))
+                            cursor.execute('INSERT INTO payments (order_id, type, amount, refund_transaction_id, status) VALUES (%s, 2, %s, %s, 1)', (record['order_id'], record['amount'], refund_rid))
+                            cursor.execute('UPDATE withdrawal_records SET status = 2, approver = %s, auto_approve_time = %s, refund_id = %s WHERE id = %s', ('system', now.strftime('%Y-%m-%d %H:%M:%S'), refund_rid, record['id']))
+                            processed_count += 1
+                        else:
+                            cursor.execute('UPDATE withdrawal_records SET status = 1, approver = %s, auto_approve_time = %s WHERE id = %s', ('system', now.strftime('%Y-%m-%d %H:%M:%S'), record['id']))
+            else:
+                sql = "SELECT wr.*, o.order_no, o.slot_id FROM withdrawal_records wr JOIN orders o ON wr.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id WHERE c.location_id = %s AND wr.status = 0 AND (wr.apply_time::date + %s) <= %s::date"
+                cursor.execute(sql, (location['id'], auto_approve_day, now))
+                pending = cursor.fetchall()
+                for record in pending:
+                    if random.random() < (location.get('auto_approve_rate', 80) / 100.0):
+                        from helpers import do_real_refund
+                        refund_ok, refund_rid, refund_msg = do_real_refund(order_id=record['order_id'], amount=record['amount'])
+                        if refund_ok:
+                            cursor.execute('UPDATE orders SET status = 4, refund_id = %s, refund_time = %s WHERE id = %s', (refund_rid, now, record['order_id']))
+                            if record['slot_id']:
+                                cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (record['slot_id'],))
+                            cursor.execute('INSERT INTO payments (order_id, type, amount, refund_transaction_id, status) VALUES (%s, 2, %s, %s, 1)', (record['order_id'], record['amount'], refund_rid))
+                            cursor.execute('UPDATE withdrawal_records SET status = 2, approver = %s, auto_approve_time = %s, refund_id = %s WHERE id = %s', ('system', now.strftime('%Y-%m-%d %H:%M:%S'), refund_rid, record['id']))
+                            processed_count += 1
+                        else:
+                            cursor.execute('UPDATE withdrawal_records SET status = 1, approver = %s, auto_approve_time = %s WHERE id = %s', ('system', now.strftime('%Y-%m-%d %H:%M:%S'), record['id']))
         conn.commit()
         conn.close()
         return json_response({'processed_count': processed_count, 'message': f'批量处理完成，共处理 {processed_count} 条申请'})
     except Exception as e:
         logger.error(f'[batch_auto] {e}')
         return json_response(message=str(e), code=500)
-
 
 # ============================================
 # 投诉管理

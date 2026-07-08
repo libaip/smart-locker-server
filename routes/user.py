@@ -2032,16 +2032,7 @@ def get_user_balance():
         if row:
             result = dict(row)
             balance_val = float(result.get('balance', 0) or 0)
-            # 查询待审批提现总额（status=0），前端展示可用余额=实际余额+待审批金额（隐藏余额）
-            _pending_total = 0.0
-            try:
-                cur.execute("SELECT COALESCE(SUM(amount), 0) FROM withdrawal_records WHERE status=0 AND (openid=%s OR user_phone=%s)", (openid or '', _check_phone or ''))
-                _pt = cur.fetchone()
-                if _pt:
-                    _pending_total = float(_pt[0] or 0)
-            except:
-                pass
-            result['available_balance'] = balance_val + _pending_total
+            result['available_balance'] = balance_val
             result['has_pending_withdrawal'] = has_pending_withdrawal
             result['has_active_orders'] = has_active_orders
             result['balance_hidden'] = balance_hidden

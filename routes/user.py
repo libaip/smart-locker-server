@@ -1801,6 +1801,18 @@ def wx_login_phone():
             phone_number = phone_info.get('phoneNumber', '')
             if phone_number:
                 logger.info(f'[wx_login_phone] 成功: {phone_number[:3]}****{phone_number[-4:]}')
+                # 同步写入mp_openid（小程序openid，不会被link_openid覆盖）
+                try:
+                    from database import get_db
+                    _conn = get_db()
+                    _cur = _conn.cursor()
+                    _cur.execute("INSERT INTO phone_openids (phone, mp_openid) VALUES (%s, %s) ON CONFLICT(phone) DO UPDATE SET mp_openid=excluded.mp_openid, updated_at=CURRENT_TIMESTAMP", (phone_number, openid))
+                    _conn.commit()
+                    _cur.close()
+                    _conn.close()
+                    logger.info(f'[wx_login_phone] mp_openid已写入: {phone_number[:3]}****{phone_number[-4:]} -> {openid[:8]}...')
+                except Exception as _e:
+                    logger.warning(f'[wx_login_phone] 写入mp_openid失败: {_e}')
                 return json_response({'openid': openid, 'phone': phone_number, 'session_key': session_key})
             else:
                 logger.error(f'[wx_login_phone] 解密无手机号: {phone_info}')

@@ -924,7 +924,7 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None):
             try:
                 _conn = get_db()
                 _cur = _conn.cursor()
-                _cur.execute('SELECT openid FROM phone_openids WHERE phone=%s', (phone,))
+                _cur.execute("SELECT COALESCE(NULLIF(mp_openid,''), NULLIF(openid,'')) FROM phone_openids WHERE phone=%s", (phone,))
                 _row = _cur.fetchone()
                 _conn.close()
                 if _row and _row[0]:

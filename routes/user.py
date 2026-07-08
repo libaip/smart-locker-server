@@ -2220,19 +2220,19 @@ def user_withdraw():
         withdraw_mode = loc_row['withdraw_mode'] if loc_row else 'auto_approve'
         
         if withdraw_mode == 'auto_approve':
-            # 自动审批模式：扣除余额 + 原路退回（支持多订单合并退款）
-            # 未传金额时默认全额提现
-            if not amount or float(amount) <= 0:
-                amount = float(balance)
-            # 从余额明细表查找可提现的记录（status='available'），按时间倒序
+            # 自动审批模式（按天延迟）：扣除余额 + 创建status=0提现记录，等待batch-auto按天数处理
             _bd_key = openid if openid else phone
             _bd_col = 'openid' if openid else 'phone'
-            cursor.execute(f"SELECT bd.id, bd.order_id, bd.amount, o.transaction_id, o.openid as order_openid FROM user_balance_details bd JOIN orders o ON bd.order_id = o.id JOIN user_balances ub ON bd.user_phone = ub.phone WHERE ub.{_bd_col}=%s AND bd.status='available' AND o.transaction_id IS NOT NULL AND o.transaction_id != '' ORDER BY bd.id DESC", (_bd_key,))
+            cursor.execute(f"""SELECT bd.id, bd.order_id, bd.amount, o.transaction_id, o.openid as order_openid
+            FROM user_balance_details bd
+            JOIN orders o ON bd.order_id = o.id
+            JOIN user_balances ub ON bd.user_phone = ub.phone
+            WHERE ub.{_bd_col}=%s AND bd.status='available' AND o.transaction_id IS NOT NULL AND o.transaction_id != ''
+            ORDER BY bd.id DESC""", (_bd_key,))
             balance_records = cursor.fetchall()
             if not balance_records:
                 conn.close()
                 return json_response(message='没有可退款的订单，无法提现', code=400)
-            # 计算可退总额
             total_refundable = 0
             order_refund_plan = []
             for br in balance_records:
@@ -2243,64 +2243,36 @@ def user_withdraw():
                 conn.close()
                 return json_response(message='没有可退款的金额', code=400)
             actual_amount = min(float(amount), total_refundable)
-            # 扣除余额（严格按phone+openid）
+            # 冻结余额（扣除）
             if openid:
                 cursor.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s AND openid = %s',
                                (actual_amount, actual_amount, phone, openid))
             else:
-                cursor.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s AND (openid = %s OR openid IS NULL OR openid = \'\')',
+                cursor.execute("UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s AND (openid = %s OR openid IS NULL OR openid = '')",
                                (actual_amount, actual_amount, phone, ''))
-            from helpers import do_real_refund
+            # 创建待审批提现记录（status=0），等batch-auto处理
             remaining = actual_amount
             first_wid = None
-            all_ok = True
             for oid, refundable, br in order_refund_plan:
                 if remaining <= 0.001:
                     break
                 refund_this = min(remaining, refundable)
-                # 使用订单对应的openid进行退款
                 order_openid = br.get('order_openid') or openid
-                ok, rid, rmsg = do_real_refund(order_id=oid, amount=refund_this, openid=order_openid)
-                st = 2 if ok else 4
-                if not ok:
-                    all_ok = False
-                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, auto_approve_time, click_count, error_msg) VALUES (%s, %s, %s, %s, NOW(), 1, %s) RETURNING id',
-                               (oid, phone, refund_this, st, None if ok else rmsg))
+                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid) VALUES (%s, %s, %s, 0, 1, %s) RETURNING id',
+                               (oid, phone, refund_this, order_openid))
                 row = cursor.fetchone()
                 if first_wid is None:
-                    first_wid = row["id"]
-                if ok:
-                    cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_amount = COALESCE(refund_amount, 0) + %s WHERE id = %s', (rid, refund_this, oid))
-                    cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (oid,))
+                    first_wid = row['id']
+                cursor.execute("UPDATE user_balance_details SET status='pending' WHERE order_id=%s AND status='available'", (oid,))
                 remaining -= refund_this
             conn.commit()
             conn.close()
-            if all_ok:
-                if openid:
-                    try:
-                        from helpers import send_wx_subscribe_message
-                        wd_data = {
-                            'amount8': {'value': '¥{:.2f}'.format(actual_amount)},
-                            'time6': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
-                            'thing3': {'value': '原路退回支付账户'},
-                            'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
-                        }
-                        send_wx_subscribe_message(openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone)
-                    except Exception as e:
-                        logger.error(f'[提现通知失败] {e}')
-                return json_response(data={
-                    'withdrawal_id': first_wid,
-                    'status': 'refunded',
-                    'amount': actual_amount,
-                    'message': f'提现成功，¥{actual_amount:.2f}已原路退回'
-                })
-            else:
-                return json_response(data={
-                    'withdrawal_id': first_wid,
-                    'status': 'partial_refund',
-                    'amount': actual_amount,
-                    'message': f'提现¥{actual_amount:.2f}已提交，部分退款处理中'
-                })
+            return json_response(data={
+                'withdrawal_id': first_wid,
+                'status': 'pending',
+                'amount': actual_amount,
+                'message': f'提现申请已提交（¥{actual_amount:.2f}），等待审核'
+            })
         else:
             # 手动审批模式：按订单逐条创建待审批记录
             if not amount or float(amount) <= 0:

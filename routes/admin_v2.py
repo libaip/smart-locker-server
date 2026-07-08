@@ -1326,20 +1326,6 @@ def admin_withdrawal_approve():
         conn.commit()
         conn.close()
         if refund_success or (" 订单已全额退款" in str(refund_msg)):
-            # 发送退款成功订阅消息
-            try:
-                from helpers import send_wx_subscribe_message
-                from datetime import datetime as dt_notify
-                now_str = dt_notify.now().strftime('%Y-%m-%d %H:%M:%S')
-                refund_notify_data = {
-                    "amount8": {"value": f"¥{amount:.2f}"},
-                    "time6": {"value": now_str},
-                    "thing3": {"value": "原路退回支付账户"},
-                    "thing2": {"value": "预计1-3个工作日到账，请耐心等待"}
-                }
-                send_wx_subscribe_message('', 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', refund_notify_data, phone=phone)
-            except Exception as e:
-                logger.error(f'[withdrawal_approve] 发送退款通知失败: {e}')
             return json_response(message='审批通过，退款已完成')
         else:
             return json_response(message='审批通过，但退款失败，请手动确认退款')

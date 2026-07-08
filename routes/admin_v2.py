@@ -893,8 +893,8 @@ def admin_order_close():
         from datetime import datetime as dt_mod2
         now = dt_mod2.now().strftime('%Y-%m-%d %H:%M:%S')
         # 更新订单状态为已结束(3)，保证金退到余额
-        c.execute('UPDATE orders SET status=3, retrieve_time=%s, pickup_time=%s, updated_at=%s, refund_mark=1, refund_amount=%s WHERE id=%s',
-                   (now, now, now, order_dict.get('deposit_amount', 0), order_id))
+        c.execute('UPDATE orders SET status=3, retrieve_time=%s, pickup_time=%s, updated_at=%s, refund_mark=1 WHERE id=%s',
+                   (now, now, now, order_id))
         # 释放柜格
         if order_dict.get('slot_id'):
             c.execute('UPDATE cabinet_slots SET status=1 WHERE id=%s', (order_dict['slot_id'],))

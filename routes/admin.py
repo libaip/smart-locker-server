@@ -1606,7 +1606,7 @@ def batch_auto_withdrawal():
                 continue
             
             if withdraw_mode == 'queue_approve':
-                cursor.execute('SELECT wr.*, o.order_no, o.slot_id FROM withdrawal_records wr JOIN orders o ON wr.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id WHERE c.location_id = %s AND wr.status = 0', (location['id'],))
+                cursor.execute("SELECT wr.*, o.order_no, o.slot_id FROM withdrawal_records wr JOIN orders o ON wr.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id WHERE c.location_id = %s AND wr.status = 0 AND (wr.auto_approve_time IS NULL OR wr.auto_approve_time::timestamp <= NOW())", (location['id'],))
                 pending = cursor.fetchall()
                 for record in pending:
                     if random.random() < (location.get('auto_approve_rate', 80) / 100.0):

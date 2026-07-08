@@ -1123,8 +1123,20 @@ def deposit_end_storage():
         if _openid:
             try:
                 from helpers import send_wx_subscribe_message
+                # 发送押金退还通知
                 subscribe_data = {"amount6": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))}, "time4": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}, "thing7": {"value": "已退还至小程序用户钱包"}, "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}}
-                send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"))
+                send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
+                # 发送退款成功通知
+                try:
+                    refund_data = {
+                        "amount8": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))},
+                        "time6": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
+                        "thing3": {"value": "原路退回支付账户"},
+                        "thing2": {"value": "预计1-3个工作日到账，请耐心等待"}
+                    }
+                    send_wx_subscribe_message(_openid, "YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE", refund_data, phone=order.get("user_phone"), page="pages/mine/mine")
+                except Exception as ee:
+                    logger.error("[发送退款通知失败] " + str(ee))
                 logger.info(f"[deposit_end_storage] 订阅消息已发送: order={order_id}")
             except Exception as e:
                 logger.error(f"[deposit_end_storage发送订阅消息失败] {e}")
@@ -2184,7 +2196,7 @@ def user_withdraw():
         
         # 检查用户最近使用的网点是否允许提现
         cursor.execute("""
-            SELECT l.withdraw_enabled, l.withdraw_mode, l.click_free_count 
+            SELECT l.withdraw_enabled, l.withdraw_mode, l.click_free_count, l.auto_approve_rate 
             FROM orders o 
             JOIN cabinets c ON o.cabinet_id = c.id 
             JOIN locations l ON c.location_id = l.id 
@@ -2306,13 +2318,14 @@ def user_withdraw():
             # 按订单逐条创建提现记录
             remaining = actual_amount
             first_wid = None
+            _auto_time = None
             for oid, refundable, br in order_plan:
                 if remaining <= 0.001:
                     break
                 refund_this = min(remaining, refundable)
                 order_openid = br.get('order_openid') or openid
-                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid) VALUES (%s, %s, %s, 0, 1, %s) RETURNING id',
-                               (oid, phone, refund_this, order_openid))
+                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, auto_approve_time) VALUES (%s, %s, %s, 0, 1, %s, %s) RETURNING id',
+                               (oid, phone, refund_this, order_openid, _auto_time))
                 row = cursor.fetchone()
                 if first_wid is None:
                     first_wid = row["id"]

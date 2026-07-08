@@ -652,16 +652,9 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
         next_ch = select_payment_channel()
         if next_ch and next_ch.get('id') and next_ch['id'] != current_channel['id']:
             logger.info(f'[渠道] 切换到下一个渠道重试: {next_ch["name"]}')
-            # ????????????????????????
-            try:
-                from database import get_db as _gdb3
-                _db3 = _gdb3()
-                _db3.execute('UPDATE orders SET payment_channel_id=%s WHERE id=%s', (next_ch['id'], order_id))
-                _db3.commit()
-                _db3.close()
-                logger.info(f'[渠道] 已更新订单#{order_id}支付渠道为{next_ch["name"]}')
-            except Exception as _e:
-                logger.error(f'[渠道] 更新订单渠道失败: {_e}')
+            # [已修复] 不再修改订单的payment_channel_id，让用户重新扫码
+            # 原因：用户扫码时是商户A，如果系统偷偷换成商户B，支付回调时会找不到订单
+            logger.warning(f'[渠道] 商户异常，需要用户重新扫码。不修改订单#{order_id}的payment_channel_id')
             return get_payment_params(order_id, order_no, deposit_amount, user_phone, openid, payment_channel=next_ch, payment_channel_id=next_ch['id'], _retry_count=_retry_count+1)
     
     if current_channel:

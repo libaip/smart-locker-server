@@ -1126,17 +1126,7 @@ def deposit_end_storage():
                 # 发送押金退还通知
                 subscribe_data = {"amount6": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))}, "time4": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}, "thing7": {"value": "已退还至小程序用户钱包"}, "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}}
                 send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
-                # 发送退款成功通知
-                try:
-                    refund_data = {
-                        "amount8": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))},
-                        "time6": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
-                        "thing3": {"value": "原路退回支付账户"},
-                        "thing2": {"value": "预计1-3个工作日到账，请耐心等待"}
-                    }
-                    send_wx_subscribe_message(_openid, "YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE", refund_data, phone=order.get("user_phone"), page="pages/mine/mine")
-                except Exception as ee:
-                    logger.error("[发送退款通知失败] " + str(ee))
+
                 logger.info(f"[deposit_end_storage] 订阅消息已发送: order={order_id}")
             except Exception as e:
                 logger.error(f"[deposit_end_storage发送订阅消息失败] {e}")
@@ -2269,7 +2259,7 @@ def user_withdraw():
                             'thing3': {'value': '原路退回支付账户'},
                             'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
                         }
-                        send_wx_subscribe_message(openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone)
+                        send_wx_subscribe_message(openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone, page='pages/mine/mine')
                     except Exception as e:
                         logger.error(f'[提现通知失败] {e}')
                 return json_response(data={

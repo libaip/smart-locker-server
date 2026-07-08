@@ -549,6 +549,9 @@ def retrieve_confirm():
                 _wechat_name = ''
                 cursor.execute("INSERT INTO user_balances (phone, openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (phone) DO UPDATE SET balance = user_balances.balance + %s, total_deposited = user_balances.total_deposited + %s",
                                (order['user_phone'], _openid, _wechat_name, deposit_amount, deposit_amount, datetime.now(), deposit_amount, deposit_amount))
+            # 插入余额明细，供提现使用
+            cursor.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status, source_time) VALUES (%s, %s, %s, 'available', NOW()) ON CONFLICT (order_id) DO NOTHING",
+                           (order['user_phone'], order_id, deposit_amount))
         refund_id = 'BALANCE_' + datetime.now().strftime('%Y%m%d%H%M%S')
         refund_success = True
         conn.commit()

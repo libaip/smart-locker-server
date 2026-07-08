@@ -231,19 +231,19 @@ def pay_notify():
                 if ub:
                     # 找到记录：更新余额 + 更新手机号为最新的
                     if _o_openid:
-                        cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, phone = %s WHERE openid = %s',
-                                       (order['deposit_amount'], order['deposit_amount'], order['user_phone'], _o_openid))
+                        cursor.execute('UPDATE user_balances SET total_deposited = total_deposited + %s, phone = %s WHERE openid = %s',
+                                       (order['deposit_amount'], order['user_phone'], _o_openid))
                     else:
-                        cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE phone = %s',
-                                       (order['deposit_amount'], order['deposit_amount'], order['user_phone']))
+                        cursor.execute('UPDATE user_balances SET total_deposited = total_deposited + %s WHERE phone = %s',
+                                       (order['deposit_amount'], order['user_phone']))
                 else:
                     # 没找到：插入新记录
                     if _o_openid:
-                        cursor.execute('INSERT INTO user_balances (phone, openid, unionid, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s)',
-                                       (order['user_phone'], _o_openid, _o_unionid, order['deposit_amount'], order['deposit_amount'], datetime.now()))
+                        cursor.execute('INSERT INTO user_balances (phone, openid, unionid, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, 0, 0, %s)',
+                                       (order['user_phone'], _o_openid, _o_unionid, datetime.now()))
                     else:
-                        cursor.execute('INSERT INTO user_balances (phone, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s)',
-                                       (order['user_phone'], order['deposit_amount'], order['deposit_amount'], datetime.now()))
+                        cursor.execute('INSERT INTO user_balances (phone, balance, total_deposited, first_use_time) VALUES (%s, 0, 0, %s)',
+                                       (order['user_phone'], datetime.now()))
             except Exception as e:
                 logger.error(f'[支付回调更新余额失败] {e}')
 

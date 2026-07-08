@@ -2190,6 +2190,20 @@ def user_withdraw():
         
         withdraw_mode = loc_row['withdraw_mode'] if loc_row else 'auto_approve'
         
+        # 发送提现订阅消息通知（无论自动/手动审批模式都发）
+        if openid:
+            try:
+                from helpers import send_wx_subscribe_message
+                wd_data = {
+                    'amount8': {'value': '¥{:.2f}'.format(actual_amount)},
+                    'time6': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
+                    'thing3': {'value': '提现申请已提交'},
+                    'thing2': {'value': '请点击查看提现进度'}
+                }
+                send_wx_subscribe_message(openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone, page='pages/mine/mine')
+            except Exception as e:
+                logger.error(f'[提现通知失败] {e}')
+
         if withdraw_mode == 'auto_approve':
             # 自动审批模式：立即调微信退款，提现管理有记录
             _bd_key = openid if openid else phone

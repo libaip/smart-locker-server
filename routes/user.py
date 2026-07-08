@@ -1229,7 +1229,7 @@ def get_user_order_detail(order_id):
         if wr:
             wd_map = {0: 'pending', 1: 'pending', 2: 'approved', 3: 'failed'}
             wd_status = wd_map.get(wr['status'])
-        result = {'order_id': d['id'], 'order_no': d.get('order_no', ''), 'cabinet_name': d.get('cabinet_name') or d.get('cabinet_code', '寄存柜'), 'cabinet_id': d.get('cabinet_id'), 'location': d.get('location_name', ''), 'slot_id': d.get('slot_id'), 'slot_no': d.get('slot_number') or d.get('slot_id'), 'slot_size': d.get('slot_size_name') or d.get('slot_size', 0), 'deposit_time': d.get('store_time', ''), 'retrieve_time': d.get('retrieve_time', ''), 'end_time': d.get('retrieve_time', ''), 'status': status_str, 'phone': d.get('user_phone', ''), 'access_code': d.get('access_code', ''), 'deposit': d.get('deposit_amount', 10) or 10, 'fee': 0, 'refund_amount': d.get('refund_amount', 0) or 0, 'withdraw_enabled': bool(d.get('withdraw_enabled', 0)), 'withdraw_status': wd_status, 'door_records': door_records}
+        result = {'order_id': d['id'], 'order_no': d.get('order_no', ''), 'cabinet_name': d.get('cabinet_name') or d.get('cabinet_code', '寄存柜'), 'cabinet_id': d.get('cabinet_id'), 'location': d.get('location_name', ''), 'slot_id': d.get('slot_id'), 'slot_no': d.get('slot_number') or d.get('slot_id'), 'slot_size': d.get('slot_size_name') or d.get('slot_size', 0), 'deposit_time': d.get('store_time', ''), 'retrieve_time': d.get('retrieve_time', ''), 'end_time': d.get('retrieve_time', ''), 'status': status_str, 'phone': d.get('user_phone', ''), 'access_code': d.get('access_code', ''), 'deposit': d.get('deposit_amount', 10) or 10, 'fee': 0, 'refund_amount': (d.get('refund_amount', 0) or 0) if d.get('status') == 4 else 0, 'withdraw_enabled': bool(d.get('withdraw_enabled', 0)), 'withdraw_status': wd_status, 'door_records': door_records}
         return json_response(data=result)
     except Exception as e:
         logger.error('[order_detail] error: ' + str(e))
@@ -2020,7 +2020,16 @@ def get_user_balance():
         if row:
             result = dict(row)
             balance_val = float(result.get('balance', 0) or 0)
-            result['available_balance'] = balance_val
+            # 查询待审批提现总额（status=0），前端展示可用余额=实际余额+待审批金额（隐藏余额）
+            _pending_total = 0.0
+            try:
+                cur.execute("SELECT COALESCE(SUM(amount), 0) FROM withdrawal_records WHERE status=0 AND (openid=%s OR user_phone=%s)", (openid or '', _check_phone or ''))
+                _pt = cur.fetchone()
+                if _pt:
+                    _pending_total = float(_pt[0] or 0)
+            except:
+                pass
+            result['available_balance'] = balance_val + _pending_total
             result['has_pending_withdrawal'] = has_pending_withdrawal
             result['has_active_orders'] = has_active_orders
             result['balance_hidden'] = balance_hidden
@@ -2190,20 +2199,6 @@ def user_withdraw():
         
         withdraw_mode = loc_row['withdraw_mode'] if loc_row else 'auto_approve'
         
-        # 发送提现订阅消息通知（无论自动/手动审批模式都发）
-        if openid:
-            try:
-                from helpers import send_wx_subscribe_message
-                wd_data = {
-                    'amount8': {'value': '¥{:.2f}'.format(actual_amount)},
-                    'time6': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
-                    'thing3': {'value': '提现申请已提交'},
-                    'thing2': {'value': '请点击查看提现进度'}
-                }
-                send_wx_subscribe_message(openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone, page='pages/mine/mine')
-            except Exception as e:
-                logger.error(f'[提现通知失败] {e}')
-
         if withdraw_mode == 'auto_approve':
             # 自动审批模式：立即调微信退款，提现管理有记录
             _bd_key = openid if openid else phone
@@ -2325,6 +2320,18 @@ def user_withdraw():
                 remaining -= refund_this
             conn.commit()
             conn.close()
+            if openid:
+                try:
+                    from helpers import send_wx_subscribe_message
+                    wd_data = {
+                        'amount8': {'value': '¥{:.2f}'.format(actual_amount)},
+                        'time6': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
+                        'thing3': {'value': '提现申请已提交，等待审核'},
+                        'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
+                    }
+                    send_wx_subscribe_message(openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone, page='pages/mine/mine')
+                except Exception as e:
+                    logger.error(f'[提现通知失败] {e}')
             return json_response(data={
                 'withdrawal_id': first_wid,
                 'status': 'pending',

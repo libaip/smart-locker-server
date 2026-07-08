@@ -658,7 +658,7 @@ def admin_orders():
             where += " AND o.created_at>=NOW() - interval '30 days'"
         c.execute(f'SELECT COUNT(*) FROM orders o LEFT JOIN cabinets c ON o.cabinet_id=c.id LEFT JOIN locations l ON c.location_id=l.id LEFT JOIN (SELECT DISTINCT ON (phone) * FROM user_balances ORDER BY phone, id DESC) ub ON o.user_phone=ub.phone LEFT JOIN phone_openids po ON o.user_phone=po.phone LEFT JOIN user_profiles up ON po.openid=up.openid WHERE {where}', params)
         total = c.fetchone()[0]
-        c.execute(f"""SELECT o.id, o.order_no, o.user_phone, o.access_code as password, o.compartment_number, o.deposit_amount, o.refund_amount, o.status,
+        c.execute(f"""SELECT o.id, o.order_no, o.user_phone, o.access_code as password, o.compartment_number, o.deposit_amount, CASE WHEN o.status=4 THEN COALESCE(o.refund_amount,0) ELSE 0 END as refund_amount, o.status,
             o.store_time, o.retrieve_time, o.created_at, o.group_id, o.cabinet_code,
             o.transaction_id, o.pay_time, o.refund_time, o.refund_mark, o.logic_mark,
             COALESCE(NULLIF(ub.wechat_name,''), NULLIF(po.wechat_name,''), up.wechat_name) as wechat_name,""" + f"""
@@ -1616,7 +1616,7 @@ def admin_agent_stats():
             conn.close()
             return empty_result
         c_ph = ','.join(['%s'] * len(cabinet_ids))
-        sql = 'SELECT COUNT(*) as order_count, COALESCE(SUM(deposit_amount),0) as total_deposit, COALESCE(SUM(refund_amount),0) as total_refund, COALESCE(SUM(deposit_amount - refund_amount),0) as total_unreturned FROM orders o WHERE o.cabinet_id IN (' + c_ph + ') ' + date_where
+        sql = 'SELECT COUNT(*) as order_count, COALESCE(SUM(deposit_amount),0) as total_deposit, COALESCE(SUM(CASE WHEN status=4 THEN refund_amount ELSE 0 END),0) as total_refund, COALESCE(SUM(deposit_amount - CASE WHEN status=4 THEN refund_amount ELSE 0 END),0) as total_unreturned FROM orders o WHERE o.cabinet_id IN (' + c_ph + ') ' + date_where
         c.execute(sql, cabinet_ids + date_params)
         row = c.fetchone()
         order_count = row[0]
@@ -2081,7 +2081,7 @@ def admin_stats():
         c.execute(f'''SELECT COUNT(*) as total, 
             SUM(CASE WHEN status=2 THEN 1 ELSE 0 END) as active_count,
             COALESCE(SUM(o.deposit_amount),0) as deposit_total,
-            COALESCE(SUM(o.refund_amount),0) as refund_total
+            COALESCE(SUM(CASE WHEN o.status=4 THEN o.refund_amount ELSE 0 END),0) as refund_total
             FROM orders{where_clause}''', params)
         summary = dict(c.fetchone())
         summary['net_income'] = float(summary.get('deposit_total',0)) - float(summary.get('refund_total',0))
@@ -2090,7 +2090,7 @@ def admin_stats():
             COUNT(o.id) as order_count,
             SUM(CASE WHEN o.status=2 THEN 1 ELSE 0 END) as active_count,
             COALESCE(SUM(o.deposit_amount),0) as deposit_total,
-            COALESCE(SUM(o.refund_amount),0) as refund_total
+            COALESCE(SUM(CASE WHEN o.status=4 THEN o.refund_amount ELSE 0 END),0) as refund_total
             FROM locations l LEFT JOIN merchants m ON l.merchant_id=m.id
             LEFT JOIN cabinets cab ON cab.location_id=l.id
             LEFT JOIN orders o ON o.cabinet_id=cab.id
@@ -2108,7 +2108,7 @@ def admin_stats():
             date = (datetime.now() - timedelta(days=29-i)).strftime('%Y-%m-%d')
             c.execute('''SELECT COUNT(*) as order_count,
                 COALESCE(SUM(o.deposit_amount),0) as deposit_total,
-                COALESCE(SUM(o.refund_amount),0) as refund_total
+                COALESCE(SUM(CASE WHEN o.status=4 THEN o.refund_amount ELSE 0 END),0) as refund_total
                 FROM orders WHERE date(created_at)=%s''', (date,))
             row = c.fetchone()
             trend.append({
@@ -2316,7 +2316,7 @@ def admin_biz_stats():
         days = 30
         for i in range(days):
             date = (datetime.now() - timedelta(days=days-1-i)).strftime('%Y-%m-%d')
-            c.execute(f'''SELECT COUNT(*) as cnt, COALESCE(SUM(o.deposit_amount),0) as dep, COALESCE(SUM(o.refund_amount),0) as ref
+            c.execute(f'''SELECT COUNT(*) as cnt, COALESCE(SUM(o.deposit_amount),0) as dep, COALESCE(SUM(CASE WHEN o.status=4 THEN o.refund_amount ELSE 0 END),0) as ref
                 FROM orders o
                 LEFT JOIN cabinets cab ON o.cabinet_id=cab.id
                 LEFT JOIN locations l ON cab.location_id=l.id
@@ -3692,7 +3692,7 @@ def admin_merchant_share_stats():
             a.name as agent_name,
             COUNT(o.id) as order_count,
             COALESCE(SUM(o.deposit_amount), 0) as deposit_total,
-            COALESCE(SUM(o.refund_amount), 0) as refund_total,
+            COALESCE(SUM(CASE WHEN o.status=4 THEN o.refund_amount ELSE 0 END), 0) as refund_total,
             ROUND(COUNT(o.id) * COALESCE(m.commission_per_order, 0), 2) as share_total
             FROM orders o
             LEFT JOIN cabinets cab ON o.cabinet_id = cab.id

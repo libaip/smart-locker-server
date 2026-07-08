@@ -349,9 +349,10 @@ def store_page():
             _ssr["charge_mode"] = row["charge_mode"] or "deposit"
             _ssr["per_use_price"] = row["per_use_price"] or 0
             _ssr["allow_h5_to_mp"] = row["allow_h5_to_mp"] or 0
-#            if row["allow_h5_to_mp"]:
-#                _ssr["mp_appid"] = config.WX_MP_APP_ID
-#                _ssr["mp_path"] = "pages/subscribe/subscribe"
+            if row["allow_h5_to_mp"]:
+                import config as _cfg
+                _ssr["mp_appid"] = _cfg.WX_MP_APP_ID
+                _ssr["mp_path"] = "pages/subscribe/subscribe"
 #            # 每次有人扫码加载存包页面就刷新心跳
 #            try:
 #                _up = conn.cursor()

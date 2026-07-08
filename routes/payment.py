@@ -218,27 +218,26 @@ def pay_notify():
             cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
                            (order['id'], order['deposit_amount'], transaction_id))
             # 更新用户余额
+            # 更新用户余额
             try:
                 _o_openid = order.get('openid', '') or ''
                 _o_unionid = order.get('unionid', '') or ''
+                # 优先按openid查找（openid是身份标识，手机号可以变）
                 if _o_openid:
-                    cursor.execute('SELECT id FROM user_balances WHERE phone = %s AND openid = %s', (order['user_phone'], _o_openid))
+                    cursor.execute('SELECT id, phone FROM user_balances WHERE openid = %s', (_o_openid,))
                 else:
-                    _o_openid = order.get('openid', '') or ''
-                _o_unionid = order.get('unionid', '') or ''
-                if _o_openid:
-                    cursor.execute('SELECT id FROM user_balances WHERE phone = %s AND openid = %s', (order['user_phone'], _o_openid))
-                else:
-                    cursor.execute('SELECT id FROM user_balances WHERE phone = %s', (order['user_phone'],))
+                    cursor.execute('SELECT id, phone FROM user_balances WHERE phone = %s', (order['user_phone'],))
                 ub = cursor.fetchone()
                 if ub:
+                    # 找到记录：更新余额 + 更新手机号为最新的
                     if _o_openid:
-                        cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE phone = %s AND openid = %s',
+                        cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, phone = %s WHERE openid = %s',
                                        (order['deposit_amount'], order['deposit_amount'], order['user_phone'], _o_openid))
                     else:
                         cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE phone = %s',
                                        (order['deposit_amount'], order['deposit_amount'], order['user_phone']))
                 else:
+                    # 没找到：插入新记录
                     if _o_openid:
                         cursor.execute('INSERT INTO user_balances (phone, openid, unionid, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s)',
                                        (order['user_phone'], _o_openid, _o_unionid, order['deposit_amount'], order['deposit_amount'], datetime.now()))
@@ -247,6 +246,7 @@ def pay_notify():
                                        (order['user_phone'], order['deposit_amount'], order['deposit_amount'], datetime.now()))
             except Exception as e:
                 logger.error(f'[支付回调更新余额失败] {e}')
+
             # 记录开锁信息（在commit之前读取，避免DB锁）
             _open_lock_info = None
             try:
@@ -288,8 +288,6 @@ def pay_notify():
                         logger.error(f'[支付回调开锁失败] {e}')
                 else:
                     logger.info(f'[支付回调] door_records已有记录，跳过开门: order_id={_open_lock_info["order_id"]}')
-                except Exception as e:
-                    logger.error(f'[支付回调开锁失败] {e}')
             if _channel_id:
                 try:
                     update_channel_stats(_channel_id, _deposit_amount)

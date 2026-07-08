@@ -632,16 +632,39 @@ def delete_cabinet(cabinet_id):
 
 @bp.route('/cabinets/info/<int:cabinet_id>', methods=['GET'])
 def get_cabinet_public_info(cabinet_id):
-    """公开接口 - H5页面获取设备押金信息"""
+    """公开接口 - H5页面获取设备信息"""
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT c.id, c.deposit_amount, c.charge_mode, c.per_use_price, c.name, c.last_heartbeat, l.name as location_name, l.allow_h5_to_mp, l.mp_appid, l.h5_url FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.id=%s', (cabinet_id,))
+        cursor.execute('SELECT c.id, c.deposit_amount, c.charge_mode, c.per_use_price, c.name, c.last_heartbeat, l.name as location_name, l.address as location_address, l.allow_h5_to_mp, l.h5_url FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.id=%s', (cabinet_id,))
         row = cursor.fetchone()
-        conn.close()
         if not row:
+            conn.close()
             return json_response(message='设备不存在', code=404)
-        return json_response(data=dict(row))
+        result = dict(row)
+        # 补充小程序跳转信息
+        if result.get('allow_h5_to_mp'):
+            import config
+            result['mp_appid'] = config.WX_MP_APP_ID
+            result['mp_path'] = 'pages/subscribe/subscribe'
+        # 计算在线状态
+        if result.get('last_heartbeat'):
+            try:
+                from datetime import datetime
+                hb = result['last_heartbeat']
+                if isinstance(hb, str):
+                    hb = datetime.strptime(hb[:19], "%Y-%m-%d %H:%M:%S")
+                result['is_online'] = (datetime.now() - hb).total_seconds() < 300
+            except:
+                result['is_online'] = False
+        else:
+            result['is_online'] = False
+        # 查询可用柜门
+        cursor.execute('SELECT id, slot_number, slot_size, slot_label FROM cabinet_slots WHERE cabinet_id=%s AND status=1 ORDER BY slot_number LIMIT 10', (cabinet_id,))
+        slots = cursor.fetchall()
+        result['available_slots_list'] = [{'id': s['id'], 'slot_number': s['slot_number'], 'slot_size': s.get('slot_size', 'M'), 'slot_label': s.get('slot_label', '') or ''} for s in slots]
+        conn.close()
+        return json_response(data=result)
     except Exception as e:
         logger.error(f'[get_cabinet_public_info] {e}')
         return json_response(message=str(e), code=500)

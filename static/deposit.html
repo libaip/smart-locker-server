@@ -1031,6 +1031,7 @@
                 currentAccessCode = d.data.access_code || code;
                 document.getElementById('s1DoorNum').textContent = (d.data.compartment_number || '') + '号';
                 document.getElementById('payDoorNum').textContent = (d.data.compartment_number || '') + '号';
+                console.log("[DEBUG] allowH5ToMp:", allowH5ToMp, "mpAppId:", mpAppId);
                 if (allowH5ToMp === 1) {
                     launchMp();
                 } else {
@@ -1498,7 +1499,7 @@
     }
 
     function loadCabinetInfo() {
-        var infoUrl = _deviceParam ? (API_BASE + '/api/cabinets/by-mainboard/' + encodeURIComponent(_deviceParam)) : (API_BASE + '/api/cabinets/by-mainboard/' + currentCabinetId);
+        var infoUrl = _deviceParam ? (API_BASE + "/api/cabinets/by-mainboard/" + encodeURIComponent(_deviceParam)) : (API_BASE + "/api/cabinets/info/" + currentCabinetId);
         fetch(infoUrl)
         .then(function(res) { return res.json(); })
         .then(function(data) {

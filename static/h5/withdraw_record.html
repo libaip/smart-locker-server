@@ -22,7 +22,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei
 .status-refund::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:#4ECDC4}
 .status-done{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:12px;font-size:12px;background:#f0f0f0;color:#888}
 .status-done svg{width:14px;height:14px;fill:#888}
-.tips{border-radius:6px;padding:8px 12px;font-size:11px;color:#E6A700;line-height:1.5;margin-top:10px}
+.tips{border-radius:6px;padding:8px 12px;font-size:11px;color:#D4A843;line-height:1.5;margin-top:10px}
 .empty,.loading{text-align:center;padding:60px 20px;color:#ccc;font-size:14px}
 </style>
 </head>
@@ -99,7 +99,7 @@ function fmtTime(t){if(!t)return '';return String(t).replace('T',' ').substring(
       var st='<span class="status-refund">退款成功</span>';
       if(isOk&&hasApprove) st+='<span class="status-done"><svg viewBox="0 0 24 24"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg>已到账</span>';
       var tip='';
-      if(!isOk) tip='<div class="tips">⚠ 预计1-3个工作日到账 请耐心等待…<br>超时请联系客服</div>';
+      if(!isOk) tip='<div class="tips">预计1-3个工作日到账 请耐心等待…<br>超时请联系客服</div>';
       h+='<div class="record-card"><div class="record-top"><div class="record-amount">+'+amt+'元<small>手续费0.00元</small></div></div>'
         +'<div class="record-time">提现时间: '+fmtTime(item.apply_time)+'</div>'
         +'<div class="status-row">'+st+'</div>'+tip+'</div>';

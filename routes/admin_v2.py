@@ -939,15 +939,7 @@ def admin_order_close():
                     'thing2': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                 }
                 send_wx_subscribe_message(order_dict['openid'], '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data, phone=order_dict.get('user_phone'))
-                # 同时发送退款通知
-                if deposit_amount > 0:
-                    refund_data = {
-                        "amount8": {"value": "¥{:.2f}".format(deposit_amount)},
-                        "time6": {"value": now},
-                        "thing3": {"value": "原路退回支付账户"},
-                        "thing2": {"value": "预计1-3个工作日到账，请耐心等待"}
-                    }
-                    send_wx_subscribe_message(order_dict["openid"], "YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE", refund_data, phone=order_dict.get("user_phone"))
+                # 退款通知在用户提现时发送，不在结束寄存时发送
             except Exception as e:
                 logger.error(f"[order_close发送订阅消息失败] {e}")
         
@@ -1334,6 +1326,20 @@ def admin_withdrawal_approve():
         conn.commit()
         conn.close()
         if refund_success or (" 订单已全额退款" in str(refund_msg)):
+            # 发送退款成功订阅消息
+            try:
+                from helpers import send_wx_subscribe_message
+                from datetime import datetime as dt_notify
+                now_str = dt_notify.now().strftime('%Y-%m-%d %H:%M:%S')
+                refund_notify_data = {
+                    "amount8": {"value": f"¥{amount:.2f}"},
+                    "time6": {"value": now_str},
+                    "thing3": {"value": "原路退回支付账户"},
+                    "thing2": {"value": "预计1-3个工作日到账，请耐心等待"}
+                }
+                send_wx_subscribe_message('', 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', refund_notify_data, phone=phone)
+            except Exception as e:
+                logger.error(f'[withdrawal_approve] 发送退款通知失败: {e}')
             return json_response(message='审批通过，退款已完成')
         else:
             return json_response(message='审批通过，但退款失败，请手动确认退款')
@@ -4552,14 +4558,7 @@ def admin_device_clear_all():
                         'thing2': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                     }
                     send_wx_subscribe_message(o_dict['openid'], '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data, phone=o_dict.get('user_phone'))
-                    if deposit_amount > 0 and o_dict.get('status') == 2:
-                        refund_data = {
-                            "amount8": {"value": "¥{:.2f}".format(deposit_amount)},
-                            "time6": {"value": now},
-                            "thing3": {"value": "原路退回支付账户"},
-                            "thing2": {"value": "预计1-3个工作日到账，请耐心等待"}
-                        }
-                        send_wx_subscribe_message(o_dict["openid"], "YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE", refund_data, phone=o_dict.get("user_phone"))
+                    # 退款通知在用户提现时发送，不在清柜时发送
                     notified += 1
                 except Exception as e:
                     logger.error(f'[clear_all] 发送订阅消息失败 order={o_dict["id"]}: {e}')

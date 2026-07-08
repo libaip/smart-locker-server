@@ -1621,7 +1621,7 @@ def batch_auto_withdrawal():
                             processed_count += 1
                         else:
                             cursor.execute('UPDATE withdrawal_records SET status = 1, approver = %s, auto_approve_time = %s WHERE id = %s', ('system', now.strftime('%Y-%m-%d %H:%M:%S'), record['id']))
-            else:
+            elif withdraw_mode == 'auto_approve':
                 sql = "SELECT wr.*, o.order_no, o.slot_id FROM withdrawal_records wr JOIN orders o ON wr.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id WHERE c.location_id = %s AND wr.status = 0 AND (wr.apply_time::date + %s) <= %s::date"
                 cursor.execute(sql, (location['id'], auto_approve_day, now))
                 pending = cursor.fetchall()

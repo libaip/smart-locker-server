@@ -81,12 +81,26 @@ class _PGCursor:
             try:
                 self._cur.execute(pg_sql, converted)
             except Exception as ee:
+                # Auto-rollback on error to prevent transaction failure cascade
+                try:
+                    self._cur.connection.rollback()
+                except:
+                    pass
                 import traceback
                 with open("/tmp/psql_err.log","a") as f:
                     f.write("PSQL ERR: %s\nPARAMS: %s\n" % (pg_sql[:300], str(converted)))
                     traceback.print_exc(file=f)
+                raise
         else:
-            self._cur.execute(pg_sql)
+            try:
+                self._cur.execute(pg_sql)
+            except Exception as ee:
+                # Auto-rollback on error to prevent transaction failure cascade
+                try:
+                    self._cur.connection.rollback()
+                except:
+                    pass
+                raise
         return self
 
     def fetchone(self):

@@ -387,11 +387,12 @@ def send_open_lock(device_id, board_no, lock_no, protocol=None, order_id='', slo
             pass
 
     
-    # 内存队列兜底（设备离线时用）
-    if device_id not in pending_lock_commands:
-        pending_lock_commands[device_id] = []
-    if command not in pending_lock_commands[device_id]:
-        pending_lock_commands[device_id].append(command)
+    # 内存队列兜底（仅在WS发送失败时使用）
+    if not _ws_sent:
+        if device_id not in pending_lock_commands:
+            pending_lock_commands[device_id] = []
+        if command not in pending_lock_commands[device_id]:
+            pending_lock_commands[device_id].append(command)
     
     # 数据库操作：始终delivered=0，让HTTP轮询作为可靠兜底（WS可能发送成功但设备未收到）
     _delivered = 1 if _ws_sent else 0
@@ -590,8 +591,10 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
     if payment_channel_id:
         ch = _get_payment_channel(payment_channel_id)
         current_channel = ch or payment_channel
-    else:
+    elif payment_channel:
         current_channel = payment_channel
+    else:
+        current_channel = _get_payment_channel()  # 自动选活跃渠道，避免fallback到硬编码默认商户
 
     if current_channel:
         wxpay, ch_type = get_channel_wxpay(current_channel, use_mp_appid=False)
@@ -909,11 +912,25 @@ def do_balance_transfer(phone, amount, openid=None):
 # 微信订阅消息
 # ============================================
 
-def send_wx_subscribe_message(openid, template_id, data, page=''):
+def send_wx_subscribe_message(openid, template_id, data, page='', phone=None):
     """发送微信订阅消息"""
     try:
         import requests
         import config
+        from database import get_db
+
+        # 如果提供了手机号，从phone_openids查找小程序openid
+        if phone:
+            try:
+                _conn = get_db()
+                _cur = _conn.cursor()
+                _cur.execute('SELECT openid FROM phone_openids WHERE phone=%s', (phone,))
+                _row = _cur.fetchone()
+                _conn.close()
+                if _row and _row[0]:
+                    openid = _row[0]
+            except Exception as _e:
+                logger.warning(f'[subscribe_msg] 查询phone_openids失败: {_e}')
 
         # 获取access_token
         token_url = f'https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid={config.WX_MP_APP_ID}&secret={config.WX_MP_APP_SECRET}'
@@ -1153,7 +1170,7 @@ def get_withhold_hours(mch_id):
     try:
         from database import get_db
         c = get_db()
-        row = c.execute("""SELECT COUNT(*) as total, COALESCE((SELECT COUNT(*) FROM complaints co JOIN orders oo ON co.order_no=oo.order_no WHERE oo.mch_id=%s),0) as comp FROM orders WHERE mch_id=%s""", (mch_id, mch_id)).fetchone()
+        row = c.execute("""SELECT COUNT(*) as total, COALESCE((SELECT COUNT(*) FROM complaints co WHERE co.mch_id=%s),0) as comp FROM orders o JOIN payment_channels pc ON o.payment_channel_id=pc.id WHERE pc.mch_id=%s""", (mch_id, mch_id)).fetchone()
         c.close()
         total, comp = row[0], row[1]
         rate = comp / max(total, 1)

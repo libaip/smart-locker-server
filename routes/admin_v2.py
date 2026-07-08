@@ -201,7 +201,7 @@ def admin_cabinet_save():
             fields = ['name','cabinet_code','location_id','mainboard_device_id','mainboard_source',
                      'total_slots','business_status','status','charge_mode',
                      'deposit_amount','per_use_price','customer_phone',
-                     'usage_rules','withdrawal_rules']
+                     'usage_rules']
             sets, params = [], []
             for f in fields:
                 if f in data:
@@ -218,7 +218,7 @@ def admin_cabinet_save():
             cabinet_code = data.get('cabinet_code') or f'CAB{datetime.now().strftime("%Y%m%d%H%M%S")}'
             c.execute("""INSERT INTO cabinets (cabinet_code,name,location_id,mainboard_device_id,mainboard_source,
                 total_slots,business_status,status,charge_mode,deposit_amount,
-                customer_phone,per_use_price,usage_rules,withdrawal_rules) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                customer_phone,per_use_price,usage_rules) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
                 (cabinet_code, data.get("name",""), int(data.get("location_id")) if data.get("location_id") and str(data.get("location_id")).strip() else None, data.get("mainboard_device_id"),
                  data.get("mainboard_source","WT"),
                  data.get("total_slots",12), data.get("business_status","open"),
@@ -226,12 +226,8 @@ def admin_cabinet_save():
                  float(data.get("deposit_amount") or 20),
                  data.get("customer_phone",""),
                  float(data.get("per_use_price") or 0),
-                 data.get("usage_rules") or "24h",
-                 data.get("withdrawal_rules") or ""))
+                 data.get("usage_rules") or "24h"))
             data['id'] = c.fetchone()[0]
-        _sp = data.get('serial_port') or ''
-        _br = data.get('baud_rate') or ''
-        _pr = data.get('mainboard_source') or ''
         if data.get('id') and (_sp or _br or _pr):
             c.execute('SELECT id FROM mainboards WHERE cabinet_id=%s', (data['id'],))
             row = c.fetchone()
@@ -873,7 +869,7 @@ def admin_order_refund():
                     'thing3': {'value': '原路退回支付账户'},
                     'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
                 }
-                send_wx_subscribe_message(order_dict['openid'], 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', subscribe_data)
+                send_wx_subscribe_message(order_dict['openid'], 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', subscribe_data, phone=order_dict.get('user_phone'))
             except Exception as e:
                 logger.error(f'[order_refund发送订阅消息失败] {e}')
         
@@ -922,7 +918,7 @@ def admin_order_close():
             c.execute('SELECT id FROM user_balances WHERE phone = %s', (order_dict['user_phone'],))
             ub_row = c.fetchone()
             if ub_row:
-                c.execute("UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, openid = COALESCE(NULLIF(openid, ''), %s), unionid = COALESCE(NULLIF(unionid, ''), %s) WHERE phone = %s",
+                c.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, openid = COALESCE(NULLIF(openid, ''), %s), unionid = COALESCE(NULLIF(unionid, ''), %s) WHERE phone = %s',
                           (deposit_amount, deposit_amount, order_dict.get('openid', ''), order_dict.get('unionid', ''), order_dict['user_phone']))
             else:
                 c.execute('INSERT INTO user_balances (phone, openid, unionid, balance, total_deposited, total_withdrawn, first_use_time) VALUES (%s, %s, %s, %s, %s, 0, NOW())',
@@ -938,12 +934,20 @@ def admin_order_close():
                 from helpers import send_wx_subscribe_message
                 subscribe_data = {
                     'amount6': {'value': '¥{:.2f}'.format(deposit_amount)},
-                    'time4': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
+                    'time4': {'value': now},
                     'thing7': {'value': '已退还至小程序用户钱包'},
                     'thing2': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                 }
-                send_wx_subscribe_message(order_dict['openid'], '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data)
-
+                send_wx_subscribe_message(order_dict['openid'], '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data, phone=order_dict.get('user_phone'))
+                # 同时发送退款通知
+                if deposit_amount > 0:
+                    refund_data = {
+                        "amount8": {"value": "¥{:.2f}".format(deposit_amount)},
+                        "time6": {"value": now},
+                        "thing3": {"value": "原路退回支付账户"},
+                        "thing2": {"value": "预计1-3个工作日到账，请耐心等待"}
+                    }
+                    send_wx_subscribe_message(order_dict["openid"], "YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE", refund_data, phone=order_dict.get("user_phone"))
             except Exception as e:
                 logger.error(f"[order_close发送订阅消息失败] {e}")
         
@@ -1301,8 +1305,8 @@ def admin_withdrawal_approve():
         refund_id = ''
         if order_id:
             # 检查是否已退过款
-            _check_refund = cursor.execute('SELECT refund_status FROM orders WHERE id=%s', (order_id,))
-            _refund_row = cursor.fetchone()
+            _check_refund = c.execute('SELECT refund_status FROM orders WHERE id=%s', (order_id,))
+            _refund_row = c.fetchone()
             if _refund_row and _refund_row[0] == 'refunded':
                 refund_success = True
                 refund_id = 'BALANCE_' + str(order_id)
@@ -4542,13 +4546,20 @@ def admin_device_clear_all():
                 try:
                     from helpers import send_wx_subscribe_message
                     subscribe_data = {
-                        'amount6': {'value': '¥{:.2f}'.format(o_dict.get('deposit_amount', 0))},
-                        'time4': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
+                        'amount6': {'value': '¥{:.2f}'.format(deposit_amount)},
+                        'time4': {'value': now},
                         'thing7': {'value': '已退还至小程序用户钱包'},
                         'thing2': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                     }
-                    send_wx_subscribe_message(o_dict['openid'], '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data)
-
+                    send_wx_subscribe_message(o_dict['openid'], '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data, phone=o_dict.get('user_phone'))
+                    if deposit_amount > 0 and o_dict.get('status') == 2:
+                        refund_data = {
+                            "amount8": {"value": "¥{:.2f}".format(deposit_amount)},
+                            "time6": {"value": now},
+                            "thing3": {"value": "原路退回支付账户"},
+                            "thing2": {"value": "预计1-3个工作日到账，请耐心等待"}
+                        }
+                        send_wx_subscribe_message(o_dict["openid"], "YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE", refund_data, phone=o_dict.get("user_phone"))
                     notified += 1
                 except Exception as e:
                     logger.error(f'[clear_all] 发送订阅消息失败 order={o_dict["id"]}: {e}')
@@ -5028,18 +5039,9 @@ def wechat_complaint_notify():
                 from helpers import mark_user_withdraw as _muw
                 try: _muw(phone=payer_phone)
                 except: pass
-            # [??: routes/admin_v2.py.bak.20260707] 2026-07-07 ?? complaint_count +1
-            if payer_phone:
-                try:
-                    c.execute("UPDATE user_balances SET complaint_count = complaint_count + 1 WHERE phone=%s", (payer_phone,))
-                    conn.commit()
-                except Exception as _ce:
-                    logger.error(f"[complaint_count] 更新失败: {_ce}")
             logger.info('[wechat_complaint_notify] 已保存投诉: complaint_id=%s', complaint_id)
         else:
             logger.info('[wechat_complaint_notify] 投诉已存在: complaint_id=%s', complaint_id)
-            # 已存在的投诉更新类型为wechat，避免调度器错过
-            c.execute('UPDATE complaints SET type=''wechat'', complaint_type=''wechat'' WHERE wx_complaint_id=%s AND type!=''wechat''', (complaint_id,))
         conn.close()
         
         # 从 complaint_order_info 提取真正的支付 transaction_id
@@ -5571,7 +5573,7 @@ def _complaint_scheduler():
             try:
                 conn3 = get_db()
                 c3 = conn3.cursor()
-                c3.execute("SELECT * FROM complaints WHERE status IN ('0','1') AND (type!='wechat' OR type IS NULL) AND created_at < NOW() - INTERVAL '2 minutes' ORDER BY id LIMIT 10")
+                c3.execute("SELECT * FROM complaints WHERE status=0 AND (type!='wechat' OR type IS NULL) AND created_at < NOW() - INTERVAL '2 minutes' ORDER BY id LIMIT 10")
                 rows2 = c3.fetchall()
                 conn3.close()
                 for row2 in rows2:
@@ -5603,49 +5605,6 @@ def _complaint_scheduler():
                     conn4.close()
                 except:
                     pass
-
-
-            # ===== catch-all: process ANY stuck complaint (fallback) =====
-            try:
-                conn5 = get_db()
-                c5 = conn5.cursor()
-                c5.execute("SELECT * FROM complaints WHERE status IN ('0','1') AND created_at < NOW() - INTERVAL '30 minutes' ORDER BY id LIMIT 10")
-                rows5 = c5.fetchall()
-                conn5.close()
-                for row5 in rows5:
-                    comp5 = dict(row5)
-                    cid5 = comp5.get("id", 0)
-                    wxid5 = comp5.get("wx_complaint_id", "")
-                    ono5 = comp5.get("order_no", "")
-                    mch5 = comp5.get("mch_id", "") or ""
-                    logger.info("[complaint_scheduler] catch-all id=%s wxid=%s status=%s", cid5, wxid5, comp5.get("status",""))
-                    if ono5:
-                        _auto_refund_complaint_order(ono5, transaction_id="", complaint_id=wxid5 or "")
-                    if wxid5 and mch5:
-                        ccert5 = WX_CERT_SERIAL_NO
-                        ckey5 = WX_KEY_PATH
-                        try:
-                            cur5 = get_db().cursor()
-                            cur5.execute('SELECT cert_serial_no, cert_name FROM payment_channels WHERE mch_id=%s', (mch5,))
-                            pc5 = cur5.fetchone()
-                            if pc5:
-                                ccert5 = pc5[0]
-                                ckey5 = f'/home/ubuntu/smart-locker/cert/{pc5[1]}_key.pem'
-                        except:
-                            pass
-                        _auto_reply_complaint(wxid5, order_no=ono5, transaction_id="", mch_id=mch5, cert_serial=ccert5, private_key_path=ckey5)
-                    conn6 = get_db()
-                    c6 = conn6.cursor()
-                    c6.execute("UPDATE complaints SET status=2 WHERE id=%s AND status IN ('0','1')", (cid5,))
-                    conn6.commit()
-                    conn6.close()
-                    logger.info("[complaint_scheduler] catch-all done id=%s", cid5)
-            except Exception as e5:
-                logger.error("[complaint_scheduler] catch-all err: %s", e5, exc_info=True)
-                try: conn5.close()
-                except: pass
-                try: conn6.close()
-                except: pass
 
         except Exception as e:
             logger.error("[complaint_scheduler] 异常: %s", e, exc_info=True)

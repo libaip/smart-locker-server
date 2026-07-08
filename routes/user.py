@@ -405,20 +405,20 @@ def retrieve():
                 try:
                     from helpers import send_wx_subscribe_message
                     subscribe_data = {
-                        "thing1": {"value": str(order.get("compartment_number", "")) + "号柜门"},
-                        "thing2": {"value": "智能寄存柜"},
-                        "time3": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
-                        "time4": {"value": datetime.now().strftime("%H:%M")}
+                        "amount6": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))},
+                        "time4": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
+                        "thing7": {"value": "已退还至小程序用户钱包"},
+                        "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}
                     }
-                    send_wx_subscribe_message(_openid, "UT0PehBf71OaahgZbqFfLPQt55BWc7tSz4D4NqCPDhE", subscribe_data)
+                    send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"))
                     try:
                         refund_data = {
-                            "character_string1": {"value": order.get("order_no", "")},
-                            "amount2": {"value": str(order.get("deposit_amount", 0)) + "元"},
-                            "thing4": {"value": "预付款已退至余额"},
-                            "time5": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}
+                            "amount8": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))},
+                            "time6": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
+                            "thing3": {"value": "原路退回支付账户"},
+                            "thing2": {"value": "预计1-3个工作日到账，请耐心等待"}
                         }
-                        send_wx_subscribe_message(_openid, "nG8Cdhn-Nym9ml4LatE9CdGXoJyyoi227vNzLMX9i8w", refund_data)
+                        send_wx_subscribe_message(_openid, "YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE", refund_data, phone=order.get("user_phone"))
                     except Exception as ee:
                         logger.error("[发送退款通知失败] " + str(ee))
                 except Exception as e:
@@ -569,21 +569,21 @@ def retrieve_confirm():
             try:
                 from helpers import send_wx_subscribe_message
                 subscribe_data = {
-                    "thing1": {"value": str(order.get("compartment_number", "")) + "号柜门"},
-                    "thing2": {"value": "智能寄存柜"},
-                    "time3": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
-                    "time4": {"value": datetime.now().strftime("%H:%M")}
+                    "amount6": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))},
+                    "time4": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
+                    "thing7": {"value": "已退还至小程序用户钱包"},
+                    "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}
                 }
-                send_wx_subscribe_message(_openid, "UT0PehBf71OaahgZbqFfLPQt55BWc7tSz4D4NqCPDhE", subscribe_data)
+                send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"))
                 # 发送退款通知
                 try:
                     refund_data = {
-                        "character_string1": {"value": order.get("order_no", "")},
-                        "amount2": {"value": str(order.get("deposit_amount", 0)) + "元"},
-                        "thing4": {"value": "预付款已退至余额"},
-                        "time5": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}
+                        "amount8": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))},
+                        "time6": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
+                        "thing3": {"value": "原路退回支付账户"},
+                        "thing2": {"value": "预计1-3个工作日到账，请耐心等待"}
                     }
-                    send_wx_subscribe_message(_openid, "nG8Cdhn-Nym9ml4LatE9CdGXoJyyoi227vNzLMX9i8w", refund_data)
+                    send_wx_subscribe_message(_openid, "YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE", refund_data, phone=order.get("user_phone"))
                 except Exception as ee:
                     logger.error("[发送退款通知失败] " + str(ee))
             except Exception as e:
@@ -965,6 +965,33 @@ def deposit_retrieve():
                           (order_dict['user_phone'], order_dict['id'], order_dict['deposit_amount']))
                 conn2.commit()
                 conn2.close()
+                # Save values for notification (defensive copy)
+                _noid = (order_dict or {}).get('openid', '')
+                _n_amt = (order_dict or {}).get('deposit_amount', 0)
+                _n_phone = (order_dict or {}).get('user_phone', '')
+                if _noid:
+                    try:
+                        from helpers import send_wx_subscribe_message
+                        _now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        _nsd = {
+                            'amount6': {'value': '¥{:.2f}'.format(_n_amt)},
+                            'time4': {'value': _now},
+                            'thing7': {'value': '已退还至小程序用户钱包'},
+                            'thing2': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
+                        }
+                        send_wx_subscribe_message(_noid, '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', _nsd, phone=_n_phone)
+                    except Exception as _ne:
+                        logger.error('[deposit_retrieve_notify1] '+ str(_ne))
+                    try:
+                        _nrd = {
+                            'amount8': {'value': '¥{:.2f}'.format(_n_amt)},
+                            'time6': {'value': _now},
+                            'thing3': {'value': '原路退回支付账户'},
+                            'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
+                        }
+                        send_wx_subscribe_message(_noid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', _nrd, phone=_n_phone)
+                    except Exception as _ne:
+                        logger.error('[deposit_retrieve_notify2] '+ str(_ne))
             else:
                 logger.warning(f'[取物开门] 缺少设备/主板/锁号: device={device_id}, board={board_no}, lock={lock_no}')
         except Exception as open_err:
@@ -1124,17 +1151,17 @@ def deposit_end_storage():
         if _openid:
             try:
                 from helpers import send_wx_subscribe_message
-                subscribe_data = {"thing1": {"value": str(order.get("compartment_number", "")) + "号柜门"}, "thing2": {"value": "智能寄存柜"}, "time3": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}, "time4": {"value": datetime.now().strftime("%H:%M")}, "time5": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}}
-                send_wx_subscribe_message(_openid, "UT0PehBf71OaahgZbqFfLPQt55BWc7tSz4D4NqCPDhE", subscribe_data)
+                subscribe_data = {"amount6": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))}, "time4": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}, "thing7": {"value": "已退还至小程序用户钱包"}, "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}}
+                send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"))
                 # 发送退款通知
                 try:
                     refund_data = {
-                        "character_string1": {"value": order.get("order_no", "")},
-                        "amount2": {"value": str(order.get("deposit_amount", 0)) + "元"},
-                        "thing4": {"value": "预付款已退至余额"},
-                        "time5": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}
+                        "amount8": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))},
+                        "time6": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
+                        "thing3": {"value": "原路退回支付账户"},
+                        "thing2": {"value": "预计1-3个工作日到账，请耐心等待"}
                     }
-                    send_wx_subscribe_message(_openid, "nG8Cdhn-Nym9ml4LatE9CdGXoJyyoi227vNzLMX9i8w", refund_data)
+                    send_wx_subscribe_message(_openid, "YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE", refund_data, phone=order.get("user_phone"))
                 except Exception as ee:
                     logger.error("[发送退款通知失败] " + str(ee))
                 logger.info(f"[deposit_end_storage] 订阅消息已发送: order={order_id}")
@@ -1844,12 +1871,30 @@ def get_user_orders():
     try:
         phone = request.args.get('phone', '')
         openid = request.args.get('openid', '')
-        if not phone:
+        
+        # 如果只有phone没有openid，从phone_openids表查找对应的openid
+        if phone and not openid:
+            conn_temp = get_db()
+            cur_temp = conn_temp.cursor()
+            cur_temp.execute('SELECT openid FROM phone_openids WHERE phone = %s ORDER BY created_at DESC LIMIT 1', (phone,))
+            row = cur_temp.fetchone()
+            conn_temp.close()
+            if row and row['openid']:
+                openid = row['openid']
+        
+        # 优先按 openid 查询，fallback 到 phone
+        if openid:
+            query_condition = 'o.openid = %s AND o.status != 1'
+            query_param = (openid,)
+        elif phone:
+            query_condition = 'o.user_phone = %s AND o.status != 1'
+            query_param = (phone,)
+        else:
             return json_response(message='请先登录', code=400)
         
         conn = get_db()
         cur = conn.cursor()
-        cur.execute('''
+        cur.execute(f'''
             SELECT o.id, o.order_no, o.user_phone, o.cabinet_id, o.compartment_number, o.slot_size, o.access_code,
                    o.deposit_amount, o.status, o.store_time, o.retrieve_time, o.created_at,
                    c.name as cabinet_name,
@@ -1857,10 +1902,10 @@ def get_user_orders():
             FROM orders o
             LEFT JOIN cabinets c ON o.cabinet_id = c.id
             LEFT JOIN locations l ON c.location_id = l.id
-            WHERE o.user_phone = %s AND o.status != 1
+            WHERE {query_condition}
             ORDER BY o.created_at DESC
             LIMIT 50
-        ''', (phone,))
+        ''', query_param)
         orders = [dict(row) for row in cur.fetchall()]
         conn.close()
         
@@ -1911,6 +1956,16 @@ def get_user_balance():
         phone = request.args.get('phone')
         openid = request.args.get('openid', '') or ''
         cabinet_id = request.args.get('cabinet_id') or ''
+        # 如果只有phone没有openid，从phone_openids表查找对应的openid
+        if phone and not openid:
+            conn_temp = get_db()
+            cur_temp = conn_temp.cursor()
+            cur_temp.execute('SELECT openid FROM phone_openids WHERE phone = %s ORDER BY created_at DESC LIMIT 1', (phone,))
+            row = cur_temp.fetchone()
+            conn_temp.close()
+            if row and row['openid']:
+                openid = row['openid']
+        
         if not openid and not phone:
             return json_response(message='请先登录', code=400)
         
@@ -1956,7 +2011,10 @@ def get_user_balance():
         has_pending_withdrawal = False
         # 使用matched记录的phone
         _check_phone = row["phone"] if row else phone
-        cur.execute('SELECT COUNT(*) as cnt FROM withdrawal_records WHERE user_phone = %s AND status IN (0, 1)', (_check_phone,))
+        if openid:
+            cur.execute('SELECT COUNT(*) as cnt FROM withdrawal_records WHERE openid = %s AND status IN (0, 1)', (openid,))
+        else:
+            cur.execute('SELECT COUNT(*) as cnt FROM withdrawal_records WHERE user_phone = %s AND status IN (0, 1)', (_check_phone,))
         wd_row = cur.fetchone()
         if wd_row and wd_row['cnt'] > 0:
             has_pending_withdrawal = True
@@ -1964,7 +2022,10 @@ def get_user_balance():
         # 检查是否有进行中的订单（status=2 表示存包中未取回）
         has_active_orders = False
         _check_phone2 = row["phone"] if row else phone
-        cur.execute('SELECT COUNT(*) as cnt FROM orders WHERE user_phone = %s AND status != 1 AND status = 2', (_check_phone2,))
+        if openid:
+            cur.execute('SELECT COUNT(*) as cnt FROM orders WHERE openid = %s AND status = 2', (openid,))
+        else:
+            cur.execute('SELECT COUNT(*) as cnt FROM orders WHERE user_phone = %s AND status = 2', (_check_phone2,))
         ao_row = cur.fetchone()
         if ao_row and ao_row['cnt'] > 0:
             has_active_orders = True
@@ -2080,10 +2141,19 @@ def user_withdraw():
         unionid = data.get('unionid', '') or ''
         amount = data.get('amount', 0)
         
+        # 如果只有phone没有openid，从phone_openids表查找对应的openid
+        
         if not openid and not phone:
             return json_response(message='请先登录', code=400)
         conn = get_db()
         cursor = conn.cursor()
+        
+        # 如果只有phone没有openid，从phone_openids表查找对应的openid
+        if phone and not openid:
+            cursor.execute('SELECT openid FROM phone_openids WHERE phone = %s ORDER BY created_at DESC LIMIT 1', (phone,))
+            row_temp = cursor.fetchone()
+            if row_temp and row_temp['openid']:
+                openid = row_temp['openid']
         
         # 检查用户余额 - 优先用unionid匹配（跨小程序/公众号统一身份）
         unionid = data.get('unionid') or ''
@@ -2111,10 +2181,12 @@ def user_withdraw():
             if row:
                 phone = row['phone']
         if not row:
+            conn.rollback()
             return json_response(message='用户不存在', code=404)
         
         balance = row['balance']
         if balance <= 0:
+            conn.rollback()
             conn.close()
             return json_response(message='余额不足，无法提现', code=400)
         # 未传金额时自动全额提现
@@ -2123,6 +2195,7 @@ def user_withdraw():
         else:
             amount = float(amount)
         if amount > balance:
+            conn.rollback()
             conn.close()
             return json_response(message='提现金额超过余额', code=400)
         
@@ -2225,7 +2298,7 @@ def user_withdraw():
                             'thing3': {'value': '原路退回支付账户'},
                             'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
                         }
-                        send_wx_subscribe_message(openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data)
+                        send_wx_subscribe_message(openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone)
                     except Exception as e:
                         logger.error(f'[提现通知失败] {e}')
                 return json_response(data={
@@ -2375,6 +2448,7 @@ def get_user_transactions():
             LIMIT %s OFFSET %s
         ''', (phone, limit, offset))
         rows = [dict(r) for r in cur.fetchall()]
+        # user_balance_details表只有user_phone字段，统一用phone查询
         cur.execute(f"SELECT COUNT(*) FROM user_balance_details d WHERE d.user_phone = %s {where_extra}", (phone,))
         total = cur.fetchone()[0]
         conn.close()
@@ -2388,6 +2462,17 @@ def get_user_withdrawals():
     """????????"""
     try:
         phone = request.args.get('phone', '')
+        openid = request.args.get('openid', '')
+        # 如果只有phone没有openid，从phone_openids表查找对应的openid
+        if phone and not openid:
+            conn_temp = get_db()
+            cur_temp = conn_temp.cursor()
+            cur_temp.execute('SELECT openid FROM phone_openids WHERE phone = ? ORDER BY created_at DESC LIMIT 1', (phone,))
+            row_temp = cur_temp.fetchone()
+            conn_temp.close()
+            if row_temp and row_temp['openid']:
+                openid = row_temp['openid']
+        
         if not phone:
             return json_response(message='????', code=400)
         conn = get_db()

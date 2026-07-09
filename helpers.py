@@ -612,7 +612,7 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
         if wxpay is None:
             return {'mode': 'error', 'error_msg': '支付渠道配置异常'}
     else:
-        wxpay = get_wxpay(use_mp_appid=False)
+        return {'mode': 'error', 'error_msg': '无可用活跃商户，请联系管理员'}
 
     total_fee = int(deposit_amount * 100)
     time_expire = (datetime.now() + timedelta(minutes=15)).strftime('%Y%m%d%H%M%S')

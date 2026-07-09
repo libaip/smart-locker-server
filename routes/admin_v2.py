@@ -1012,7 +1012,11 @@ def admin_member_refund():
                         wxpay_inst = None
                         wx_err_msg = '无可用活跃商户'
                 total_fee = int(refund_amount * 100)
-                refund_result = wxpay_inst.refund(out_trade_no=order['order_no'], total_fee=total_fee, refund_fee=total_fee, out_refund_no=refund_no, refund_desc='')
+                if not wxpay_inst:
+                    wx_err_msg = wx_err_msg or '无可用支付实例'
+                    logger.error(f'[member_refund] {wx_err_msg}')
+                else:
+                    refund_result = wxpay_inst.refund(out_trade_no=order['order_no'], total_fee=total_fee, refund_fee=total_fee, out_refund_no=refund_no, refund_desc='')
                 if refund_result and refund_result.get('return_code') == 'SUCCESS' and refund_result.get('result_code') == 'SUCCESS':
                     wx_refund_ok = True
                 else:

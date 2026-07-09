@@ -623,6 +623,15 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
                                  scene_info=scene_info, time_expire=time_expire)
 
     if result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS':
+        # 更新订单的实际支付渠道（防止轮转导致不一致）
+        try:
+            from database import get_db as _gdb3
+            _db3 = _gdb3()
+            _db3.execute("UPDATE orders SET payment_channel_id=%s WHERE id=%s", (current_channel["id"], order_id))
+            _db3.commit()
+            _db3.close()
+        except Exception as _e:
+            logger.error(f"[支付渠道更新] 失败: {_e}")
         # 更新渠道统计
         if current_channel:
             update_channel_stats(current_channel['id'], deposit_amount)

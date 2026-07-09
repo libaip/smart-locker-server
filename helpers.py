@@ -1187,6 +1187,33 @@ def _on_merchant_error(err_code, err_desc, raw_result, channel=None):
     send_pushplus(title, content)
 
 
+    # auto-disable on repeated failures
+    try:
+        if channel and channel.get('id'):
+            from database import get_db
+            _dc = get_db()
+            _dc_c = _dc.cursor()
+            _dc_c.execute("UPDATE payment_channels SET failure_count = COALESCE(failure_count, 0) + 1 WHERE id=%s", (channel['id'],))
+            _dc.commit()
+            _dc_c.execute("SELECT failure_count FROM payment_channels WHERE id=%s", (channel['id'],))
+            _fc = _dc_c.fetchone()
+            if _fc and _fc[0] >= 3:
+                _dc_c.execute("UPDATE payment_channels SET auto_disabled=1, is_active=0 WHERE id=%s", (channel['id'],))
+                _dc.commit()
+                # migrate users from this merchant to best available
+                if channel.get('mch_id'):
+                    _dc_c.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0) ORDER BY total_users ASC LIMIT 1")
+                    _nb = _dc_c.fetchone()
+                    if _nb:
+                        _dc_c.execute("UPDATE user_balances SET merchant_id=%s WHERE merchant_id=%s", (_nb[0], channel['mch_id']))
+                        _dc_c.execute("UPDATE payment_channels SET total_users=(SELECT COUNT(*) FROM user_balances WHERE merchant_id=%s) WHERE mch_id=%s", (_nb[0], _nb[0]))
+                        _dc.commit()
+                        logger.warning('[MERCHANT] migrated users from %s to %s' % (channel['mch_id'], _nb[0]))
+                logger.warning('[MERCHANT] auto-disabled channel %s (id=%s), failure_count=%s' % (channel.get('name',''), channel['id'], _fc[0]))
+            _dc.close()
+    except Exception as _dx:
+        logger.error('[MERCHANT] auto-disable error: %s' % _dx)
+
 # ====== [优化] 商户号分配与自动审批 ======
 def assign_merchant(phone=None, openid=None):
     """为新用户分配商户号"""
@@ -1200,9 +1227,12 @@ def assign_merchant(phone=None, openid=None):
         else:
             row = None
         if row and row[0]:
-            c.close()
-            return row[0]
-        row = c.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 ORDER BY total_users ASC LIMIT 1").fetchone()
+            _alive = c.execute("SELECT id FROM payment_channels WHERE mch_id=%s AND is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0)", (row[0],)).fetchone()
+            if _alive:
+                c.close()
+                return row[0]
+            # merchant disabled, fall through to pick a new one
+        row = c.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0) ORDER BY total_users ASC LIMIT 1").fetchone()
         if not row:
             c.close()
             return None
@@ -1283,3 +1313,82 @@ def mark_user_withdraw(openid=None, phone=None):
 
 # 防重缓存：记录每个order_id最后一次开门时间
 _last_open_lock_time = {}
+# ====== æç°ç½ååå·¥å· ======
+def check_whitelist(openid):
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT openid, source, remain_count FROM withdrawal_whitelist WHERE openid = %s", (openid,))
+        row = cur.fetchone()
+        conn.close()
+        return row
+    except Exception as e:
+        logger.error("[check_whitelist] " + str(e))
+        return None
+def add_whitelist(openid, source, remain_count=-1):
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        sql = "INSERT INTO withdrawal_whitelist (openid, source, remain_count, created_at) VALUES (%s, %s, %s, NOW()) ON CONFLICT (openid) DO UPDATE SET source = EXCLUDED.source, remain_count = CASE WHEN withdrawal_whitelist.remain_count = -1 THEN -1 ELSE EXCLUDED.remain_count END, created_at = NOW()"
+        cur.execute(sql, (openid, source, remain_count))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error("[add_whitelist] " + str(e))
+        return False
+def consume_whitelist(openid):
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT remain_count FROM withdrawal_whitelist WHERE openid = %s", (openid,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            return False
+        if row["remain_count"] == -1:
+            conn.close()
+            return True
+        if row["remain_count"] <= 1:
+            cur.execute("DELETE FROM withdrawal_whitelist WHERE openid = %s", (openid,))
+        else:
+            cur.execute("UPDATE withdrawal_whitelist SET remain_count = remain_count - 1 WHERE openid = %s", (openid,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error("[consume_whitelist] " + str(e))
+        return False
+def remove_whitelist(openid):
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM withdrawal_whitelist WHERE openid = %s", (openid,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error("[remove_whitelist] " + str(e))
+        return False
+def get_openid_by_phone(phone):
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT openid FROM user_balances WHERE phone = %s AND openid IS NOT NULL AND openid != '' ORDER BY id DESC LIMIT 1", (phone,))
+        row = cur.fetchone()
+        conn.close()
+        return row["openid"] if row else None
+    except Exception as e:
+        logger.error("[get_openid_by_phone] " + str(e))
+        return None
+def add_whitelist_by_phone(phone, source, remain_count=-1):
+    openid = get_openid_by_phone(phone)
+    if not openid:
+        logger.warning("[add_whitelist_by_phone] phone=" + str(phone) + " no openid")
+        return False
+    return add_whitelist(openid, source, remain_count)

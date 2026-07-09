@@ -917,8 +917,8 @@ def admin_order_close():
                 c.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, openid = COALESCE(NULLIF(openid, ''), %s), unionid = COALESCE(NULLIF(unionid, ''), %s) WHERE phone = %s',
                           (deposit_amount, deposit_amount, order_dict.get('openid', ''), order_dict.get('unionid', ''), order_dict['user_phone']))
             else:
-                c.execute('INSERT INTO user_balances (phone, openid, unionid, balance, total_deposited, total_withdrawn, first_use_time) VALUES (%s, %s, %s, %s, %s, 0, NOW())',
-                          (order_dict['user_phone'], order_dict.get('openid', ''), order_dict.get('unionid', ''), deposit_amount, deposit_amount))
+                c.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, balance, total_deposited, total_withdrawn, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, 0, NOW())',
+                          (order_dict['user_phone'], order_dict.get('openid', ''), order_dict.get('unionid', ''), order_dict.get('mp_openid', ''), deposit_amount, deposit_amount))
             # 写入余额明细（灰度：新提现逻辑）
             c.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s, %s, %s, 'available') ON CONFLICT (order_id) DO NOTHING",
                       (order_dict['user_phone'], order_id, deposit_amount))
@@ -4538,9 +4538,9 @@ def admin_device_clear_all():
                                  WHERE phone = %s""",
                               (deposit_amount, deposit_amount, o_dict.get('openid', ''), o_dict.get('unionid', ''), o_dict['user_phone']))
                 else:
-                    c.execute("""INSERT INTO user_balances (phone, openid, unionid, balance, total_deposited, total_withdrawn, first_use_time)
+                    c.execute("""INSERT INTO user_balances (phone, openid, unionid, mp_openid, balance, total_deposited, total_withdrawn, first_use_time)
                                  VALUES (%s, %s, %s, %s, %s, 0, NOW())""",
-                              (o_dict['user_phone'], o_dict.get('openid', ''), o_dict.get('unionid', ''), deposit_amount, deposit_amount))
+                              (o_dict['user_phone'], o_dict.get('openid', ''), o_dict.get('unionid', ''), o_dict.get('mp_openid', ''), deposit_amount, deposit_amount))
                 c.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s, %s, %s, 'available') ON CONFLICT (order_id) DO NOTHING",
                           (o_dict['user_phone'], o_dict['id'], deposit_amount))
             # 发送微信订阅消息通知用户
@@ -5034,6 +5034,10 @@ def wechat_complaint_notify():
                 from helpers import mark_user_withdraw as _muw
                 try: _muw(phone=payer_phone)
                 except: pass
+            # 投诉自动加入提现白名单
+            if payer_phone:
+                from helpers import add_whitelist_by_phone
+                add_whitelist_by_phone(payer_phone, 'complaint', -1)
             logger.info('[wechat_complaint_notify] 已保存投诉: complaint_id=%s', complaint_id)
         else:
             logger.info('[wechat_complaint_notify] 投诉已存在: complaint_id=%s', complaint_id)

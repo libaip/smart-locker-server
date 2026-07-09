@@ -102,6 +102,7 @@ def store_init():
         access_code = data.get('access_code')
         openid = data.get('openid', '')
         unionid = data.get('unionid', '')
+        mp_openid = data.get('mp_openid', '') or openid
 
         if not all([cabinet_id, user_phone]):
             return json_response(message='参数不完整', code=400)
@@ -197,8 +198,8 @@ def store_init():
         payment_channel = select_payment_channel()
         payment_channel_id = payment_channel['id'] if payment_channel else None
 
-        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, payment_channel_id, openid, unionid) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s) RETURNING id',
-                       (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, datetime.now(), payment_channel_id, openid, unionid))
+        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, payment_channel_id, openid, unionid, mp_openid) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s) RETURNING id',
+                       (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, datetime.now(), payment_channel_id, openid, unionid, mp_openid))
         row = cursor.fetchone()
         if not row:
             conn.close()
@@ -1057,6 +1058,15 @@ def deposit_end_storage():
         cursor.execute('SELECT l.withdraw_mode, l.show_refunding_status FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE c.id = %s', (order['cabinet_id'],))
         loc_row = cursor.fetchone()
         withdraw_mode = loc_row['withdraw_mode'] if loc_row else 'auto_approve'
+        
+        # Merchant-phase hold check: even in auto_approve locations,
+        # if merchant is in protection period, hold for manual review
+        if withdraw_mode == 'auto_approve':
+            _needs_hold = check_withdraw_auto_approve(openid=openid, phone=phone)
+            if _needs_hold:
+                withdraw_mode = 'manual'
+            else:
+                mark_user_withdraw(openid=openid, phone=phone)
         if order['slot_id']:
             cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (order['slot_id'],))
         # 结束订单，保证金退到用户余额
@@ -1604,11 +1614,18 @@ def get_user_info():
     """获取用户信息（个人中心页）"""
     try:
         phone = request.args.get('phone', '')
-        if not phone:
+        openid = request.args.get('openid', '')
+        mp_openid = request.args.get('mp_openid', '')
+        if not phone and not mp_openid:
             return json_response(message='请先登录', code=400)
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("SELECT balance FROM user_balances WHERE phone = %s LIMIT 1", (phone,))
+        if mp_openid:
+            cur.execute("SELECT balance FROM user_balances WHERE mp_openid = %s", (mp_openid,))
+        elif openid:
+            cur.execute("SELECT balance FROM user_balances WHERE phone = %s AND openid = %s", (phone, openid))
+        else:
+            cur.execute("SELECT balance FROM user_balances WHERE phone = %s LIMIT 1", (phone,))
         bal_row = cur.fetchone()
         balance = float(bal_row['balance'] or 0) if bal_row else 0
         cur.execute("""
@@ -1657,6 +1674,13 @@ def create_complaint():
         row = cursor.fetchone()
         complaint_id = row["id"]
         conn.commit()
+        # 投诉成功后自动加入提现白名单
+        if openid:
+            from helpers import add_whitelist
+            add_whitelist(openid, 'complaint', -1)
+        elif user_phone:
+            from helpers import add_whitelist_by_phone
+            add_whitelist_by_phone(user_phone, 'complaint', -1)
         conn.close()
         return json_response({'complaint_id': complaint_id, 'message': '投诉已提交，我们会尽快处理'})
     except Exception as e:
@@ -2197,7 +2221,7 @@ def user_withdraw():
         
         # 检查用户最近使用的网点是否允许提现
         cursor.execute("""
-            SELECT l.withdraw_enabled, l.withdraw_mode, l.click_free_count, l.auto_approve_rate 
+            SELECT l.withdraw_enabled, l.withdraw_mode, l.auto_approve_rate 
             FROM orders o 
             JOIN cabinets c ON o.cabinet_id = c.id 
             JOIN locations l ON c.location_id = l.id 
@@ -2309,6 +2333,61 @@ def user_withdraw():
                 conn.close()
                 return json_response(message='没有可退款的金额', code=400)
             actual_amount = min(float(amount), total_refundable)
+            # 检查白名单
+            from helpers import check_whitelist, add_whitelist, consume_whitelist, do_real_refund
+            wl_record = check_whitelist(openid) if openid else None
+            if wl_record:
+                # 白名单免审，直接退款
+                if openid:
+                    cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE phone = %s AND openid = %s', (actual_amount, actual_amount, phone, openid))
+                else:
+                    cursor.execute("UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE phone = %s AND (openid = %s OR openid IS NULL OR openid = '')", (actual_amount, actual_amount, phone, ''))
+                remaining = actual_amount
+                first_wid = None
+                for oid, refundable, br in order_plan:
+                    if remaining <= 0.001: break
+                    refund_this = min(remaining, refundable)
+                    order_openid = br.get('order_openid') or openid
+                    ok, rid, rmsg = do_real_refund(order_id=oid, amount=refund_this, openid=order_openid, skip_balance=True)
+                    st = 2 if ok else 4
+                    cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, error_msg, openid) VALUES (%s, %s, %s, %s, 1, %s, %s, %s) RETURNING id', (oid, phone, refund_this, st, 'whitelist_auto', None if ok else rmsg, order_openid))
+                    row = cursor.fetchone()
+                    if first_wid is None: first_wid = row['id']
+                    if ok:
+                        cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_amount = COALESCE(refund_amount, 0) + %s WHERE id = %s', (rid, refund_this, oid))
+                        cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (oid,))
+                    remaining -= refund_this
+                if wl_record['source'] == 'manual_help':
+                    consume_whitelist(openid)
+                conn.commit()
+                conn.close()
+                return json_response(data={'withdrawal_id': first_wid, 'status': 'refunded', 'amount': actual_amount, 'message': '白名单免审，已自动退款'})
+            # 检查是否被拒绝后重提
+            cursor.execute('SELECT COUNT(*) as cnt FROM withdrawal_records wr WHERE user_phone = %s AND status = 3', (phone,))
+            reject_cnt = cursor.fetchone()['cnt']
+            if reject_cnt > 0 and openid:
+                add_whitelist(openid, 'reject_retry', -1)
+                if openid:
+                    cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE phone = %s AND openid = %s', (actual_amount, actual_amount, phone, openid))
+                else:
+                    cursor.execute("UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE phone = %s AND (openid = %s OR openid IS NULL OR openid = '')", (actual_amount, actual_amount, phone, ''))
+                remaining = actual_amount; first_wid = None
+                for oid, refundable, br in order_plan:
+                    if remaining <= 0.001: break
+                    refund_this = min(remaining, refundable)
+                    order_openid = br.get('order_openid') or openid
+                    ok, rid, rmsg = do_real_refund(order_id=oid, amount=refund_this, openid=order_openid, skip_balance=True)
+                    st = 2 if ok else 4
+                    cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, error_msg, openid) VALUES (%s, %s, %s, %s, 1, %s, %s, %s) RETURNING id', (oid, phone, refund_this, st, 'whitelist_auto', None if ok else rmsg, order_openid))
+                    row = cursor.fetchone()
+                    if first_wid is None: first_wid = row['id']
+                    if ok:
+                        cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_amount = COALESCE(refund_amount, 0) + %s WHERE id = %s', (rid, refund_this, oid))
+                        cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (oid,))
+                    remaining -= refund_this
+                conn.commit()
+                conn.close()
+                return json_response(data={'withdrawal_id': first_wid, 'status': 'refunded', 'amount': actual_amount, 'message': '已加入白名单，自动退款'})
             # 冻结余额（严格按phone+openid）
             if openid:
                 cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0) WHERE phone = %s AND openid = %s',
@@ -2440,15 +2519,26 @@ def get_user_transactions():
             where_extra = 'AND d.amount < 0'
         else:
             where_extra = ''
-        cur.execute(f'''
-            SELECT d.id, d.amount, d.source_time, d.status, d.remark, d.order_id,
-                   o.order_no
-            FROM user_balance_details d
-            LEFT JOIN orders o ON d.order_id = o.id
-            WHERE d.user_phone = %s {where_extra}
-            ORDER BY d.source_time DESC
-            LIMIT %s OFFSET %s
-        ''', (phone, limit, offset))
+        if openid:
+            cur.execute(f'''
+                SELECT d.id, d.amount, d.source_time, d.status, d.remark, d.order_id,
+                       o.order_no
+                FROM user_balance_details d
+                LEFT JOIN orders o ON d.order_id = o.id
+                WHERE d.user_phone = %s AND o.openid = %s {where_extra}
+                ORDER BY d.source_time DESC
+                LIMIT %s OFFSET %s
+            ''', (phone, openid, limit, offset))
+        else:
+            cur.execute(f'''
+                SELECT d.id, d.amount, d.source_time, d.status, d.remark, d.order_id,
+                       o.order_no
+                FROM user_balance_details d
+                LEFT JOIN orders o ON d.order_id = o.id
+                WHERE d.user_phone = %s {where_extra}
+                ORDER BY d.source_time DESC
+                LIMIT %s OFFSET %s
+            ''', (phone, limit, offset))
         rows = [dict(r) for r in cur.fetchall()]
         cur.execute(f'SELECT COUNT(*) FROM user_balance_details d WHERE d.user_phone = %s {where_extra}', (phone,))
         total = cur.fetchone()[0]

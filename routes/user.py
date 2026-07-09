@@ -2170,6 +2170,12 @@ def user_withdraw():
             row = cursor.fetchone()
             if row:
                 phone = row['phone']
+                # fallback: get openid from user_balances
+                if not openid:
+                    cursor.execute("SELECT openid FROM user_balances WHERE phone = %s AND openid IS NOT NULL AND openid != '' ORDER BY id DESC LIMIT 1", (phone,))
+                    _ub = cursor.fetchone()
+                    if _ub and _ub[0]:
+                        openid = _ub[0]
         if not row:
             conn.rollback()
             return json_response(message='用户不存在', code=404)

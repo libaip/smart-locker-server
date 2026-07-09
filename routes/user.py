@@ -1907,21 +1907,7 @@ def get_user_orders():
         phone = request.args.get('phone', '')
         openid = request.args.get('openid', '')
         
-        # 如果只有phone没有openid，从phone_openids表查找对应的openid
-        if phone and not openid:
-            conn_temp = get_db()
-            cur_temp = conn_temp.cursor()
-            cur_temp.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s ORDER BY created_at DESC LIMIT 1', (phone,))
-            row = cur_temp.fetchone()
-            conn_temp.close()
-            if row and row['openid']:
-                openid = row['openid']
-        
-        # 严格按openid查询，不再fallback到手机号
-        if openid:
-            query_condition = 'COALESCE(o.mp_openid, o.openid) = %s AND o.status != 1'
-            query_param = (openid,)
-        elif phone:
+        if phone:
             query_condition = 'o.user_phone = %s AND o.status != 1'
             query_param = (phone,)
         else:
@@ -2533,18 +2519,6 @@ def get_user_transactions():
             where_extra = 'AND d.amount > 0'
         elif tp == 'expense':
             where_extra = 'AND d.amount < 0'
-        else:
-            where_extra = ''
-        if openid:
-            cur.execute(f'''
-                SELECT d.id, d.amount, d.source_time, d.status, d.remark, d.order_id,
-                       o.order_no
-                FROM user_balance_details d
-                LEFT JOIN orders o ON d.order_id = o.id
-                WHERE d.user_phone = %s AND COALESCE(o.mp_openid, o.openid) = %s {where_extra}
-                ORDER BY d.source_time DESC
-                LIMIT %s OFFSET %s
-            ''', (phone, openid, limit, offset))
         else:
             cur.execute(f'''
                 SELECT d.id, d.amount, d.source_time, d.status, d.remark, d.order_id,

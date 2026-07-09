@@ -1141,7 +1141,7 @@
             if (savedPhone && rPhone && !rPhone.value) rPhone.value = savedPhone;
         });
     }
-    function goToProfilePage() { window.location.replace("/static/h5/index.html" + window.location.search); }
+    function goToProfilePage() { fetch('/api/wx/generate-scheme',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:'pages/mine/mine'})}).then(function(r){return r.json();}).then(function(d){if(d.code===200&&d.data&&d.data.scheme){window.location.href=d.data.scheme;}}).catch(function(){}); }
     function goToOrdersPage() { showPage('ordersPage'); loadUserOrders(); }
 
     function fillSavedPhone() {

@@ -909,6 +909,19 @@ def admin_order_close():
             c.execute('UPDATE cabinet_slots SET status=1 WHERE id=%s', (order_dict['slot_id'],))
         # 保证金退到用户余额
         deposit_amount = order_dict.get('deposit_amount', 0)
+        # Look up mp_openid from phone_openids
+        mp_oid = mp_oid
+        if not mp_oid and order_dict.get('user_phone'):
+            try:
+                cc = get_db()
+                cu = cc.cursor()
+                cu.execute("SELECT mp_openid FROM phone_openids WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (order_dict['user_phone'],))
+                rw = cu.fetchone()
+                if rw and rw['mp_openid']:
+                    mp_oid = rw['mp_openid']
+                cc.close()
+            except:
+                pass
         if deposit_amount > 0 and order_dict.get('user_phone'):
             # 检查用户余额记录是否存在
             c.execute('SELECT id FROM user_balances WHERE phone = %s', (order_dict['user_phone'],))

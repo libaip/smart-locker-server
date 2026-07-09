@@ -103,6 +103,14 @@ def store_init():
         openid = data.get('openid', '')
         unionid = data.get('unionid', '')
         mp_openid = data.get('mp_openid', '') or openid
+        if not mp_openid and user_phone:
+            _conn_mp = get_db()
+            _cur_mp = _conn_mp.cursor()
+            _cur_mp.execute("SELECT mp_openid FROM phone_openids WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (user_phone,))
+            _r = _cur_mp.fetchone()
+            _conn_mp.close()
+            if _r and _r['mp_openid']:
+                mp_openid = _r['mp_openid']
 
         if not all([cabinet_id, user_phone]):
             return json_response(message='参数不完整', code=400)
@@ -606,6 +614,7 @@ def create_deposit_order():
         openid = data.get('openid', '')
         unionid = data.get('unionid', '')
         unionid = data.get('unionid', '')
+        mp_openid = data.get('mp_openid', '') or openid
         if not all([cabinet_id, user_phone]):
             return json_response(message='参数不完整', code=400)
         sms_enabled = get_setting('sms_enabled', 'false').lower() == 'true'
@@ -688,7 +697,7 @@ def create_deposit_order():
         compartment_display = slot['slot_label'] if 'slot_label' in slot.keys() and slot['slot_label'] else (slot['display_number'] if slot['display_number'] else slot['slot_number'])
         # Mark slot as occupied immediately to prevent double allocation
         cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (slot['id'],))
-        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, payment_channel_id, openid, unionid) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s) RETURNING id',
+        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, payment_channel_id, openid, unionid, mp_openid) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s) RETURNING id',
                        (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, datetime.now(), payment_channel_id, openid, unionid))
         row = cursor.fetchone()
         order_id = row["id"]
@@ -1910,7 +1919,7 @@ def get_user_orders():
         
         # 严格按openid查询，不再fallback到手机号
         if openid:
-            query_condition = 'o.openid = %s AND o.status != 1'
+            query_condition = 'o.mp_openid = %s AND o.status != 1'
             query_param = (openid,)
         elif phone:
             query_condition = 'o.user_phone = %s AND o.status != 1'
@@ -2006,8 +2015,7 @@ def get_user_balance():
             cur.execute("""
                 SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at
                 FROM user_balances
-                WHERE openid = %s
-                ORDER BY balance DESC
+                WHERE mp_openid = %s
                 LIMIT 1
             """, (openid,))
             row = cur.fetchone()
@@ -2179,7 +2187,7 @@ def user_withdraw():
         row = None
         # 优先用openid匹配
         if openid:
-            cursor.execute('SELECT phone, balance, total_deposited, total_withdrawn FROM user_balances WHERE openid = %s ORDER BY balance DESC LIMIT 1', (openid,))
+            cursor.execute('SELECT phone, balance, total_deposited, total_withdrawn FROM user_balances WHERE mp_openid = %s ORDER BY balance DESC LIMIT 1', (openid,))
             row = cursor.fetchone()
             if row:
                 phone = row['phone']
@@ -2525,7 +2533,7 @@ def get_user_transactions():
                        o.order_no
                 FROM user_balance_details d
                 LEFT JOIN orders o ON d.order_id = o.id
-                WHERE d.user_phone = %s AND o.openid = %s {where_extra}
+                WHERE d.user_phone = %s AND o.mp_openid = %s {where_extra}
                 ORDER BY d.source_time DESC
                 LIMIT %s OFFSET %s
             ''', (phone, openid, limit, offset))

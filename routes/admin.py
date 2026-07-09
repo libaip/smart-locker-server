@@ -1558,6 +1558,7 @@ def withdrawal_apply():
         conn.close()
         return json_response({'withdrawal_id': withdrawal_id, 'status': 'pending', 'message': '提现申请已提交，等待审核',
                               'show_refunding_status': dict(order).get('show_refunding_status', 1)})
+    except Exception as e:
         logger.error(f'[withdrawal_apply] {e}')
         return json_response(message=str(e), code=500)
 

@@ -1159,8 +1159,13 @@ def deposit_end_storage():
                 _ncur = _nconn.cursor()
                 _ncur.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (order['user_phone'],))
                 _nrow = _ncur.fetchone()
-                if _nrow:
-                    _openid = _nrow[0] or ''
+                if _nrow and _nrow[0]:
+                    _openid = _nrow[0]
+                else:
+                    _ncur.execute("SELECT openid FROM user_balances WHERE phone = %s AND openid IS NOT NULL AND openid != '' ORDER BY id DESC LIMIT 1", (order['user_phone'],))
+                    _nrow = _ncur.fetchone()
+                    if _nrow and _nrow[0]:
+                        _openid = _nrow[0]
                 _ncur.close()
                 _nconn.close()
             except Exception as _ne:

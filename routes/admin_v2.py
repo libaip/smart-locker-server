@@ -228,6 +228,9 @@ def admin_cabinet_save():
                  float(data.get("per_use_price") or 0),
                  data.get("usage_rules") or "24h"))
             data['id'] = c.fetchone()[0]
+        _sp = data.get('serial_port') or ''
+        _br = data.get('baud_rate') or ''
+        _pr = data.get('mainboard_source') or ''
         if data.get('id') and (_sp or _br or _pr):
             c.execute('SELECT id FROM mainboards WHERE cabinet_id=%s', (data['id'],))
             row = c.fetchone()

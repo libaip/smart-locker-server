@@ -755,7 +755,7 @@ def return_to_balance(phone, amount, withdrawal_id=None, openid=''):
         logger.error("[return_to_balance] Failed: " + str(e))
         return False
 
-def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=None, **kwargs):
+def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=None, skip_balance=False, **kwargs):
     """Actually call WeChat refund API. Returns (success, refund_id, message)"""
     try:
         from database import get_db
@@ -812,7 +812,7 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
                     c_bal = conn_bal.cursor()
                     c_bal.execute("SELECT user_phone FROM orders WHERE id=%s", (order_id,))
                     phone_row = c_bal.fetchone()
-                    if phone_row and phone_row['user_phone']:
+                    if phone_row and phone_row['user_phone'] and not skip_balance:
                         bal_phone = phone_row['user_phone']
                         c_bal.execute("UPDATE user_balances SET balance = GREATEST(balance - %s, 0) WHERE phone=%s", (amount, bal_phone))
                         if c_bal.rowcount > 0:

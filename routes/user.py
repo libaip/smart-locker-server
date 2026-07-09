@@ -368,6 +368,16 @@ def retrieve():
                 if not _r_ub:
                     cursor.execute("SELECT id FROM user_balances WHERE phone = %s AND (openid = '' OR openid IS NULL)", (order['user_phone'],))
                     _r_ub = cursor.fetchone()
+                # 桥接迁移：如果有mp_openid，合并同phone的空openid记录
+                if _r_openid and not _r_ub:
+                    cursor.execute("SELECT id, balance, total_deposited, total_withdrawn FROM user_balances WHERE phone = %s AND (openid = '' OR openid IS NULL) LIMIT 1", (order['user_phone'],))
+                    _old_empty = cursor.fetchone()
+                    if _old_empty:
+                        # 合并旧记录数据到mp_openid记录，更新openid
+                        cursor.execute("UPDATE user_balances SET openid = %s, balance = balance + %s, total_deposited = total_deposited + %s WHERE id = %s",
+                                       (_r_openid, _old_empty['balance'], _old_empty['total_deposited'], _old_empty['id']))
+                        _r_ub = {'id': _old_empty['id']}
+                        logger.info('[bridge] merged empty openid record id=%s phone=%s -> mp_openid=%s' % (_old_empty['id'], order['user_phone'], _r_openid[:8]))
                 if _r_ub:
                     if _r_openid:
                         cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE phone = %s AND openid = %s',
@@ -2219,10 +2229,10 @@ def user_withdraw():
             actual_amount = min(float(amount), total_refundable)
             # 扣除余额
             if openid:
-                cursor.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s AND openid = %s',
+                cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE phone = %s AND openid = %s',
                                (actual_amount, actual_amount, phone, openid))
             else:
-                cursor.execute("UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s AND (openid = %s OR openid IS NULL OR openid = '')",
+                cursor.execute("UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE phone = %s AND (openid = %s OR openid IS NULL OR openid = '')",
                                (actual_amount, actual_amount, phone, ''))
             # 立即微信退款
             from helpers import do_real_refund
@@ -2234,7 +2244,7 @@ def user_withdraw():
                     break
                 refund_this = min(remaining, refundable)
                 order_openid = br.get('order_openid') or openid
-                ok, rid, rmsg = do_real_refund(order_id=oid, amount=refund_this, openid=order_openid)
+                ok, rid, rmsg = do_real_refund(order_id=oid, amount=refund_this, openid=order_openid, skip_balance=True)
                 if not ok:
                     all_ok = False
                 st = 2 if ok else 4
@@ -2291,10 +2301,10 @@ def user_withdraw():
             actual_amount = min(float(amount), total_refundable)
             # 冻结余额（严格按phone+openid）
             if openid:
-                cursor.execute('UPDATE user_balances SET balance = balance - %s WHERE phone = %s AND openid = %s',
+                cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0) WHERE phone = %s AND openid = %s',
                                (actual_amount, phone, openid))
             else:
-                cursor.execute('UPDATE user_balances SET balance = balance - %s WHERE phone = %s AND (openid = %s OR openid IS NULL OR openid = \'\')',
+                cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0) WHERE phone = %s AND (openid = %s OR openid IS NULL OR openid = \'\')',
                                (actual_amount, phone, ''))
             # 按订单逐条创建提现记录
             remaining = actual_amount
@@ -2359,6 +2369,12 @@ def link_openid():
         else:
             # openid无映射，正常插入
             cursor.execute('INSERT INTO phone_openids (phone, openid, wechat_name, unionid) VALUES (%s, %s, %s, %s) ON CONFLICT(phone) DO UPDATE SET openid=excluded.openid, wechat_name=excluded.wechat_name, unionid=excluded.unionid, updated_at=CURRENT_TIMESTAMP', (phone, openid, wechat_name, unionid))
+        # 桥接迁移：link_openid时合并空openid的user_balances记录
+        if openid and not openid.startswith('oLhbm'):
+            cursor.execute("UPDATE user_balances SET openid = %s WHERE phone = %s AND (openid = '' OR openid IS NULL)", (openid, phone))
+            if cursor.rowcount > 0:
+                import logging
+                logging.getLogger(__name__).info('[bridge] link_openid merged empty openid phone=%s -> %s' % (phone, openid[:8]))
         # Also update user_balances with unionid if it exists
         if unionid:
             cursor.execute('UPDATE user_balances SET unionid=%s WHERE phone=%s', (unionid, phone))

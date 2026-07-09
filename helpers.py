@@ -489,6 +489,18 @@ def _get_payment_channel(channel_id=None):
             rotation_mode = row[0]
     except Exception:
         pass
+
+    # ====== Sequential mode: one at a time, failover on block ======
+    if rotation_mode == 'sequential':
+        cursor.execute('SELECT * FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0) ORDER BY rotation_index ASC LIMIT 1')
+        ch = cursor.fetchone()
+        conn.close()
+        if ch:
+            selected = dict(ch)
+            logger.info('[channel-sequential] current: %s (id=%d)' % (selected.get('name',''), selected['id']))
+            return selected
+        logger.error('[channel-sequential] no channel!')
+        return None
     if rotation_mode == 'round_robin':
         # 真轮询：选last_used_at最早的，保证每个商户依次使用
         from datetime import datetime as _dt; selected = min(channels, key=lambda ch: ch['last_used_at'] or _dt(1970,1,1))
@@ -1109,7 +1121,7 @@ def check_merchant_health():
                     if is_merchant_account_error(ec):
                         logger.error('[MerchantHealth] 渠道 %s(%s) 异常! err=%s %s' % (ch_name, mch_id, ec, err_desc))
                         # 自动禁用该渠道
-                        cursor.execute('UPDATE payment_channels SET is_active=0 WHERE id=%s', (channel['id'],))
+                        cursor.execute('UPDATE payment_channels SET is_active=0, auto_disabled=1 WHERE id=%s', (channel['id'],))
                         conn.commit()
                         logger.warning('[MerchantHealth] 已自动禁用渠道: %s(%s)' % (ch_name, mch_id))
                         _on_merchant_error(ec, err_desc, result, channel=channel)
@@ -1120,6 +1132,11 @@ def check_merchant_health():
                 logger.error('[MerchantHealth] 渠道 %s 探测异常: %s' % (ch_name, e))
         conn.close()
         return all_ok
+    except Exception as e:
+        logger.error('[MerchantHealth] ????: %s' % e)
+        return False
+
+
     except Exception as e:
         logger.error('[MerchantHealth] 探测异常: %s' % e)
         return False
@@ -1136,85 +1153,25 @@ def merchant_health_scheduler():
             check_merchant_health()
             # Auto-failover
             conn_f = get_db()
+            # Sequential mode: activate next if no active channel
+            conn_f = get_db()
             c_f = conn_f.cursor()
-            c_f.execute('SELECT id FROM payment_channels WHERE is_active=1 AND id != 8')
-            active_ids = [r[0] for r in c_f.fetchall()]
-            if active_ids:
-                any_ok = any(f'success_mch_{aid}' in _merchant_health_state for aid in active_ids)
-                if any_ok:
-                    _failover_consecutive_fails = 0
-                    c_f.execute('UPDATE payment_channels SET is_active=0 WHERE id=8 AND is_active=1')
-                    if c_f.rowcount > 0: logger.info('[failover] Deactivated standby - primary recovered')
-                else:
-                    _failover_consecutive_fails += 1
-                    if _failover_consecutive_fails >= 2:
-                        c_f.execute('UPDATE payment_channels SET is_active=1 WHERE id=8 AND is_active=0')
-                        if c_f.rowcount > 0:
-                            logger.info('[failover] Activated standby 1112742905 - all primary down')
-                            _failover_consecutive_fails = 0
-            conn_f.commit()
+            c_f.execute("SELECT count(*) FROM payment_channels WHERE is_active=1")
+            _ac = c_f.fetchone()[0]
+            if _ac == 0:
+                try:
+                    _activate_next_channel()
+                except Exception:
+                    pass
             conn_f.close()
         except Exception as e:
             logger.error('[MerchantHealth/failover] %s' % e)
             try: conn_f.close()
             except: pass
-        time.sleep(300)
+        time.sleep(10)
 
 
-def _on_merchant_error(err_code, err_desc, raw_result, channel=None):
-    """商户号异常告警，防止短时间内重复推送，包含具体商户号信息"""
-    import time
-    now = time.time()
-    # 按商户号独立记录告警时间，避免一个商户告警后其他商户的告警被跳过
-    mch_key = 'last_alert_%s' % (channel['mch_id'] if channel else 'default')
-    last = _merchant_health_state.get(mch_key, 0)
-    if now - last < 600:  # 10分钟内同商户不重复告警
-        return
-    _merchant_health_state[mch_key] = now
-    _merchant_health_state['last_alert_time'] = now
-    # 构造包含商户号信息的告警内容
-    mch_id = channel.get('mch_id', '未知') if channel else '未知(默认渠道)'
-    mch_name = channel.get('name', '未知') if channel else '未知(默认渠道)'
-    ch_id = channel.get('id', '?') if channel else '?'
-    title = '【%s】商户号被封' % mch_name
-    content = ("微信支付商户号出现异常，可能被限制或封禁。\n"
-               "商户名称: %s\n"
-               "商户号(mch_id): %s\n"
-               "渠道ID: %s\n"
-               "错误码: %s\n"
-               "错误描述: %s\n"
-               "请立刻登录 pay.weixin.qq.com 查看。") % (mch_name, mch_id, ch_id, err_code, err_desc)
-    send_pushplus(title, content)
 
-
-    # auto-disable on repeated failures
-    try:
-        if channel and channel.get('id'):
-            from database import get_db
-            _dc = get_db()
-            _dc_c = _dc.cursor()
-            _dc_c.execute("UPDATE payment_channels SET failure_count = COALESCE(failure_count, 0) + 1 WHERE id=%s", (channel['id'],))
-            _dc.commit()
-            _dc_c.execute("SELECT failure_count FROM payment_channels WHERE id=%s", (channel['id'],))
-            _fc = _dc_c.fetchone()
-            if _fc and _fc[0] >= 3:
-                _dc_c.execute("UPDATE payment_channels SET auto_disabled=1, is_active=0 WHERE id=%s", (channel['id'],))
-                _dc.commit()
-                # migrate users from this merchant to best available
-                if channel.get('mch_id'):
-                    _dc_c.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0) ORDER BY total_users ASC LIMIT 1")
-                    _nb = _dc_c.fetchone()
-                    if _nb:
-                        _dc_c.execute("UPDATE user_balances SET merchant_id=%s WHERE merchant_id=%s", (_nb[0], channel['mch_id']))
-                        _dc_c.execute("UPDATE payment_channels SET total_users=(SELECT COUNT(*) FROM user_balances WHERE merchant_id=%s) WHERE mch_id=%s", (_nb[0], _nb[0]))
-                        _dc.commit()
-                        logger.warning('[MERCHANT] migrated users from %s to %s' % (channel['mch_id'], _nb[0]))
-                logger.warning('[MERCHANT] auto-disabled channel %s (id=%s), failure_count=%s' % (channel.get('name',''), channel['id'], _fc[0]))
-            _dc.close()
-    except Exception as _dx:
-        logger.error('[MERCHANT] auto-disable error: %s' % _dx)
-
-# ====== [优化] 商户号分配与自动审批 ======
 def assign_merchant(phone=None, openid=None):
     """为新用户分配商户号"""
     try:

@@ -2237,7 +2237,14 @@ def user_withdraw():
             return json_response(message='该网点暂不支持提现', code=400)
         
         withdraw_mode = loc_row['withdraw_mode'] if loc_row else 'auto_approve'
-        
+
+        # Merchant-phase hold check
+        if withdraw_mode == 'auto_approve':
+            _needs_hold = check_withdraw_auto_approve(openid=openid, phone=phone)
+            if _needs_hold:
+                withdraw_mode = 'manual'
+            else:
+                mark_user_withdraw(openid=openid, phone=phone)
         if withdraw_mode == 'auto_approve':
             # 自动审批模式：立即调微信退款，提现管理有记录
             _bd_key = openid if openid else phone

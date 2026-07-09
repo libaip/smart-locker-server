@@ -637,9 +637,11 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
             return {'mode': 'h5', 'order_id': order_id, 'order_no': order_no,
                     'mweb_url': result.get('mweb_url')}
     
-    # 商户被封/异常自动检测：禁用渠道并切换到下一个
-    _dead_errors = {'MCH_NOT_EXIST', 'APPID_MCHID_NOT_MATCH', 'ACCOUNT_ERROR', 'BANK_ERROR'}  # NOAUTH/NO_AUTH removed: 权限问题不会自动恢复，禁用无意义
-    if current_channel and result.get('err_code') in _dead_errors and _retry_count < 3:
+    # 商户被封/异常自动检测
+    _dead_errors = {'MCH_NOT_EXIST', 'APPID_MCHID_NOT_MATCH', 'ACCOUNT_ERROR', 'BANK_ERROR'}
+    _skip_errors = {'NOAUTH', 'NO_AUTH'}  # 收款受限，切换重试但不永久禁用
+    _err_code = result.get('err_code', '')
+    if current_channel and _retry_count < 3 and (_err_code in _dead_errors or _err_code in _skip_errors):
         try:
             from database import get_db as _gdb2
             _db2 = _gdb2()

@@ -47,7 +47,20 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','P
 .float-icon.complaint{background:#f5c542;}
 .float-label{font-size:11px;color:#666;}
 .common-q{text-align:center;padding:20px;font-size:14px;color:#5ec9b4;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;}
+
+/* Subscribe Modal */
+.sub-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;display:none;align-items:center;justify-content:center;}
+.sub-overlay.show{display:flex;}
+.sub-box{background:#fff;border-radius:16px;width:85%;max-width:340px;padding:28px 24px 20px;text-align:center;animation:subIn .3s ease;}
+@keyframes subIn{from{opacity:0;transform:scale(0.9)}to{opacity:1;transform:scale(1)}}
+.sub-icon{font-size:48px;margin-bottom:12px;}
+.sub-title{font-size:17px;font-weight:700;color:#1a1a1a;margin-bottom:8px;}
+.sub-desc{font-size:14px;color:#666;line-height:1.6;margin-bottom:20px;}
+.sub-btns{display:flex;gap:12px;}
+.sub-btn-skip{flex:1;padding:12px;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;border:none;background:#f0f0f0;color:#666;}
+.sub-btn-ok{flex:1;padding:12px;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;border:none;background:#5ec9b4;color:#fff;}
 </style>
+<script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
 </head>
 <body>
 <div class="page">
@@ -85,6 +98,17 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','P
     </div>
   </div>
   <div class="common-q"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5ec9b4" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9 9a3 3 0 115.12 2.13c-.67.57-1.12 1.06-1.12 1.87"/><circle cx="12" cy="17" r=".5" fill="#5ec9b4"/></svg>常见问题</div>
+</div>
+<div class="sub-overlay" id="subModal">
+  <div class="sub-box">
+    <div class="sub-icon">🔔</div>
+    <div class="sub-title" id="subTitle">开启订阅通知</div>
+    <div class="sub-desc" id="subDesc">订阅后可接收订单变动、退款到账等重要通知，建议开启</div>
+    <div class="sub-btns">
+      <button class="sub-btn-skip" onclick="subSkip()">暂不开通</button>
+      <button class="sub-btn-ok" onclick="subConfirm()">同意并前往</button>
+    </div>
+  </div>
 </div>
 <div class="floating-btns">
   <a class="float-btn" id="floatService"><div class="float-icon robot"><svg viewBox="0 0 52 52" width="52" height="52"><circle cx="26" cy="22" r="12" fill="#fff"/><circle cx="21" cy="20" r="2.5" fill="#45b89e"/><circle cx="31" cy="20" r="2.5" fill="#45b89e"/><path d="M21 26 Q26 31 31 26" stroke="#45b89e" stroke-width="2" fill="none" stroke-linecap="round"/><line x1="26" y1="10" x2="26" y2="5" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/><circle cx="26" cy="4" r="2.5" fill="#fff"/><path d="M13 18 Q10 22 13 26" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/><path d="M39 18 Q42 22 39 26" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/><path d="M18 34 Q18 38 26 38 Q34 38 34 34 L34 32 Q34 30 26 30 Q18 30 18 32 Z" fill="#fff" opacity="0.85"/></svg></div><div class="float-label">联系客服</div></a>
@@ -143,15 +167,63 @@ function withPhone(href){
 }
 var API_BASE='https://locker.cqdyxl.com/api';
 
+// Detect environment
+var isMiniProgram = /miniProgram/i.test(navigator.userAgent);
+var isWechat = /MicroMessenger/i.test(navigator.userAgent);
+var pendingNav = '';
+var mpPageMap = {
+  orders: '/pages/orders/orders',
+  wallet: '/pages/balance/balance',
+  complaint: '/pages/complaint/complaint'
+};
+var h5FallbackMap = {
+  orders: 'orders.html',
+  wallet: 'wallet.html',
+  complaint: 'complaint.html'
+};
+
+function showSubModal(target) {
+  pendingNav = target;
+  var titles = {orders:'查看我的订单', wallet:'查看我的钱包', complaint:'投诉反馈'};
+  var descs = {orders:'订阅后可接收存包到期、退款到账等通知', wallet:'订阅后可接收余额变动、提现到账等通知', complaint:'订阅后可接收投诉处理进度通知'};
+  document.getElementById('subTitle').textContent = titles[target] || '开启订阅通知';
+  document.getElementById('subDesc').textContent = descs[target] || '订阅后可接收重要通知，建议开启';
+  document.getElementById('subModal').classList.add('show');
+}
+function subSkip() {
+  document.getElementById('subModal').classList.remove('show');
+  if (pendingNav && h5FallbackMap[pendingNav]) {
+    location.href = withPhone(h5FallbackMap[pendingNav]);
+  }
+  pendingNav = '';
+}
+function subConfirm() {
+  document.getElementById('subModal').classList.remove('show');
+  if (pendingNav && mpPageMap[pendingNav] && typeof wx !== 'undefined' && wx.miniProgram) {
+    wx.miniProgram.navigateTo({url: mpPageMap[pendingNav]});
+  } else if (pendingNav && h5FallbackMap[pendingNav]) {
+    location.href = withPhone(h5FallbackMap[pendingNav]);
+  }
+  pendingNav = '';
+}
+
 (function(){
   var phone=getPhone();
   document.getElementById('userName').textContent=maskPhone(phone);
+  // Set href for non-mini-program fallback
   document.getElementById('linkOrders').href=withPhone('orders.html');
   document.getElementById('linkWallet').href=withPhone('wallet.html');
   document.getElementById('linkComplaint').href=withPhone('complaint.html');
   document.getElementById('linkService').href=withPhone('customer_service.html');
   document.getElementById('floatService').href=withPhone('customer_service.html');
   document.getElementById('floatComplaint').href=withPhone('complaint.html');
+  // Override click handlers for mini program navigation with subscribe modal
+  if (isMiniProgram) {
+    document.getElementById('linkOrders').addEventListener('click', function(e){e.preventDefault();showSubModal('orders');});
+    document.getElementById('linkWallet').addEventListener('click', function(e){e.preventDefault();showSubModal('wallet');});
+    document.getElementById('linkComplaint').addEventListener('click', function(e){e.preventDefault();showSubModal('complaint');});
+    document.getElementById('floatComplaint').addEventListener('click', function(e){e.preventDefault();showSubModal('complaint');});
+  }
   apiGet(API_BASE+'/user/balance').then(function(data){
     var balance=parseFloat(data.balance||data.available_balance||0);
     document.getElementById('balanceSub').textContent='¥'+balance.toFixed(2);

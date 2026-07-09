@@ -752,8 +752,25 @@ def store_pay():
             conn.close()
             return json_response({'order_id': order_id, 'order_no': order['order_no'], 'transaction_id': transaction_id, 'mode': 'mock', 'message': '支付成功，请取物存放'})
         else:
-            from helpers import get_wxpay
-            wxpay = get_wxpay()
+            # 使用订单关联的商户号查询支付结果
+            from helpers import get_channel_wxpay
+            wxpay = None
+            _pc_id = order.get('payment_channel_id')
+            if _pc_id:
+                try:
+                    cursor.execute('SELECT * FROM payment_channels WHERE id=%s', (_pc_id,))
+                    _ch = cursor.fetchone()
+                    if _ch:
+                        wxpay, _ = get_channel_wxpay(dict(_ch))
+                except Exception as _e:
+                    logger.error(f'[deposit_query] 渠道查询异常: {_e}')
+            if not wxpay:
+                from helpers import select_payment_channel
+                _active_ch = select_payment_channel()
+                if _active_ch:
+                    wxpay, _ = get_channel_wxpay(dict(_active_ch))
+            if not wxpay:
+                return json_response({'error': '无可用商户号'}, code=500)
             result = wxpay.order_query(out_trade_no=order['order_no'])
             if result.get('trade_state') == 'SUCCESS' or result.get('result_code') == 'SUCCESS':
                 transaction_id = result.get('transaction_id')

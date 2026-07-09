@@ -816,9 +816,15 @@ def admin_order_refund():
                     if ch:
                         wxpay_inst, _ = get_channel_wxpay(dict(ch))
                     else:
-                        wxpay_inst = get_wxpay()
+                        return json_response(message='订单关联的商户渠道不存在，无法退款', code=400)
                 else:
-                    wxpay_inst = get_wxpay()
+                    # 没有渠道ID，选一个活跃的
+                    c.execute('SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1')
+                    active_ch = c.fetchone()
+                    if active_ch:
+                        wxpay_inst, _ = get_channel_wxpay(dict(active_ch))
+                    else:
+                        return json_response(message='无可用活跃商户，无法退款', code=400)
                 total_fee = int(amount * 100)
                 refund_result = wxpay_inst.refund(
                     out_trade_no=order_no,
@@ -992,9 +998,19 @@ def admin_member_refund():
                 if payment_channel_id:
                     c.execute('SELECT * FROM payment_channels WHERE id=%s', (payment_channel_id,))
                     ch = c.fetchone()
-                    wxpay_inst, _ = get_channel_wxpay(dict(ch)) if ch else (get_wxpay(), None)
+                    if ch:
+                        wxpay_inst, _ = get_channel_wxpay(dict(ch))
+                    else:
+                        wxpay_inst = None
+                        wx_err_msg = '订单关联的商户渠道不存在'
                 else:
-                    wxpay_inst = get_wxpay()
+                    c.execute('SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1')
+                    active_ch = c.fetchone()
+                    if active_ch:
+                        wxpay_inst, _ = get_channel_wxpay(dict(active_ch))
+                    else:
+                        wxpay_inst = None
+                        wx_err_msg = '无可用活跃商户'
                 total_fee = int(refund_amount * 100)
                 refund_result = wxpay_inst.refund(out_trade_no=order['order_no'], total_fee=total_fee, refund_fee=total_fee, out_refund_no=refund_no, refund_desc='')
                 if refund_result and refund_result.get('return_code') == 'SUCCESS' and refund_result.get('result_code') == 'SUCCESS':
@@ -5028,7 +5044,21 @@ def wechat_complaint_notify():
         if order_no:
             _auto_refund_complaint_order(order_no, transaction_id, complaint_id)
             # 查找正确的商户凭证
-            _mch_id = complained_mchid or WX_MCH_ID
+            _mch_id = complained_mchid
+            if not _mch_id:
+                # 从订单关联的商户获取
+                try:
+                    _cc = get_db().cursor()
+                    _cc.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1")
+                    _cr = _cc.fetchone()
+                    if _cr:
+                        _mch_id = _cr['mch_id']
+                    _cc.connection.close()
+                except:
+                    pass
+            if not _mch_id:
+                logger.error('[投诉处理] 无可用商户号')
+                return
             _cert_serial = WX_CERT_SERIAL_NO
             _key_path = WX_KEY_PATH
             if complained_mchid:
@@ -5151,7 +5181,16 @@ def _auto_reply_complaint(complaint_id, order_no="", transaction_id="", mch_id="
     import time, requests, base64
     try:
         # 根据订单支付渠道选择对应商户证书
-        mch_id = mch_id or WX_MCH_ID
+        if not mch_id:
+            try:
+                _ac = get_db().cursor()
+                _ac.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1")
+                _ar = _ac.fetchone()
+                if _ar:
+                    mch_id = _ar['mch_id']
+                _ac.connection.close()
+            except:
+                pass
         cert_serial = cert_serial or WX_CERT_SERIAL_NO
         private_key_path = private_key_path or WX_KEY_PATH
         conn = None
@@ -5537,7 +5576,21 @@ def _complaint_scheduler():
                             c3.close()
                         except:
                             pass
-                    _auto_complete_complaint(wxid, cmch or WX_MCH_ID, ccert, ckey)
+                    _cmch = cmch
+                    if not _cmch:
+                        try:
+                            _fc = get_db().cursor()
+                            _fc.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1")
+                            _fr = _fc.fetchone()
+                            if _fr:
+                                _cmch = _fr['mch_id']
+                            _fc.connection.close()
+                        except:
+                            pass
+                    if _cmch:
+                        _auto_complete_complaint(wxid, _cmch, ccert, ckey)
+                    else:
+                        logger.error('[投诉自动处理] 无可用商户号')
                     conn2 = get_db()
                     c2 = conn2.cursor()
                     c2.execute("UPDATE complaints SET status=2 WHERE id=%s AND status='1'", (cid,))

@@ -172,8 +172,8 @@ def pay_notify():
 
         temp_result = WxPay.xml_to_dict(xml_data)
         out_trade_no = temp_result.get('out_trade_no', '')
-        notify_wxpay = get_wxpay()
-
+        # 先查订单关联的商户号，用正确的密钥验签
+        notify_wxpay = None
         if out_trade_no:
             try:
                 conn = get_db()
@@ -187,9 +187,18 @@ def pay_notify():
                         wxpay_inst, ch_type = get_channel_wxpay(dict(ch))
                         if wxpay_inst and ch_type == 'wechat':
                             notify_wxpay = wxpay_inst
+                # 没找到渠道，选一个活跃的
+                if not notify_wxpay:
+                    cursor.execute('SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1')
+                    active_ch = cursor.fetchone()
+                    if active_ch:
+                        notify_wxpay, _ = get_channel_wxpay(dict(active_ch))
                 conn.close()
             except Exception as e:
                 logger.error(f'[支付回调] 渠道查询异常: {e}')
+        if not notify_wxpay:
+            logger.error('[支付回调] 无可用活跃商户')
+            return 'fail', 500
 
         result = notify_wxpay.parse_pay_notify(xml_data)
         if result.get('return_code') != 'SUCCESS':
@@ -340,7 +349,38 @@ def refund_notify():
         mock_mode = is_mock_mode()
         if mock_mode:
             return WxPay.build_pay_notify_response('SUCCESS', 'OK')
-        wxpay = get_wxpay()
+        # 退款回调：尝试从XML获取订单号，查对应商户
+        wxpay = None
+        try:
+            _pre = WxPay.xml_to_dict(xml_data)
+            _out_refund_no = _pre.get('out_refund_no', '')
+            if _out_refund_no:
+                _rc = get_db().cursor()
+                # 退款单号含订单ID，尝试关联
+                _rc.execute("SELECT o.payment_channel_id FROM orders o WHERE o.order_no LIKE %s LIMIT 1", (_out_refund_no[:20] + '%',))
+                _rr = _rc.fetchone()
+                if _rr and _rr.get('payment_channel_id'):
+                    _rc.execute("SELECT * FROM payment_channels WHERE id=%s", (_rr['payment_channel_id'],))
+                    _ch = _rc.fetchone()
+                    if _ch:
+                        wxpay, _ = get_channel_wxpay(dict(_ch))
+                _rc.connection.close()
+        except:
+            pass
+        if not wxpay:
+            # fallback: 选一个活跃商户
+            try:
+                _ac = get_db().cursor()
+                _ac.execute("SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1")
+                _ach = _ac.fetchone()
+                if _ach:
+                    wxpay, _ = get_channel_wxpay(dict(_ach))
+                _ac.connection.close()
+            except:
+                pass
+        if not wxpay:
+            logger.error('[退款回调] 无可用活跃商户')
+            return 'fail', 500
         result, success = wxpay.parse_refund_notify(xml_data)
         if not success:
             return wxpay.build_pay_notify_response('FAIL', '解析失败'), 400

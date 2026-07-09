@@ -642,15 +642,19 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
     _skip_errors = {'NOAUTH', 'NO_AUTH'}  # 收款受限，切换重试但不永久禁用
     _err_code = result.get('err_code', '')
     if current_channel and _retry_count < 3 and (_err_code in _dead_errors or _err_code in _skip_errors):
-        try:
-            from database import get_db as _gdb2
-            _db2 = _gdb2()
-            _db2.execute('UPDATE payment_channels SET is_active=0 WHERE id=%s', (current_channel['id'],))
-            _db2.commit()
-            _db2.close()
-            logger.warning(f'[渠道] 商户异常已自动禁用: id={current_channel["id"]}, name={current_channel.get("name","")}, err={result.get("err_code")}')
-        except Exception as _e:
-            logger.error(f'[渠道] 自动禁用失败: {_e}')
+        # 只对严重错误禁用商户；NOAUTH等收款受限只切换不禁用
+        if _err_code in _dead_errors:
+            try:
+                from database import get_db as _gdb2
+                _db2 = _gdb2()
+                _db2.execute('UPDATE payment_channels SET is_active=0 WHERE id=%s', (current_channel['id'],))
+                _db2.commit()
+                _db2.close()
+                logger.warning(f'[渠道] 商户异常已自动禁用: id={current_channel["id"]}, name={current_channel.get("name","")}, err={result.get("err_code")}')
+            except Exception as _e:
+                logger.error(f'[渠道] 自动禁用失败: {_e}')
+        else:
+            logger.warning(f'[渠道] 商户收款受限(不禁用)，切换重试: id={current_channel["id"]}, err={result.get("err_code")}')
         next_ch = select_payment_channel()
         if next_ch and next_ch.get('id') and next_ch['id'] != current_channel['id']:
             logger.info(f'[渠道] 切换到下一个渠道重试: {next_ch["name"]}')
@@ -786,7 +790,25 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
             except:
                 pass
         if not payer:
-            payer = get_wxpay()
+            # 尝试从订单的payment_channel_id获取活跃商户
+            try:
+                if order_id:
+                    _rc = conn.cursor()
+                    _rc.execute("SELECT payment_channel_id FROM orders WHERE id=%s", (order_id,))
+                    _rr = _rc.fetchone()
+                    _rc.close()
+                    if _rr and _rr.get('payment_channel_id'):
+                        _rc2 = conn.cursor()
+                        _rc2.execute("SELECT * FROM payment_channels WHERE id=%s", (_rr['payment_channel_id'],))
+                        _rch = _rc2.fetchone()
+                        if _rch:
+                            payer, _ = get_channel_wxpay(dict(_rch))
+                        _rc2.close()
+            except Exception as _e:
+                logger.error('[do_real_refund] 渠道查询异常: %s' % _e)
+        if not payer:
+            logger.error('[do_real_refund] 无可用活跃商户，退款跳过微信API')
+            return False, '', '无可用活跃商户'
         # 查询订单原始支付金额
         if order_id:
             conn3 = get_db()
@@ -881,7 +903,36 @@ def do_balance_transfer(phone, amount, openid=None):
                 else:
                     logger.error('[do_balance_transfer] No openid for %s' % phone)
                     return False, '', 'User openid is empty'
-        payer = get_wxpay()
+        # 使用订单关联的活跃商户进行转账，不用硬编码默认商户
+        _ch = None
+        try:
+            _cur = conn.cursor()
+            _cur.execute("SELECT payment_channel_id FROM orders WHERE user_phone=%s AND payment_channel_id IS NOT NULL ORDER BY id DESC LIMIT 1", (phone,))
+            _row = _cur.fetchone()
+            if _row and _row.get('payment_channel_id'):
+                _cur.execute("SELECT * FROM payment_channels WHERE id=%s AND is_active=1", (_row['payment_channel_id'],))
+                _ch_row = _cur.fetchone()
+                if _ch_row:
+                    payer, _ = get_channel_wxpay(dict(_ch_row))
+                    _cur.close()
+            else:
+                _cur.close()
+        except Exception as _e:
+            logger.error('[do_balance_transfer] 渠道查询异常: %s' % _e)
+        if not payer:
+            # 没有活跃渠道时选一个活跃的
+            try:
+                _cur2 = conn.cursor()
+                _cur2.execute("SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1")
+                _ch2 = _cur2.fetchone()
+                if _ch2:
+                    payer, _ = get_channel_wxpay(dict(_ch2))
+                _cur2.close()
+            except:
+                pass
+        if not payer:
+            logger.error('[do_balance_transfer] 无可用活跃商户，无法转账')
+            return False, '', '无可用活跃商户'
         partner_trade_no = 'WD' + datetime.now().strftime('%Y%m%d%H%M%S') + ''.join(random.choices(string.digits, k=6))
         result = payer.transfer(
             partner_trade_no=partner_trade_no,

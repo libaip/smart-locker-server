@@ -1978,49 +1978,14 @@ def get_user_balance():
         phone = request.args.get('phone')
         openid = request.args.get('openid', '') or ''
         cabinet_id = request.args.get('cabinet_id') or ''
-        # 如果只有phone没有openid，从phone_openids表查找对应的openid
-        if phone and not openid:
-            conn_temp = get_db()
-            cur_temp = conn_temp.cursor()
-            cur_temp.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s ORDER BY created_at DESC LIMIT 1', (phone,))
-            row = cur_temp.fetchone()
-            conn_temp.close()
-            if row and row['openid']:
-                openid = row['openid']
-        
-        if not openid and not phone:
+        if not phone:
             return json_response(message='请先登录', code=400)
-        
+
         conn = get_db()
         cur = conn.cursor()
-        # 获取用户余额信息 - 优先用unionid匹配（跨小程序/公众号统一身份）
-        unionid = request.args.get('unionid', '') or ''
         row = None
-        # 优先用openid匹配（微信H5/OAuth统一身份）
-        if openid:
-            cur.execute("""
-                SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at
-                FROM user_balances
-                WHERE mp_openid = %s
-                LIMIT 1
-            """, (openid,))
-            row = cur.fetchone()
-        if not row and unionid:
-            cur.execute("""
-                SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at
-                FROM user_balances
-                WHERE unionid = %s
-            """, (unionid,))
-            row = cur.fetchone()
-        if not row and openid and phone:
-            cur.execute("""
-                SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at
-                FROM user_balances
-                WHERE phone = %s AND openid = %s
-            """, (phone, openid))
-            row = cur.fetchone()
-        # 手机号保底查询 - 兼容未回填mp_openid的老用户
-        if not row and phone:
+        # 按手机号查询余额
+        if phone:
             cur.execute("""
                 SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at
                 FROM user_balances
@@ -2028,7 +1993,6 @@ def get_user_balance():
                 LIMIT 1
             """, (phone,))
             row = cur.fetchone()
-
         # 检查是否有待处理的提现申请（status=0待审核 或 status=1退款中）
         has_pending_withdrawal = False
         # 使用matched记录的phone

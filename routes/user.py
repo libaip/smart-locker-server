@@ -2033,8 +2033,16 @@ def get_user_balance():
                 WHERE phone = %s AND openid = %s
             """, (phone, openid))
             row = cur.fetchone()
-        # 不再fallback到手机号查询，严格按openid隔离
-        
+        # 手机号保底查询 - 兼容未回填mp_openid的老用户
+        if not row and phone:
+            cur.execute("""
+                SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at
+                FROM user_balances
+                WHERE phone = %s
+                LIMIT 1
+            """, (phone,))
+            row = cur.fetchone()
+
         # 检查是否有待处理的提现申请（status=0待审核 或 status=1退款中）
         has_pending_withdrawal = False
         # 使用matched记录的phone

@@ -20,7 +20,7 @@ def _return_balance_to_user(cursor, order_dict):
     _openid = order_dict.get('openid', '') or ''
     _unionid = order_dict.get('unionid', '') or ''
     if not _openid:
-        cursor.execute('SELECT openid, unionid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (user_phone,))
+        cursor.execute('SELECT COALESCE(mp_openid, openid) as openid, unionid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (user_phone,))
         _po = cursor.fetchone()
         if _po:
             if not _openid:
@@ -231,7 +231,7 @@ def offline_retrieve():
                 try:
                     _nc = get_db()
                     _ncur = _nc.cursor()
-                    _ncur.execute('SELECT openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (order['user_phone'],))
+                    _ncur.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (order['user_phone'],))
                     _nr = _ncur.fetchone()
                     if _nr:
                         _notify_openid = _nr['openid'] or ''
@@ -318,7 +318,7 @@ def offline_retrieve_batch():
                     try:
                         _nc2 = get_db()
                         _ncur2 = _nc2.cursor()
-                        _ncur2.execute('SELECT openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (_nphone,))
+                        _ncur2.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (_nphone,))
                         _nr2 = _ncur2.fetchone()
                         if _nr2:
                             _nopenid = _nr2['openid'] or ''

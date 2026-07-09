@@ -192,16 +192,29 @@ function showSubModal(target) {
 }
 function subSkip() {
   document.getElementById('subModal').classList.remove('show');
-  if (pendingNav && h5FallbackMap[pendingNav]) {
+  // 小程序内嵌H5：不跳转，直接显示H5内容
+  // 扫码H5（微信浏览器）：用URL Scheme打开小程序
+  if (!isMiniProgram && isWechat && pendingNav && mpPageMap[pendingNav]) {
+    location.href = 'weixin://dl/business/?appid=wx57eaea52dcfff4e8&path=' + encodeURIComponent(mpPageMap[pendingNav]);
+  }
+  // 其他情况（非微信环境）：fallback到H5页面
+  else if (pendingNav && h5FallbackMap[pendingNav]) {
     location.href = withPhone(h5FallbackMap[pendingNav]);
   }
   pendingNav = '';
 }
 function subConfirm() {
   document.getElementById('subModal').classList.remove('show');
-  if (pendingNav && mpPageMap[pendingNav] && typeof wx !== 'undefined' && wx.miniProgram) {
+  // 小程序内嵌H5：用wx.miniProgram.navigateTo跳原生页面
+  if (isMiniProgram && pendingNav && mpPageMap[pendingNav] && typeof wx !== 'undefined' && wx.miniProgram) {
     wx.miniProgram.navigateTo({url: mpPageMap[pendingNav]});
-  } else if (pendingNav && h5FallbackMap[pendingNav]) {
+  }
+  // 扫码H5（微信浏览器）：用URL Scheme打开小程序
+  else if (!isMiniProgram && isWechat && pendingNav && mpPageMap[pendingNav]) {
+    location.href = 'weixin://dl/business/?appid=wx57eaea52dcfff4e8&path=' + encodeURIComponent(mpPageMap[pendingNav]);
+  }
+  // 其他情况（非微信环境）：fallback到H5页面
+  else if (pendingNav && h5FallbackMap[pendingNav]) {
     location.href = withPhone(h5FallbackMap[pendingNav]);
   }
   pendingNav = '';
@@ -217,8 +230,9 @@ function subConfirm() {
   document.getElementById('linkService').href=withPhone('customer_service.html');
   document.getElementById('floatService').href=withPhone('customer_service.html');
   document.getElementById('floatComplaint').href=withPhone('complaint.html');
-  // Override click handlers for mini program navigation with subscribe modal
-  if (isMiniProgram) {
+  // 扫码H5（微信浏览器）：拦截点击，弹订阅弹窗，然后用URL Scheme跳小程序
+  // 小程序内嵌H5：不拦截，直接在H5内显示
+  if (!isMiniProgram && isWechat) {
     document.getElementById('linkOrders').addEventListener('click', function(e){e.preventDefault();showSubModal('orders');});
     document.getElementById('linkWallet').addEventListener('click', function(e){e.preventDefault();showSubModal('wallet');});
     document.getElementById('linkComplaint').addEventListener('click', function(e){e.preventDefault();showSubModal('complaint');});

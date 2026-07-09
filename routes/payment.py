@@ -311,7 +311,7 @@ def pay_notify():
                 if not openid:
                     try:
                         cur = conn.cursor()
-                        cur.execute('SELECT openid FROM phone_openids WHERE phone = %s', (order['user_phone'],))
+                        cur.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s', (order['user_phone'],))
                         r = cur.fetchone()
                         if r:
                             openid = r['openid']

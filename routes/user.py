@@ -355,7 +355,7 @@ def retrieve():
                 _r_unionid = order.get('unionid', '') or ''
                 if not _r_openid:
                     try:
-                        cursor.execute('SELECT openid, unionid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (order['user_phone'],))
+                        cursor.execute('SELECT COALESCE(mp_openid, openid) as openid, unionid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (order['user_phone'],))
                         _r_po = cursor.fetchone()
                         if _r_po:
                             if not _r_openid: _r_openid = _r_po.get('openid', '') or ''
@@ -405,7 +405,7 @@ def retrieve():
             _openid = order.get("openid")
             if not _openid:
                 try:
-                    cursor.execute('SELECT openid FROM phone_openids WHERE phone = %s', (order['user_phone'],))
+                    cursor.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s', (order['user_phone'],))
                     _r2 = cursor.fetchone()
                     if _r2:
                         _openid = _r2['openid']
@@ -523,7 +523,7 @@ def retrieve_confirm():
             _openid = order.get('openid', '') or ''
             # 订单无openid时从phone_openids查找，确保退款到正确余额桶
             if not _openid:
-                cursor.execute('SELECT openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (order['user_phone'],))
+                cursor.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (order['user_phone'],))
                 _po = cursor.fetchone()
                 if _po:
                     _openid = _po['openid'] or ''
@@ -562,7 +562,7 @@ def retrieve_confirm():
             try:
                 cursor.execute('SELECT 1')  # reset cursor state after ON CONFLICT
                 cursor.fetchall()
-                cursor.execute('SELECT openid FROM phone_openids WHERE phone = %s', (order['user_phone'],))
+                cursor.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s', (order['user_phone'],))
                 _r2 = cursor.fetchone()
                 if _r2:
                     _openid = _r2['openid']
@@ -1068,7 +1068,7 @@ def deposit_end_storage():
         _unionid = order.get('unionid', '') or ''
         # 订单无openid/unionid时从phone_openids查找
         if not _openid or not _unionid:
-            cursor.execute('SELECT openid, unionid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (order['user_phone'],))
+            cursor.execute('SELECT COALESCE(mp_openid, openid) as openid, unionid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (order['user_phone'],))
             _po = cursor.fetchone()
             if _po:
                 if not _openid:
@@ -1138,7 +1138,7 @@ def deposit_end_storage():
                 from config import DATABASE_URL as _NURL
                 _nconn = psycopg2.connect(_NURL, connect_timeout=5)
                 _ncur = _nconn.cursor()
-                _ncur.execute('SELECT openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (order['user_phone'],))
+                _ncur.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (order['user_phone'],))
                 _nrow = _ncur.fetchone()
                 if _nrow:
                     _openid = _nrow[0] or ''
@@ -1512,7 +1512,7 @@ def get_pay_status(order_id):
                                 if not _notify_openid and _ps_user_phone:
                                     _nc = get_db()
                                     _ncu = _nc.cursor()
-                                    _ncu.execute('SELECT openid FROM phone_openids WHERE phone = %s', (_ps_user_phone,))
+                                    _ncu.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s', (_ps_user_phone,))
                                     _nr = _ncu.fetchone()
                                     _nc.close()
                                     if _nr:
@@ -1878,16 +1878,16 @@ def get_user_orders():
         if phone and not openid:
             conn_temp = get_db()
             cur_temp = conn_temp.cursor()
-            cur_temp.execute('SELECT openid FROM phone_openids WHERE phone = %s ORDER BY created_at DESC LIMIT 1', (phone,))
+            cur_temp.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s ORDER BY created_at DESC LIMIT 1', (phone,))
             row = cur_temp.fetchone()
             conn_temp.close()
             if row and row['openid']:
                 openid = row['openid']
         
-        # 优先按 openid 查询，fallback 到 phone
+        # 严格按openid查询，不再fallback到手机号
         if openid:
-            query_condition = '(o.openid = %s OR o.user_phone = %s) AND o.status != 1'
-            query_param = (openid, phone)
+            query_condition = 'o.openid = %s AND o.status != 1'
+            query_param = (openid,)
         elif phone:
             query_condition = 'o.user_phone = %s AND o.status != 1'
             query_param = (phone,)
@@ -1963,7 +1963,7 @@ def get_user_balance():
         if phone and not openid:
             conn_temp = get_db()
             cur_temp = conn_temp.cursor()
-            cur_temp.execute('SELECT openid FROM phone_openids WHERE phone = %s ORDER BY created_at DESC LIMIT 1', (phone,))
+            cur_temp.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s ORDER BY created_at DESC LIMIT 1', (phone,))
             row = cur_temp.fetchone()
             conn_temp.close()
             if row and row['openid']:
@@ -2001,14 +2001,7 @@ def get_user_balance():
                 WHERE phone = %s AND openid = %s
             """, (phone, openid))
             row = cur.fetchone()
-        # 兼容纯手机号查询（老用户可能没有openid）
-        if not row and phone:
-            cur.execute("""
-                SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at
-                FROM user_balances
-                WHERE phone = %s
-            """, (phone,))
-            row = cur.fetchone()
+        # 不再fallback到手机号查询，严格按openid隔离
         
         # 检查是否有待处理的提现申请（status=0待审核 或 status=1退款中）
         has_pending_withdrawal = False
@@ -2152,7 +2145,7 @@ def user_withdraw():
         
         # 如果只有phone没有openid，从phone_openids表查找对应的openid
         if phone and not openid:
-            cursor.execute('SELECT openid FROM phone_openids WHERE phone = %s ORDER BY created_at DESC LIMIT 1', (phone,))
+            cursor.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s ORDER BY created_at DESC LIMIT 1', (phone,))
             row_temp = cursor.fetchone()
             if row_temp and row_temp['openid']:
                 openid = row_temp['openid']
@@ -2474,7 +2467,7 @@ def get_user_withdrawals():
         if phone and not openid:
             conn_temp = get_db()
             cur_temp = conn_temp.cursor()
-            cur_temp.execute('SELECT openid FROM phone_openids WHERE phone = %s ORDER BY created_at DESC LIMIT 1', (phone,))
+            cur_temp.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s ORDER BY created_at DESC LIMIT 1', (phone,))
             row_temp = cur_temp.fetchone()
             conn_temp.close()
             if row_temp and row_temp['openid']:

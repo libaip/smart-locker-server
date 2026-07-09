@@ -1919,7 +1919,7 @@ def get_user_orders():
         
         # 严格按openid查询，不再fallback到手机号
         if openid:
-            query_condition = 'o.mp_openid = %s AND o.status != 1'
+            query_condition = 'COALESCE(o.mp_openid, o.openid) = %s AND o.status != 1'
             query_param = (openid,)
         elif phone:
             query_condition = 'o.user_phone = %s AND o.status != 1'
@@ -2541,7 +2541,7 @@ def get_user_transactions():
                        o.order_no
                 FROM user_balance_details d
                 LEFT JOIN orders o ON d.order_id = o.id
-                WHERE d.user_phone = %s AND o.mp_openid = %s {where_extra}
+                WHERE d.user_phone = %s AND COALESCE(o.mp_openid, o.openid) = %s {where_extra}
                 ORDER BY d.source_time DESC
                 LIMIT %s OFFSET %s
             ''', (phone, openid, limit, offset))

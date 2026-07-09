@@ -2520,6 +2520,7 @@ def get_user_transactions():
         elif tp == 'expense':
             where_extra = 'AND d.amount < 0'
         else:
+            where_extra = ''
             cur.execute(f'''
                 SELECT d.id, d.amount, d.source_time, d.status, d.remark, d.order_id,
                        o.order_no

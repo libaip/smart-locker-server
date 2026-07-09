@@ -1025,7 +1025,7 @@ _balance_hide_thread.start()
 logger.info('[启动] 余额超时隐藏任务已启动(每小时)')
 
 # ============================================
-# 定时任务：自动清柜（每分钟检查）
+# 定时任务：自动清柜（每分钟检查，连接PostgreSQL）
 # ============================================
 _clear_box_processed = {}
 
@@ -1034,37 +1034,35 @@ def _auto_clear_cabinet_scheduler():
     while True:
         time.sleep(60)
         try:
-            import sqlite3
-            import json as _json
-            from datetime import datetime
-            from config import DATABASE
-            conn = sqlite3.connect(DATABASE)
-            conn.row_factory = sqlite3.Row
-            c = conn.cursor()
+            import psycopg2
+            import psycopg2.extras
+            from datetime import datetime, timedelta
+            from config import DATABASE_URL
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+            c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             now = datetime.now()
-            today_str = now.strftime('%Y-%m-%d')
-            current_time = now.strftime('%H:%M')
+            today_str = now.strftime("%Y-%m-%d")
+            current_time = now.strftime("%H:%M")
 
-            c.execute("SELECT id, clear_box_time, clear_box_cycle FROM locations WHERE enable_clear_box = 1")
+            c.execute("SELECT id, clear_box_time, clear_box_cycle FROM locations WHERE enable_clear_box = 1 AND clear_box_time IS NOT NULL")
             locations = c.fetchall()
 
             for loc in locations:
-                loc_id = loc['id']
-                clear_time = loc['clear_box_time'] or '23:00'
-                cycle = loc['clear_box_cycle'] or 1
+                loc_id = loc["id"]
+                clear_time = loc["clear_box_time"] or "03:00"
+                cycle = loc["clear_box_cycle"] or 1
 
                 if current_time < clear_time:
                     continue
 
-                last_date = _clear_box_processed.get(loc_id, '')
+                last_date = _clear_box_processed.get(loc_id, "")
                 if last_date == today_str:
                     continue
 
-                if cycle > 1 and last_date:
-                    from datetime import date as date_type
+                if last_date:
                     try:
-                        last = date_type.fromisoformat(last_date)
-                        today = date_type.fromisoformat(today_str)
+                        last = datetime.strptime(last_date, "%Y-%m-%d")
+                        today = datetime.strptime(today_str, "%Y-%m-%d")
                         if (today - last).days < cycle:
                             continue
                     except:
@@ -1072,57 +1070,72 @@ def _auto_clear_cabinet_scheduler():
 
                 _clear_box_processed[loc_id] = today_str
 
-                c.execute("SELECT id, mainboard_device_id FROM cabinets WHERE location_id = %s", (loc_id,))
-                cabinets = c.fetchall()
+                cutoff_time = now - timedelta(days=cycle)
+
+                c.execute("""
+                    SELECT o.id, o.slot_id, o.user_phone, o.deposit_amount, o.openid, o.unionid
+                    FROM orders o
+                    JOIN cabinets c ON o.cabinet_id = c.id
+                    WHERE c.location_id = %s AND o.status = 2 AND o.store_time < %s
+                """, (loc_id, cutoff_time))
+                active_orders = c.fetchall()
 
                 total_ended = 0
-                total_opened = 0
+                now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
-                for cab in cabinets:
-                    cab_id = cab['id']
-                    device_id = cab['mainboard_device_id']
+                for o in active_orders:
+                    c.execute("UPDATE orders SET status=3, retrieve_time=%s, pickup_time=%s, updated_at=%s, refund_mark=1 WHERE id=%s",
+                              (now_str, now_str, now_str, o["id"]))
 
-                    c.execute("SELECT id, slot_id FROM orders WHERE cabinet_id = %s AND status = 2", (cab_id,))
-                    active_orders = c.fetchall()
-                    now_str = now.strftime('%Y-%m-%d %H:%M:%S')
-                    for o in active_orders:
-                        c.execute("UPDATE orders SET status = 3, retrieve_time = %s, pickup_time = %s, updated_at = %s WHERE id = %s",
-                                  (now_str, now_str, now_str, o['id']))
-                        if o['slot_id']:
-                            c.execute("UPDATE cabinet_slots SET status = 1 WHERE id = %s", (o['slot_id'],))
-                        total_ended += 1
+                    if o["slot_id"]:
+                        c.execute("UPDATE cabinet_slots SET status=0 WHERE id=%s", (o["slot_id"],))
 
-                    c.execute("UPDATE cabinet_slots SET status = 1 WHERE cabinet_id = %s AND status = 2", (cab_id,))
+                    deposit_amount = float(o["deposit_amount"] or 0)
+                    if deposit_amount > 0 and o["user_phone"]:
+                        c.execute("SELECT id FROM user_balances WHERE phone=%s", (o["user_phone"],))
+                        ub = c.fetchone()
+                        u_openid = o["openid"] or ""
+                        u_unionid = o["unionid"] or ""
+                        if ub:
+                            c.execute("UPDATE user_balances SET balance=balance+%s, total_deposited=total_deposited+%s, openid=COALESCE(NULLIF(openid,\"\"),%s), unionid=COALESCE(NULLIF(unionid,\"\"),%s) WHERE phone=%s",
+                                      (deposit_amount, deposit_amount, u_openid, u_unionid, o["user_phone"]))
+                        else:
+                            c.execute("INSERT INTO user_balances (phone, openid, unionid, balance, total_deposited, total_withdrawn, first_use_time) VALUES (%s,%s,%s,%s,%s,0,NOW())",
+                                      (o["user_phone"], u_openid, u_unionid, deposit_amount, deposit_amount))
+                        c.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s,%s,%s,\"available\") ON CONFLICT (order_id) DO NOTHING",
+                                  (o["user_phone"], o["id"], deposit_amount))
 
-                    if device_id:
-                        c.execute("SELECT id, slot_number, slot_label, board_no, lock_no FROM cabinet_slots WHERE cabinet_id = %s", (cab_id,))
-                        slots = c.fetchall()
-                        for s in slots:
-                            cmd = _json.dumps({
-                                'type': 'open_lock',
-                                'device_id': device_id,
-                                'deviceId': device_id,
-                                'board_no': s.get('board_no', 1) or 1,
-                                'boardNo': s.get('board_no', 1) or 1,
-                                'lock_no': s.get('lock_no', 1) or 1,
-                                'lockNo': s.get('lock_no', 1) or 1,
-                                'slot_number': s['slot_number'],
-                                'slot_label': s.get('slot_label', '') or ''
-                            })
-                            c.execute("INSERT INTO pending_lock_cmds (cabinet_id, slot_id, command, status) VALUES (%s, %s, %s, 'pending')",
-                                      (cab_id, s['id'], cmd))
-                            total_opened += 1
+                    if o.get("openid"):
+                        try:
+                            from helpers import send_wx_subscribe_message
+                            sub_data = {
+                                "amount6": {"value": "\u00a5{:.2f}".format(deposit_amount)},
+                                "time4": {"value": now_str},
+                                "thing7": {"value": "\u5df2\u9000\u8fd8\u81f3\u5c0f\u7a0b\u5e8f\u7528\u6237\u94b1\u5305"},
+                                "thing2": {"value": "\u8bf7\u81ea\u884c\u70b9\u51fb\u6b64\u901a\u77e5\u6d88\u606f\u8df3\u8f6c\u201c\u6211\u7684\u94b1\u5305\u201d\u63d0\u73b0"}
+                            }
+                            send_wx_subscribe_message(o["openid"], "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", sub_data, phone=o["user_phone"])
+                        except Exception as e:
+                            logger.error('[自动清柜] 发送通知失败')
+
+                    total_ended += 1
 
                 conn.commit()
-                if total_ended > 0 or total_opened > 0:
-                    logger.info('[自动清柜] Location %s: 结束 %s 个订单, 发送 %s 个开门指令' % (loc_id, total_ended, total_opened))
+                if total_ended > 0:
+                    logger.info("[自动清柜] Location %s: 结束 %s 个订单(周期=%s天,截止时间=%s)" % (loc_id, total_ended, cycle, cutoff_time))
 
             conn.close()
         except Exception as e:
-            logger.error('[自动清柜] 异常: %s' % e)
+            logger.error("[自动清柜] 异常: %s" % e)
+            try: conn.close()
+            except: pass
 
 _auto_clear_thread = threading.Thread(target=_auto_clear_cabinet_scheduler, daemon=True)
 _auto_clear_thread.start()
+logger.info("[启动] 自动清柜任务已启动(每分钟检查,PostgreSQL连接)")
+
+
+# Start merchant health scheduler
 logger.info('[启动] 自动清柜任务已启动(每分钟检查)')
 
 

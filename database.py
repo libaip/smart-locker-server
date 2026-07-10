@@ -140,6 +140,7 @@ class _PGConn:
         import psycopg2
         self.__class__._init_pool(dsn)
         self._conn = self.__class__._pool.getconn()
+        self._conn.autocommit = True
         self._returned = False
     def cursor(self):
         from psycopg2.extras import RealDictCursor

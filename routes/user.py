@@ -2306,9 +2306,10 @@ def user_withdraw():
             if not amount or float(amount) <= 0:
                 amount = float(balance)
             # 从余额明细表查找可提现的记录（status='available'）
-            _bd_m = 'openid' if openid else 'phone'
-            _bk_m = openid if openid else phone
-            cursor.execute("SELECT bd.id, bd.order_id, bd.amount, o.transaction_id, o.openid as order_openid FROM user_balance_details bd JOIN orders o ON bd.order_id = o.id JOIN user_balances ub ON bd.user_phone = ub.phone WHERE ub._bd_m=%s AND bd.status='available' AND o.transaction_id IS NOT NULL AND o.transaction_id != '' ORDER BY bd.id DESC", (_bk_m,))
+            if openid:
+                cursor.execute("SELECT bd.id, bd.order_id, bd.amount, o.transaction_id, o.openid as order_openid FROM user_balance_details bd JOIN orders o ON bd.order_id = o.id JOIN user_balances ub ON bd.user_phone = ub.phone WHERE ub.openid=%s AND bd.status='available' AND o.transaction_id IS NOT NULL AND o.transaction_id != '' ORDER BY bd.id DESC", (openid,))
+            else:
+                cursor.execute("SELECT bd.id, bd.order_id, bd.amount, o.transaction_id, o.openid as order_openid FROM user_balance_details bd JOIN orders o ON bd.order_id = o.id JOIN user_balances ub ON bd.user_phone = ub.phone WHERE ub.phone=%s AND bd.status='available' AND o.transaction_id IS NOT NULL AND o.transaction_id != '' ORDER BY bd.id DESC", (phone,))
             balance_records = cursor.fetchall()
             if not balance_records:
                 conn.close()

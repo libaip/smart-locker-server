@@ -1208,8 +1208,6 @@ def refund_order(order_id):
         cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, refund_transaction_id, status, created_at) VALUES (%s, 2, %s, %s, %s, 2, %s)',
                        (order_id, order['deposit_amount'], order['transaction_id'], refund_no, datetime.now()))
         cursor.execute('UPDATE orders SET status = 4, refund_id = %s, refund_time = %s WHERE id = %s', (refund_no, datetime.now(), order_id))
-        # 同步更新余额明细状态
-        cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status='available'", (order_id,))
         conn.commit()
         # 手动退款成功后加入提现白名单（仅一次有效）
         try:
@@ -1313,10 +1311,6 @@ def withdrawal_apply():
                     cursor.execute('SELECT balance, openid as rec_openid FROM user_balances WHERE phone = %s AND (openid = %s OR openid = \'\') ORDER BY CASE WHEN openid = %s THEN 0 ELSE 1 END LIMIT 1', (user_phone, user_openid, user_openid))
                 bal_row = cursor.fetchone()
                 _real_openid = bal_row['rec_openid'] if bal_row else user_openid
-                # 防止 mp_openid/openid 为空导致匹配所有空记录
-                if not _real_openid:
-                    conn.close()
-                    return json_response(message='用户身份信息不完整，无法提现', code=400)
                 if not bal_row or float(bal_row['balance']) <= 0:
                     conn.close()
                     return json_response(message='余额不足', code=400)
@@ -1363,8 +1357,6 @@ def withdrawal_apply():
                                        (order_id, user_phone, amount, click_count, user_openid))
                         withdrawal_id = cursor.lastrowid
                         cursor.execute("UPDATE orders SET status=4, refund_id=%s, refund_time=NOW() WHERE id=%s", (refund_id, order_id))
-                        # 同步更新余额明细状态
-                        cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status='available'", (order_id,))
                         conn.commit()
                         conn.close()
                         # 发送退款成功订阅消息（用户点击提现时立即发送）

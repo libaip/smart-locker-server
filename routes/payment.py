@@ -188,11 +188,15 @@ def pay_notify():
                         if wxpay_inst and ch_type == 'wechat':
                             notify_wxpay = wxpay_inst
                 # 没找到渠道，选一个活跃的
+                _callback_channel_id = None
                 if not notify_wxpay:
                     cursor.execute('SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1')
                     active_ch = cursor.fetchone()
                     if active_ch:
                         notify_wxpay, _ = get_channel_wxpay(dict(active_ch))
+                        _callback_channel_id = active_ch['id']
+                elif order_row and order_row['payment_channel_id']:
+                    _callback_channel_id = order_row['payment_channel_id']
                 conn.close()
             except Exception as e:
                 logger.error(f'[支付回调] 渠道查询异常: {e}')
@@ -220,8 +224,13 @@ def pay_notify():
             return notify_wxpay.build_pay_notify_response('SUCCESS', 'OK'), 200
 
         if trade_state == 'SUCCESS' or result.get('result_code') == 'SUCCESS':
-            cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s',
-                           (transaction_id, datetime.now(), order['id']))
+            # 更新订单状态和支付渠道ID
+            if order.get('payment_channel_id') is None and '_callback_channel_id' in locals() and _callback_channel_id:
+                cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s, payment_channel_id = %s WHERE id = %s',
+                               (transaction_id, datetime.now(), _callback_channel_id, order['id']))
+            else:
+                cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s',
+                               (transaction_id, datetime.now(), order['id']))
             if order['slot_id']:
                 cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
             cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',

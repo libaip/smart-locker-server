@@ -864,13 +864,16 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
                 try:
                     conn_bal = get_db()
                     c_bal = conn_bal.cursor()
-                    c_bal.execute("SELECT user_phone FROM orders WHERE id=%s", (order_id,))
+                    c_bal.execute("SELECT user_phone, openid FROM orders WHERE id=%s", (order_id,))
                     phone_row = c_bal.fetchone()
                     if phone_row and phone_row['user_phone'] and not skip_balance:
-                        bal_phone = phone_row['user_phone']
-                        c_bal.execute("UPDATE user_balances SET balance = GREATEST(balance - %s, 0) WHERE phone=%s", (amount, bal_phone))
+                        bal_openid = phone_row.get('openid') or ''
+                        if bal_openid:
+                            c_bal.execute("UPDATE user_balances SET balance = GREATEST(balance - %s, 0) WHERE openid=%s", (amount, bal_openid))
+                        else:
+                            c_bal.execute("UPDATE user_balances SET balance = GREATEST(balance - %s, 0) WHERE phone=%s", (amount, phone_row['user_phone']))
                         if c_bal.rowcount > 0:
-                            logger.info('[do_real_refund] Balance deducted: phone=%s, amount=%s' % (bal_phone, amount))
+                            logger.info('[do_real_refund] Balance deducted: openid=%s, amount=%s' % (bal_openid, amount))
                     conn_bal.commit()
                     conn_bal.close()
                 except Exception as be:

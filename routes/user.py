@@ -1635,13 +1635,12 @@ def get_user_info():
             return json_response(message='请先登录', code=400)
         conn = get_db()
         cur = conn.cursor()
-        if mp_openid:
+        if openid:
+            cur.execute("SELECT balance FROM user_balances WHERE openid = %s", (openid,))
+        elif mp_openid:
             cur.execute("SELECT balance FROM user_balances WHERE mp_openid = %s", (mp_openid,))
-        elif openid:
-            cur.execute("SELECT balance FROM user_balances WHERE phone = %s AND openid = %s", (phone, openid))
         else:
-            cur.execute("SELECT balance FROM user_balances WHERE phone = %s LIMIT 1", (phone,))
-        bal_row = cur.fetchone()
+            bal_row = None  # 无openid，返回0
         balance = float(bal_row['balance'] or 0) if bal_row else 0
         cur.execute("""
             SELECT c.name as cabinet_name, c.withdrawal_rules
@@ -1777,6 +1776,14 @@ def wx_login():
         resp = requests.get(url, timeout=10)
         result = resp.json()
         if 'openid' in result:
+            openid_val = result['openid']
+            try:
+                conn2 = get_db()
+                conn2.execute("UPDATE user_balances SET mp_openid = %s WHERE openid = %s AND (mp_openid IS NULL OR mp_openid = '')", (openid_val, openid_val))
+                conn2.commit()
+                conn2.close()
+            except:
+                pass
             return json_response({'openid': result['openid'], 'session_key': result.get('session_key', '')})
         else:
             logger.error(f'[wx_login] 微信接口返回异常: {result}')
@@ -1990,16 +1997,13 @@ def get_user_balance():
         conn = get_db()
         cur = conn.cursor()
         row = None
-        # 按手机号查询余额
-        if phone:
-            cur.execute("""
-                SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at
-                FROM user_balances
-                WHERE phone = %s
-                LIMIT 1
-            """, (phone,))
+        # 优先按openid查询余额
+        if openid:
+            cur.execute("SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at FROM user_balances WHERE openid = %s", (openid,))
             row = cur.fetchone()
-        # 检查是否有待处理的提现申请（status=0待审核 或 status=1退款中）
+        if not row and phone:
+            cur.execute("SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at FROM user_balances WHERE phone = %s LIMIT 1", (phone,))
+            row = cur.fetchone()
         has_pending_withdrawal = False
         # 使用matched记录的phone
         _check_phone = row["phone"] if row else phone
@@ -2151,7 +2155,7 @@ def user_withdraw():
         row = None
         # 优先用openid匹配
         if openid:
-            cursor.execute('SELECT phone, balance, total_deposited, total_withdrawn FROM user_balances WHERE mp_openid = %s ORDER BY balance DESC LIMIT 1', (openid,))
+            cursor.execute('SELECT phone, balance, total_deposited, total_withdrawn FROM user_balances WHERE mp_openid = %s LIMIT 1', (openid,))
             row = cursor.fetchone()
             if row:
                 phone = row['phone']

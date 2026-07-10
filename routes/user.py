@@ -2270,7 +2270,7 @@ def user_withdraw():
             conn.commit()
             conn.close()
             if all_ok:
-                if openid:
+                if mp_openid:
                     try:
                         from helpers import send_wx_subscribe_message
                         wd_data = {
@@ -2279,7 +2279,7 @@ def user_withdraw():
                             'thing3': {'value': '原路退回支付账户'},
                             'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
                         }
-                        send_wx_subscribe_message(openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone, page='pages/mine/mine')
+                        send_wx_subscribe_message(mp_openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone, page='pages/mine/mine')
                     except Exception as e:
                         logger.error(f'[提现通知失败] {e}')
                 return json_response(data={
@@ -2379,16 +2379,17 @@ def user_withdraw():
                 remaining -= refund_this
             conn.commit()
             conn.close()
-            if openid:
+            # 发送订阅消息：使用 mp_openid（已解析的公众号openid）
+            if mp_openid:
                 try:
                     from helpers import send_wx_subscribe_message
                     wd_data = {
                         'amount8': {'value': '¥{:.2f}'.format(actual_amount)},
                         'time6': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
-                        'thing3': {'value': '原路退回支付账户'},
+                        'thing3': {'value': '提现申请已提交'},
                         'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
                     }
-                    send_wx_subscribe_message(openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone, page='pages/mine/mine')
+                    send_wx_subscribe_message(mp_openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone, page='pages/mine/mine')
                 except Exception as e:
                     logger.error(f'[提现通知失败] {e}')
             return json_response(data={

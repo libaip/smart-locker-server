@@ -477,7 +477,7 @@ def send_open_all(device_id, protocol=None):
 # ============================================
 # 支付相关 - 延迟导入避免循环
 # ============================================
-def _get_payment_channel(channel_id=None):
+def _get_payment_channel(channel_id=None, exclude_channel_id=None):
     """获取支付渠道（支持严格轮转和加权随机）"""
     conn = get_db()
     cursor = conn.cursor()
@@ -491,6 +491,12 @@ def _get_payment_channel(channel_id=None):
     if not channels:
         conn.close()
         return None
+    # 如果有排除的渠道，过滤掉
+    if exclude_channel_id:
+        channels = [ch for ch in channels if ch['id'] != exclude_channel_id]
+        if not channels:
+            conn.close()
+            return None
     # 读取轮转模式
     rotation_mode = 'round_robin'
     try:
@@ -503,7 +509,10 @@ def _get_payment_channel(channel_id=None):
 
     # ====== Sequential mode: one at a time, failover on block ======
     if rotation_mode == 'sequential':
-        cursor.execute('SELECT * FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0) ORDER BY rotation_index ASC LIMIT 1')
+        if exclude_channel_id:
+            cursor.execute('SELECT * FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0) AND id != %s ORDER BY rotation_index ASC LIMIT 1', (exclude_channel_id,))
+        else:
+            cursor.execute('SELECT * FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0) ORDER BY rotation_index ASC LIMIT 1')
         ch = cursor.fetchone()
         conn.close()
         if ch:
@@ -529,9 +538,11 @@ def _get_payment_channel(channel_id=None):
     return dict(selected)
 
 
-def select_payment_channel():
-    """选择支付渠道（加权随机轮换）"""
-    return _get_payment_channel()
+def select_payment_channel(exclude_channel_id=None):
+    """选择支付渠道（加权随机轮换）
+    exclude_channel_id: 排除的渠道ID，用于故障切换时跳过当前失败的渠道
+    """
+    return _get_payment_channel(exclude_channel_id=exclude_channel_id)
 
 
 def update_channel_stats(channel_id, amount):
@@ -687,7 +698,7 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
                 logger.error(f'[渠道] 自动禁用失败: {_e}')
         else:
             logger.warning(f'[渠道] 商户收款受限(不禁用)，切换重试: id={current_channel["id"]}, err={result.get("err_code")}')
-        next_ch = select_payment_channel()
+        next_ch = select_payment_channel(exclude_channel_id=current_channel['id'])
         if next_ch and next_ch.get('id') and next_ch['id'] != current_channel['id']:
             logger.info(f'[渠道] 切换到下一个渠道重试: {next_ch["name"]}')
             # [已修复] 不再修改订单的payment_channel_id，让用户重新扫码

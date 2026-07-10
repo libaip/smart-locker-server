@@ -5777,7 +5777,9 @@ def _complaint_scheduler():
                     ccert = WX_CERT_SERIAL_NO
                     ckey = WX_KEY_PATH
                     if cmch:
+                        conn2 = None
                         try:
+                            conn2 = get_db()
                             c3 = conn2.cursor()
                             c3.execute('SELECT cert_serial_no, cert_name FROM payment_channels WHERE mch_id=%s', (cmch,))
                             pc = c3.fetchone()
@@ -5785,36 +5787,68 @@ def _complaint_scheduler():
                                 ccert = pc[0]
                                 ckey = f'/home/ubuntu/smart-locker/cert/{pc[1]}_key.pem'
                             c3.close()
+                            conn2.close()
+                            conn2 = None
                         except:
                             pass
+                        finally:
+                            if conn2:
+                                try:
+                                    conn2.close()
+                                except:
+                                    pass
                     _cmch = cmch
                     if not _cmch:
+                        _fc_conn = None
                         try:
-                            _fc = get_db().cursor()
+                            _fc_conn = get_db()
+                            _fc = _fc_conn.cursor()
                             _fc.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1")
                             _fr = _fc.fetchone()
                             if _fr:
                                 _cmch = _fr['mch_id']
-                            _fc.connection.close()
+                            _fc.close()
+                            _fc_conn.close()
+                            _fc_conn = None
                         except:
                             pass
+                        finally:
+                            if _fc_conn:
+                                try:
+                                    _fc_conn.close()
+                                except:
+                                    pass
                     if _cmch:
                         _auto_complete_complaint(wxid, _cmch, ccert, ckey)
                     else:
                         logger.error('[投诉自动处理] 无可用商户号')
-                    conn2 = get_db()
-                    c2 = conn2.cursor()
-                    c2.execute("UPDATE complaints SET status=2 WHERE id=%s AND status='1'", (cid,))
-                    conn2.commit()
-                    conn2.close()
+                    conn2 = None
+                    try:
+                        conn2 = get_db()
+                        c2 = conn2.cursor()
+                        c2.execute("UPDATE complaints SET status=2 WHERE id=%s AND status='1'", (cid,))
+                        conn2.commit()
+                        conn2.close()
+                        conn2 = None
+                    except Exception as e:
+                        logger.error('[投诉自动处理] 更新投诉状态失败: %s', e)
+                    finally:
+                        if conn2:
+                            try:
+                                conn2.close()
+                            except:
+                                pass
 
             # non-wechat auto complaints (with refund if has order)
+            conn3 = None
+            conn4 = None
             try:
                 conn3 = get_db()
                 c3 = conn3.cursor()
                 c3.execute("SELECT * FROM complaints WHERE status=0 AND (type!='wechat' OR type IS NULL) AND created_at < NOW() - INTERVAL '2 minutes' ORDER BY id LIMIT 10")
                 rows2 = c3.fetchall()
                 conn3.close()
+                conn3 = None
                 for row2 in rows2:
                     comp2 = dict(row2)
                     cid2 = comp2.get("id", 0)
@@ -5828,22 +5862,35 @@ def _complaint_scheduler():
                         else:
                             logger.warning("[complaint_scheduler] non-wechat refund fail id=%s order=%s msg=%s", cid2, ono2, refund_msg2)
                     reply_text = '您好，您的投诉已收到，我们会尽快处理。如有紧急情况请联系客服，感谢您的理解与支持！'
-                    conn4 = get_db()
-                    c4 = conn4.cursor()
-                    c4.execute("UPDATE complaints SET reply=%s, status=2, reply_time=CURRENT_TIMESTAMP WHERE id=%s", (reply_text, cid2))
-                    conn4.commit()
-                    conn4.close()
-                    logger.info("[complaint_scheduler] non-wechat complaint done id=%s", cid2)
+                    try:
+                        conn4 = get_db()
+                        c4 = conn4.cursor()
+                        c4.execute("UPDATE complaints SET reply=%s, status=2, reply_time=CURRENT_TIMESTAMP WHERE id=%s", (reply_text, cid2))
+                        conn4.commit()
+                        conn4.close()
+                        conn4 = None
+                        logger.info("[complaint_scheduler] non-wechat complaint done id=%s", cid2)
+                    except Exception as e4:
+                        logger.error("[complaint_scheduler] non-wechat update error: %s", e4)
+                    finally:
+                        if conn4:
+                            try:
+                                conn4.close()
+                            except:
+                                pass
             except Exception as e2:
                 logger.error("[complaint_scheduler] non-wechat error: %s", e2, exc_info=True)
-                try:
-                    conn3.close()
-                except:
-                    pass
-                try:
-                    conn4.close()
-                except:
-                    pass
+            finally:
+                if conn3:
+                    try:
+                        conn3.close()
+                    except:
+                        pass
+                if conn4:
+                    try:
+                        conn4.close()
+                    except:
+                        pass
 
         except Exception as e:
             logger.error("[complaint_scheduler] 异常: %s", e, exc_info=True)

@@ -1181,12 +1181,11 @@ def merchant_health_scheduler():
     global _failover_consecutive_fails
     time.sleep(60)
     while True:
+        conn_f = None
         try:
             logger.info('[MerchantHealth] 开始探测...')
             check_merchant_health()
             # Auto-failover
-            conn_f = get_db()
-            # Sequential mode: activate next if no active channel
             conn_f = get_db()
             c_f = conn_f.cursor()
             c_f.execute("SELECT count(*) FROM payment_channels WHERE is_active=1")
@@ -1197,10 +1196,12 @@ def merchant_health_scheduler():
                 except Exception:
                     pass
             conn_f.close()
+            conn_f = None
         except Exception as e:
             logger.error('[MerchantHealth/failover] %s' % e)
-            try: conn_f.close()
-            except: pass
+        finally:
+            if conn_f:
+                conn_f.close()
         time.sleep(10)
 
 

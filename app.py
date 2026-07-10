@@ -908,6 +908,7 @@ def _auto_clear_cabinet_scheduler():
     import time
     while True:
         time.sleep(60)
+        conn = None
         try:
             import psycopg2
             import psycopg2.extras
@@ -1019,12 +1020,12 @@ def _auto_clear_cabinet_scheduler():
 
             # 【修复3】正常关闭连接
             conn.close()
+            conn = None
         except Exception as e:
             logger.error("[自动清柜] 异常: %s" % e)
-            try:
+        finally:
+            if conn:
                 conn.close()
-            except:
-                pass
 
 _auto_clear_thread = threading.Thread(target=_auto_clear_cabinet_scheduler, daemon=True)
 _auto_clear_thread.start()

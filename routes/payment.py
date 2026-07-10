@@ -190,7 +190,7 @@ def pay_notify():
                 # 没找到渠道，选一个活跃的
                 _callback_channel_id = None
                 if not notify_wxpay:
-                    cursor.execute('SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1')
+                    cursor.execute('SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id ASC LIMIT 1')
                     active_ch = cursor.fetchone()
                     if active_ch:
                         notify_wxpay, _ = get_channel_wxpay(dict(active_ch))
@@ -381,7 +381,7 @@ def refund_notify():
             # fallback: 选一个活跃商户
             try:
                 _ac = get_db().cursor()
-                _ac.execute("SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1")
+                _ac.execute("SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id ASC LIMIT 1")
                 _ach = _ac.fetchone()
                 if _ach:
                     wxpay, _ = get_channel_wxpay(dict(_ach))

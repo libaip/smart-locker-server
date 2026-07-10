@@ -977,7 +977,7 @@ def do_balance_transfer(phone, amount, openid=None):
             # 没有活跃渠道时选一个活跃的
             try:
                 _cur2 = conn.cursor()
-                _cur2.execute("SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1")
+                _cur2.execute("SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id ASC LIMIT 1")
                 _ch2 = _cur2.fetchone()
                 if _ch2:
                     payer, _ = get_channel_wxpay(dict(_ch2))

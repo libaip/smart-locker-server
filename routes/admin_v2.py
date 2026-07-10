@@ -819,7 +819,7 @@ def admin_order_refund():
                         return json_response(message='订单关联的商户渠道不存在，无法退款', code=400)
                 else:
                     # 没有渠道ID，选一个活跃的
-                    c.execute('SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1')
+                    c.execute('SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id ASC LIMIT 1')
                     active_ch = c.fetchone()
                     if active_ch:
                         wxpay_inst, _ = get_channel_wxpay(dict(active_ch))
@@ -1033,7 +1033,7 @@ def admin_member_refund():
                         wxpay_inst = None
                         wx_err_msg = '订单关联的商户渠道不存在'
                 else:
-                    c.execute('SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1')
+                    c.execute('SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id ASC LIMIT 1')
                     active_ch = c.fetchone()
                     if active_ch:
                         wxpay_inst, _ = get_channel_wxpay(dict(active_ch))
@@ -5264,7 +5264,7 @@ def wechat_complaint_notify():
                 # 从订单关联的商户获取
                 try:
                     _cc = get_db().cursor()
-                    _cc.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1")
+                    _cc.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 ORDER BY id ASC LIMIT 1")
                     _cr = _cc.fetchone()
                     if _cr:
                         _mch_id = _cr['mch_id']
@@ -5399,7 +5399,7 @@ def _auto_reply_complaint(complaint_id, order_no="", transaction_id="", mch_id="
         if not mch_id:
             try:
                 _ac = get_db().cursor()
-                _ac.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1")
+                _ac.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 ORDER BY id ASC LIMIT 1")
                 _ar = _ac.fetchone()
                 if _ar:
                     mch_id = _ar['mch_id']
@@ -5807,7 +5807,7 @@ def _complaint_scheduler():
                         try:
                             _fc_conn = get_db()
                             _fc = _fc_conn.cursor()
-                            _fc.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1")
+                            _fc.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 ORDER BY id ASC LIMIT 1")
                             _fr = _fc.fetchone()
                             if _fr:
                                 _cmch = _fr['mch_id']

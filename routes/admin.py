@@ -990,7 +990,7 @@ def open_all_normal_slots(cabinet_id):
     try:
         conn = get_db()
         c = conn.cursor()
-        c.execute('SELECT cs.slot_number, cs.board_no, cs.lock_no, c.mainboard_device_id FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id WHERE cs.cabinet_id = %s AND cs.status = 1', (cabinet_id,))
+        c.execute('SELECT cs.slot_number, cs.board_no, cs.lock_no, c.mainboard_device_id FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id WHERE cs.cabinet_id = %s AND cs.status IN (1, 2)', (cabinet_id,))
         slots = c.fetchall()
         conn.close()
         if not slots:

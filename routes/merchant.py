@@ -713,17 +713,22 @@ def merchant_refund_deposit(payment_id):
             return json_response(message='该押金已退还', code=400)
         # Update payment status to refunded
         cursor.execute('UPDATE payments SET status = 2 WHERE id = %s', (payment_id,))
-        # Update user balance
+        # Update user balance - 统一用 mp_openid 查找
         if payment['user_phone']:
             amount_val = float(payment['amount'])
-            cursor.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s AND balance >= %s', (amount_val, amount_val, payment['user_phone'], amount_val))
+            _m_mp = None
+            cursor.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (payment['user_phone'],))
+            _m_r = cursor.fetchone()
+            if _m_r:
+                _m_mp = _m_r['mp_openid']
+            if _m_mp:
+                cursor.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE mp_openid = %s AND balance >= %s', (amount_val, amount_val, _m_mp, amount_val))
+            else:
+                cursor.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s AND balance >= %s', (amount_val, amount_val, payment['user_phone'], amount_val))
             if cursor.rowcount == 0:
-                # Try to create/update record with phone only (legacy)
-                cursor.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s AND (openid IS NULL OR openid = \'\') AND balance >= %s', (amount_val, amount_val, payment['user_phone'], amount_val))
-                if cursor.rowcount == 0:
-                    conn.rollback()
-                    conn.close()
-                    return json_response(message='用户余额不足，无法扣除', code=400)
+                conn.rollback()
+                conn.close()
+                return json_response(message='用户余额不足，无法扣除', code=400)
         conn.commit()
         conn.close()
         return json_response(message='押金退还成功')

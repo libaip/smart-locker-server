@@ -10,7 +10,7 @@ from database import get_db
 from helpers import json_response, logger, pending_lock_commands, connected_devices
 
 def _return_balance_to_user(cursor, order_dict):
-    """离线取包/APK取件时退还保证金到用户余额"""
+    """离线取包/APK取件时退还保证金到用户余额 - 统一用 mp_openid"""
     deposit_amount = order_dict.get('deposit_amount', 0)
     if deposit_amount <= 0:
         return (0, order_dict.get('openid', '') or '')
@@ -19,50 +19,40 @@ def _return_balance_to_user(cursor, order_dict):
         return
     _openid = order_dict.get('openid', '') or ''
     _unionid = order_dict.get('unionid', '') or ''
-    if not _openid:
-        cursor.execute('SELECT COALESCE(mp_openid, openid) as openid, unionid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (user_phone,))
+    _mp_openid = order_dict.get('mp_openid', '') or _openid
+    # 统一用 mp_openid 查找用户余额
+    if not _mp_openid and user_phone:
+        cursor.execute("SELECT mp_openid FROM phone_openids WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' ORDER BY updated_at DESC LIMIT 1", (user_phone,))
         _po = cursor.fetchone()
-        if _po:
-            if not _openid:
-                _openid = _po.get('openid', '') or ''
-            if not _unionid:
-                _unionid = _po.get('unionid', '') or ''
-    # 查询余额记录
+        if _po and _po.get('mp_openid'):
+            _mp_openid = _po['mp_openid']
+        else:
+            cursor.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (user_phone,))
+            _ub_r = cursor.fetchone()
+            if _ub_r and _ub_r['mp_openid']:
+                _mp_openid = _ub_r['mp_openid']
     _ub = None
-    if _unionid:
-        cursor.execute('SELECT id FROM user_balances WHERE unionid = %s', (_unionid,))
-        _ub = cursor.fetchone()
-    # [Agent-modified 2026-07-04] openid优先查找余额桶
-    if not _ub and _openid:
-        cursor.execute('SELECT id FROM user_balances WHERE openid = %s', (_openid,))
-        _ub = cursor.fetchone()
-    if not _ub:
-        empty_openid = ''
-        cursor.execute("SELECT id FROM user_balances WHERE phone = %s AND (openid = %s OR openid IS NULL OR openid = '')", (user_phone, empty_openid))
+    if _mp_openid:
+        cursor.execute('SELECT id FROM user_balances WHERE mp_openid = %s', (_mp_openid,))
         _ub = cursor.fetchone()
     if _ub:
-        if _unionid:
-            cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, openid = %s, phone = %s WHERE unionid = %s',
-                           (deposit_amount, deposit_amount, _openid, user_phone, _unionid))
-        elif _openid:
-            cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE openid = %s',
-                           (deposit_amount, deposit_amount, _openid))
-        else:
-            empty_openid = ''
-            cursor.execute("UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE phone = %s AND (openid = %s OR openid IS NULL OR openid = '')",
-                           (deposit_amount, deposit_amount, user_phone, empty_openid))
+        cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE mp_openid = %s',
+                       (deposit_amount, deposit_amount, _mp_openid))
     else:
-        cursor.execute('INSERT INTO user_balances (phone, openid, unionid, balance, total_deposited, total_withdrawn, first_use_time) VALUES (%s, %s, %s, %s, %s, 0, NOW())',
-                       (user_phone, _openid, _unionid, deposit_amount, deposit_amount))
+        if _mp_openid:
+            cursor.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, balance, total_deposited, total_withdrawn, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, 0, NOW()) ON CONFLICT (mp_openid) DO UPDATE SET balance = user_balances.balance + %s, total_deposited = user_balances.total_deposited + %s',
+                           (user_phone, _openid, _unionid, _mp_openid, deposit_amount, deposit_amount, deposit_amount, deposit_amount))
+        else:
+            cursor.execute('INSERT INTO user_balances (phone, openid, unionid, balance, total_deposited, total_withdrawn, first_use_time) VALUES (%s, %s, %s, %s, %s, 0, NOW())',
+                           (user_phone, _openid, _unionid, deposit_amount, deposit_amount))
     # 写入余额明细
     cursor.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s, %s, %s, 'available') ON CONFLICT (order_id) DO NOTHING",
                    (user_phone, order_dict['id'], deposit_amount))
     cursor.execute('SELECT 1')
     cursor.fetchall()
-    return (deposit_amount, _openid)
+    return (deposit_amount, _mp_openid or _openid)
     # 更新订单退款标记
     cursor.execute('UPDATE orders SET refund_amount = %s, refund_mark = 1 WHERE id = %s', (deposit_amount, order_dict['id']))
-
 
 
 bp = Blueprint('offline', __name__)

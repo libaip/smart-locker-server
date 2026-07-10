@@ -860,8 +860,18 @@ def admin_order_refund():
                   (order_id, amount, transaction_id, refund_no, datetime.now()))
         # 如果订单是已结算(3)，保证金已从余额退过，需要扣回余额
         if order_dict.get('status') == 3 and order_dict.get('user_phone'):
-            c.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s',
-                      (amount, amount, order_dict['user_phone']))
+            # 统一用 mp_openid 查找
+            _rv_mp = None
+            c.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (order_dict['user_phone'],))
+            _rv_row = c.fetchone()
+            if _rv_row:
+                _rv_mp = _rv_row['mp_openid']
+            if _rv_mp:
+                c.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE mp_openid = %s',
+                          (amount, amount, _rv_mp))
+            else:
+                c.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s',
+                          (amount, amount, order_dict['user_phone']))
         # 如果订单还在使用中(2)，释放柜格
         # [Agent-modified 2026-07-04] 退款时释放格口：无论订单是使用中(2)还是已结算(3)，都要释放格口为空闲(0)
         if order_dict.get('status') in (2, 3) and order_dict.get('slot_id'):
@@ -910,15 +920,24 @@ def admin_order_close():
         # 保证金退到用户余额
         deposit_amount = order_dict.get('deposit_amount', 0)
         if deposit_amount > 0 and order_dict.get("user_phone"):
-            # 检查用户余额记录是否存在
-            c.execute('SELECT id FROM user_balances WHERE phone = %s', (order_dict['user_phone'],))
+            # 统一用 mp_openid 查找用户余额
+            _cl_mp_openid = order_dict.get('mp_openid', '') or order_dict.get('openid', '')
+            if not _cl_mp_openid:
+                c.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (order_dict['user_phone'],))
+                _cl_r = c.fetchone()
+                if _cl_r and _cl_r['mp_openid']:
+                    _cl_mp_openid = _cl_r['mp_openid']
+            c.execute('SELECT id FROM user_balances WHERE mp_openid = %s', (_cl_mp_openid,))
             ub_row = c.fetchone()
+            if not ub_row:
+                c.execute('SELECT id FROM user_balances WHERE phone = %s', (order_dict['user_phone'],))
+                ub_row = c.fetchone()
             if ub_row:
-                c.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, openid = COALESCE(NULLIF(openid, ''), %s), unionid = COALESCE(NULLIF(unionid, ''), %s) WHERE phone = %s',
-                          (deposit_amount, deposit_amount, order_dict.get('openid', ''), order_dict.get('unionid', ''), order_dict['user_phone']))
+                c.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, mp_openid = COALESCE(NULLIF(mp_openid, ''), %s), openid = COALESCE(NULLIF(openid, ''), %s), unionid = COALESCE(NULLIF(unionid, ''), %s) WHERE id = %s',
+                          (deposit_amount, deposit_amount, _cl_mp_openid, order_dict.get('openid', ''), order_dict.get('unionid', ''), ub_row['id']))
             else:
                 c.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, balance, total_deposited, total_withdrawn, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, 0, NOW())',
-                          (order_dict['user_phone'], order_dict.get('openid', ''), order_dict.get('unionid', ''), order_dict.get('mp_openid', ''), deposit_amount, deposit_amount))
+                          (order_dict['user_phone'], order_dict.get('openid', ''), order_dict.get('unionid', ''), _cl_mp_openid, deposit_amount, deposit_amount))
             # 写入余额明细（灰度：新提现逻辑）
             c.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s, %s, %s, 'available') ON CONFLICT (order_id) DO NOTHING",
                       (order_dict['user_phone'], order_id, deposit_amount))
@@ -978,13 +997,21 @@ def admin_member_refund():
             return json_response(message='参数错误', code=400)
         conn = get_db()
         c = conn.cursor()
-        c.execute('SELECT * FROM user_balances WHERE phone=%s', (phone,))
+        # 统一用 mp_openid 查找
+        c.execute("SELECT * FROM user_balances WHERE mp_openid = (SELECT mp_openid FROM user_balances WHERE phone=%s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1) LIMIT 1", (phone,))
         user = c.fetchone()
+        if not user:
+            c.execute('SELECT * FROM user_balances WHERE phone=%s', (phone,))
+            user = c.fetchone()
         if not user or (user['balance'] or 0) <= 0:
             conn.close()
             return json_response(message='用户余额不足', code=400)
         refund_amount = min(amount, user['balance'] or 0)
-        c.execute('UPDATE user_balances SET balance=balance-%s, total_withdrawn=total_withdrawn+%s WHERE phone=%s', (refund_amount, refund_amount, phone))
+        _m_mp = user.get('mp_openid') or ''
+        if _m_mp:
+            c.execute('UPDATE user_balances SET balance=balance-%s, total_withdrawn=total_withdrawn+%s WHERE mp_openid=%s', (refund_amount, refund_amount, _m_mp))
+        else:
+            c.execute('UPDATE user_balances SET balance=balance-%s, total_withdrawn=total_withdrawn+%s WHERE phone=%s', (refund_amount, refund_amount, phone))
         c.execute("SELECT id, order_no, transaction_id, deposit_amount, payment_channel_id FROM orders WHERE user_phone=%s AND status != 4 AND refund_status!='refunded' ORDER BY id DESC LIMIT 1", (phone,))
         order = c.fetchone()
         refund_no = 'RF_M' + datetime.now().strftime('%Y%m%d%H%M%S') + str(phone)[-4:]
@@ -1064,7 +1091,11 @@ def admin_member_batch_refund():
             if not user or (user['balance'] or 0) <= 0:
                 continue
             refund_amount = user['balance'] or 0
-            c.execute('UPDATE user_balances SET balance=0, total_withdrawn=total_withdrawn+balance WHERE phone=%s', (phone,))
+            _b_mp = user.get('mp_openid') or ''
+            if _b_mp:
+                c.execute('UPDATE user_balances SET balance=0, total_withdrawn=total_withdrawn+balance WHERE mp_openid=%s', (_b_mp,))
+            else:
+                c.execute('UPDATE user_balances SET balance=0, total_withdrawn=total_withdrawn+balance WHERE phone=%s', (phone,))
             c.execute("SELECT id, order_no, transaction_id, deposit_amount, payment_channel_id FROM orders WHERE user_phone=%s AND status != 4 AND refund_status!='refunded' ORDER BY id DESC LIMIT 1", (phone,))
             order = c.fetchone()
             refund_no = 'RF_B' + datetime.now().strftime('%Y%m%d%H%M%S') + str(phone)[-4:]
@@ -1301,7 +1332,16 @@ def admin_withdrawal_approve():
             return json_response(message='审批通过，退款已处理' if all_ok else '审批通过，部分退款失败')
         # 兼容旧逻辑：单个order_id
         # 余额已在用户提现时扣除，无需再次扣除
-        c.execute("UPDATE user_balances SET balance = GREATEST(COALESCE(balance,0) - %s, 0), total_withdrawn = COALESCE(total_withdrawn,0) + %s WHERE phone = %s", (amount, amount, phone))
+        # 统一用 mp_openid 查找
+        _ap_mp = None
+        c.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (phone,))
+        _ap_r = c.fetchone()
+        if _ap_r:
+            _ap_mp = _ap_r['mp_openid']
+        if _ap_mp:
+            c.execute("UPDATE user_balances SET balance = GREATEST(COALESCE(balance,0) - %s, 0), total_withdrawn = COALESCE(total_withdrawn,0) + %s WHERE mp_openid = %s", (amount, amount, _ap_mp))
+        else:
+            c.execute("UPDATE user_balances SET balance = GREATEST(COALESCE(balance,0) - %s, 0), total_withdrawn = COALESCE(total_withdrawn,0) + %s WHERE phone = %s", (amount, amount, phone))
         # 真正退款/转账
         refund_success = False
         refund_id = ''
@@ -1362,8 +1402,18 @@ def admin_withdrawal_reject():
             return json_response(message='提现记录不存在', code=400)
         # 已扣余额的记录需要退还
         if wd['status'] in (0, 1) and wd['user_phone']:
-            c.execute('UPDATE user_balances SET balance=balance+%s,total_withdrawn=total_withdrawn-%s WHERE phone=%s',
-                      (wd['amount'], wd['amount'], wd['user_phone']))
+            # 统一用 mp_openid 查找
+            _cn_mp = None
+            c.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (wd['user_phone'],))
+            _cn_r = c.fetchone()
+            if _cn_r:
+                _cn_mp = _cn_r['mp_openid']
+            if _cn_mp:
+                c.execute('UPDATE user_balances SET balance=balance+%s,total_withdrawn=total_withdrawn-%s WHERE mp_openid=%s',
+                          (wd['amount'], wd['amount'], _cn_mp))
+            else:
+                c.execute('UPDATE user_balances SET balance=balance+%s,total_withdrawn=total_withdrawn-%s WHERE phone=%s',
+                          (wd['amount'], wd['amount'], wd['user_phone']))
         # 解析打包的订单ID
         import json as _json
         order_ids_str = wd.get('order_ids') or '[]'
@@ -3718,8 +3768,18 @@ def withdrawal_batch_auto():
                     approved += 1
             else:
                 # ?????????????
-                c.execute("UPDATE user_balances SET balance = balance + %s, total_withdrawn = total_withdrawn - %s WHERE phone = %s",
-                          (r['amount'], r['amount'], r['user_phone']))
+                # 统一用 mp_openid 查找
+                _brj_mp = None
+                c.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (r['user_phone'],))
+                _brj_r = c.fetchone()
+                if _brj_r:
+                    _brj_mp = _brj_r['mp_openid']
+                if _brj_mp:
+                    c.execute("UPDATE user_balances SET balance = balance + %s, total_withdrawn = total_withdrawn - %s WHERE mp_openid = %s",
+                              (r['amount'], r['amount'], _brj_mp))
+                else:
+                    c.execute("UPDATE user_balances SET balance = balance + %s, total_withdrawn = total_withdrawn - %s WHERE phone = %s",
+                              (r['amount'], r['amount'], r['user_phone']))
                 c.execute("UPDATE withdrawal_records SET status=3, approve_time=datetime('now'), approver='队列' WHERE id=%s", (r['id'],))
                 rejected += 1
         conn.commit()
@@ -4620,17 +4680,28 @@ def admin_device_clear_all():
             # 退押金到余额（使用中的订单押金未退，已结算的已退过余额不再重复退）
             deposit_amount = o_dict.get('deposit_amount', 0)
             if deposit_amount > 0 and o_dict.get('user_phone') and o_dict.get('status') == 2:
-                c.execute('SELECT id FROM user_balances WHERE phone = %s', (o_dict['user_phone'],))
+                # 统一用 mp_openid 查找用户余额
+                _bc_mp_openid = o_dict.get('mp_openid', '') or o_dict.get('openid', '')
+                if not _bc_mp_openid:
+                    c.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (o_dict['user_phone'],))
+                    _bc_r = c.fetchone()
+                    if _bc_r and _bc_r['mp_openid']:
+                        _bc_mp_openid = _bc_r['mp_openid']
+                c.execute('SELECT id FROM user_balances WHERE mp_openid = %s', (_bc_mp_openid,))
                 ub_row = c.fetchone()
+                if not ub_row:
+                    c.execute('SELECT id FROM user_balances WHERE phone = %s', (o_dict['user_phone'],))
+                    ub_row = c.fetchone()
                 if ub_row:
                     c.execute("""UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s,
+                                 mp_openid = COALESCE(NULLIF(mp_openid, ''), %s),
                                  openid = COALESCE(NULLIF(openid, ''), %s), unionid = COALESCE(NULLIF(unionid, ''), %s)
-                                 WHERE phone = %s""",
-                              (deposit_amount, deposit_amount, o_dict.get('openid', ''), o_dict.get('unionid', ''), o_dict['user_phone']))
+                                 WHERE id = %s""",
+                              (deposit_amount, deposit_amount, _bc_mp_openid, o_dict.get('openid', ''), o_dict.get('unionid', ''), ub_row['id']))
                 else:
                     c.execute("""INSERT INTO user_balances (phone, openid, unionid, mp_openid, balance, total_deposited, total_withdrawn, first_use_time)
-                                 VALUES (%s, %s, %s, %s, %s, 0, NOW())""",
-                              (o_dict['user_phone'], o_dict.get('openid', ''), o_dict.get('unionid', ''), o_dict.get('mp_openid', ''), deposit_amount, deposit_amount))
+                                 VALUES (%s, %s, %s, %s, %s, %s, 0, NOW())""",
+                              (o_dict['user_phone'], o_dict.get('openid', ''), o_dict.get('unionid', ''), _bc_mp_openid, deposit_amount, deposit_amount))
                 c.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s, %s, %s, 'available') ON CONFLICT (order_id) DO NOTHING",
                           (o_dict['user_phone'], o_dict['id'], deposit_amount))
             # 发送微信订阅消息通知用户

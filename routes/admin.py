@@ -1305,7 +1305,10 @@ def withdrawal_apply():
                 # 余额提现
                 withdraw_amount = data.get('amount', 0)
                 # 检查用户余额
-                cursor.execute('SELECT balance, openid as rec_openid FROM user_balances WHERE phone = %s AND (openid = %s OR openid = \'\') ORDER BY CASE WHEN openid = %s THEN 0 ELSE 1 END LIMIT 1', (user_phone, user_openid, user_openid))
+                # 统一用 mp_openid 查找
+                cursor.execute("""SELECT balance, mp_openid as rec_openid FROM user_balances WHERE mp_openid = (SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1) LIMIT 1""", (user_phone,))
+                if cursor.rowcount == 0:
+                    cursor.execute('SELECT balance, openid as rec_openid FROM user_balances WHERE phone = %s AND (openid = %s OR openid = \'\') ORDER BY CASE WHEN openid = %s THEN 0 ELSE 1 END LIMIT 1', (user_phone, user_openid, user_openid))
                 bal_row = cursor.fetchone()
                 _real_openid = bal_row['rec_openid'] if bal_row else user_openid
                 if not bal_row or float(bal_row['balance']) <= 0:
@@ -1347,7 +1350,7 @@ def withdrawal_apply():
                     from helpers import do_real_refund
                     success, refund_id, msg = do_real_refund(order_id=order_id, order_no=eligible['order_no'], amount=amount, payment_channel_id=eligible['payment_channel_id'])
                     # 无论成功失败，先扣余额并创建记录
-                    cursor.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s AND openid = %s', (amount, amount, user_phone, _real_openid))
+                    cursor.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE mp_openid = %s', (amount, amount, _real_openid))
                     if success:
                         # 退款成功
                         cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, auto_approve_time, openid) VALUES (%s, %s, %s, 2, %s, 'system', NOW(), %s, %s)",
@@ -1606,11 +1609,14 @@ def approve_withdrawal(withdrawal_id):
         phone = record['user_phone']
         # 扣除余额
         _wd_openid = record['openid'] if 'openid' in record.keys() and record['openid'] else ''
-        cursor.execute('SELECT balance, openid as rec_openid FROM user_balances WHERE phone=%s AND (openid=%s OR openid=\'\') ORDER BY CASE WHEN openid=%s THEN 0 ELSE 1 END LIMIT 1', (phone, _wd_openid, _wd_openid))
+        # 统一用 mp_openid 查找
+        cursor.execute("""SELECT balance, mp_openid as rec_openid FROM user_balances WHERE mp_openid = (SELECT mp_openid FROM user_balances WHERE phone=%s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1) LIMIT 1""", (phone,))
+        if cursor.rowcount == 0:
+            cursor.execute('SELECT balance, openid as rec_openid FROM user_balances WHERE phone=%s AND (openid=%s OR openid=\'\') ORDER BY CASE WHEN openid=%s THEN 0 ELSE 1 END LIMIT 1', (phone, _wd_openid, _wd_openid))
         bal = cursor.fetchone()
         _wd_real_openid = bal['rec_openid'] if bal else _wd_openid
         if bal and bal['balance'] >= amount:
-            cursor.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s AND openid = %s', (amount, amount, phone, _wd_real_openid))
+            cursor.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE mp_openid = %s', (amount, amount, _wd_real_openid))
         # 真正退款
         if order_id:
             from helpers import do_real_refund
@@ -1661,13 +1667,16 @@ def reject_withdrawal(withdrawal_id):
         cursor.execute('UPDATE withdrawal_records SET status = 3, approver = %s, approve_time = %s WHERE id = %s',
                        (approver + ':' + reason if reason else approver, datetime.now(), withdrawal_id))
         _rj_openid = record['openid'] if 'openid' in record.keys() and record['openid'] else ''
-        cursor.execute('SELECT *, openid as rec_openid FROM user_balances WHERE phone = %s AND (openid = %s OR openid = \'\') ORDER BY CASE WHEN openid = %s THEN 0 ELSE 1 END LIMIT 1', (record['user_phone'], _rj_openid, _rj_openid))
+        # 统一用 mp_openid 查找
+        cursor.execute("""SELECT *, mp_openid as rec_openid FROM user_balances WHERE mp_openid = (SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1) LIMIT 1""", (record['user_phone'],))
+        if cursor.rowcount == 0:
+            cursor.execute('SELECT *, openid as rec_openid FROM user_balances WHERE phone = %s AND (openid = %s OR openid = \'\') ORDER BY CASE WHEN openid = %s THEN 0 ELSE 1 END LIMIT 1', (record['user_phone'], _rj_openid, _rj_openid))
         balance = cursor.fetchone()
         _rj_real_openid = balance['rec_openid'] if balance else _rj_openid
         if balance:
-            cursor.execute('UPDATE user_balances SET balance = balance + %s WHERE phone = %s AND openid = %s', (record['amount'], record['user_phone'], _rj_real_openid))
+            cursor.execute('UPDATE user_balances SET balance = balance + %s WHERE mp_openid = %s', (record['amount'], _rj_real_openid))
         else:
-            cursor.execute('INSERT INTO user_balances (phone, openid, balance, total_deposited) VALUES (%s, %s, %s, 0)', (record['user_phone'], _rj_openid, record['amount']))
+            cursor.execute('INSERT INTO user_balances (phone, openid, mp_openid, balance, total_deposited) VALUES (%s, %s, %s, %s, 0)', (record['user_phone'], _rj_openid, _rj_openid, record['amount']))
         conn.commit()
         conn.close()
         return json_response(message='已拒绝，押金已添加到用户余额')

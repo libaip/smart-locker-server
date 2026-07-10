@@ -226,33 +226,34 @@ def pay_notify():
                 cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
             cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
                            (order['id'], order['deposit_amount'], transaction_id))
-            # 更新用户余额
-            # 更新用户余额
+            # 更新用户余额 - 统一用 mp_openid 查找
             try:
                 _o_openid = order.get('openid', '') or ''
                 _o_unionid = order.get('unionid', '') or ''
-                # 优先按openid查找（openid是身份标识，手机号可以变）
-                if _o_openid:
-                    cursor.execute('SELECT id, phone FROM user_balances WHERE openid = %s', (_o_openid,))
+                _o_mp_openid = order.get('mp_openid', '') or _o_openid
+                # 统一用 mp_openid 查找
+                if _o_mp_openid:
+                    cursor.execute('SELECT id, phone FROM user_balances WHERE mp_openid = %s', (_o_mp_openid,))
+                    ub = cursor.fetchone()
+                    if not ub:
+                        # 尝试从 openid 字段查找并获取 mp_openid
+                        cursor.execute('SELECT id, phone, mp_openid FROM user_balances WHERE openid = %s', (_o_openid,))
+                        ub = cursor.fetchone()
+                        if ub and not ub.get('mp_openid'):
+                            # 更新 mp_openid
+                            cursor.execute('UPDATE user_balances SET mp_openid = %s WHERE id = %s', (_o_mp_openid, ub['id']))
                 else:
-                    cursor.execute('SELECT id, phone FROM user_balances WHERE phone = %s', (order['user_phone'],))
-                ub = cursor.fetchone()
+                    cursor.execute('SELECT id, phone, mp_openid FROM user_balances WHERE phone = %s', (order['user_phone'],))
+                    ub = cursor.fetchone()
+                    if ub and ub.get('mp_openid'):
+                        _o_mp_openid = ub['mp_openid']
                 if ub:
-                    # 找到记录：更新余额 + 更新手机号为最新的
-                    if _o_openid:
-                        cursor.execute('UPDATE user_balances SET total_deposited = total_deposited + %s, phone = %s WHERE openid = %s',
-                                       (order['deposit_amount'], order['user_phone'], _o_openid))
-                    else:
-                        cursor.execute('UPDATE user_balances SET total_deposited = total_deposited + %s WHERE phone = %s',
-                                       (order['deposit_amount'], order['user_phone']))
+                    cursor.execute('UPDATE user_balances SET total_deposited = total_deposited + %s, phone = %s, mp_openid = COALESCE(NULLIF(mp_openid, ''), %s) WHERE mp_openid = %s',
+                                   (order['deposit_amount'], order['user_phone'], _o_mp_openid, _o_mp_openid))
                 else:
                     # 没找到：插入新记录
-                    if _o_openid:
-                        cursor.execute('INSERT INTO user_balances (phone, openid, unionid, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, 0, 0, %s)',
-                                       (order['user_phone'], _o_openid, _o_unionid, datetime.now()))
-                    else:
-                        cursor.execute('INSERT INTO user_balances (phone, balance, total_deposited, first_use_time) VALUES (%s, 0, 0, %s)',
-                                       (order['user_phone'], datetime.now()))
+                    cursor.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, 0, 0, %s)',
+                                   (order['user_phone'], _o_openid, _o_unionid, _o_mp_openid, datetime.now()))
             except Exception as e:
                 logger.error(f'[支付回调更新余额失败] {e}')
 

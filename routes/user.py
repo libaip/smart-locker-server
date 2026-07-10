@@ -1160,6 +1160,7 @@ def deposit_end_storage():
                 _ncur = _nconn.cursor()
                 _ncur.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (order['user_phone'],))
                 _nrow = _ncur.fetchone()
+                logger.info(f"[end_storage_debug] phone_openids query result: {_nrow}")
                 if _nrow and _nrow[0]:
                     _openid = _nrow[0]
                 else:
@@ -1172,6 +1173,7 @@ def deposit_end_storage():
             except Exception as _ne:
                 logger.error(f'[end_storage_notify] lookup failed: {_ne}')
                 pass
+        logger.info(f"[end_storage_debug] Found openid={_openid}, sending notification for order={order_id}")
         if _openid:
             try:
                 from helpers import send_wx_subscribe_message

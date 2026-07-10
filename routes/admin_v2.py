@@ -3120,6 +3120,11 @@ def get_settings():
         return jsonify({'code': 200, 'data': settings})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 @bp.route('/settings/save', methods=['POST'])
 def save_settings():
@@ -3138,6 +3143,11 @@ def save_settings():
         return jsonify({'code': 200, 'message': '保存成功'})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 @bp.route('/settings/order-visibility', methods=['GET', 'POST'])
 def get_order_visibility():
@@ -3154,6 +3164,11 @@ def get_order_visibility():
         }})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 @bp.route('/settings/order-visibility/save', methods=['POST'])
 def save_order_visibility():
@@ -3173,6 +3188,11 @@ def save_order_visibility():
         return jsonify({'code': 200, 'message': '保存成功'})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 @bp.route('/settings/duplicate-filter', methods=['GET', 'POST'])
 def get_duplicate_filter():
@@ -3191,6 +3211,11 @@ def get_duplicate_filter():
         }})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 @bp.route('/settings/duplicate-filter/save', methods=['POST'])
 def save_duplicate_filter():
@@ -3210,6 +3235,11 @@ def save_duplicate_filter():
         return jsonify({'code': 200, 'message': '保存成功'})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 # ==================== P0-4: 柜组管理 ====================
@@ -3240,6 +3270,11 @@ def cabinet_groups_list():
         return jsonify({'code': 200, 'data': {'list': groups, 'total': total}})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 @bp.route('/admin/cabinet-groups/save', methods=['POST'])
 def cabinet_groups_save():
@@ -3258,6 +3293,11 @@ def cabinet_groups_save():
         return jsonify({'code': 200, 'message': '保存成功'})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 @bp.route('/admin/cabinet-groups/delete', methods=['POST'])
 def cabinet_groups_delete():
@@ -3271,6 +3311,11 @@ def cabinet_groups_delete():
         return jsonify({'code': 200, 'message': '删除成功'})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 @bp.route('/admin/cabinet-groups/cabinets', methods=['GET', 'POST'])
 def cabinet_groups_cabinets():
@@ -3284,6 +3329,11 @@ def cabinet_groups_cabinets():
         return jsonify({'code': 200, 'data': [dict(r) for r in rows]})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 @bp.route('/admin/cabinet-groups/by-code', methods=['GET', 'POST'])
 def cabinet_groups_by_code():
@@ -3302,6 +3352,11 @@ def cabinet_groups_by_code():
         return jsonify({'code': 200, 'data': g})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 # ==================== P1: 代理商/员工登录 ====================
 
@@ -3346,6 +3401,11 @@ def agent_login():
         return jsonify({'code': 200, 'data': {'token': token, 'role': 'agent', 'agent_id': row['id'], 'name': row['name'], 'commission_rate': result.get('commission_rate', 0)}})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 @bp.route('/admin/merchant/login', methods=['POST'])
@@ -3386,6 +3446,11 @@ def merchant_login():
         return jsonify({'code': 200, 'data': {'token': token, 'role': 'merchant', 'merchant_id': row['id'], 'name': row['name'], 'agent_id': result.get('agent_id'), 'permissions': result.get("permissions", "[]")}})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 @bp.route('/admin/employee/login', methods=['POST'])
@@ -3418,6 +3483,11 @@ def employee_login():
         return jsonify({'code': 200, 'data': {'token': token, 'employee_id': row['id'], 'name': row['name'], 'permissions': row['permissions'] if 'permissions' in row.keys() else '[]'}})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 
@@ -3825,6 +3895,11 @@ def remote_open_logs_list():
         return jsonify({'code': 200, 'data': {'list': rows, 'total': total}})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 # ==================== P1: 设备日志查看 ====================
 
@@ -3869,6 +3944,11 @@ def device_logs_list():
     except Exception as e:
         logger.error('[device_logs] ' + str(e))
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 # ==================== P1: 开门记录 ====================
@@ -4004,6 +4084,11 @@ def alerts_list():
         return jsonify({'code': 200, 'data': {'list': result_list, 'total': total, 'device_summaries': device_summaries}})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 # ==================== P1: 待执行命令监控 ====================
 
@@ -4018,6 +4103,11 @@ def pending_cmds_list():
         return jsonify({'code': 200, 'data': {'list': [dict(r) for r in rows], 'total': len(rows)}})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 @bp.route('/admin/cancel-cmd', methods=['POST'])

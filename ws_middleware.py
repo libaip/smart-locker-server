@@ -50,6 +50,11 @@ def _record_alert(device_id, alert_type, message):
         _sl.getLogger('ws_middleware').info(f'[alert_recorded] 设备{device_id} 状态变化: {alert_type}')
     except Exception as e:
         _sl.getLogger('ws_middleware').error(f'[record_alert] {e}')
+    finally:
+        try:
+            _db2.close()
+        except Exception:
+            pass
 
 
 def _init_device_online_status():
@@ -82,6 +87,11 @@ def _init_device_online_status():
         _sl.getLogger('ws_middleware').info(f'[init_status] 初始化设备在线状态: {device_online_status}')
     except Exception as e:
         _sl.getLogger('ws_middleware').error(f'[init_status] 初始化失败: {e}')
+    finally:
+        try:
+            _db.close()
+        except Exception:
+            pass
 
 # 服务启动时初始化
 _init_device_online_status()

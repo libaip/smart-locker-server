@@ -122,6 +122,11 @@ class _PGCursor:
     def __iter__(self):
         for r in self._cur:
             yield _Row(r)
+    def close(self):
+        try:
+            self._cur.close()
+        except Exception:
+            pass
 
 class _PGConn:
     """包装psycopg2连接, 兼容sqlite3接口（带连接池）"""

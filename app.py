@@ -193,6 +193,11 @@ def _cleanup_expired_orders():
             db.close()
         except Exception as e:
             logger.error(f'[超时清理] 异常: {e}')
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
 
 import threading
 t = threading.Thread(target=_cleanup_expired_orders, daemon=True)
@@ -477,57 +482,63 @@ def scan_qr():
     device = request.args.get('device', '')
     if not device:
         return jsonify({'code': 400, 'message': 'missing device'}), 400
-    import sqlite3
-    db = sqlite3.connect(DATABASE)
-    db.row_factory = sqlite3.Row
-    cur = db.cursor()
-    cur.execute('SELECT * FROM cabinets WHERE mainboard_device_id=%s', (device,))
-    cabinet = cur.fetchone()
-    db.close()
-    if not cabinet:
-        return jsonify({'code': 404, 'message': 'device not found'}), 404
-    store = cabinet['name'] or ''
-    # 检查设备在线状态
-    from helpers import connected_devices
-    device_id = cabinet['mainboard_device_id'] or ''
-    is_online = device_id and device_id in connected_devices
-    if not is_online:
-        return '<!DOCTYPE html><html><head><meta charset=UTF-8><meta name=viewport content="width=device-width,initial-scale=1.0"><title>设备离线</title><style>body{font-family:sans-serif;margin:0;padding:0;background:#f0f2f5;min-height:100vh;display:flex;align-items:center;justify-content:center}.card{background:#fff;border-radius:12px;padding:40px 30px;max-width:360px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.1)}.icon{font-size:64px;margin-bottom:16px}.card h2{color:#f56c6c;margin-bottom:8px;font-size:20px}.card p{color:#999;font-size:14px;margin-top:8px;line-height:1.6}</style></head><body><div class=card><div class=icon>📡</div><h2>设备未在线</h2><p>该寄存柜当前处于离线状态<br>暂时无法使用,请稍后再试</p></div></body></html>', 200
-    html = '<!DOCTYPE html><html><head><meta charset=UTF-8><meta name=viewport content=width=device-width,initial-scale=1.0><title>智能寄存柜</title><style>body{font-family:sans-serif;margin:0;padding:20px;background:#f0f2f5;text-align:center}.card{background:#fff;border-radius:12px;padding:30px;max-width:400px;margin:40px auto;box-shadow:0 4px 20px rgba(0,0,0,0.1)}h2{color:#333;margin-bottom:10px}p{color:#666;font-size:14px}.btn{display:inline-block;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:14px 40px;border-radius:8px;text-decoration:none;font-size:16px;margin-top:20px}.info{margin:15px 0;color:#999;font-size:13px}</style></head><body><div class=card><h2>智能寄存柜</h2>'
-    # Build full page with store + retrieve buttons
-    html = '''<!DOCTYPE html><html><head><meta charset=UTF-8><meta name=viewport content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no"><title>智能寄存柜</title><style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,sans-serif;background:#f0f2f5;min-height:100vh}
-.header{background:linear-gradient(135deg,#1A73E8,#0d47a1);color:#fff;padding:24px 20px;text-align:center}
-.header h1{font-size:22px;margin-bottom:4px}
-.header .sub{font-size:13px;opacity:0.8}
-.info{background:#fff;margin:12px;border-radius:12px;padding:16px}
-.info-row{display:flex;align-items:center;padding:8px 0;font-size:14px;color:#333;border-bottom:1px solid #f0f0f0}
-.info-row:last-child{border:none}
-.info-row .label{color:#999;width:80px;flex-shrink:0}
-.status{display:flex;gap:12px;margin:12px}
-.status-card{flex:1;background:#fff;border-radius:12px;padding:16px;text-align:center}
-.status-card .num{font-size:36px;font-weight:bold;color:#1A73E8}
-.status-card .num.green{color:#34A853}
-.status-card .txt{font-size:13px;color:#999;margin-top:4px}
-.actions{margin:16px 12px;display:flex;gap:12px}
-.actions a{flex:1;display:block;padding:18px;border-radius:12px;text-align:center;color:#fff;font-size:20px;font-weight:bold;text-decoration:none}
-.btn-store{background:linear-gradient(135deg,#1A73E8,#0d47a1)}
-.btn-retrieve{background:linear-gradient(135deg,#34A853,#1b5e20)}
-.footer{text-align:center;padding:20px;font-size:12px;color:#bbb}
-</style></head><body>
-<div class="header"><h1>''' + store + '''</h1><div class="sub">智能寄存柜 · 安全便捷</div></div>
-<div class="info">
-<div class="info-row"><span class="label">设备号</span><span>''' + device + '''</span></div>
-<div class="info-row"><span class="label">网点</span><span>''' + store + '''</span></div>
-</div>
-<div class="actions">
-<a class="btn-store" href="/store?device=''' + device + '''">存 物</a>
-<a class="btn-retrieve" href="/retrieve?device=''' + device + '''">取 物</a>
-</div>
-<div class="footer">locker.cqdyxl.com</div>
-</body></html>'''
-    return html
+    try:
+        import sqlite3
+        db = sqlite3.connect(DATABASE)
+        db.row_factory = sqlite3.Row
+        cur = db.cursor()
+        cur.execute('SELECT * FROM cabinets WHERE mainboard_device_id=%s', (device,))
+        cabinet = cur.fetchone()
+        db.close()
+        if not cabinet:
+            return jsonify({'code': 404, 'message': 'device not found'}), 404
+        store = cabinet['name'] or ''
+        # 检查设备在线状态
+        from helpers import connected_devices
+        device_id = cabinet['mainboard_device_id'] or ''
+        is_online = device_id and device_id in connected_devices
+        if not is_online:
+            return '<!DOCTYPE html><html><head><meta charset=UTF-8><meta name=viewport content="width=device-width,initial-scale=1.0"><title>设备离线</title><style>body{font-family:sans-serif;margin:0;padding:0;background:#f0f2f5;min-height:100vh;display:flex;align-items:center;justify-content:center}.card{background:#fff;border-radius:12px;padding:40px 30px;max-width:360px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.1)}.icon{font-size:64px;margin-bottom:16px}.card h2{color:#f56c6c;margin-bottom:8px;font-size:20px}.card p{color:#999;font-size:14px;margin-top:8px;line-height:1.6}</style></head><body><div class=card><div class=icon>📡</div><h2>设备未在线</h2><p>该寄存柜当前处于离线状态<br>暂时无法使用,请稍后再试</p></div></body></html>', 200
+        html = '<!DOCTYPE html><html><head><meta charset=UTF-8><meta name=viewport content=width=device-width,initial-scale=1.0><title>智能寄存柜</title><style>body{font-family:sans-serif;margin:0;padding:20px;background:#f0f2f5;text-align:center}.card{background:#fff;border-radius:12px;padding:30px;max-width:400px;margin:40px auto;box-shadow:0 4px 20px rgba(0,0,0,0.1)}h2{color:#333;margin-bottom:10px}p{color:#666;font-size:14px}.btn{display:inline-block;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:14px 40px;border-radius:8px;text-decoration:none;font-size:16px;margin-top:20px}.info{margin:15px 0;color:#999;font-size:13px}</style></head><body><div class=card><h2>智能寄存柜</h2>'
+        # Build full page with store + retrieve buttons
+        html = '''<!DOCTYPE html><html><head><meta charset=UTF-8><meta name=viewport content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no"><title>智能寄存柜</title><style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:-apple-system,sans-serif;background:#f0f2f5;min-height:100vh}
+    .header{background:linear-gradient(135deg,#1A73E8,#0d47a1);color:#fff;padding:24px 20px;text-align:center}
+    .header h1{font-size:22px;margin-bottom:4px}
+    .header .sub{font-size:13px;opacity:0.8}
+    .info{background:#fff;margin:12px;border-radius:12px;padding:16px}
+    .info-row{display:flex;align-items:center;padding:8px 0;font-size:14px;color:#333;border-bottom:1px solid #f0f0f0}
+    .info-row:last-child{border:none}
+    .info-row .label{color:#999;width:80px;flex-shrink:0}
+    .status{display:flex;gap:12px;margin:12px}
+    .status-card{flex:1;background:#fff;border-radius:12px;padding:16px;text-align:center}
+    .status-card .num{font-size:36px;font-weight:bold;color:#1A73E8}
+    .status-card .num.green{color:#34A853}
+    .status-card .txt{font-size:13px;color:#999;margin-top:4px}
+    .actions{margin:16px 12px;display:flex;gap:12px}
+    .actions a{flex:1;display:block;padding:18px;border-radius:12px;text-align:center;color:#fff;font-size:20px;font-weight:bold;text-decoration:none}
+    .btn-store{background:linear-gradient(135deg,#1A73E8,#0d47a1)}
+    .btn-retrieve{background:linear-gradient(135deg,#34A853,#1b5e20)}
+    .footer{text-align:center;padding:20px;font-size:12px;color:#bbb}
+    </style></head><body>
+    <div class="header"><h1>''' + store + '''</h1><div class="sub">智能寄存柜 · 安全便捷</div></div>
+    <div class="info">
+    <div class="info-row"><span class="label">设备号</span><span>''' + device + '''</span></div>
+    <div class="info-row"><span class="label">网点</span><span>''' + store + '''</span></div>
+    </div>
+    <div class="actions">
+    <a class="btn-store" href="/store?device=''' + device + '''">存 物</a>
+    <a class="btn-retrieve" href="/retrieve?device=''' + device + '''">取 物</a>
+    </div>
+    <div class="footer">locker.cqdyxl.com</div>
+    </body></html>'''
+        return html
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
 
 
 @app.route('/locker')
@@ -755,6 +766,11 @@ def get_order_minimal(order_id):
         return jsonify({"code": 404, "message": "order not found"})
     except Exception as e:
         return jsonify({"code": 500, "message": str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 @app.route("/push-update", methods=["POST"])
 def push_update():
@@ -799,6 +815,11 @@ def push_update():
                 return jsonify({"code": 200, "msg": "QUEUED"})
         except Exception as he:
             logger.error(f"[Push] queue fallback error: {he}")
+        finally:
+            try:
+                conn_db.close()
+            except Exception:
+                pass
         return jsonify({"code": -1, "msg": "设备不在线"})
     except Exception as e:
         logger.error(f"[Push] error: {e}")
@@ -826,6 +847,11 @@ def app_version():
             return jsonify({'code': -1, 'msg': 'no version'})
     except Exception as e:
         return jsonify({'code': -1, 'msg': str(e)})
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
 
 
 
@@ -888,71 +914,88 @@ def _retry_failed_refunds():
         conn.close()
     except Exception as e:
         logger.error("[Retry] Exception: " + str(e))
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 def _process_manual_batch():
     import datetime, random
     from config import DATABASE
     import sqlite3
-    now = datetime.datetime.now()
-    conn = sqlite3.connect(DATABASE)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute("""
-        SELECT l.id, l.auto_approve_rate, l.refund_approve_start_min, l.refund_approve_end_min
-        FROM locations l
-        WHERE l.withdraw_mode='manual_approve' AND l.withdraw_enabled=1
-    """)
-    locs = c.fetchall()
-    if not locs:
-        conn.close(); return
-    for loc in locs:
-        rate = loc["auto_approve_rate"] if loc["auto_approve_rate"] is not None else 80
-        start_min = loc["refund_approve_start_min"] or 10
-        end_min = loc["refund_approve_end_min"] or 1440
+    try:
+        now = datetime.datetime.now()
+        conn = sqlite3.connect(DATABASE)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
         c.execute("""
-            SELECT w.* FROM withdrawal_records w 
-            LEFT JOIN orders o ON w.order_id = o.id 
-            LEFT JOIN cabinets cb ON o.cabinet_id = cb.id 
-            WHERE w.status=0 AND cb.location_id=%s
-        """, (loc["id"],))
+            SELECT l.id, l.auto_approve_rate, l.refund_approve_start_min, l.refund_approve_end_min
+            FROM locations l
+            WHERE l.withdraw_mode='manual_approve' AND l.withdraw_enabled=1
+        """)
+        locs = c.fetchall()
+        if not locs:
+            conn.close(); return
+        for loc in locs:
+            rate = loc["auto_approve_rate"] if loc["auto_approve_rate"] is not None else 80
+            start_min = loc["refund_approve_start_min"] or 10
+            end_min = loc["refund_approve_end_min"] or 1440
+            c.execute("""
+                SELECT w.* FROM withdrawal_records w 
+                LEFT JOIN orders o ON w.order_id = o.id 
+                LEFT JOIN cabinets cb ON o.cabinet_id = cb.id 
+                WHERE w.status=0 AND cb.location_id=%s
+            """, (loc["id"],))
+            for w in c.fetchall():
+                ct = w.get("created_at")
+                if not ct: continue
+                if isinstance(ct, str):
+                    ct = datetime.datetime.strptime(ct, "%Y-%m-%d %H:%M:%S")
+                elapsed = (now - ct).total_seconds() / 60.0
+                if start_min <= elapsed:  # 只要超过最小等待时间就处理，不设上限
+                    if random.randint(1, 100) <= rate:
+                        _approve_wd(c, w)
+                    else:
+                        _reject_wd(c, w)
+            conn.commit()
+        conn.close()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+def _process_queue_batch():
+    import sqlite3, random, datetime
+    from config import DATABASE
+    try:
+        now = datetime.datetime.now()
+        conn = sqlite3.connect(DATABASE)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute("SELECT w.*, l.refund_approve_rate, l.refund_approve_start_min, l.refund_approve_end_min FROM withdrawal_records w JOIN orders o ON w.order_id = o.id JOIN cabinets cb ON o.cabinet_id = cb.id JOIN locations l ON cb.location_id = l.id WHERE w.status=0 AND l.withdraw_mode='queue_approve' AND l.withdraw_enabled=1")
         for w in c.fetchall():
+            sm = w["refund_approve_start_min"] or 60
+            em = w["refund_approve_end_min"] or 300
+            rate = w["refund_approve_rate"] if w["refund_approve_rate"] is not None else 80
             ct = w.get("created_at")
             if not ct: continue
             if isinstance(ct, str):
                 ct = datetime.datetime.strptime(ct, "%Y-%m-%d %H:%M:%S")
             elapsed = (now - ct).total_seconds() / 60.0
-            if start_min <= elapsed:  # 只要超过最小等待时间就处理，不设上限
+            if sm <= elapsed <= em:
                 if random.randint(1, 100) <= rate:
                     _approve_wd(c, w)
                 else:
                     _reject_wd(c, w)
-        conn.commit()
-    conn.close()
-
-def _process_queue_batch():
-    import sqlite3, random, datetime
-    from config import DATABASE
-    now = datetime.datetime.now()
-    conn = sqlite3.connect(DATABASE)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute("SELECT w.*, l.refund_approve_rate, l.refund_approve_start_min, l.refund_approve_end_min FROM withdrawal_records w JOIN orders o ON w.order_id = o.id JOIN cabinets cb ON o.cabinet_id = cb.id JOIN locations l ON cb.location_id = l.id WHERE w.status=0 AND l.withdraw_mode='queue_approve' AND l.withdraw_enabled=1")
-    for w in c.fetchall():
-        sm = w["refund_approve_start_min"] or 60
-        em = w["refund_approve_end_min"] or 300
-        rate = w["refund_approve_rate"] if w["refund_approve_rate"] is not None else 80
-        ct = w.get("created_at")
-        if not ct: continue
-        if isinstance(ct, str):
-            ct = datetime.datetime.strptime(ct, "%Y-%m-%d %H:%M:%S")
-        elapsed = (now - ct).total_seconds() / 60.0
-        if sm <= elapsed <= em:
-            if random.randint(1, 100) <= rate:
-                _approve_wd(c, w)
-            else:
-                _reject_wd(c, w)
-        conn.commit()
-    conn.close()
+            conn.commit()
+        conn.close()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 def _approve_wd(c, w):
     import datetime
@@ -1019,6 +1062,11 @@ def _balance_hide_scheduler():
                 logger.info('[余额隐藏] 本次共隐藏 %d 条余额明细' % total_hidden)
         except Exception as e:
             logger.error('[余额隐藏] 异常: %s' % e)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 _balance_hide_thread = threading.Thread(target=_balance_hide_scheduler, daemon=True)
 _balance_hide_thread.start()

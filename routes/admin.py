@@ -27,6 +27,9 @@ from helpers import (json_response, require_auth, require_merchant_auth, require
 from models import ORDER_STATUS, BUSINESS_STATUS_MAP, BUSINESS_STATUS_ACTIVE
 
 bp = Blueprint('admin', __name__)
+n# 柜体信息缓存（减少设备轮询压力）
+_CABINET_CACHE = {}
+_CABINET_CACHE_TTL = 60
 import config
 
 
@@ -673,7 +676,22 @@ def get_cabinet_public_info(cabinet_id):
 @bp.route('/cabinets/by-mainboard/<mainboard_id>', methods=['GET'])
 
 def get_cabinet_by_mainboard(mainboard_id):
-    """通过主板编号获取柜体配置（APK使用）"""
+    """通过主板编号获取柜体配置（APK使用）- 带60秒缓存"""
+    import time
+    # 检查缓存
+    now = time.time()
+    if mainboard_id in _CABINET_CACHE:
+        cached = _CABINET_CACHE[mainboard_id]
+        if now - cached['time'] < _CABINET_CACHE_TTL:
+            # 缓存命中，只更新心跳（轻量操作）
+            try:
+                conn = get_db()
+                conn.cursor().execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (mainboard_id,))
+                conn.commit()
+                conn.close()
+            except:
+                pass
+            return cached['data']
     try:
         conn = get_db()
         cursor = conn.cursor()
@@ -767,6 +785,8 @@ def get_cabinet_by_mainboard(mainboard_id):
             result['display_text'] = '????'
         result['cabinet_name'] = result.get('name', '')
         conn.close()
+        # 存入缓存
+        _CABINET_CACHE[mainboard_id] = {'data': json_response(result, headers={'Cache-Control': 'public, max-age=300'}), 'time': time.time()}
         return json_response(result, headers={'Cache-Control': 'public, max-age=300'})
     except Exception as e:
         logger.error(f'[get_cabinet_by_mainboard] {e}')

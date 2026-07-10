@@ -125,6 +125,9 @@ def _push_usage_rules(device_id, ws):
         _rules_logger.error(f'[WS-MW] 推送使用规则失败: {e}')
 
 
+    finally:
+        try: _db.close()
+        except Exception: pass
 def fix_websocket(app):
     """添加WSGI中间件处理WebSocket请求"""
     
@@ -246,6 +249,9 @@ def fix_websocket(app):
                     _db.close()
                 except Exception as db_err:
                     logger.error(f'[WS-MW] 读取数据库指令失败: {db_err}')
+                finally:
+                    try: _db.close()
+                    except Exception: pass
                 
                 # 消息循环
                 try:
@@ -293,6 +299,9 @@ def fix_websocket(app):
                                         logger.info(f'[WS-MW] 注册更新版本: device={device_id}, ver={reg_ver}, code={reg_ver_code}')
                                     except Exception as db_e:
                                         logger.error(f'[WS-MW] 注册写DB失败: {db_e}')
+                                    finally:
+                                        try: db.close()
+                                        except Exception: pass
                                     # 版本更新改为推送下载模式，通过 /api/admin/device/push-update 手动触发
                                     
                                     # 推送使用规则
@@ -310,6 +319,9 @@ def fix_websocket(app):
                                     except:
                                         pass
                             
+                                    finally:
+                                        try: db.close()
+                                        except Exception: pass
                             elif msg_type == 'debug_echo_resp':
                                 logger.info(f'[WS-MW] ★★★DEBUG回显★★★: device={device_id}, data={data}')
                             
@@ -333,6 +345,9 @@ def fix_websocket(app):
                                     # 版本更新改为推送下载模式，通过 /api/admin/device/push-update 手动触发
                                 except:
                                     pass
+                                finally:
+                                    try: db.close()
+                                    except Exception: pass
                                 # 回复心跳确认
                                 try:
                                     ack_data = {
@@ -377,6 +392,9 @@ def fix_websocket(app):
                                         _db.close()
                                     except Exception as _dqe:
                                         logger.error(f"[WS-MW] door_query_cache update fail: {_dqe}")
+                                    finally:
+                                        try: _db.close()
+                                        except Exception: pass
                                     try:
                                         from routes.admin_v2 import _door_status_results, _door_status_lock
                                         with _door_status_lock:
@@ -414,6 +432,9 @@ def fix_websocket(app):
                                     except Exception as e:
                                         logger.error(f'[WS-MW] 更新柜格失败: {e}')
                         
+                                    finally:
+                                        try: db.close()
+                                        except Exception: pass
                         except json.JSONDecodeError:
                             logger.warning(f'[WS-MW] 非JSON消息: device={device_id}, preview={msg[:200]}')
                             pass
@@ -495,3 +516,6 @@ def sync_offline_orders(device_id):
     except Exception as e:
         import logging as _sl2
         _sl2.getLogger('sync_offline').error("[sync_offline] Error: %s" % e)
+    finally:
+        try: conn.close()
+        except Exception: pass

@@ -872,6 +872,8 @@ def admin_order_refund():
             else:
                 c.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s',
                           (amount, amount, order_dict['user_phone']))
+            # 同步更新 balance_details 状态，防止双重退款
+            c.execute("UPDATE user_balance_details SET status='clawed_back' WHERE order_id=%s AND status='available'", (order_id,))
         # 如果订单还在使用中(2)，释放柜格
         # [Agent-modified 2026-07-04] 退款时释放格口：无论订单是使用中(2)还是已结算(3)，都要释放格口为空闲(0)
         if order_dict.get('status') in (2, 3) and order_dict.get('slot_id'):

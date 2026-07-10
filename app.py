@@ -1075,8 +1075,6 @@ logger.info('[启动] 余额超时隐藏任务已启动(每小时)')
 # ============================================
 # 定时任务：自动清柜（每分钟检查，连接PostgreSQL）
 # ============================================
-_clear_box_processed = {}
-
 def _auto_clear_cabinet_scheduler():
     import time
     while True:
@@ -1090,93 +1088,114 @@ def _auto_clear_cabinet_scheduler():
             c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             now = datetime.now()
             today_str = now.strftime("%Y-%m-%d")
-            current_time = now.strftime("%H:%M")
 
-            c.execute("SELECT id, clear_box_time, clear_box_cycle FROM locations WHERE enable_clear_box = 1 AND clear_box_time IS NOT NULL")
+            c.execute("SELECT id, clear_box_time, clear_box_cycle, last_clear_date FROM locations WHERE enable_clear_box = 1 AND clear_box_time IS NOT NULL")
             locations = c.fetchall()
 
             for loc in locations:
                 loc_id = loc["id"]
                 clear_time = loc["clear_box_time"] or "03:00"
                 cycle = loc["clear_box_cycle"] or 1
+                last_clear = str(loc["last_clear_date"] or "")
 
-                if current_time < clear_time:
+                # 【修复1】时间窗口：只在 clear_time ~ clear_time+1小时 内执行
+                try:
+                    clear_h, clear_m = map(int, clear_time.split(":"))
+                except:
+                    clear_h, clear_m = 3, 0
+                clear_start = now.replace(hour=clear_h, minute=clear_m, second=0, microsecond=0)
+                clear_end = clear_start + timedelta(hours=1)
+                if not (clear_start <= now < clear_end):
                     continue
 
-                last_date = _clear_box_processed.get(loc_id, "")
-                if last_date == today_str:
+                # 【修复5】用数据库字段代替内存变量
+                if last_clear == today_str:
                     continue
-
-                if last_date:
+                if last_clear:
                     try:
-                        last = datetime.strptime(last_date, "%Y-%m-%d")
-                        today = datetime.strptime(today_str, "%Y-%m-%d")
-                        if (today - last).days < cycle:
+                        last_dt = datetime.strptime(last_clear, "%Y-%m-%d").date()
+                        today_dt = now.date()
+                        if (today_dt - last_dt).days < cycle:
                             continue
                     except:
                         pass
 
-                _clear_box_processed[loc_id] = today_str
+                # 【修复4】每个location独立try/except
+                try:
+                    cutoff_time = now - timedelta(days=cycle)
 
-                cutoff_time = now - timedelta(days=cycle)
+                    c.execute("""
+                        SELECT o.id, o.slot_id, o.user_phone, o.deposit_amount, o.openid, o.unionid
+                        FROM orders o
+                        JOIN cabinets c ON o.cabinet_id = c.id
+                        WHERE c.location_id = %s AND o.status = 2 AND o.store_time < %s
+                    """, (loc_id, cutoff_time))
+                    active_orders = c.fetchall()
 
-                c.execute("""
-                    SELECT o.id, o.slot_id, o.user_phone, o.deposit_amount, o.openid, o.unionid
-                    FROM orders o
-                    JOIN cabinets c ON o.cabinet_id = c.id
-                    WHERE c.location_id = %s AND o.status = 2 AND o.store_time < %s
-                """, (loc_id, cutoff_time))
-                active_orders = c.fetchall()
+                    total_ended = 0
+                    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
-                total_ended = 0
-                now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+                    for o in active_orders:
+                        c.execute("UPDATE orders SET status=3, retrieve_time=%s, pickup_time=%s, updated_at=%s, refund_mark=1 WHERE id=%s",
+                                  (now_str, now_str, now_str, o["id"]))
 
-                for o in active_orders:
-                    c.execute("UPDATE orders SET status=3, retrieve_time=%s, pickup_time=%s, updated_at=%s, refund_mark=1 WHERE id=%s",
-                              (now_str, now_str, now_str, o["id"]))
+                        if o["slot_id"]:
+                            c.execute("UPDATE cabinet_slots SET status=0 WHERE id=%s", (o["slot_id"],))
 
-                    if o["slot_id"]:
-                        c.execute("UPDATE cabinet_slots SET status=0 WHERE id=%s", (o["slot_id"],))
+                        deposit_amount = float(o["deposit_amount"] or 0)
+                        if deposit_amount > 0 and o["user_phone"]:
+                            c.execute("SELECT id FROM user_balances WHERE phone=%s", (o["user_phone"],))
+                            ub = c.fetchone()
+                            u_openid = o["openid"] or ""
+                            u_unionid = o["unionid"] or ""
+                            if ub:
+                                c.execute("UPDATE user_balances SET balance=balance+%s, total_deposited=total_deposited+%s, openid=COALESCE(NULLIF(openid,''),%s), unionid=COALESCE(NULLIF(unionid,''),%s) WHERE phone=%s",
+                                          (deposit_amount, deposit_amount, u_openid, u_unionid, o["user_phone"]))
+                            else:
+                                c.execute("INSERT INTO user_balances (phone, openid, unionid, balance, total_deposited, total_withdrawn, first_use_time) VALUES (%s,%s,%s,%s,%s,0,NOW())",
+                                          (o["user_phone"], u_openid, u_unionid, deposit_amount, deposit_amount))
+                            c.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s,%s,%s,'available') ON CONFLICT (order_id) DO NOTHING",
+                                      (o["user_phone"], o["id"], deposit_amount))
 
-                    deposit_amount = float(o["deposit_amount"] or 0)
-                    if deposit_amount > 0 and o["user_phone"]:
-                        c.execute("SELECT id FROM user_balances WHERE phone=%s", (o["user_phone"],))
-                        ub = c.fetchone()
-                        u_openid = o["openid"] or ""
-                        u_unionid = o["unionid"] or ""
-                        if ub:
-                            c.execute("UPDATE user_balances SET balance=balance+%s, total_deposited=total_deposited+%s, openid=COALESCE(NULLIF(openid,\"\"),%s), unionid=COALESCE(NULLIF(unionid,\"\"),%s) WHERE phone=%s",
-                                      (deposit_amount, deposit_amount, u_openid, u_unionid, o["user_phone"]))
-                        else:
-                            c.execute("INSERT INTO user_balances (phone, openid, unionid, balance, total_deposited, total_withdrawn, first_use_time) VALUES (%s,%s,%s,%s,%s,0,NOW())",
-                                      (o["user_phone"], u_openid, u_unionid, deposit_amount, deposit_amount))
-                        c.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s,%s,%s,\"available\") ON CONFLICT (order_id) DO NOTHING",
-                                  (o["user_phone"], o["id"], deposit_amount))
+                        if o.get("openid"):
+                            try:
+                                from helpers import send_wx_subscribe_message
+                                sub_data = {
+                                    "amount6": {"value": "¥{:.2f}".format(deposit_amount)},
+                                    "time4": {"value": now_str},
+                                    "thing7": {"value": "已退还至小程序用户钱包"},
+                                    "thing2": {"value": "请自行点击此通知消息跳转\u201c我的钱包\u201d提现"}
+                                }
+                                send_wx_subscribe_message(o["openid"], "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", sub_data, phone=o["user_phone"])
+                            except Exception as e:
+                                logger.error('[自动清柜] 发送通知失败')
 
-                    if o.get("openid"):
-                        try:
-                            from helpers import send_wx_subscribe_message
-                            sub_data = {
-                                "amount6": {"value": "\u00a5{:.2f}".format(deposit_amount)},
-                                "time4": {"value": now_str},
-                                "thing7": {"value": "\u5df2\u9000\u8fd8\u81f3\u5c0f\u7a0b\u5e8f\u7528\u6237\u94b1\u5305"},
-                                "thing2": {"value": "\u8bf7\u81ea\u884c\u70b9\u51fb\u6b64\u901a\u77e5\u6d88\u606f\u8df3\u8f6c\u201c\u6211\u7684\u94b1\u5305\u201d\u63d0\u73b0"}
-                            }
-                            send_wx_subscribe_message(o["openid"], "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", sub_data, phone=o["user_phone"])
-                        except Exception as e:
-                            logger.error('[自动清柜] 发送通知失败')
+                        total_ended += 1
 
-                    total_ended += 1
+                    conn.commit()
 
-                conn.commit()
-                if total_ended > 0:
-                    logger.info("[自动清柜] Location %s: 结束 %s 个订单(周期=%s天,截止时间=%s)" % (loc_id, total_ended, cycle, cutoff_time))
+                    # 【修复2】commit成功后才更新数据库标记
+                    c.execute("UPDATE locations SET last_clear_date=%s WHERE id=%s", (today_str, loc_id))
+                    conn.commit()
 
+                    if total_ended > 0:
+                        logger.info("[自动清柜] Location %s: 结束 %s 个订单(周期=%s天,截止时间=%s)" % (loc_id, total_ended, cycle, cutoff_time))
+
+                except Exception as e:
+                    logger.error("[自动清柜] Location %s 处理异常: %s" % (loc_id, e))
+                    try:
+                        conn.rollback()
+                    except:
+                        pass
+
+            # 【修复3】正常关闭连接
             conn.close()
         except Exception as e:
             logger.error("[自动清柜] 异常: %s" % e)
-            try: conn.close()
-            except: pass
+            try:
+                conn.close()
+            except:
+                pass
 
 _auto_clear_thread = threading.Thread(target=_auto_clear_cabinet_scheduler, daemon=True)
 _auto_clear_thread.start()

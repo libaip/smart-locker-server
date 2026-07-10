@@ -804,6 +804,11 @@ def return_to_balance(phone, amount, withdrawal_id=None, openid='', order_id=Non
     except Exception as e:
         logger.error("[return_to_balance] Failed: " + str(e))
         return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=None, skip_balance=False, **kwargs):
     """Actually call WeChat refund API. Returns (success, refund_id, message)"""

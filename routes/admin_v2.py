@@ -1378,6 +1378,26 @@ def admin_withdrawal_approve():
         conn.commit()
         conn.close()
         if refund_success or (" 订单已全额退款" in str(refund_msg)):
+            # 发送审批通过订阅消息
+            try:
+                from helpers import send_wx_subscribe_message
+                # 获取用户openid
+                _conn2 = get_db()
+                _c2 = _conn2.cursor()
+                _c2.execute("SELECT mp_openid FROM user_balances WHERE phone=%s AND mp_openid IS NOT NULL LIMIT 1", (phone,))
+                _usr = _c2.fetchone()
+                _conn2.close()
+                if _usr and _usr['mp_openid']:
+                    from datetime import datetime as dt_notify
+                    wd_data = {
+                        'amount8': {'value': '¥{:.2f}'.format(amount)},
+                        'time6': {'value': dt_notify.now().strftime('%Y-%m-%d %H:%M:%S')},
+                        'thing3': {'value': '原路退回支付账户'},
+                        'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
+                    }
+                    send_wx_subscribe_message(_usr['mp_openid'], 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone, page='pages/mine/mine')
+            except Exception as _notify_err:
+                logger.error(f'[withdrawal_approve] 发送订阅消息失败: {_notify_err}')
             return json_response(message='审批通过，退款已完成')
         else:
             return json_response(message='审批通过，但退款失败，请手动确认退款')
@@ -1436,6 +1456,26 @@ def admin_withdrawal_reject():
                   (session.get('admin_username', 'admin') + (':' + reason if reason else ''), withdrawal_id))
         conn.commit()
         conn.close()
+        # 发送拒绝订阅消息（退回余额）
+        try:
+            from helpers import send_wx_subscribe_message
+            if wd and wd.get('user_phone'):
+                _conn3 = get_db()
+                _c3 = _conn3.cursor()
+                _c3.execute("SELECT mp_openid FROM user_balances WHERE phone=%s AND mp_openid IS NOT NULL LIMIT 1", (wd['user_phone'],))
+                _usr3 = _c3.fetchone()
+                _conn3.close()
+                if _usr3 and _usr3['mp_openid']:
+                    from datetime import datetime as dt_notify
+                    wd_reject_data = {
+                        'amount8': {'value': '¥{:.2f}'.format(wd['amount'])},
+                        'time6': {'value': dt_notify.now().strftime('%Y-%m-%d %H:%M:%S')},
+                        'thing3': {'value': '提现申请已拒绝'},
+                        'thing2': {'value': '金额已退回到您的余额，可继续使用'}
+                    }
+                    send_wx_subscribe_message(_usr3['mp_openid'], 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_reject_data, phone=wd['user_phone'], page='pages/mine/mine')
+        except Exception as _notify_err2:
+            logger.error(f'[withdrawal_reject] 发送订阅消息失败: {_notify_err2}')
         return json_response(message='已拒绝')
     except Exception as e:
         logger.error(f'[withdrawal_reject] {e}')

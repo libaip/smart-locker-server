@@ -1633,6 +1633,7 @@ def get_user_info():
             _bc_mp = _resolve_mp_openid(cur, mp_openid='', openid=openid, phone=phone)
         if _bc_mp:
             cur.execute("SELECT balance FROM user_balances WHERE mp_openid = %s", (_bc_mp,))
+            bal_row = cur.fetchone()
         else:
             bal_row = None  # 无法找到 mp_openid，返回0
         balance = float(bal_row['balance'] or 0) if bal_row else 0

@@ -134,7 +134,7 @@ class _PGConn:
             import threading
             from psycopg2 import pool
             cls._pool_lock = threading.Lock()
-            cls._pool = pool.ThreadedConnectionPool(5, 20, dsn)
+            cls._pool = pool.ThreadedConnectionPool(5, 50, dsn)
 
     def __init__(self, dsn):
         import psycopg2

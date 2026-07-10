@@ -396,6 +396,7 @@ def send_open_lock(device_id, board_no, lock_no, protocol=None, order_id='', slo
     
     # 数据库操作：始终delivered=0，让HTTP轮询作为可靠兜底（WS可能发送成功但设备未收到）
     _delivered = 1 if _ws_sent else 0
+    _sl_conn = None
     try:
         import psycopg2
         from config import DATABASE_URL as _SL_DB
@@ -410,6 +411,11 @@ def send_open_lock(device_id, board_no, lock_no, protocol=None, order_id='', slo
         signal_pending_command(device_id)
     except Exception as _e:
         logger.error(f"[DB] 存储pending_lock失败: {_e}")
+    finally:
+        if _sl_conn:
+            try: _sl_conn.close()
+            except: pass
+            _sl_conn = None
     try:
         import psycopg2
         from config import DATABASE_URL as _SL_DB2
@@ -422,6 +428,11 @@ def send_open_lock(device_id, board_no, lock_no, protocol=None, order_id='', slo
         _sl_conn2.close()
     except Exception as _e3:
         logger.error(f"[DB] 存储door_record失败: {_e3}")
+    finally:
+        if _sl_conn2:
+            try: _sl_conn2.close()
+            except: pass
+            _sl_conn2 = None
     return True
 
 

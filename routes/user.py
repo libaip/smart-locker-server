@@ -1015,9 +1015,21 @@ def deposit_retrieve():
                 conn2.commit()
                 conn2.close()
                 # Save values for notification (defensive copy)
-                _noid = (order_dict or {}).get('openid', '')
-                _n_amt = (order_dict or {}).get('deposit_amount', 0)
+                # 通过手机号查询 mp_openid
                 _n_phone = (order_dict or {}).get('user_phone', '')
+                _noid = ''
+                if _n_phone:
+                    try:
+                        _n_conn = get_db()
+                        _n_cur = _n_conn.cursor()
+                        _n_cur.execute("SELECT mp_openid FROM phone_openids WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (_n_phone,))
+                        _n_row = _n_cur.fetchone()
+                        _n_conn.close()
+                        if _n_row and _n_row[0]:
+                            _noid = _n_row[0]
+                    except:
+                        pass
+                _n_amt = (order_dict or {}).get('deposit_amount', 0)
                 if _noid:
                     try:
                         from helpers import send_wx_subscribe_message
@@ -1548,15 +1560,16 @@ def get_pay_status(order_id):
                             logger.info(f'[pay-status] 主动查询发现订单{order["id"]}已支付，已更新')
                             # 发送寄存成功订阅消息（pay-status兜底场景）
                             try:
-                                _notify_openid = _ps_openid
-                                if not _notify_openid and _ps_user_phone:
+                                # 直接查 mp_openid
+                                _notify_openid = ""
+                                if _ps_user_phone:
                                     _nc = get_db()
                                     _ncu = _nc.cursor()
-                                    _ncu.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s', (_ps_user_phone,))
+                                    _ncu.execute("SELECT mp_openid FROM phone_openids WHERE phone = %s AND mp_openid IS NOT NULL LIMIT 1", (_ps_user_phone,))
                                     _nr = _ncu.fetchone()
                                     _nc.close()
-                                    if _nr:
-                                        _notify_openid = _nr['openid']
+                                    if _nr and _nr[0]:
+                                        _notify_openid = _nr[0]
                                 if _notify_openid:
                                     from helpers import send_wx_subscribe_message
                                     _loc_name = '智能寄存柜'

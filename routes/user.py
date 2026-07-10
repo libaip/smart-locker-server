@@ -2211,8 +2211,8 @@ def user_withdraw():
 
         # Merchant-phase hold check
         if withdraw_mode == 'auto_approve':
-            _order_openid = order.get('openid', '') or ''
-            _order_phone = order['user_phone']
+            _order_openid = mp_openid or openid or ''
+            _order_phone = phone
             _needs_hold = check_withdraw_auto_approve(openid=_order_openid, phone=_order_phone)
             if _needs_hold:
                 withdraw_mode = 'manual'

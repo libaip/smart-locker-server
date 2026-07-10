@@ -1116,7 +1116,7 @@ def deposit_end_storage():
                 cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE phone = %s AND openid = %s',
                                (refund_amount, refund_amount, order['user_phone'], _openid))
             else:
-                cursor.execute("UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE phone = %s AND (openid = %s OR openid IS NULL OR openid = '')",
+                cursor.execute("UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, openid = %s WHERE phone = %s AND (openid = %s OR openid IS NULL OR openid = '')",
                                (refund_amount, refund_amount, order['user_phone'], ''))
         else:
             # 查询wechat_name（忽略游标异常，避免阻止订单结束）

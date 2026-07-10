@@ -157,6 +157,12 @@ class _PGConn:
             return
         self._returned = True
         try:
+            from flask import g
+            if getattr(g, "_db_conn", None) is self:
+                g._db_conn = None
+        except (ImportError, RuntimeError):
+            pass
+        try:
             self._conn.rollback()
         except:
             pass

@@ -153,7 +153,7 @@ function calcElapsed(st){
 
 function midOpenDoor(orderId,cabinetCode,accessCode){
   if(!confirm('确认要中途开门？')) return;
-  apiPost(API_BASE+'/deposit/retrieve',{
+  apiPost(API_BASE+'/deposit/mid-retrieve',{
     order_id: orderId,
     cabinet_code: cabinetCode,
     access_code: accessCode

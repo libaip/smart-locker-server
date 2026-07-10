@@ -935,7 +935,7 @@ def admin_order_close():
                 c.execute('SELECT id FROM user_balances WHERE phone = %s', (order_dict['user_phone'],))
                 ub_row = c.fetchone()
             if ub_row:
-                c.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, mp_openid = COALESCE(NULLIF(mp_openid, ''), %s), openid = COALESCE(NULLIF(openid, ''), %s), unionid = COALESCE(NULLIF(unionid, ''), %s) WHERE id = %s',
+                c.execute("UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, mp_openid = COALESCE(NULLIF(mp_openid, ''), %s), openid = COALESCE(NULLIF(openid, ''), %s), unionid = COALESCE(NULLIF(unionid, ''), %s) WHERE id = %s",
                           (deposit_amount, deposit_amount, _cl_mp_openid, order_dict.get('openid', ''), order_dict.get('unionid', ''), ub_row['id']))
             else:
                 c.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, balance, total_deposited, total_withdrawn, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, 0, NOW())',

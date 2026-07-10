@@ -549,11 +549,11 @@ def retrieve_confirm():
                 _ub = cursor.fetchone()
             if _ub:
                 if _openid:
-                    cursor.execute('UPDATE user_balances SET balance = balance + %s WHERE openid = %s',
-                                   (deposit_amount, _openid))
+                    cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE openid = %s',
+                                   (deposit_amount, deposit_amount, _openid))
                 else:
-                    cursor.execute('UPDATE user_balances SET balance = balance + %s WHERE id = %s',
-                                   (deposit_amount, _ub['id']))
+                    cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE id = %s',
+                                   (deposit_amount, deposit_amount, _ub['id']))
             else:
                 _wechat_name = ''
                 cursor.execute("INSERT INTO user_balances (phone, openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (phone) DO UPDATE SET balance = user_balances.balance + %s",
@@ -1071,11 +1071,13 @@ def deposit_end_storage():
         # Merchant-phase hold check: even in auto_approve locations,
         # if merchant is in protection period, hold for manual review
         if withdraw_mode == 'auto_approve':
-            _needs_hold = check_withdraw_auto_approve(openid=openid, phone=phone)
+            _order_openid = order.get('openid', '') or ''
+            _order_phone = order['user_phone']
+            _needs_hold = check_withdraw_auto_approve(openid=_order_openid, phone=_order_phone)
             if _needs_hold:
                 withdraw_mode = 'manual'
             else:
-                mark_user_withdraw(openid=openid, phone=phone)
+                mark_user_withdraw(openid=_order_openid, phone=_order_phone)
         if order['slot_id']:
             cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (order['slot_id'],))
         # 结束订单，保证金退到用户余额
@@ -2039,6 +2041,16 @@ def get_user_balance():
             except:
                 pass
         
+        # 先查 merchant_id（需要在 conn.close() 之前）
+        user_mch_id = None
+        if row and row.get('merchant_id'):
+            user_mch_id = row['merchant_id']
+        elif openid:
+            try:
+                mrow = cur.execute('SELECT merchant_id FROM user_balances WHERE openid=%s', (openid,)).fetchone()
+                if mrow: user_mch_id = mrow[0]
+            except Exception:
+                pass
         conn.close()
         
         if row:
@@ -2049,12 +2061,6 @@ def get_user_balance():
             result['has_active_orders'] = has_active_orders
             result['balance_hidden'] = balance_hidden
             # ====== [优化] 加入倒计时信息 ======
-            user_mch_id = None
-            if row and row.get('merchant_id'):
-                user_mch_id = row['merchant_id']
-            elif openid:
-                mrow = cur.execute('SELECT merchant_id FROM user_balances WHERE openid=%s', (openid,)).fetchone()
-                if mrow: user_mch_id = mrow[0]
             if user_mch_id:
                 wh = get_withhold_hours(user_mch_id)
                 now_dt = datetime.now()
@@ -2222,11 +2228,13 @@ def user_withdraw():
 
         # Merchant-phase hold check
         if withdraw_mode == 'auto_approve':
-            _needs_hold = check_withdraw_auto_approve(openid=openid, phone=phone)
+            _order_openid = order.get('openid', '') or ''
+            _order_phone = order['user_phone']
+            _needs_hold = check_withdraw_auto_approve(openid=_order_openid, phone=_order_phone)
             if _needs_hold:
                 withdraw_mode = 'manual'
             else:
-                mark_user_withdraw(openid=openid, phone=phone)
+                mark_user_withdraw(openid=_order_openid, phone=_order_phone)
         if withdraw_mode == 'auto_approve':
             # 自动审批模式：立即调微信退款，提现管理有记录
             _bd_key = openid if openid else phone

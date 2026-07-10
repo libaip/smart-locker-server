@@ -863,10 +863,8 @@ def _balance_hide_scheduler():
     while True:
         time.sleep(3600)  # 每小时执行一次
         try:
-            import sqlite3
-            from config import DATABASE
-            conn = sqlite3.connect(DATABASE)
-            conn.row_factory = sqlite3.Row
+            from database import get_db
+            conn = get_db()
             c = conn.cursor()
             c.execute("SELECT id, balance_hide_days FROM locations WHERE balance_hide_enabled = 1 AND balance_hide_days > 0")
             locations = c.fetchall()
@@ -893,11 +891,6 @@ def _balance_hide_scheduler():
                 logger.info('[余额隐藏] 本次共隐藏 %d 条余额明细' % total_hidden)
         except Exception as e:
             logger.error('[余额隐藏] 异常: %s' % e)
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
 
 _balance_hide_thread = threading.Thread(target=_balance_hide_scheduler, daemon=True)
 _balance_hide_thread.start()

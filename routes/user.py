@@ -1153,6 +1153,7 @@ def deposit_end_storage():
         # 发送寄存结束订阅消息
         _openid = order.get("openid")
         if not _openid:
+            _nconn = None
             try:
                 from config import DATABASE_URL as _NURL
                 _nconn = psycopg2.connect(_NURL, connect_timeout=5)
@@ -2403,7 +2404,7 @@ def user_withdraw():
                     wd_data = {
                         'amount8': {'value': '¥{:.2f}'.format(actual_amount)},
                         'time6': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
-                        'thing3': {'value': '提现申请已提交，等待审核'},
+                        'thing3': {'value': '原路退回支付账户'},
                         'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
                     }
                     send_wx_subscribe_message(openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone, page='pages/mine/mine')

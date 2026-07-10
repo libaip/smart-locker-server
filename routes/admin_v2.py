@@ -13,7 +13,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from database import get_db
 import threading, uuid
 from helpers import json_response, manage_user_tokens, require_auth, logger, connected_devices, should_hide_order
-from config import WX_API_V3_KEY, WX_MCH_ID, WX_CERT_SERIAL_NO, WX_KEY_PATH, WX_CERT_PATH, WX_MP_APP_ID, WX_MP_APP_SECRET
+from config import WX_API_V3_KEY, WX_MCH_ID, WX_CERT_SERIAL_NO, WX_KEY_PATH, WX_CERT_PATH, WX_MP_APP_ID, WX_MP_APP_SECRET, WX_APP_ID, WX_APP_SECRET, WX_API_KEY
 def _fmt_time(t):
     """格式化时间: YYYY-MM-DD HH:MM:SS"""
     if not t:
@@ -2499,7 +2499,7 @@ def admin_channel_save():
                     return json_response(message=f'商户号 {mch_id} 已存在，请勿重复添加', code=400)
             c.execute('''INSERT INTO payment_channels (name,channel_type,app_id,mch_id,api_key,app_secret,cert_name,is_active) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)''',
                       (data.get('name'), data.get('channel_type'), data.get('app_id') or WX_APP_ID,
-                       data.get('mch_id'), data.get('api_key'), data.get('app_secret') or WX_APP_SECRET, data.get('cert_name'), data.get('status',1)))
+                       data.get('mch_id'), data.get('api_key') or WX_API_KEY, data.get('app_secret') or WX_APP_SECRET, data.get('cert_name'), data.get('status',1)))
         conn.commit()
         conn.close()
         return json_response(message='保存成功')
@@ -2507,6 +2507,10 @@ def admin_channel_save():
         logger.error(f'[channel_save] {e}')
         return json_response(message=str(e), code=500)
 
+@bp.route('/admin/channel/defaults', methods=['GET'])
+@require_auth
+def admin_channel_defaults():
+    return json_response({'app_id': WX_APP_ID, 'api_key': WX_API_KEY, 'app_secret': WX_APP_SECRET})
 
 @bp.route('/admin/channel/delete', methods=['POST'])
 @require_auth

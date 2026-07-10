@@ -1558,43 +1558,7 @@ def get_pay_status(order_id):
                                      'transaction_id': txn_id, 'pay_time': datetime.now(),
                                      'refund_id': order['refund_id'], 'refund_time': order['refund_time']}
                             logger.info(f'[pay-status] 主动查询发现订单{order["id"]}已支付，已更新')
-                            # 发送寄存成功订阅消息（pay-status兜底场景）
-                            try:
-                                # 直接查 mp_openid
-                                _notify_openid = ""
-                                if _ps_user_phone:
-                                    _nc = get_db()
-                                    _ncu = _nc.cursor()
-                                    _ncu.execute("SELECT mp_openid FROM phone_openids WHERE phone = %s AND mp_openid IS NOT NULL LIMIT 1", (_ps_user_phone,))
-                                    _nr = _ncu.fetchone()
-                                    _nc.close()
-                                    if _nr and _nr[0]:
-                                        _notify_openid = _nr[0]
-                                if _notify_openid:
-                                    from helpers import send_wx_subscribe_message
-                                    _loc_name = '智能寄存柜'
-                                    _cab_name = ''
-                                    if _ps_cabinet_id:
-                                        _lc2 = get_db()
-                                        _lcu2 = _lc2.cursor()
-                                        _lcu2.execute("SELECT c.name as cabinet_name, l.name as location_name FROM cabinets c LEFT JOIN locations l ON c.location_id = l.id WHERE c.id = %s", (_ps_cabinet_id,))
-                                        _ci2 = _lcu2.fetchone()
-                                        _lc2.close()
-                                        if _ci2:
-                                            _loc_name = _ci2.get('location_name') or '智能寄存柜'
-                                            _cab_name = _ci2.get('cabinet_name') or ''
-                                    _door = (_cab_name + '-' if _cab_name else '') + str(_ps_compartment) + '号柜门'
-                                    _sub_data = {
-                                        'thing1': {'value': _loc_name},
-                                        'thing2': {'value': _door},
-                                        'thing3': {'value': str(_ps_deposit) + '元'},
-                                        'time4': {'value': datetime.now().strftime('%Y-%m-%d %H:%M')},
-                                        'time5': {'value': datetime.now().strftime('%Y-%m-%d %H:%M')}
-                                    }
-                                    send_wx_subscribe_message(_notify_openid, 'aUc6gRRMUXKxy94Pd6kLWaLGwzcutYMW_cQT_Hks1fg', _sub_data)
-                                    logger.info(f'[pay-status] 存包通知已发送: order={_ps_order_id}')
-                            except Exception as _ne:
-                                logger.error(f'[pay-status] 发送存包通知失败: {_ne}')
+                            # 寄存成功通知已在 payment.py 支付回调中发送，此处不再重复发送
             except Exception as e2:
                 logger.error(f'[pay-status] 主动查询微信失败: {e2}')
         return json_response({'order_id': order['id'], 'order_no': order['order_no'], 'status': order['status'],

@@ -782,7 +782,7 @@ def generate_sms_code():
     """生成6位短信验证码"""
     return ''.join(random.choices(string.digits, k=6))
 
-def return_to_balance(phone, amount, withdrawal_id=None, openid=''):
+def return_to_balance(phone, amount, withdrawal_id=None, openid='', order_id=None):
     try:
         from database import get_db
         conn = get_db()
@@ -794,9 +794,12 @@ def return_to_balance(phone, amount, withdrawal_id=None, openid=''):
         conn.execute("UPDATE user_balances SET balance = balance + %s, total_withdrawn = total_withdrawn - %s WHERE openid = %s", (amount, amount, real_openid))
         if withdrawal_id:
             conn.execute("UPDATE withdrawal_records SET status = 3 WHERE id = %s", (withdrawal_id,))
+        # 拒绝退款时：恢复余额明细状态为available
+        if order_id:
+            conn.execute("UPDATE user_balance_details SET status = 'available' WHERE order_id = %s AND status = 'pending'", (order_id,))
         conn.commit()
         conn.close()
-        logger.info("[return_to_balance] phone=" + str(phone) + " amount=" + str(amount))
+        logger.info("[return_to_balance] phone=" + str(phone) + " amount=" + str(amount) + " order_id=" + str(order_id))
         return True
     except Exception as e:
         logger.error("[return_to_balance] Failed: " + str(e))

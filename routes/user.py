@@ -2429,7 +2429,7 @@ def link_openid():
             cursor.execute('UPDATE phone_openids SET wechat_name=%s, unionid=%s, updated_at=CURRENT_TIMESTAMP WHERE openid=%s', (wechat_name, unionid, openid))
         else:
             # openid无映射，正常插入
-            cursor.execute('INSERT INTO phone_openids (phone, openid, wechat_name, unionid) VALUES (%s, %s, %s, %s) ON CONFLICT(phone) DO UPDATE SET openid=excluded.openid, wechat_name=excluded.wechat_name, unionid=excluded.unionid, updated_at=CURRENT_TIMESTAMP', (phone, openid, wechat_name, unionid))
+            cursor.execute('INSERT INTO phone_openids (phone, openid, mp_openid, wechat_name, unionid) VALUES (%s, %s, %s, %s, %s) ON CONFLICT(phone) DO UPDATE SET openid=excluded.openid, mp_openid=excluded.mp_openid, wechat_name=excluded.wechat_name, unionid=excluded.unionid, updated_at=CURRENT_TIMESTAMP', (phone, openid, openid, wechat_name, unionid))
         # 统一用 mp_openid 更新 user_balances
         if openid:
             # mp_openid = openid（小程序场景）

@@ -1803,17 +1803,6 @@ def wx_login():
             except Exception as _e:
                 logger.error(f'[wx_login] 查询phone失败: {_e}')
             
-            # 找到手机号后，更新老用户的mp_openid（解决H5和小程序openid不同导致创建重复账户的问题）
-            if _phone:
-                try:
-                    _conn3 = get_db()
-                    # 更新该手机号最早的user_balances记录的mp_openid为当前小程序openid
-                    _conn3.execute("UPDATE user_balances SET mp_openid = %s WHERE phone = %s AND id = (SELECT min(id) FROM user_balances WHERE phone = %s)", (openid_val, _phone, _phone))
-                    _conn3.commit()
-                    _conn3.close()
-                except Exception as _e2:
-                    logger.error(f'[wx_login] 更新老用户mp_openid失败: {_e2}')
-            
             _resp = {'openid': result['openid'], 'session_key': result.get('session_key', '')}
             if _phone:
                 _resp['phone'] = _phone

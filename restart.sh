@@ -5,7 +5,7 @@ if [ -n "$PID" ]; then
     kill -HUP $PID
     echo "Graceful reload (HUP sent to PID $PID)"
 else
-    nohup /usr/bin/python3 /home/ubuntu/.local/bin/gunicorn --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker --workers 2 --timeout 120 --bind 127.0.0.1:5001 bind 127.0.0.1:5001 > /tmp/g3.log 2>&1 &
+    nohup /usr/bin/python3 /home/ubuntu/.local/bin/gunicorn --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker --workers 8 --timeout 120 --bind 127.0.0.1:5001 --error-logfile /home/ubuntu/smart-locker/gunicorn.log --access-logfile /home/ubuntu/smart-locker/gunicorn-access.log app:app > /dev/null 2>&1 &
     sleep 2
     echo "Fresh start"
 fi

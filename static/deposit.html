@@ -870,7 +870,8 @@
 
     // 如果有小程序ID但没有公众号ID，也跳OAuth获取
     var wxGzhOpenid = params.get('gzh_openid') || '';
-    if (wxOpenid && !wxGzhOpenid && isWechat) {
+    var isFromMiniProgram = wxOpenid && wxOpenid.indexOf('oLhbm2') === 0;
+    if (isFromMiniProgram && !wxGzhOpenid && isWechat) {
         // 先把小程序ID存本地，OAuth跳回来时openid会被覆盖成公众号ID
         try { localStorage.setItem('locker_mp_openid', wxOpenid); } catch(e){}
         window.location.href = API_BASE + '/api/wx/oauth?redirect_uri=' + encodeURIComponent(window.location.href);

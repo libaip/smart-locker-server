@@ -877,7 +877,7 @@ def admin_order_refund():
         # 如果订单还在使用中(2)，释放柜格
         # [Agent-modified 2026-07-04] 退款时释放格口：无论订单是使用中(2)还是已结算(3)，都要释放格口为空闲(0)
         if order_dict.get('status') in (2, 3) and order_dict.get('slot_id'):
-            c.execute('UPDATE cabinet_slots SET status=0 WHERE id=%s', (order_dict['slot_id'],))
+            c.execute('UPDATE cabinet_slots SET status=1 WHERE id=%s', (order_dict['slot_id'],))
         conn.commit()
         
         
@@ -4722,7 +4722,7 @@ def admin_device_clear_all():
                       (now, now, now, o_dict['id']))
             # 释放格口为空闲
             if o_dict.get('slot_id'):
-                c.execute('UPDATE cabinet_slots SET status=0 WHERE id=%s', (o_dict['slot_id'],))
+                c.execute('UPDATE cabinet_slots SET status=1 WHERE id=%s', (o_dict['slot_id'],))
             # 退押金到余额（使用中的订单押金未退，已结算的已退过余额不再重复退）
             deposit_amount = o_dict.get('deposit_amount', 0)
             if deposit_amount > 0 and o_dict.get('user_phone') and o_dict.get('status') == 2:

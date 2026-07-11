@@ -2485,6 +2485,66 @@ def link_openid():
         return json_response(message=str(e), code=500)
 
 
+@bp.route('/user/sync-mp-openid', methods=['POST'])
+def sync_mp_openid():
+    """小程序个人中心加载时，用小程序 ID 匹配并更新 user_balances.mp_openid"""
+    try:
+        data = request.get_json()
+        mp_openid = data.get('mp_openid', '')  # 小程序ID
+        gzh_openid = data.get('gzh_openid', '')  # 公众号ID
+        if not mp_openid:
+            return json_response(message='参数不完整', code=400)
+
+        from helpers import get_db
+        conn = get_db()
+        cur = conn.cursor()
+
+        # 1. 先查 user_balances 有没有这条小程序ID
+        cur.execute("SELECT id FROM user_balances WHERE mp_openid = %s LIMIT 1", (mp_openid,))
+        exist = cur.fetchone()
+        if exist:
+            conn.close()
+            return json_response(message='已同步', data={'matched': True})
+
+        # 2. 没有 -> 用公众号ID去匹配
+        matched_gzh = gzh_openid or ''
+        if not matched_gzh:
+            # 从 phone_openids 看有没有这个小程序ID对应的公众号ID
+            cur.execute("SELECT openid FROM phone_openids WHERE mp_openid = %s LIMIT 1", (mp_openid,))
+            r = cur.fetchone()
+            if r:
+                matched_gzh = r[0]
+
+        if matched_gzh:
+            # 用公众号ID去 user_balances 找
+            cur.execute("SELECT id FROM user_balances WHERE openid = %s AND (mp_openid IS NULL OR mp_openid = chr(39)||chr(39) OR mp_openid = %s) LIMIT 1", (matched_gzh, matched_gzh))
+            r = cur.fetchone()
+            if r:
+                cur.execute("UPDATE user_balances SET mp_openid = %s WHERE id = %s", (mp_openid, r[0]))
+                conn.commit()
+                conn.close()
+                return json_response(message='同步成功', data={'matched': True, 'updated': True})
+            else:
+                # 用公众号ID去 phone_openids 找到 phone，再用 phone 去 user_balances 找（兼容旧数据）
+                cur.execute("SELECT phone FROM phone_openids WHERE openid = %s LIMIT 1", (matched_gzh,))
+                r = cur.fetchone()
+                if r:
+                    found_phone = r[0]
+                    cur.execute("SELECT id FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != chr(39)||chr(39) LIMIT 1", (found_phone,))
+                    r = cur.fetchone()
+                    if r:
+                        cur.execute("UPDATE user_balances SET mp_openid = %s WHERE id = %s", (mp_openid, r[0]))
+                        conn.commit()
+                        conn.close()
+                        return json_response(message='同步成功', data={'matched': True, 'updated': True})
+
+        conn.close()
+        return json_response(message='未找到匹配记录', data={'matched': False})
+    except Exception as e:
+        logger.error(f'[sync_mp_openid] {e}')
+        return json_response(message=str(e), code=500)
+
+
 @bp.route('/order/<int:order_id>/reopen', methods=['POST'])
 def order_reopen_by_url(order_id):
     try:

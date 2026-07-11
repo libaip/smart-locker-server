@@ -868,7 +868,30 @@
         if (sa) sa.textContent = s.site_addr;
     }
 
-    if (!wxOpenid && isWechat) { window.location.href = API_BASE + '/api/wx/oauth?redirect_uri=' + encodeURIComponent(window.location.href); }
+    // 如果有小程序ID但没有公众号ID，也跳OAuth获取
+    var wxGzhOpenid = params.get('gzh_openid') || '';
+    if (wxOpenid && !wxGzhOpenid && isWechat) {
+        // 先把小程序ID存本地，OAuth跳回来时openid会被覆盖成公众号ID
+        try { localStorage.setItem('locker_mp_openid', wxOpenid); } catch(e){}
+        window.location.href = API_BASE + '/api/wx/oauth?redirect_uri=' + encodeURIComponent(window.location.href);
+    } else if (!wxOpenid && isWechat) { 
+        window.location.href = API_BASE + '/api/wx/oauth?redirect_uri=' + encodeURIComponent(window.location.href); 
+    }
+    
+    // OAuth跳回来后，从localStorage恢复小程序ID（OAuth会把openid覆盖成公众号ID）
+    try { 
+        var savedMp = localStorage.getItem('locker_mp_openid');
+        if (savedMp && savedMp != wxOpenid) {
+            // 说明OAuth跳回来覆盖了openid，小程序ID在localStorage里
+            // 把公众号ID存到wxGzhOpenid，wxOpenid恢复成小程序ID
+            wxGzhOpenid = wxOpenid;
+            wxOpenid = savedMp;
+            try { localStorage.removeItem('locker_mp_openid'); } catch(e2){}
+        }
+    } catch(e){}
+    if (!wxGzhOpenid) {
+        var wxGzhOpenid = params.get('openid') || (params.get('gzh_openid') || '');  
+    }
 
     var selectedSize = 'M';
     var cabinetSizes = [];
@@ -1141,7 +1164,19 @@
             if (savedPhone && rPhone && !rPhone.value) rPhone.value = savedPhone;
         });
     }
-    function goToProfilePage() { fetch('/api/wx/generate-scheme',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:'pages/mine/mine'})}).then(function(r){return r.json();}).then(function(d){if(d.code===200&&d.data&&d.data.scheme){window.location.href=d.data.scheme;}}).catch(function(){}); }
+    function goToProfilePage() { 
+        // [2026-07-11 fix_mp] 个人中心加载时，同步小程序 ID 到后端
+        if (wxOpenid) {
+            var savedPhone = localStorage.getItem('locker_saved_phone') || '';
+            fetch(API_BASE + '/api/user/sync-mp-openid', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({mp_openid: wxOpenid, gzh_openid: wxGzhOpenid || ''})
+            }).catch(function(e){ console.warn('sync-mp-openid failed:', e); });
+        }
+        showPage('profilePage'); 
+        loadUserProfile(); 
+    }
     function goToOrdersPage() { showPage('ordersPage'); loadUserOrders(); }
 
     function fillSavedPhone() {

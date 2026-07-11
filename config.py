@@ -46,8 +46,8 @@ BRAND_DEFAULTS = {
 # ============================================
 # APK版本信息
 # ============================================
-LATEST_VERSION_CODE = 177
-LATEST_VERSION_NAME = "1.2.57"
+LATEST_VERSION_CODE = 179
+LATEST_VERSION_NAME = "1.2.58"
 AUTO_UPDATE_ENABLED = False
 APK_DOWNLOAD_URL = "https://locker.cqdyxl.com/static/locker.apk"
 

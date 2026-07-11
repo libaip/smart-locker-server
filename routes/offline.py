@@ -117,16 +117,6 @@ def get_pending_commands(device_id):
             cursor.execute('UPDATE pending_lock_cmds SET delivered=1 WHERE id=%s', (row['id'],))
             logger.info(f'[DEBUG_POLL] device={device_id} delivered cmd id={row["id"]} command={command_text[:100]}')
 
-        update_info = None
-        try:
-            from config import AUTO_UPDATE_ENABLED
-            if AUTO_UPDATE_ENABLED:
-                cursor.execute('SELECT * FROM apk_version ORDER BY id DESC LIMIT 1')
-                apk_row = cursor.fetchone()
-                if apk_row:
-                    update_info = {'has_update': True, 'version_name': apk_row['version_name'], 'version_code': apk_row['version_code'], 'download_url': apk_row['download_url'], 'update_desc': apk_row['update_desc'] or '', 'force': True}
-        except:
-            pass
 
         now = datetime.now()
         cursor.execute('SELECT o.id as order_id, o.order_no, o.user_phone, o.access_code, o.deposit_amount, o.compartment_number, o.slot_size, o.cabinet_id, o.store_time FROM orders o JOIN cabinets c ON o.cabinet_id = c.id WHERE c.mainboard_device_id = %s AND o.status = 2 ORDER BY o.id DESC', (device_id,))
@@ -134,8 +124,6 @@ def get_pending_commands(device_id):
         conn.commit()
         conn.close()
 
-        if update_info:
-            valid_commands.append({'type': 'force_update', 'download_url': update_info['download_url'], 'version_name': update_info['version_name'], 'version_code': update_info['version_code'], 'update_desc': update_info.get('update_desc', ''), 'force': update_info.get('force', False)})
 
         # 查询该设备柜体下所有主板配置，随轮询返回给APK自动同步
         mainboard_config = []
@@ -154,7 +142,7 @@ def get_pending_commands(device_id):
         except Exception as _e:
             logger.warning(f'[pending_commands] 查询主板配置失败(不影响正常功能): {_e}')
 
-        return json_response({"commands": valid_commands, "orders": orders, "server_time": now.strftime("%Y-%m-%d %H:%M:%S"), "update": update_info, "mainboard_config": mainboard_config})
+        return json_response({"commands": valid_commands, "orders": orders, "server_time": now.strftime("%Y-%m-%d %H:%M:%S"), "mainboard_config": mainboard_config})
     except Exception as e:
         logger.error(f'[pending_commands] {e}')
         return json_response(message=str(e), code=500)

@@ -1013,18 +1013,19 @@ def do_balance_transfer(phone, amount, openid=None):
 # ============================================
 
 def send_wx_subscribe_message(openid, template_id, data, page='', phone=None):
-    """发送微信订阅消息"""
+    """发送微信订阅消息（仅支持小程序mp_openid）"""
     try:
         import requests
         import config
         from database import get_db
 
-        # 如果提供了手机号，从phone_openids查找小程序openid
+        # 如果提供了手机号，从phone_openids查找小程序mp_openid
         if phone:
             try:
                 _conn = get_db()
                 _cur = _conn.cursor()
-                _cur.execute("SELECT COALESCE(NULLIF(mp_openid,''), NULLIF(openid,'')) FROM phone_openids WHERE phone=%s", (phone,))
+                # 只查mp_openid，不查openid（公众号openid无法发送小程序订阅消息）
+                _cur.execute("SELECT mp_openid FROM phone_openids WHERE phone=%s AND mp_openid IS NOT NULL AND mp_openid != ''", (phone,))
                 _row = _cur.fetchone()
                 _conn.close()
                 if _row and _row[0]:
@@ -1032,7 +1033,16 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None):
             except Exception as _e:
                 logger.warning(f'[subscribe_msg] 查询phone_openids失败: {_e}')
 
-        # 获取access_token
+        if not openid:
+            logger.warning(f'[subscribe_msg] mp_openid为空，跳过发送（phone={phone}）')
+            return False
+
+        # 检查是否为公众号openid（oWrA8开头），如果是则无法发送
+        if openid.startswith('oWrA8'):
+            logger.warning(f'[subscribe_msg] openid={openid[:8]}... 是公众号openid，无法发送小程序订阅消息（phone={phone}）')
+            return False
+
+        # 获取access_token（小程序）
         token_url = f'https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid={config.WX_MP_APP_ID}&secret={config.WX_MP_APP_SECRET}'
         token_resp = requests.get(token_url, timeout=5)
         token_data = token_resp.json()

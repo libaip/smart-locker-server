@@ -970,7 +970,7 @@ def _auto_clear_cabinet_scheduler():
                                   (now_str, now_str, now_str, o["id"]))
 
                         if o["slot_id"]:
-                            c.execute("UPDATE cabinet_slots SET status=0 WHERE id=%s", (o["slot_id"],))
+                            c.execute("UPDATE cabinet_slots SET status=1 WHERE id=%s", (o["slot_id"],))
 
                         deposit_amount = float(o["deposit_amount"] or 0)
                         if deposit_amount > 0 and o["user_phone"]:

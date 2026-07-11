@@ -206,7 +206,7 @@ function subSkip() {
   // 小程序内嵌H5：不跳转，直接显示H5内容
   // 扫码H5（微信浏览器）：用URL Scheme打开小程序
   if (!isMiniProgram && isWechat && pendingNav && mpPageMap[pendingNav]) {
-    location.href = 'weixin://dl/business/?appid=wx57eaea52dcfff4e8&path=' + encodeURIComponent(mpPageMap[pendingNav]);
+    location.href = 'weixin://dl/business/?appid=wx57eaea52dcfff4e8&path=' + encodeURIComponent(mpPageMap[pendingNav] + "?openid=" + openid);
   }
   // 其他情况（非微信环境）：fallback到H5页面
   else if (pendingNav && h5FallbackMap[pendingNav]) {
@@ -222,7 +222,7 @@ function subConfirm() {
   }
   // 扫码H5（微信浏览器）：用URL Scheme打开小程序
   else if (!isMiniProgram && isWechat && pendingNav && mpPageMap[pendingNav]) {
-    location.href = 'weixin://dl/business/?appid=wx57eaea52dcfff4e8&path=' + encodeURIComponent(mpPageMap[pendingNav]);
+    location.href = 'weixin://dl/business/?appid=wx57eaea52dcfff4e8&path=' + encodeURIComponent(mpPageMap[pendingNav] + "?openid=" + openid);
   }
   // 其他情况（非微信环境）：fallback到H5页面
   else if (pendingNav && h5FallbackMap[pendingNav]) {

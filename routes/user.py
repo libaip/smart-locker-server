@@ -1782,7 +1782,9 @@ def wx_login():
         resp = requests.get(url, timeout=10)
         result = resp.json()
         if 'openid' in result:
-            openid_val = result['openid']
+            openid_val = result['openid']  # 小程序的mp_openid
+            openid_from_h5 = data.get('openid', '')  # H5传来的公众号openid
+            
             try:
                 conn2 = get_db()
                 conn2.execute("UPDATE user_balances SET mp_openid = %s WHERE openid = %s AND (mp_openid IS NULL OR mp_openid = '')", (openid_val, openid_val))
@@ -1790,15 +1792,30 @@ def wx_login():
                 conn2.close()
             except:
                 pass
-            # 用openid查手机号，实现自动登录
+            
+            # 查询手机号：先查mp_openid，找不到再查openid
             _phone = ''
             try:
                 _conn = get_db()
                 _cur = _conn.cursor()
-                _cur.execute("SELECT phone FROM phone_openids WHERE openid = %s OR mp_openid = %s LIMIT 1", (openid_val, openid_val))
+                
+                # 1. 先用mp_openid查
+                _cur.execute("SELECT phone FROM phone_openids WHERE mp_openid = %s LIMIT 1", (openid_val,))
                 _row = _cur.fetchone()
+                
+                # 2. 找不到，用openid查
+                if not _row and openid_from_h5:
+                    _cur.execute("SELECT phone FROM phone_openids WHERE openid = %s LIMIT 1", (openid_from_h5,))
+                    _row = _cur.fetchone()
+                
+                # 3. 找到手机号
                 if _row and _row[0]:
                     _phone = _row[0]
+                    # 4. 如果是通过openid找到的，更新mp_openid
+                    if openid_from_h5:
+                        _cur.execute("UPDATE phone_openids SET mp_openid = %s WHERE openid = %s", (openid_val, openid_from_h5))
+                        _conn.commit()
+                
                 _conn.close()
             except Exception as _e:
                 logger.error(f'[wx_login] 查询phone失败: {_e}')
@@ -2424,33 +2441,42 @@ def link_openid():
     try:
         data = request.get_json()
         phone = data.get('phone')
-        openid = data.get('openid')
+        openid_h5 = data.get('openid', '')  # H5公众号openid
+        mp_openid_val = data.get('mp_openid', '') or openid_h5  # 小程序openid，没传就用H5的
         unionid = data.get('unionid') or ''
         wechat_name = data.get('wechat_name') or data.get('nickName') or ''
-        if not phone or not openid:
+        if not phone or not openid_h5:
             return json_response(message='参数不完整', code=400)
         from helpers import get_db
         conn = get_db()
         cursor = conn.cursor()
-        # 先检查该openid是否已有手机号映射，防止同一openid绑定多个手机号
-        cursor.execute('SELECT phone FROM phone_openids WHERE openid = %s LIMIT 1', (openid,))
+
+        # 1. 先用mp_openid查（小程序openid）
+        cursor.execute("SELECT phone FROM phone_openids WHERE mp_openid = %s LIMIT 1", (mp_openid_val,))
         existing = cursor.fetchone()
+
+        # 2. 找不到，改用H5的openid查（兼容老用户）
+        if not existing:
+            cursor.execute("SELECT phone FROM phone_openids WHERE openid = %s LIMIT 1", (openid_h5,))
+            existing = cursor.fetchone()
+
         if existing:
-            # openid已有映射，保留原始手机号，只更新wechat_name和unionid
-            cursor.execute('UPDATE phone_openids SET wechat_name=%s, unionid=%s, updated_at=CURRENT_TIMESTAMP WHERE openid=%s', (wechat_name, unionid, openid))
+            # 3. 找到后，更新mp_openid + wechat_name + unionid
+            cursor.execute('UPDATE phone_openids SET mp_openid=%s, wechat_name=%s, unionid=%s, updated_at=CURRENT_TIMESTAMP WHERE openid=%s',
+                           (mp_openid_val, wechat_name, unionid, openid_h5))
         else:
-            # openid无映射，正常插入
-            cursor.execute('INSERT INTO phone_openids (phone, openid, mp_openid, wechat_name, unionid) VALUES (%s, %s, %s, %s, %s) ON CONFLICT(phone) DO UPDATE SET openid=excluded.openid, mp_openid=excluded.mp_openid, wechat_name=excluded.wechat_name, unionid=excluded.unionid, updated_at=CURRENT_TIMESTAMP', (phone, openid, openid, wechat_name, unionid))
+            # 没找到，正常插入
+            cursor.execute('INSERT INTO phone_openids (phone, openid, mp_openid, wechat_name, unionid) VALUES (%s, %s, %s, %s, %s) ON CONFLICT(phone) DO UPDATE SET openid=excluded.openid, mp_openid=excluded.mp_openid, wechat_name=excluded.wechat_name, unionid=excluded.unionid, updated_at=CURRENT_TIMESTAMP',
+                           (phone, openid_h5, mp_openid_val, wechat_name, unionid))
+
         # 统一用 mp_openid 更新 user_balances
-        if openid:
-            # mp_openid = openid（小程序场景）
-            cursor.execute("UPDATE user_balances SET mp_openid = %s, openid = COALESCE(NULLIF(openid, ''), %s) WHERE phone = %s AND (mp_openid IS NULL OR mp_openid = '' OR mp_openid = %s)", (openid, openid, phone, openid))
+        if mp_openid_val:
+            cursor.execute("UPDATE user_balances SET mp_openid = %s, openid = COALESCE(NULLIF(openid, ''), %s) WHERE phone = %s AND (mp_openid IS NULL OR mp_openid = '' OR mp_openid = %s)", (mp_openid_val, openid_h5, phone, mp_openid_val))
             if cursor.rowcount == 0:
-                # 没有匹配记录，尝试按 openid 更新
-                cursor.execute("UPDATE user_balances SET mp_openid = %s, phone = %s WHERE openid = %s AND (mp_openid IS NULL OR mp_openid = '')", (openid, phone, openid))
-        # Also update user_balances with unionid if it exists
+                cursor.execute("UPDATE user_balances SET mp_openid = %s, phone = %s WHERE openid = %s AND (mp_openid IS NULL OR mp_openid = '')", (mp_openid_val, phone, openid_h5))
         if unionid:
-            cursor.execute('UPDATE user_balances SET unionid=%s WHERE mp_openid=%s', (unionid, openid))
+            cursor.execute('UPDATE user_balances SET unionid=%s WHERE mp_openid=%s', (unionid, mp_openid_val))
+
         conn.commit()
         conn.close()
         return json_response(message='关联成功')

@@ -133,7 +133,7 @@ var API_BASE='https://locker.cqdyxl.com/api';
     withdrawalRules=data.withdrawal_rules||'';
   }).catch(function(e){});
   document.getElementById('btnRule').addEventListener('click',function(){
-    alert(withdrawalRules||'提现规则：\n提现金额最低1元起\n提现将在1-3个工作日内原路退回支付账户\n如有疑问请联系客服');
+    alert(withdrawalRules||'提现规则：\n提现无最低金额限制\n提现将在1-3个工作日内原路退回支付账户\n如有疑问请联系客服');
   });
 })();
 </script>

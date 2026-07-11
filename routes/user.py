@@ -383,30 +383,31 @@ def retrieve():
                 'SELECT o.*, c.mainboard_device_id FROM orders o '
                 'JOIN cabinets c ON o.cabinet_id = c.id '
                 'WHERE o.user_phone = %s AND o.access_code = %s AND c.mainboard_device_id = %s AND o.status = 2 '
-                'ORDER BY CASE WHEN o.status = 2 THEN 0 ELSE 1 END, o.id DESC LIMIT 1',
+                'ORDER BY CASE WHEN o.status = 2 THEN 0 ELSE 1 END, o.id DESC',
                 (phone, access_code, device_id))
-            order = cursor.fetchone()
-            if not order:
+            orders = cursor.fetchall()
+            if not orders:
                 conn.close()
                 return json_response(message='取件码错误或柜格已空', code=400)
-            # 发送开锁指令到设备
-            try:
-                from helpers import send_open_lock
-                slot_id = order.get("slot_id")
-                if slot_id:
-                    cur2 = conn.cursor()
-                    cur2.execute("SELECT board_no, lock_no, slot_number FROM cabinet_slots WHERE id = %s", (slot_id,))
-                    slot = cur2.fetchone()
-                    if slot:
-                        did = str(order.get("mainboard_device_id", ""))
-                        bn = int(slot.get("board_no", 1) or 1)
-                        ln = int(slot.get("lock_no", slot.get("slot_number", 1)) or slot.get("slot_number", 1))
-                        if did:
-                            send_open_lock(did, bn, ln, order_id=str(order["id"]))
-            except Exception as open_err:
-                logger.error(f"[retrieve] 开锁失败: {open_err}")
-            cursor.execute('UPDATE orders SET status = 3, retrieve_time = %s WHERE id = %s',
-            (datetime.now(), order['id']))
+            # 遍历所有订单，逐个开门
+            from helpers import send_open_lock
+            for order in orders:
+                try:
+                    slot_id = order.get("slot_id")
+                    if slot_id:
+                        cur2 = conn.cursor()
+                        cur2.execute("SELECT board_no, lock_no, slot_number FROM cabinet_slots WHERE id = %s", (slot_id,))
+                        slot = cur2.fetchone()
+                        if slot:
+                            did = str(order.get("mainboard_device_id", ""))
+                            bn = int(slot.get("board_no", 1) or 1)
+                            ln = int(slot.get("lock_no", slot.get("slot_number", 1)) or slot.get("slot_number", 1))
+                            if did:
+                                send_open_lock(did, bn, ln, order_id=str(order["id"]))
+                except Exception as open_err:
+                    logger.error(f"[retrieve] 开锁失败(order={order.get('id')}): {open_err}")
+                cursor.execute('UPDATE orders SET status = 3, retrieve_time = %s WHERE id = %s',
+                (datetime.now(), order['id']))
             if order['slot_id']:
                 cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (order['slot_id'],))
                 _deposit_amount = order.get('deposit_amount', 0)
@@ -435,8 +436,10 @@ def retrieve():
                                 _wn_row2 = cursor.fetchone()
                                 if _wn_row2:
                                     _wechat_name = _wn_row2['wechat_name']
-                            cursor.execute("INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (mp_openid) DO UPDATE SET balance = user_balances.balance + %s, total_deposited = user_balances.total_deposited + %s",
-                                           (order['user_phone'], _r_openid, _r_unionid, _r_mp_openid, _wechat_name, _deposit_amount, _deposit_amount, datetime.now(), _deposit_amount, _deposit_amount))
+                            cursor.execute("UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE mp_openid = %s", (_deposit_amount, _deposit_amount, _r_mp_openid))
+                            if cursor.rowcount == 0:
+                                cursor.execute("INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                                               (order['user_phone'], _r_openid, _r_unionid, _r_mp_openid, _wechat_name, _deposit_amount, _deposit_amount, datetime.now()))
                     else:
                         # 没有 mp_openid，使用 phone 查找（兼容旧数据）
                         cursor.execute("SELECT id FROM user_balances WHERE phone = %s LIMIT 1", (order['user_phone'],))
@@ -583,11 +586,15 @@ def retrieve_confirm():
             else:
                 _wechat_name = ''
                 if _mp_openid:
-                    cursor.execute("INSERT INTO user_balances (phone, openid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (mp_openid) DO UPDATE SET balance = user_balances.balance + %s",
-                                   (order['user_phone'], _openid, _mp_openid, _wechat_name, deposit_amount, deposit_amount, datetime.now(), deposit_amount))
+                    cursor.execute("UPDATE user_balances SET balance = balance + %s WHERE mp_openid = %s", (deposit_amount, _mp_openid))
+                    if cursor.rowcount == 0:
+                        cursor.execute("INSERT INTO user_balances (phone, openid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                                       (order['user_phone'], _openid, _mp_openid, _wechat_name, deposit_amount, deposit_amount, datetime.now()))
                 else:
-                    cursor.execute("INSERT INTO user_balances (phone, openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (phone) DO UPDATE SET balance = user_balances.balance + %s",
-                                   (order['user_phone'], _openid, _wechat_name, deposit_amount, deposit_amount, datetime.now(), deposit_amount))
+                    cursor.execute("UPDATE user_balances SET balance = balance + %s WHERE phone = %s", (deposit_amount, order['user_phone']))
+                    if cursor.rowcount == 0:
+                        cursor.execute("INSERT INTO user_balances (phone, openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s)",
+                                       (order['user_phone'], _openid, _wechat_name, deposit_amount, deposit_amount, datetime.now()))
             # 插入余额明细，供提现使用
             cursor.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status, source_time) VALUES (%s, %s, %s, 'available', NOW()) ON CONFLICT (order_id) DO NOTHING",
                            (order['user_phone'], order_id, deposit_amount))
@@ -977,7 +984,7 @@ def deposit_retrieve():
             if not group:
                 conn.close()
                 return json_response(message='柜组不存在', code=404)
-            cursor.execute('SELECT o.*, cs.slot_number, COALESCE(cs.slot_size, o.slot_size) as slot_size, c.cabinet_code, c.name as cabinet_name, cs.board_no, cs.lock_no, c.mainboard_device_id FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id JOIN cabinets c ON o.cabinet_id = c.id WHERE c.group_id = %s AND o.user_phone = %s AND o.access_code = %s AND o.status = 2 ORDER BY o.id DESC LIMIT 1',
+            cursor.execute('SELECT o.*, cs.slot_number, COALESCE(cs.slot_size, o.slot_size) as slot_size, c.cabinet_code, c.name as cabinet_name, cs.board_no, cs.lock_no, c.mainboard_device_id FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id JOIN cabinets c ON o.cabinet_id = c.id WHERE c.group_id = %s AND o.user_phone = %s AND o.access_code = %s AND o.status = 2 ORDER BY o.id DESC',
                            (group['id'], phone, access_code))
         else:
             if not cabinet_code:
@@ -988,35 +995,37 @@ def deposit_retrieve():
             if not cabinet:
                 conn.close()
                 return json_response(message='柜体不存在', code=404)
-            cursor.execute('SELECT o.*, cs.slot_number, COALESCE(cs.slot_size, o.slot_size) as slot_size, cs.board_no, cs.lock_no, c.mainboard_device_id FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id JOIN cabinets c ON o.cabinet_id = c.id WHERE o.cabinet_id = %s AND o.user_phone = %s AND o.access_code = %s AND o.status = 2 ORDER BY o.id DESC LIMIT 1',
+            cursor.execute('SELECT o.*, cs.slot_number, COALESCE(cs.slot_size, o.slot_size) as slot_size, cs.board_no, cs.lock_no, c.mainboard_device_id FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id JOIN cabinets c ON o.cabinet_id = c.id WHERE o.cabinet_id = %s AND o.user_phone = %s AND o.access_code = %s AND o.status = 2 ORDER BY o.id DESC',
                            (cabinet['id'], phone, access_code))
-        order = cursor.fetchone()
-        if not order:
+        orders = cursor.fetchall()
+        if not orders:
             conn.close()
             return json_response(message='手机号或取物码错误', code=400)
-        order_dict = dict(order)
         conn.close()
-        try:
-            device_id = order_dict.get('mainboard_device_id')
-            board_no = order_dict.get('board_no') or ''
-            lock_no = order_dict.get('lock_no') or ''
-            if device_id and board_no and lock_no:
-                send_open_lock(device_id, board_no, lock_no, order_id=order_dict.get('order_no', str(order_dict['id'])))
-                logger.info(f'[取物开门] device={device_id}, board={board_no}, lock={lock_no}, order_id={order_dict["id"]}')
-                # 取物即结束订单
-                conn2 = get_db()
-                c2 = conn2.cursor()
-                c2.execute("UPDATE orders SET status=3, retrieve_time=NOW(), refund_amount=%s, refund_mark=1 WHERE id=%s AND status=2",
-                          (order_dict['deposit_amount'], order_dict['id']))
-                if order_dict.get('slot_id'):
-                    c2.execute("UPDATE cabinet_slots SET status=1 WHERE id=%s", (order_dict['slot_id'],))
-                c2.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s,%s,%s,'available') ON CONFLICT (order_id) DO NOTHING",
-                          (order_dict['user_phone'], order_dict['id'], order_dict['deposit_amount']))
-                conn2.commit()
-                conn2.close()
-                # Save values for notification (defensive copy)
-                # 通过手机号查询 mp_openid
-                _n_phone = (order_dict or {}).get('user_phone', '')
+        # 遍历所有订单，逐个开门并结束
+        for order in orders:
+            order_dict = dict(order)
+            try:
+                device_id = order_dict.get('mainboard_device_id')
+                board_no = order_dict.get('board_no') or ''
+                lock_no = order_dict.get('lock_no') or ''
+                if device_id and board_no and lock_no:
+                    send_open_lock(device_id, board_no, lock_no, order_id=order_dict.get('order_no', str(order_dict['id'])))
+                    logger.info(f'[取物开门] device={device_id}, board={board_no}, lock={lock_no}, order_id={order_dict["id"]}')
+                    # 取物即结束订单
+                    conn2 = get_db()
+                    c2 = conn2.cursor()
+                    c2.execute("UPDATE orders SET status=3, retrieve_time=NOW(), refund_amount=%s, refund_mark=1 WHERE id=%s AND status=2",
+                              (order_dict['deposit_amount'], order_dict['id']))
+                    if order_dict.get('slot_id'):
+                        c2.execute("UPDATE cabinet_slots SET status=1 WHERE id=%s", (order_dict['slot_id'],))
+                    c2.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s,%s,%s,'available') ON CONFLICT (order_id) DO NOTHING",
+                              (order_dict['user_phone'], order_dict['id'], order_dict['deposit_amount']))
+                    conn2.commit()
+                    conn2.close()
+                    # Save values for notification (defensive copy)
+                    # 通过手机号查询 mp_openid
+                    _n_phone = (order_dict or {}).get('user_phone', '')
                 _noid = ''
                 if _n_phone:
                     try:
@@ -1043,11 +1052,11 @@ def deposit_retrieve():
                         send_wx_subscribe_message(_noid, '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', _nsd, phone=_n_phone)
                     except Exception as _ne:
                         logger.error('[deposit_retrieve_notify1] '+ str(_ne))
-            else:
-                logger.warning(f'[取物开门] 缺少设备/主板/锁号: device={device_id}, board={board_no}, lock={lock_no}')
-        except Exception as open_err:
-            logger.error(f'[%s%s%s%s] %s%s%s%s: ' + str(open_err))
-        logger.info(f"[%s%s%s%s] %s%s: order_id={order_dict['id']}")
+                else:
+                    logger.warning(f'[取物开门] 缺少设备/主板/锁号: device={device_id}, board={board_no}, lock={lock_no}')
+            except Exception as open_err:
+                logger.error(f'[retrieve] 处理订单{order_dict.get("id")}失败: ' + str(open_err))
+            logger.info(f"[retrieve] order_id={order_dict['id']} 处理完成")
         return json_response({'order_id': order_dict['id'], 'order_no': order_dict['order_no'],
                               'cabinet_id': order_dict['cabinet_id'], 'cabinet_code': order_dict.get('cabinet_code', cabinet_code),
                               'slot_id': order['slot_id'], 'compartment_number': order['slot_number'],
@@ -1157,8 +1166,10 @@ def deposit_end_storage():
             except Exception:
                 pass
             if _mp_openid:
-                cursor.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (mp_openid) DO UPDATE SET balance = user_balances.balance + %s, total_deposited = user_balances.total_deposited + %s',
-                               (order['user_phone'], _openid, _unionid, _mp_openid, _wechat_name2, refund_amount, refund_amount, datetime.now(), refund_amount, refund_amount))
+                cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE mp_openid = %s', (refund_amount, refund_amount, _mp_openid))
+                if cursor.rowcount == 0:
+                    cursor.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+                                   (order['user_phone'], _openid, _unionid, _mp_openid, _wechat_name2, refund_amount, refund_amount, datetime.now()))
             else:
                 cursor.execute('INSERT INTO user_balances (phone, openid, unionid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s)',
                                (order['user_phone'], _openid, _unionid, _wechat_name2, refund_amount, refund_amount, datetime.now()))

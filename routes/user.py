@@ -1779,7 +1779,23 @@ def wx_login():
                 conn2.close()
             except:
                 pass
-            return json_response({'openid': result['openid'], 'session_key': result.get('session_key', '')})
+            # 用openid查手机号，实现自动登录
+            _phone = ''
+            try:
+                _conn = get_db()
+                _cur = _conn.cursor()
+                _cur.execute("SELECT phone FROM phone_openids WHERE openid = %s OR mp_openid = %s LIMIT 1", (openid_val, openid_val))
+                _row = _cur.fetchone()
+                if _row and _row[0]:
+                    _phone = _row[0]
+                _conn.close()
+            except Exception as _e:
+                logger.error(f'[wx_login] 查询phone失败: {_e}')
+            
+            _resp = {'openid': result['openid'], 'session_key': result.get('session_key', '')}
+            if _phone:
+                _resp['phone'] = _phone
+            return json_response(_resp)
         else:
             logger.error(f'[wx_login] 微信接口返回异常: {result}')
             return json_response(message='登录失败，请稍后重试', code=400)

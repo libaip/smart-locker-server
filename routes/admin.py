@@ -27,7 +27,7 @@ from helpers import (json_response, require_auth, require_merchant_auth, require
 from models import ORDER_STATUS, BUSINESS_STATUS_MAP, BUSINESS_STATUS_ACTIVE
 
 bp = Blueprint('admin', __name__)
-n# 柜体信息缓存（减少设备轮询压力）
+# 柜体信息缓存（减少设备轮询压力）
 _CABINET_CACHE = {}
 _CABINET_CACHE_TTL = 60
 import config

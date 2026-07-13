@@ -452,15 +452,23 @@ def send_open_all(device_id, protocol=None):
         pending_lock_commands[device_id] = []
     pending_lock_commands[device_id].append(command)
 
+    import threading as _th, urllib.request as _req, json as _json
+    try:
+        _body = _json.dumps({"device_id": device_id, "command": command}).encode()
+        _th.Thread(target=lambda: _req.urlopen("http://127.0.0.1:5004/send", data=_body, timeout=5), daemon=True).start()
+        logger.info("[WS-DAEMON] open_all sent via daemon: " + str(device_id))
+    except Exception as _e:
+        logger.warning("[WS-DAEMON] open_all send failed: " + str(_e))
+
     if device_id in connected_devices:
         ws = connected_devices[device_id]
         if hasattr(ws, 'send') and not getattr(ws, 'closed', True):
             try:
                 ws.send(json.dumps(command))
-                logger.info(f'[RawWS] open_all: device={device_id}')
+                logger.info("[RawWS] open_all: " + str(device_id))
                 return True
             except Exception as e:
-                logger.error(f'[RawWS] open_all failed: {e}')
+                logger.error("[RawWS] open_all failed: " + str(e))
         elif isinstance(ws, str):
             try:
                 from flask import current_app
@@ -470,7 +478,7 @@ def send_open_all(device_id, protocol=None):
                     return True
             except:
                 pass
-    logger.info(f'[Queue] open_all queued: device={device_id}')
+    logger.info("[Queue] open_all queued: " + str(device_id))
     return True
 
 
@@ -1019,27 +1027,28 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None):
         import config
         from database import get_db
 
-        # 如果提供了手机号，从phone_openids查找小程序mp_openid
+        # 如果提供了手机号，查openid（先user_balances.openid，再phone_openids.mp_openid）
         if phone:
             try:
                 _conn = get_db()
                 _cur = _conn.cursor()
-                # 只查mp_openid，不查openid（公众号openid无法发送小程序订阅消息）
-                _cur.execute("SELECT mp_openid FROM phone_openids WHERE phone=%s AND mp_openid IS NOT NULL AND mp_openid != ''", (phone,))
+                # 第一级：user_balances.openid
+                _cur.execute("SELECT openid FROM user_balances WHERE phone=%s AND openid IS NOT NULL AND openid != '' ORDER BY id DESC LIMIT 1", (phone,))
                 _row = _cur.fetchone()
-                _conn.close()
                 if _row and _row[0]:
                     openid = _row[0]
+                else:
+                    # 第二级：phone_openids.mp_openid
+                    _cur.execute("SELECT mp_openid FROM phone_openids WHERE phone=%s AND mp_openid IS NOT NULL AND mp_openid != ''", (phone,))
+                    _row2 = _cur.fetchone()
+                    if _row2 and _row2[0]:
+                        openid = _row2[0]
+                _conn.close()
             except Exception as _e:
                 logger.warning(f'[subscribe_msg] 查询phone_openids失败: {_e}')
 
         if not openid:
             logger.warning(f'[subscribe_msg] mp_openid为空，跳过发送（phone={phone}）')
-            return False
-
-        # 检查是否为公众号openid（oWrA8开头），如果是则无法发送
-        if openid.startswith('oWrA8'):
-            logger.warning(f'[subscribe_msg] openid={openid[:8]}... 是公众号openid，无法发送小程序订阅消息（phone={phone}）')
             return False
 
         # 获取access_token（小程序）

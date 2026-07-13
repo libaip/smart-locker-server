@@ -1624,7 +1624,7 @@ Vue.component('page-alert-mgr',{template:`
 <label style="font-weight:600;font-size:13px;color:#333">类型:</label>
 <select v-model="$parent.alertFilterType" @change="$parent.loadAlerts(1)" style="padding:6px 10px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;min-width:100px">
 <option value="">全部</option>
-<option value="online">上线</option>
+<option value="online">在线</option>
 <option value="offline">离线</option>
 </select>
 </div>
@@ -1639,23 +1639,14 @@ Vue.component('page-alert-mgr',{template:`
 </select>
 </div>
 </div>
-<div v-if="$parent.alertDeviceSummaries.length>0" style="margin-bottom:16px;padding:12px 16px;background:#f8f9fa;border-radius:6px;border:1px solid #e8e8e8">
-<div style="font-weight:600;font-size:13px;color:#333;margin-bottom:8px">设备最新状态</div>
-<div style="display:flex;gap:16px;flex-wrap:wrap">
-<div v-for="s in $parent.alertDeviceSummaries" :key="s.device_id" style="display:flex;align-items:center;gap:6px;font-size:13px;padding:4px 10px;border-radius:4px;background:#fff;border:1px solid #e0e0e0">
-<span style="font-weight:500">设备 {{s.device_id}}</span>
-<span :style="{color:s.alert_type==='offline'?'#e74c3c':'#1890ff',fontWeight:600}">{{s.alert_type==='offline'?'● 离线':'● 在线'}}</span>
-<span style="color:#888;font-size:12px">{{s.last_time}}</span>
-</div>
-</div>
-</div>
+
 <table class="data-table">
 <thead><tr><th>ID</th><th>设备ID</th><th>告警类型</th><th>详情</th><th>时间</th></tr></thead>
 <tbody>
 <tr v-for="a in $parent.alerts" :key="a.id">
 <td>{{a.id}}</td>
 <td>{{a.device_id||'-'}}</td>
-<td><span :style="{color:a.alert_type==='offline'?'#e74c3c':a.alert_type==='online'?'#1890ff':'#fa8c16',fontWeight:600}">{{a.alert_type==='offline'?'● 离线':a.alert_type==='online'?'● 在线':a.alert_type||'-'}}</span></td>
+<td><span :style="{color:a.alert_type==='offline'?'#e74c3c':a.alert_type==='online'?'#1890ff':'#fa8c16',fontWeight:600}">{{a.alert_type==='offline'?'离线':a.alert_type==='online'?'在线':a.alert_type||'-'}}</span></td>
 <td>{{a.detail||'-'}}</td>
 <td style="font-family:monospace;font-size:13px">{{a.created_at}}</td>
 </tr>

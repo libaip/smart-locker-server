@@ -52,22 +52,8 @@ def get_token():
 
 @device_new_bp.route('/device/updateApp', methods=['POST'])
 def update_app():
-    try:
-        data = request.get_json(force=True)
-        device_id = data.get('device_id', '')
-        current_version = data.get('current_version', '')
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('CREATE TABLE IF NOT EXISTS apk_version (id INTEGER PRIMARY KEY AUTOINCREMENT, version_name TEXT, version_code INTEGER, download_url TEXT, update_desc TEXT, create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
-        cursor.execute('SELECT * FROM apk_version ORDER BY id DESC LIMIT 1')
-        row = cursor.fetchone()
-        conn.close()
-        if row and row['version_name'] != current_version:
-            return jsonify({'code': 0, 'msg': 'success', 'data': {'has_update': True, 'version_name': row['version_name'], 'version_code': row['version_code'], 'download_url': row['download_url'], 'update_desc': row['update_desc']}})
-        else:
-            return jsonify({'code': 0, 'msg': 'success', 'data': {'has_update': False}})
-    except Exception as e:
-        return jsonify({'code': -1, 'msg': str(e)})
+    # 已禁用设备端自动更新检查，始终返回无更新
+    return jsonify({'code': 0, 'msg': 'success', 'data': {'has_update': False}})
 
 @device_new_bp.route('/device/updateDevice', methods=['POST'])
 def update_device():

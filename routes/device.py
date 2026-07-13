@@ -239,9 +239,9 @@ def device_status():
         cursor.execute('SELECT * FROM mainboards WHERE cabinet_id = %s ORDER BY board_index LIMIT 1', (cabinet['id'],))
         mainboard = cursor.fetchone()
 
-        # 查询最新APK版本
-        cursor.execute('SELECT version_name, version_code, download_url FROM apk_version ORDER BY version_code DESC LIMIT 1')
-        latest_apk = cursor.fetchone()
+        # 已禁用设备端自动更新检查
+        #         cursor.execute('SELECT version_name, version_code, download_url FROM apk_version ORDER BY version_code DESC LIMIT 1')
+        #         latest_apk = cursor.fetchone()
 
         data = {
             'device_id': device_id,
@@ -262,11 +262,11 @@ def device_status():
             'apk_url': ''
         }
 
-        if latest_apk and cabinet['app_version_code'] < latest_apk['version_code']:
-            data['has_update'] = True
-            data['latest_version'] = latest_apk['version_name']
-            data['latest_version_code'] = latest_apk['version_code']
-            data['apk_url'] = latest_apk['download_url'] or '/static/smart-locker.apk'
+        #         if latest_apk and cabinet['app_version_code'] < latest_apk['version_code']:
+        #             data['has_update'] = True
+        #             data['latest_version'] = latest_apk['version_name']
+        #             data['latest_version_code'] = latest_apk['version_code']
+        #             data['apk_url'] = latest_apk['download_url'] or '/static/smart-locker.apk'
 
         db.close()
         return jsonify({'code': 200, 'message': 'success', 'data': data})
@@ -385,6 +385,41 @@ def pending_commands(device_id):
         logger.error(f'[待执行指令] 查询失败: {e}', exc_info=True)
         return jsonify({'code': 200, 'data': {'commands': [], 'orders': []}})
 
+@bp.route('/pending-update/<device_id>', methods=['GET'])
+def pending_update(device_id):
+    """???? - ??force_update????3?????"""
+    try:
+        from database import get_db
+        from helpers import logger
+        db = get_db()
+        cursor = db.cursor()
+
+        cursor.execute("SELECT id, name FROM cabinets WHERE mainboard_device_id = %s", (device_id,))
+        cabinet = cursor.fetchone()
+        if not cabinet:
+            db.close()
+            return jsonify({"code": 200, "data": {"commands": [], "orders": []}})
+
+        cursor.execute("SELECT * FROM pending_lock_cmds WHERE device_id=%s AND delivered=0 ORDER BY id", (device_id,))
+        rows = cursor.fetchall()
+        commands = []
+        for row in rows:
+            cmd_json = row["command"] if row["command"] else ""
+            if cmd_json and "force_update" in cmd_json:
+                import json as _json
+                try:
+                    cmd_obj = _json.loads(cmd_json)
+                    commands.append(cmd_obj)
+                except:
+                    pass
+                cursor.execute("UPDATE pending_lock_cmds SET delivered=1 WHERE id=%s", (row["id"],))
+        db.commit()
+        db.close()
+        return jsonify({"code": 200, "data": {"commands": commands, "orders": []}})
+
+    except Exception as e:
+        logger.error(f"[?????] ????: {e}")
+        return jsonify({"code": 200, "data": {"commands": [], "orders": []}})
 
 @bp.route("/scan")
 def scan_page():

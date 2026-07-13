@@ -26,7 +26,7 @@ WX_CERT_SERIAL_NO = '73AB063E7593B2FC5DDF37C0F6A269826675D119'
 WX_APP_ID = 'wxd85204d0ec930d46'
 WX_APP_SECRET = '552e27fa9a260a6640bf6983bd3470f5'
 WX_MP_APP_ID = 'wx57eaea52dcfff4e8'
-WX_MP_APP_SECRET = '8b1233a6227fb2e5dc4d5c420979ac71'
+WX_MP_APP_SECRET = 'eac6e21d37bf5621730633d4e249275b'
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WX_CERT_PATH = os.path.join(BASE_DIR, 'cert', 'apiclient_cert.pem')
@@ -46,8 +46,8 @@ BRAND_DEFAULTS = {
 # ============================================
 # APK版本信息
 # ============================================
-LATEST_VERSION_CODE = 179
-LATEST_VERSION_NAME = "1.2.58"
+LATEST_VERSION_CODE = 201
+LATEST_VERSION_NAME = "1.2.65"
 AUTO_UPDATE_ENABLED = False
 APK_DOWNLOAD_URL = "https://locker.cqdyxl.com/static/locker.apk"
 

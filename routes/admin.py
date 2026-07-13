@@ -22,7 +22,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from database import get_db
 from helpers import (json_response, require_auth, require_merchant_auth, require_agent_auth, require_employee_auth,
                      get_setting, is_mock_mode, send_open_lock, should_hide_order,
-                     filter_duplicate_users, logger, get_wxpay, get_channel_wxpay,
+                     filter_duplicate_users, logger, get_wxpay, get_channel_wxpay, send_open_all,
                      select_payment_channel, connected_devices)
 from models import ORDER_STATUS, BUSINESS_STATUS_MAP, BUSINESS_STATUS_ACTIVE
 
@@ -1006,7 +1006,7 @@ def open_single_slot(cabinet_id, slot_id):
 @bp.route('/cabinets/<int:cabinet_id>/open-all', methods=['POST'])
 @require_auth
 def open_all_normal_slots(cabinet_id):
-    """一键开门 - 只开正常柜门"""
+    """一键开门 - 只开正常柜门（通过WS批量指令）"""
     try:
         conn = get_db()
         c = conn.cursor()
@@ -1016,18 +1016,12 @@ def open_all_normal_slots(cabinet_id):
         if not slots:
             return json_response(message='没有可开的正常柜门', code=400)
         did = str(slots[0]['mainboard_device_id'])
-        opened = []
-        for s in slots:
-            bn2 = s.get('board_no') or 1
-            ln2 = s.get('lock_no') or s['slot_number']
-            send_open_lock(did, int(bn2), int(ln2), None, '', slot_number=s['slot_number'])
-            opened.append(s['slot_number'])
-        return json_response(message=f'已发送{len(opened)}个柜门开锁指令', data={'opened': opened})
+        opened = [s['slot_number'] for s in slots]
+        send_open_all(did)
+        return json_response(message=f'已发送{len(opened)}个柜门开锁指令（批量）', data={'opened': opened})
     except Exception as e:
         logger.error(f'[open_all] {e}')
         return json_response(message=str(e), code=500)
-
-
 @bp.route('/cabinets/<int:cabinet_id>/clear-all', methods=['POST'])
 @require_auth
 def clear_all_slots(cabinet_id):
@@ -3203,3 +3197,54 @@ def admin_v2_user_save():
     return json_response({'id': u_id})
 
 # ============ End Admin-v2 Route Aliases ============
+
+
+
+@bp.route('/cabinets/<int:cabinet_id>/slots/<int:slot_id>/physical-status', methods=['GET'])
+@require_auth
+def admin_query_physical_lock_status(cabinet_id, slot_id):
+    """查询柜门的物理锁状态（通过WS代理发送指令到设备）"""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT c.id, c.mainboard_device_id, cs.slot_number, cs.board_no, cs.lock_no FROM cabinets c JOIN cabinet_slots cs ON cs.cabinet_id = c.id WHERE c.id = %s AND cs.id = %s', (cabinet_id, slot_id))
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            return json_response(message='柜格不存在', code=404)
+        
+        did = str(row['mainboard_device_id'])
+        board_no = row.get('board_no') or 1
+        lock_no = row.get('lock_no') or row['slot_number']
+        
+        import urllib.request as _req
+        import json as _json
+        import uuid
+        
+        request_id = str(uuid.uuid4())[:8]
+        query_cmd = {
+            'type': 'query_door_status',
+            'request_id': request_id,
+            'device_id': did,
+            'board_no': board_no,
+            'lock_no': lock_no,
+            'protocol': 'YBM'
+        }
+        
+        try:
+            _body = _json.dumps({'device_id': did, 'command': query_cmd}).encode()
+            _req.urlopen('http://127.0.0.1:5004/send', data=_body, timeout=3)
+        except Exception as e:
+            logger.error(f'[admin_physical_status] WS proxy send failed: {e}')
+            return json_response(message='设备可能离线，无法查询物理状态', code=502)
+        
+        return json_response(message='状态查询指令已发送至设备', data={
+            'device_id': did,
+            'board_no': board_no,
+            'lock_no': lock_no,
+            'request_id': request_id,
+            'query_sent': True
+        })
+    except Exception as e:
+        logger.error(f'[admin_physical_status] {e}')
+        return json_response(message=str(e), code=500)

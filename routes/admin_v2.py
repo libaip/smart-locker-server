@@ -453,13 +453,18 @@ def admin_slots_open_all():
             return json_response(message='缺少柜体ID', code=400)
         conn = get_db()
         c = conn.cursor()
-        c.execute('SELECT mainboard_device_id FROM cabinets WHERE id=%s', (cabinet_id,))
-        row = c.fetchone()
+        c.execute('SELECT cs.slot_number, cs.status, c.mainboard_device_id FROM cabinets c JOIN cabinet_slots cs ON cs.cabinet_id = c.id WHERE c.id = %s AND cs.status NOT IN (3, 4)', (cabinet_id,))
+        rows = c.fetchall()
         conn.close()
-        if not row or not row['mainboard_device_id']:
-            return json_response(message='未找到设备', code=400)
-        from helpers import send_open_all
-        send_open_all(str(row['mainboard_device_id']))
+        if not rows:
+            return json_response(message='没有可开的正常柜门', code=400)
+        from helpers import send_open_lock
+        did = str(rows[0]['mainboard_device_id'])
+        opened = []
+        for r in rows:
+            send_open_lock(did, 1, r['slot_number'], None, '')
+            opened.append(r['slot_number'])
+        return json_response(message=f'已发送{len(opened)}个柜门开锁指令')
         return json_response(message='已发送全开指令')
     except Exception as e:
         logger.error(f'[open_all] {e}')
@@ -2205,7 +2210,8 @@ def admin_stats():
             COUNT(o.id) as order_count,
             SUM(CASE WHEN o.status=2 THEN 1 ELSE 0 END) as active_count,
             COALESCE(SUM(o.deposit_amount),0) as deposit_total,
-            COALESCE(SUM(CASE WHEN o.status=4 THEN o.refund_amount ELSE 0 END),0) as refund_total
+            COALESCE(SUM(CASE WHEN o.status=4 THEN o.refund_amount ELSE 0 END),0) as refund_total,
+            COALESCE(l.legacy_visible_orders, 0) as legacy_visible_orders
             FROM locations l LEFT JOIN merchants m ON l.merchant_id=m.id
             LEFT JOIN cabinets cab ON cab.location_id=l.id
             LEFT JOIN orders o ON o.cabinet_id=cab.id
@@ -2288,9 +2294,12 @@ def admin_biz_stats():
             LEFT JOIN locations l ON cab.location_id=l.id
             {where_clause}''', params)
         row = c.fetchone()
+        # Add legacy visible orders to total
+        c.execute("SELECT COALESCE(SUM(legacy_visible_orders), 0) FROM locations")
+        _legacy_total = c.fetchone()[0] or 0
         orderStats = {
             'total': row[0] if row else 0,
-            'visible_count': row[1] if row else 0,
+            'visible_count': (row[1] if row else 0) + _legacy_total,
             'active_count': row[2] if row else 0,
             'deposit_total': float(row[3] if row and row[3] else 0),
             'refund_total': float(row[4] if row and row[4] else 0),
@@ -4150,6 +4159,27 @@ def alerts_list():
             if ts and ' ' in str(ts):
                 d['last_time'] = str(ts)[:19]
             device_summaries.append(d)
+        # 从PostgreSQL devices表补充实时在线状态
+        try:
+            pg = get_db()
+            pgc = pg.cursor()
+            pgc.execute("SELECT device_id, status, update_time FROM devices WHERE status IS NOT NULL ORDER BY update_time DESC")
+            for r in pgc.fetchall():
+                did = r[0]
+                st = r[1]
+                ut = str(r[2])[:19] if r[2] else ''
+                found = False
+                for s in device_summaries:
+                    if s['device_id'] == did:
+                        s['pg_status'] = st
+                        s['pg_time'] = ut
+                        found = True
+                        break
+                if not found:
+                    device_summaries.append({'device_id': did, 'alert_type': st, 'last_time': ut, 'pg_status': st, 'pg_time': ut})
+            pg.close()
+        except Exception as _pe:
+            logger.error(f'[devices_status] {_pe}')
         # Filtered list (default: last N days)
         where = "WHERE 1=1"
         params = []
@@ -4718,7 +4748,7 @@ def admin_device_clear_all():
         for o in active:
             o_dict = dict(o)
             # 结束订单
-            c.execute('UPDATE orders SET status=4, retrieve_time=%s, pickup_time=%s, updated_at=%s WHERE id=%s',
+            c.execute('UPDATE orders SET status=3, retrieve_time=%s, pickup_time=%s, updated_at=%s WHERE id=%s',
                       (now, now, now, o_dict['id']))
             # 释放格口为空闲
             if o_dict.get('slot_id'):

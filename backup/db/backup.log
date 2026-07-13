@@ -12,3 +12,7 @@ Mon Jul  6 03:00:07 AM CST 2026: Backup smart_locker_20260706_030001.sql.gz done
 /bin/sh: 1: /home/ubuntu/smart-locker/backup/db_backup.sh: Permission denied
 /bin/sh: 1: /home/ubuntu/smart-locker/backup/db_backup.sh: Permission denied
 /bin/sh: 1: /home/ubuntu/smart-locker/backup/auto_backup.sh: Permission denied
+/bin/sh: 1: /home/ubuntu/smart-locker/backup/auto_backup.sh: Permission denied
+/bin/sh: 1: /home/ubuntu/smart-locker/backup/db_backup.sh: Permission denied
+/bin/sh: 1: /home/ubuntu/smart-locker/backup/auto_backup.sh: Permission denied
+/bin/sh: 1: /home/ubuntu/smart-locker/backup/db_backup.sh: Permission denied

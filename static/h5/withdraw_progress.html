@@ -133,9 +133,19 @@ var API_BASE='https://locker.cqdyxl.com/api';
         var list=d.data||[];
         if(list.length>0){
           var latest=list[0];
-          document.getElementById("wdAmount").textContent="¥ "+parseFloat(latest.amount||0).toFixed(2);
+          var totalAmt=parseFloat(latest.amount||0);
+          var latestTime=latest.apply_time||"";
+          for(var i=1;i<list.length;i++){
+            var item=list[i];
+            if(item.apply_time&&item.apply_time===latestTime){
+              totalAmt+=parseFloat(item.amount||0);
+            }else{
+              break;
+            }
+          }
+          document.getElementById("wdAmount").textContent="¥ "+totalAmt.toFixed(2);
           if(latest.apply_time){
-            var t=String(latest.apply_time).replace('T',' ').substring(0,19);
+            var t=String(latest.apply_time).replace("T"," ").substring(0,19);
             document.getElementById("wdTime").textContent=t;
           }
         }

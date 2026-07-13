@@ -1168,11 +1168,35 @@ def deposit_end_storage():
             if _mp_openid:
                 cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE mp_openid = %s', (refund_amount, refund_amount, _mp_openid))
                 if cursor.rowcount == 0:
-                    cursor.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
-                                   (order['user_phone'], _openid, _unionid, _mp_openid, _wechat_name2, refund_amount, refund_amount, datetime.now()))
+                    # 按mp_openid没找到，按phone找已有记录；但检查该记录是否属于其他微信
+                    cursor.execute("SELECT id, mp_openid FROM user_balances WHERE phone = %s LIMIT 1", (order['user_phone'],))
+                    _exist = cursor.fetchone()
+                    if _exist:
+                        _exist_id, _exist_mp = _exist
+                        # 如果已有记录的mp_openid跟自己不同且不为空，说明是另一个微信，不共享余额
+                        if _exist_mp and _exist_mp != _mp_openid and _exist_mp != order.get("openid", ""):
+                            cursor.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+                                           (order['user_phone'], _openid, _unionid, _mp_openid, _wechat_name2, refund_amount, refund_amount, datetime.now()))
+                        else:
+                            cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, mp_openid = %s WHERE id = %s', (refund_amount, refund_amount, _mp_openid, _exist_id))
+                    else:
+                        cursor.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+                                       (order['user_phone'], _openid, _unionid, _mp_openid, _wechat_name2, refund_amount, refund_amount, datetime.now()))
             else:
-                cursor.execute('INSERT INTO user_balances (phone, openid, unionid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s)',
-                               (order['user_phone'], _openid, _unionid, _wechat_name2, refund_amount, refund_amount, datetime.now()))
+                # 没有mp_openid，按phone找已有记录（可能来自H5扫码存包）
+                cursor.execute("SELECT id, mp_openid FROM user_balances WHERE phone = %s LIMIT 1", (order['user_phone'],))
+                _exist = cursor.fetchone()
+                if _exist:
+                    _exist_id, _exist_mp = _exist
+                    # 如果记录属于其他微信且有openid，不共享
+                    if _exist_mp and _exist_mp != order.get("openid", ""):
+                        cursor.execute('INSERT INTO user_balances (phone, openid, unionid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s)',
+                                       (order['user_phone'], _openid, _unionid, _wechat_name2, refund_amount, refund_amount, datetime.now()))
+                    else:
+                        cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE id = %s', (refund_amount, refund_amount, _exist_id))
+                else:
+                    cursor.execute('INSERT INTO user_balances (phone, openid, unionid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s)',
+                                   (order['user_phone'], _openid, _unionid, _wechat_name2, refund_amount, refund_amount, datetime.now()))
         # 写入余额明细（灰度：新提现逻辑）
         cursor.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s, %s, %s, 'available') ON CONFLICT (order_id) DO NOTHING", (order['user_phone'], order_id, refund_amount))
         cursor.execute("UPDATE orders SET logical_mark='end' WHERE id=%s", (order_id,))
@@ -1194,14 +1218,17 @@ def deposit_end_storage():
                 from config import DATABASE_URL as _NURL
                 _nconn = psycopg2.connect(_NURL, connect_timeout=5)
                 _ncur = _nconn.cursor()
-                _ncur.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (order['user_phone'],))
+                # first check user_balances mp_openid (has correct mini-program openid)
+                _ncur.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid NOT LIKE 'oWrA8%%' ORDER BY id DESC LIMIT 1", (order['user_phone'],))
                 _nrow = _ncur.fetchone()
-                logger.info(f"[end_storage_debug] phone_openids query result: {_nrow}")
+                logger.info(f"[end_storage_debug] user_balances mp_openid query: {_nrow}")
                 if _nrow and _nrow[0]:
                     _openid = _nrow[0]
                 else:
-                    _ncur.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' ORDER BY id DESC LIMIT 1", (order['user_phone'],))
+                    # not found in user_balances, try phone_openids
+                    _ncur.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (order['user_phone'],))
                     _nrow = _ncur.fetchone()
+                    logger.info(f"[end_storage_debug] phone_openids query result: {_nrow}")
                     if _nrow and _nrow[0]:
                         _openid = _nrow[0]
                 _ncur.close()
@@ -1787,7 +1814,12 @@ def wx_login():
             
             try:
                 conn2 = get_db()
+                # 先尝试按openid更新（匹配h5传来的公众号openid）
                 conn2.execute("UPDATE user_balances SET mp_openid = %s WHERE openid = %s AND (mp_openid IS NULL OR mp_openid = '')", (openid_val, openid_val))
+                # 再尝试按现有的mp_openid更新（匹配已存的小程序openid）
+                conn2.execute("UPDATE user_balances SET openid = %s, mp_openid = %s WHERE mp_openid = %s", (openid_val, openid_val, openid_val))
+                # 也同步更新phone_openids（让后续能找到手机号）
+                conn2.execute("UPDATE phone_openids SET openid = %s, mp_openid = %s WHERE mp_openid = %s", (openid_val, openid_val, openid_val))
                 conn2.commit()
                 conn2.close()
             except:
@@ -2521,6 +2553,8 @@ def sync_mp_openid():
             r = cur.fetchone()
             if r:
                 cur.execute("UPDATE user_balances SET mp_openid = %s WHERE id = %s", (mp_openid, r[0]))
+                # 同时更新 phone_openids，确保发通知时能查到小程序ID
+                cur.execute("UPDATE phone_openids SET mp_openid = %s WHERE openid = %s AND (mp_openid IS NULL OR mp_openid = '' OR mp_openid = %s)", (mp_openid, matched_gzh, matched_gzh))
                 conn.commit()
                 conn.close()
                 return json_response(message='同步成功', data={'matched': True, 'updated': True})

@@ -1442,8 +1442,6 @@ def admin_withdrawal_approve():
         return json_response(message=str(e), code=500)
 
 
-@bp.route('/admin/withdrawal/reject', methods=['POST'])
-@require_auth
 
 
 @bp.route("/admin/recharge-records", methods=["GET", "POST"])
@@ -1476,6 +1474,8 @@ def admin_recharge_records():
         logger.error("[admin_recharge_records] %s", str(e))
         return json_response(data={"list": [], "total": 0}, code=500)
 
+@bp.route('/admin/withdrawal/reject', methods=['POST'])
+@require_auth
 def admin_withdrawal_reject():
     """拒绝提现"""
     try:
@@ -3114,39 +3114,6 @@ def blacklist_delete():
 
 @bp.route('/alarms/list', methods=['GET', 'POST'])
 @require_auth
-def alarms_list():
-    try:
-        page = int(request.args.get('page', 1))
-        size = int(request.args.get('size', 20))
-        status = request.args.get('status', '')
-        offset = (page - 1) * size
-        conn = get_db()
-        c = conn.cursor()
-        sql = """SELECT a.*, c.cabinet_code, c.name as cabinet_name
-                FROM alarms a LEFT JOIN cabinets c ON a.cabinet_id=c.id WHERE 1=1"""
-        params = []
-        if status != '':
-            sql += " AND a.status=%s"
-            params.append(int(status))
-        sql += " ORDER BY a.id DESC LIMIT %s OFFSET %s"
-        params += [size, offset]
-        c.execute(sql, params)
-        rows = [dict(r) for r in c.fetchall()]
-        count_sql = "SELECT COUNT(*) FROM alarms a WHERE 1=1"
-        count_params = []
-        if status != '':
-            count_sql += " AND a.status=%s"
-            count_params.append(int(status))
-        c.execute(count_sql, count_params)
-        total = c.fetchone()[0]
-        conn.close()
-        return json_response(data={'list': rows, 'total': total, 'page': page, 'size': size})
-    except Exception as e:
-        logger.error(f'[alarms_list] {e}')
-        return json_response(message=str(e), code=500)
-
-@bp.route('/alarms/resolve', methods=['POST'])
-@require_auth
 def alarms_resolve():
     try:
         data = request.get_json()
@@ -3305,9 +3272,9 @@ def get_settings():
 
 
 
-bp.add_url_rule('/admin/alerts', 'admin_alerts_fixed', require_auth(alarms_list), methods=['GET', 'POST'])
 # DISABLED: misplaced delete endpoint (was inserted at wrong location)
 # @bp.route('/admin/alerts/delete', methods=['POST'])
+# @require_auth
 def alerts_delete():
     """??????"""
     try:

@@ -9,7 +9,7 @@ from datetime import datetime
 from flask import Blueprint, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 from database import get_db
-from helpers import (json_response, require_merchant_auth, get_setting, logger, send_open_lock,
+from helpers import (json_response, require_merchant_auth, get_setting, logger, send_open_lock, send_open_all,
                      should_hide_order, filter_duplicate_users)
 
 bp = Blueprint('merchant', __name__)
@@ -287,7 +287,7 @@ def merchant_orders():
             if config['hide_ratio'] > 0 and should_hide_order(merchant_id, o['id'], o['user_phone'], config['hide_ratio'], config['whitelist_phones'], o.get('logic_mark'), total_orders=total_orders):
                 is_hash_hidden = True
             # 手机号搜索时允许显示隐藏订单，但标记_hidden
-            if phone:
+            if phone and session.get('is_agent'):
                 o['_hidden'] = is_logic_hidden or is_hash_hidden
                 filtered.append(o)
             else:
@@ -509,11 +509,9 @@ def merchant_open_all_slots(cabinet_id):
         if not slots:
             return json_response(message='没有可开的正常柜门', code=400)
         did = str(slots[0]['mainboard_device_id'])
-        opened = []
-        for s in slots:
-            send_open_lock(did, 1, s['slot_number'], None, '')
-            opened.append(s['slot_number'])
-        return json_response(message=f'已发送{len(opened)}个柜门开锁指令', data={'opened': opened})
+        opened = [s['slot_number'] for s in slots]
+        send_open_all(did)
+        return json_response(message=f'已发送{len(opened)}个柜门开锁指令（批量）', data={'opened': opened})
     except Exception as e:
         logger.error(f'[merchant_open_all] {e}')
         return json_response(message=str(e), code=500)
@@ -909,4 +907,57 @@ def merchant_dashboard_config():
     except Exception as e:
         logger.error(f'[merchant_update_merchant] {e}')
         return json_response(message=str(e), code=500)
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/merchant/cabinets/<int:cabinet_id>/slots/<int:slot_id>/physical-status', methods=['GET'])
+@require_merchant_auth
+def merchant_query_physical_lock_status(cabinet_id, slot_id):
+    """查询柜门的物理锁状态（通过WS代理发送状态查询指令到设备）"""
+    try:
+        merchant_id, mfilter, mparams = _get_merchant_filter()
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(f'SELECT c.id, c.mainboard_device_id, cs.slot_number, cs.board_no, cs.lock_no FROM cabinets c JOIN locations l ON c.location_id = l.id JOIN cabinet_slots cs ON cs.cabinet_id = c.id WHERE c.id = %s AND cs.id = %s AND {mfilter}', (cabinet_id, slot_id, *mparams))
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            return json_response(message='柜格不存在或无权访问', code=404)
+        
+        did = str(row['mainboard_device_id'])
+        board_no = row.get('board_no') or 1
+        lock_no = row.get('lock_no') or row['slot_number']
+        
+        # 通过WS代理发送状态查询指令到设备
+        from helpers import send_open_lock
+        import urllib.request as _req
+        import json as _json
+        import uuid
+        
+        request_id = str(uuid.uuid4())[:8]
+        query_cmd = {
+            'type': 'query_door_status',
+            'request_id': request_id,
+            'device_id': did,
+            'board_no': board_no,
+            'lock_no': lock_no,
+            'protocol': 'YBM'
+        }
+        
+        try:
+            _body = _json.dumps({'device_id': did, 'command': query_cmd}).encode()
+            _req.urlopen('http://127.0.0.1:5004/send', data=_body, timeout=3)
+        except Exception as e:
+            logger.error(f'[physical_status] WS proxy send failed: {e}')
+            return json_response(message='设备可能离线，无法查询物理状态', code=502)
+        
+        return json_response(message='状态查询指令已发送至设备，请稍后查看结果', data={
+            'device_id': did,
+            'board_no': board_no,
+            'lock_no': lock_no,
+            'request_id': request_id,
+            'query_sent': True
+        })
+    except Exception as e:
+        logger.error(f'[physical_status] {e}')
         return json_response(message=str(e), code=500)

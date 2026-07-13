@@ -3304,6 +3304,8 @@ def get_settings():
             pass
 
 
+
+bp.add_url_rule('/admin/alerts', 'admin_alerts_fixed', require_auth(alarms_list), methods=['GET', 'POST'])
 # DISABLED: misplaced delete endpoint (was inserted at wrong location)
 # @bp.route('/admin/alerts/delete', methods=['POST'])
 def alerts_delete():
@@ -4228,15 +4230,15 @@ def door_records_list():
 
 # ==================== 告警管理 ====================
 
-@bp.route('/admin/alerts', methods=['GET', 'POST'])
-def alerts_list():
+# @bp.route('/admin/alerts', methods=['GET', 'POST'])
+def alarms_list():
     try:
         page = int(request.args.get('page', 1))
         limit = int(request.args.get('limit', 10))
         alert_type = request.args.get('alert_type', '')
         device_id = request.args.get('device_id', '')
         days = int(request.args.get('days', 3))
-        logger.info(f'[alerts_list] DB_PATH={DB_PATH}, page={page}, limit={limit}, device={device_id}, type={alert_type}, days={days}')
+        logger.info(f'[alarms_list] DB_PATH={DB_PATH}, page={page}, limit={limit}, device={device_id}, type={alert_type}, days={days}')
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
@@ -5905,7 +5907,8 @@ def _query_wechat_complaint(complaint_id, mch_id=None, cert_serial=None, key_pat
     """从微信API查询投诉详情，获取订单号等信息"""
     try:
         import requests as _req, base64 as _b64, uuid as _uid, json as _js
-        from cryptography.hazmat.primitives import hashes as _hs, padding as _pd
+        from cryptography.hazmat.primitives import hashes as _hs
+        from cryptography.hazmat.primitives.asymmetric import padding as _pd
         from cryptography.hazmat.primitives.serialization import load_pem_private_key as _load_key
         if not mch_id:
             _cc = get_db().cursor()

@@ -104,6 +104,7 @@ body { background: #f5f5f5; font-family: -apple-system, sans-serif; min-height: 
     <button onclick="hidePasswordModal();" style="width:100%;padding:12px;background:#f0f0f0;color:#666;border:none;border-radius:8px;font-size:15px;margin-top:8px;cursor:pointer;">取消</button>
   </div>
 </div>
+<script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
 <script>
 var token = (location.search.match(/token=([^&]*)/) || [])[1] || '';
 var currentPage = 'home';
@@ -129,21 +130,34 @@ function goBack() {
   else showPage('pageHome');
 }
 
+var nativePages = {
+  'devices': '/pages/devices/devices',
+  'orders': '/pages/orders/orders',
+  'statistics': '/pages/statistics/statistics',
+  'locations': '/pages/locations/locations',
+  'withdrawals': '/pages/withdrawal/withdrawal',
+  'alerts': '/pages/alerts/alerts',
+  'merchant-edit': '/pages/merchant-edit/merchant-edit',
+  'payment': '/pages/payment-binding/payment-binding',
+  'privacy': '/pages/privacy/privacy',
+  'agreement': '/pages/agreement/agreement',
+  'merchant-manage': '/pages/merchant-manage/merchant-manage',
+};
+
 function navigateTo(page) {
+  var np = nativePages[page];
+  if (np && typeof wx !== "undefined" && wx.miniProgram) {
+    wx.miniProgram.navigateTo({ url: np });
+    return;
+  }
   currentPage = page;
   var el = document.getElementById('pagePlaceholder');
   var txt = '';
   switch(page) {
-    case 'devices': txt = '设备管理'; break;
-    case 'orders': txt = '订单管理'; break;
-    case 'statistics': txt = '统计分析'; break;
-    case 'locations': txt = '网点管理'; break;
-    case 'withdrawals': txt = '提现管理'; break;
-    case 'alerts': txt = '告警管理'; break;
-    case 'merchant-edit': txt = '商户编辑'; break;
-    case 'payment': txt = '支付绑定'; break;
-    case 'privacy': txt = '隐私政策'; break;
-    case 'agreement': txt = '用户协议'; break;
+    case 'devices': txt = '设备管理'; break; case 'orders': txt = '订单管理'; break; case 'statistics': txt = '统计分析'; break;
+    case 'locations': txt = '网点管理'; break; case 'withdrawals': txt = '提现管理'; break; case 'alerts': txt = '告警管理'; break;
+    case 'merchant-edit': txt = '商户编辑'; break; case 'payment': txt = '支付绑定'; break;
+    case 'privacy': txt = '隐私政策'; break; case 'agreement': txt = '用户协议'; break;
   }
   document.getElementById('placeholderText').textContent = txt + ' - 功能开发中...';
   document.getElementById('pageTitle').textContent = txt;
@@ -290,6 +304,14 @@ function showPageDevices(){
   }).catch(function(){el.innerHTML='<div style="padding:60px;text-align:center;color:#ccc">加载失败</div>'})
 }
 
+
+function handleLogout() {
+  token = "";
+  if (typeof wx !== "undefined" && wx.miniProgram) {
+    wx.miniProgram.postMessage({ data: { logout: true } });
+  }
+  showPage("pageLogin");
+}
 </script>
 </body>
 </html>

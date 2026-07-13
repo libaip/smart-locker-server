@@ -3304,7 +3304,8 @@ def get_settings():
             pass
 
 
-@bp.route('/admin/alerts/delete', methods=['POST'])
+# DISABLED: misplaced delete endpoint (was inserted at wrong location)
+# @bp.route('/admin/alerts/delete', methods=['POST'])
 def alerts_delete():
     """??????"""
     try:
@@ -5391,6 +5392,21 @@ def wechat_complaint_notify():
         if complaint_order_info:
             transaction_id = complaint_order_info[0].get('transaction_id', '')
         
+        # 如果回调没带订单号，主动查询微信API
+        if not order_no and complaint_id:
+            _qd = _query_wechat_complaint(complaint_id, mch_id=complained_mchid)
+            if _qd:
+                order_no = _qd.get("out_trade_no", "") or _qd.get("transaction_id", "")
+                complained_mchid = _qd.get("complainted_mchid", "") or complained_mchid
+                if order_no:
+                    try:
+                        _cc2 = get_db().cursor()
+                        _cc2.execute("UPDATE complaints SET order_no=%s, mch_id=%s, user_phone=COALESCE(user_phone,%s) WHERE wx_complaint_id=%s",
+                                     (order_no, complained_mchid, _qd.get("payer_phone", ""), complaint_id))
+                        _cc2.connection.commit()
+                        _cc2.close()
+                    except:
+                        pass
         # 自动处理投诉：退款 + 回复 + 结案
         if order_no:
             _auto_refund_complaint_order(order_no, transaction_id, complaint_id)
@@ -5885,6 +5901,36 @@ def admin_device_update_result():
         return json_response(code=500, message=str(e))
 
 # ============ 投诉自动处理调度器（替代Timer） ============
+def _query_wechat_complaint(complaint_id, mch_id=None, cert_serial=None, key_path=None):
+    """从微信API查询投诉详情，获取订单号等信息"""
+    try:
+        import requests as _req, base64 as _b64, uuid as _uid, json as _js
+        from cryptography.hazmat.primitives import hashes as _hs, padding as _pd
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key as _load_key
+        if not mch_id:
+            _cc = get_db().cursor()
+            _cc.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 ORDER BY id ASC LIMIT 1")
+            _cr = _cc.fetchone()
+            mch_id = _cr["mch_id"] if _cr else WX_MCH_ID
+            _cc.close()
+        cert_serial = cert_serial or WX_CERT_SERIAL_NO
+        key_path = key_path or WX_KEY_PATH
+        with open(key_path, "rb") as _f:
+            _key_obj = _load_key(_f.read(), password=None)
+        _ts = str(int(__import__("time").time()))
+        _nonce = _uid.uuid4().hex
+        _url = "/v3/merchant-service/complaints-v2/" + complaint_id
+        _sstr = "GET\n" + _url + "\n" + _ts + "\n" + _nonce + "\n\n"
+        _sig = _b64.b64encode(_key_obj.sign(_sstr.encode("utf-8"), _pd.PKCS1v15(), _hs.SHA256())).decode("utf-8")
+        _auth = "WECHATPAY2-SHA256-RSA2048 mchid=\"" + mch_id + "\",nonce_str=\"" + _nonce + "\",timestamp=\"" + _ts + "\",serial_no=\"" + cert_serial + "\",signature=\"" + _sig + "\""
+        _resp = _req.get("https://api.mch.weixin.qq.com" + _url, headers={"Authorization": _auth, "Accept": "application/json"}, timeout=10)
+        if _resp.status_code == 200:
+            return _resp.json()
+        logger.warning("[query_complaint] 查询失败 complaint_id=%s status=%s", complaint_id, _resp.status_code)
+    except Exception as _e:
+        logger.error("[query_complaint] 异常 complaint_id=%s err=%s", complaint_id, str(_e))
+    return None
+
 def _complaint_scheduler():
     """后台线程：每30秒扫描未处理的微信投诉（status=0），进行退款+回复"""
     import time
@@ -5902,7 +5948,23 @@ def _complaint_scheduler():
                 wxid = comp.get("wx_complaint_id", "")
                 ono = comp.get("order_no", "")
                 cstatus = comp.get("status", "0")
-                logger.info("[complaint_scheduler] 处理投诉 id=%s wx_id=%s status=%s", cid, wxid, cstatus)
+                # 如果投诉无订单号，主动查询微信API
+                if not ono and wxid:
+                    _qd = _query_wechat_complaint(wxid)
+                    if _qd:
+                        ono = _qd.get("out_trade_no", "") or _qd.get("transaction_id", "")
+                        cmch = _qd.get("complainted_mchid", "")
+                        cphone = _qd.get("payer_phone", "")
+                        if ono or cmch or cphone:
+                            try:
+                                _cc2 = get_db().cursor()
+                                _cc2.execute("UPDATE complaints SET order_no=COALESCE(order_no,%s), mch_id=COALESCE(mch_id,%s), user_phone=COALESCE(user_phone,%s) WHERE id=%s",
+                                             (ono if ono else None, cmch if cmch else None, cphone if cphone else None, cid))
+                                _cc2.connection.commit()
+                                _cc2.close()
+                            except:
+                                pass
+                logger.info("[complaint_scheduler] 处理投诉 id=%s wx_id=%s order_no=%s status=%s", cid, wxid, ono, cstatus)
                 if cstatus == "0":
                     refund_ok, refund_msg = _auto_refund_complaint_order(ono, transaction_id="", complaint_id=wxid)
                     if not refund_ok:

@@ -1060,7 +1060,7 @@ Vue.component('page-member-list',{template:`
 </table>
 <div class="pagination"><span>共 {{$parent.memberTotal}} 条</span><div><button :disabled="$parent.memberPage<=1" @click="$parent.loadMembers($parent.memberPage-1)">上一页</button><span style="margin:0 8px">{{$parent.memberPage}} / {{$parent.pageCount($parent.memberTotal,10)||1}}</span><button :disabled="$parent.memberPage>=$parent.pageCount($parent.memberTotal,10)" @click="$parent.loadMembers($parent.memberPage+1)">下一页</button></div></div>
 </div>
-</div>`});
+</div>`,created(){this.$parent.loadRechargeRecords(1);}});
 
 // Member Withdraw
 Vue.component('page-member-withdraw',{template:'\
@@ -1085,7 +1085,7 @@ Vue.component('page-member-withdraw',{template:'\
 </div>'});
 
 // Member Recharge (placeholder)
-Vue.component('page-member-recharge',{template:`<div class="page-box"><div class="box-header"><h3>会员充值记录</h3></div><div class="search-bar"><div class="search-item"><label>手机号</label><input v-model="$parent.rechargeSearchPhone" placeholder="请输入手机号" @keyup.enter="$parent.loadRechargeRecords(1)"></div><div class="search-item"><label>&nbsp;</label><button class="btn btn-sm btn-blue" @click="$parent.loadRechargeRecords(1)">搜索</button></div></div><table><tr><th>手机号</th><th>金额</th><th>交易号</th><th>时间</th></tr><tr v-for="r in $parent.rechargeRecords"><td>{{r.user_phone}}</td><td>{{r.amount}}元</td><td>{{r.transaction_id||&quot;-&quot;}}</td><td>{{$parent.formatTime(r.create_time)}}</td></tr><tr v-if="!rechargeRecords.length"><td colspan="4" class="empty-row">暂无数据</td></tr></table><div class="pagination"><span>共 {{$parent.rechargeTotal}} 条</span><div><button :disabled="$parent.rechargePage<=1" @click="$parent.loadRechargeRecords($parent.rechargePage-1)">上一页</button><span style="margin:0 8px">{{$parent.rechargePage}}</span><button :disabled="$parent.rechargePage>=$parent.pageCount($parent.rechargeTotal,10)" @click="$parent.loadRechargeRecords($parent.rechargePage+1)">下一页</button></div></div></div>`});
+Vue.component('page-member-recharge',{template:`<div class="page-box"><div class="box-header"><h3>会员充值记录</h3></div><div class="search-bar"><div class="search-item"><label>手机号</label><input v-model="$parent.rechargeSearchPhone" placeholder="请输入手机号" @keyup.enter="$parent.loadRechargeRecords(1)"></div><div class="search-item"><label>&nbsp;</label><button class="btn btn-sm btn-blue" @click="$parent.loadRechargeRecords(1)">搜索</button></div></div><table><tr><th>手机号</th><th>金额</th><th>交易号</th><th>时间</th></tr><tr v-for="r in $parent.rechargeRecords"><td>{{r.user_phone}}</td><td>{{r.amount}}元</td><td>{{r.transaction_id||&quot;-&quot;}}</td><td>{{$parent.formatTime(r.create_time)}}</td></tr><tr v-if="!$parent.rechargeRecords.length"><td colspan="4" class="empty-row">暂无数据</td></tr></table><div class="pagination"><span>共 {{$parent.rechargeTotal}} 条</span><div><button :disabled="$parent.rechargePage<=1" @click="$parent.loadRechargeRecords($parent.rechargePage-1)">上一页</button><span style="margin:0 8px">{{$parent.rechargePage}}</span><button :disabled="$parent.rechargePage>=$parent.pageCount($parent.rechargeTotal,10)" @click="$parent.loadRechargeRecords($parent.rechargePage+1)">下一页</button></div></div></div>`});
 
 // Complaint Self
 Vue.component('page-complaint-self',{template:'\

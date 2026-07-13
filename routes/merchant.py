@@ -886,7 +886,7 @@ def merchant_device_status():
         merchant_id, mfilter, mparams = _get_merchant_filter()
         conn = get_db()
         cursor = conn.cursor()
-        sql = 'SELECT c.id, c.name, c.cabinet_code, c.mainboard_device_id, c.last_heartbeat, l.name as location_name FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE ' + mfilter + ' ORDER BY l.name, c.name'
+        sql = "SELECT c.id, c.name, c.cabinet_code, c.mainboard_device_id, c.last_heartbeat, l.name as location_name FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE " + mfilter + " AND (c.last_heartbeat IS NULL OR c.last_heartbeat < NOW() - INTERVAL '30 seconds') ORDER BY l.name, c.name"
         cursor.execute(sql, mparams)
         rows = cursor.fetchall()
         conn.close()
@@ -895,7 +895,9 @@ def merchant_device_status():
         result = []
         for r in rows:
             d = dict(r)
-            d['is_online'] = 1 if d.get('mainboard_device_id') in _oids else 0
+            # 排除ws_proxy认为在线的设备
+            if d.get('mainboard_device_id') in _oids:
+                continue
             result.append(d)
         return json_response({'list': result})
     except Exception as e:

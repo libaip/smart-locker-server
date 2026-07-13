@@ -27,6 +27,30 @@ def _fmt_time(t):
     return s
 
 
+def _check_phone_uniqueness(cursor, phone, exclude_table=None, exclude_id=None):
+    """???????????/???/????"""
+    if exclude_table and exclude_id:
+        sql = """
+            SELECT id, tbl FROM (
+                SELECT id, 'agents' as tbl FROM agents WHERE contact_phone=%s
+                UNION ALL
+                SELECT id, 'merchants' as tbl FROM merchants WHERE contact_phone=%s
+                UNION ALL
+                SELECT id, 'employees' as tbl FROM employees WHERE phone=%s
+            ) all_phones
+        """
+        cursor.execute(sql, (phone, phone, phone))
+    else:
+        sql = "SELECT COUNT(*) FROM (SELECT contact_phone FROM agents UNION SELECT contact_phone FROM merchants UNION SELECT phone FROM employees) p WHERE p.phone=%s"
+        cursor.execute(sql, (phone,))
+        row = cursor.fetchone()
+        return row[0] > 0
+    for row in cursor.fetchall():
+        if row["tbl"] != exclude_table or row["id"] != exclude_id:
+            return True
+    return False
+
+
 
 bp = Blueprint('admin_v2', __name__)
 
@@ -1634,6 +1658,9 @@ def admin_agent_save():
         data = request.get_json()
         conn = get_db()
         c = conn.cursor()
+        if data.get('contact_phone') and _check_phone_uniqueness(c, data["contact_phone"], "agents" if data.get("id") else None, data.get("id")):
+            conn.close()
+            return json_response(message="该手机号已被其他商家/代理商/员工使用", code=400)
         if data.get('id'):
             fields = ['name','contact_name','contact_phone','status','commission_rate']
             sets, params = [], []
@@ -1815,6 +1842,9 @@ def admin_merchant_save():
         data = request.get_json()
         conn = get_db()
         c = conn.cursor()
+        if data.get('contact_phone') and _check_phone_uniqueness(c, data["contact_phone"], "merchants" if data.get("id") else None, data.get("id")):
+            conn.close()
+            return json_response(message="该手机号已被其他商家/代理商/员工使用", code=400)
         if data.get('id'):
             fields = ['name','merchant_number','contact_name','contact_phone','agent_id','status','permissions','commission_per_order','text_labels','dashboard_config']
             _int_fields = {'agent_id'}
@@ -1910,6 +1940,9 @@ def admin_employee_save():
         data = request.get_json()
         conn = get_db()
         c = conn.cursor()
+        if data.get('phone') and _check_phone_uniqueness(c, data["phone"], "employees" if data.get("id") else None, data.get("id")):
+            conn.close()
+            return json_response(message="该手机号已被其他商家/代理商/员工使用", code=400)
         if data.get('id'):
             fields = ['name','phone','role','merchant_id','status','permissions']
             sets, params = [], []
@@ -2288,7 +2321,7 @@ def admin_biz_stats():
             COUNT(CASE WHEN o.logic_mark IS NULL OR o.logic_mark != 'Y' THEN 1 END) as visible_count,
             SUM(CASE WHEN o.status=2 THEN 1 ELSE 0 END) as active_count,
             COALESCE(SUM(o.deposit_amount),0) as deposit_total,
-            COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL AND date(o.store_time)=date(o.refund_time) THEN o.refund_amount ELSE 0 END),0) as refund_total
+            COALESCE(SUM(CASE WHEN o.status=4 THEN o.refund_amount ELSE 0 END),0) as refund_total
             FROM orders o
             LEFT JOIN cabinets cab ON o.cabinet_id=cab.id
             LEFT JOIN locations l ON cab.location_id=l.id

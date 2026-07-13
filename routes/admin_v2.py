@@ -1437,6 +1437,38 @@ def admin_withdrawal_approve():
 
 @bp.route('/admin/withdrawal/reject', methods=['POST'])
 @require_auth
+
+
+@bp.route("/admin/recharge-records", methods=["GET", "POST"])
+@require_auth
+def admin_recharge_records():
+    """会员充值记录"""
+    try:
+        from helpers import _fmt_time
+        data = request.get_json() if request.method == "POST" else {}
+        search = (data or {}).get("search", "") or request.args.get("search", "")
+        page = int(request.args.get("page", (data or {}).get("page", 1)))
+        page_size = int(request.args.get("limit", (data or {}).get("limit", 10)))
+        conn = get_db()
+        c = conn.cursor()
+        where, params = "1=1", []
+        if search:
+            where += " AND bd.user_phone LIKE %s"
+            params.append(f"%%{search}%%")
+        c.execute("SELECT COUNT(*) FROM user_balance_details bd WHERE " + where, params)
+        total = c.fetchone()[0]
+        c.execute("SELECT bd.user_phone, bd.amount, o.transaction_id, bd.created_at FROM user_balance_details bd LEFT JOIN orders o ON bd.order_id = o.id WHERE " + where + " ORDER BY bd.id DESC LIMIT %s OFFSET %s",
+                  params + [page_size, (page - 1) * page_size])
+        rows = [dict(r) for r in c.fetchall()]
+        for r in rows:
+            r["create_time"] = _fmt_time(r.pop("created_at"))
+            r["amount"] = float(r["amount"])
+        conn.close()
+        return json_response(data={"list": rows, "total": total})
+    except Exception as e:
+        logger.error("[admin_recharge_records] %s", str(e))
+        return json_response(data={"list": [], "total": 0}, code=500)
+
 def admin_withdrawal_reject():
     """拒绝提现"""
     try:

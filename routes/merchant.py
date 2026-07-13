@@ -501,28 +501,11 @@ def merchant_slot_label(cabinet_id, slot_id):
 
 
 @bp.route('/merchant/cabinets/<int:cabinet_id>/open-all', methods=['POST'])
+@require_merchant_auth
 def merchant_open_all_slots(cabinet_id):
     try:
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        if not token:
-            return json_response(message='未登录', code=401)
         conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT id FROM merchants WHERE auth_token = %s", (token,))
-        m = c.fetchone()
-        if not m:
-            c.execute("SELECT merchant_id FROM employees WHERE auth_token = %s", (token,))
-            m = c.fetchone()
-        if not m:
-            conn.close()
-            return json_response(message='无效token', code=401)
-        c.execute('SELECT cs.slot_number, c.mainboard_device_id FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id WHERE cs.cabinet_id = %s AND cs.status NOT IN (3, 4)', (cabinet_id,))
-        slots = c.fetchall()
-        conn.close()
-        if not slots:
-            return json_response(message='没有可开的正常柜门', code=400)
-        did = str(slots[0]['mainboard_device_id'])
-        opened = [s['slot_number'] for s in slots]
         send_open_all(did)
         return json_response(message=f'已发送{len(opened)}个柜门开锁指令（批量）', data={'opened': opened})
     except Exception as e:
@@ -571,28 +554,18 @@ def merchant_cabinet_status(cabinet_id):
 
 # 单个柜门状态查询(GET)
 @bp.route('/merchant/query-door-status', methods=['POST'])
+@require_merchant_auth
 def merchant_query_door_status():
     """查询柜门物理状态（前端兼容接口）"""
     try:
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
         data = request.get_json() or {}
         cabinet_id = data.get('cabinet_id')
         board_no = data.get('board_no', 1)
         lock_no = data.get('lock_no')
-        if not token or not cabinet_id or not lock_no:
+        if not cabinet_id or not lock_no:
             return json_response(message='参数缺失', code=400)
         conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT id FROM merchants WHERE auth_token = %s", (token,))
-        m = c.fetchone()
-        if not m:
-            c.execute("SELECT merchant_id FROM employees WHERE auth_token = %s", (token,))
-            m = c.fetchone()
-        conn.close()
-        if not m:
-            return json_response(message='未登录', code=401)
-        
-        from helpers import send_open_lock
         import urllib.request as _req
         import json as _json
         import uuid

@@ -2380,21 +2380,30 @@ def user_withdraw():
             if wl_record:
                 # 白名单免审，直接退款
                 cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE mp_openid = %s', (actual_amount, actual_amount, mp_openid))
+                import json as _json_cons
                 remaining = actual_amount
-                first_wid = None
+                _total_refunded = 0.0
+                _all_order_ids = []
+                _first_err = None
+                _first_oid_openid = None
                 for oid, refundable, br in order_plan:
                     if remaining <= 0.001: break
                     refund_this = min(remaining, refundable)
                     order_openid = br.get('order_openid') or openid
                     ok, rid, rmsg = do_real_refund(order_id=oid, amount=refund_this, openid=order_openid, skip_balance=True)
-                    st = 2 if ok else 4
-                    cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, error_msg, openid) VALUES (%s, %s, %s, %s, 1, %s, %s, %s) RETURNING id', (oid, phone, refund_this, st, 'whitelist_auto', None if ok else rmsg, order_openid))
-                    row = cursor.fetchone()
-                    if first_wid is None: first_wid = row['id']
+                    if not ok and _first_err is None:
+                        _first_err = rmsg
+                    _total_refunded += refund_this
+                    _all_order_ids.append(str(oid))
+                    if _first_oid_openid is None:
+                        _first_oid_openid = order_openid
                     if ok:
                         cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_amount = COALESCE(refund_amount, 0) + %s WHERE id = %s', (rid, refund_this, oid))
                         cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (oid,))
                     remaining -= refund_this
+                _st = 2 if _first_err is None else 4
+                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, error_msg, openid, order_ids) VALUES (%s, %s, %s, %s, 1, %s, %s, %s, %s) RETURNING id', (_all_order_ids[0] if _all_order_ids else None, phone, _total_refunded, _st, 'whitelist_auto', _first_err, _first_oid_openid or openid, _json_cons3.dumps(_all_order_ids)))
+                first_wid = cursor.fetchone()['id']
                 if wl_record['source'] == 'manual_help':
                     consume_whitelist(openid)
                 conn.commit()
@@ -2406,20 +2415,25 @@ def user_withdraw():
             if reject_cnt > 0 and openid:
                 add_whitelist(openid, 'reject_retry', -1)
                 cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE mp_openid = %s', (actual_amount, actual_amount, mp_openid))
-                remaining = actual_amount; first_wid = None
+                import json as _json_cons3; remaining = actual_amount; _total_refunded = 0.0; _all_order_ids = []; _first_err = None; _first_oid_openid = None
                 for oid, refundable, br in order_plan:
                     if remaining <= 0.001: break
                     refund_this = min(remaining, refundable)
                     order_openid = br.get('order_openid') or openid
                     ok, rid, rmsg = do_real_refund(order_id=oid, amount=refund_this, openid=order_openid, skip_balance=True)
-                    st = 2 if ok else 4
-                    cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, error_msg, openid) VALUES (%s, %s, %s, %s, 1, %s, %s, %s) RETURNING id', (oid, phone, refund_this, st, 'whitelist_auto', None if ok else rmsg, order_openid))
-                    row = cursor.fetchone()
-                    if first_wid is None: first_wid = row['id']
+                    if not ok and _first_err is None:
+                        _first_err = rmsg
+                    _total_refunded += refund_this
+                    _all_order_ids.append(str(oid))
+                    if _first_oid_openid is None:
+                        _first_oid_openid = order_openid
                     if ok:
                         cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_amount = COALESCE(refund_amount, 0) + %s WHERE id = %s', (rid, refund_this, oid))
                         cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (oid,))
                     remaining -= refund_this
+                _st = 2 if _first_err is None else 4
+                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, error_msg, openid, order_ids) VALUES (%s, %s, %s, %s, 1, %s, %s, %s, %s) RETURNING id', (_all_order_ids[0] if _all_order_ids else None, phone, _total_refunded, _st, 'whitelist_auto', _first_err, _first_oid_openid or openid, _json_cons3.dumps(_all_order_ids)))
+                first_wid = cursor.fetchone()['id']
                 conn.commit()
                 conn.close()
                 return json_response(data={'withdrawal_id': first_wid, 'status': 'refunded', 'amount': actual_amount, 'message': '已加入白名单，自动退款'})

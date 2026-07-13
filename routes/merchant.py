@@ -201,7 +201,7 @@ def merchant_cabinets():
         result = []
         for cab in cabinets:
             d = dict(cab)
-            d['is_online'] = 1 if d.get('mainboard_device_id') in _oids else 0
+            d['is_online'] = 1 if (d.get('mainboard_device_id') in _oids) or (d.get('last_heartbeat') and (datetime.now() - d['last_heartbeat']).total_seconds() < 30) else 0
             result.append(d)
         return json_response(result)
     except Exception as e:

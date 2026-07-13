@@ -3,6 +3,7 @@
 独立 WebSocket 代理服务（端口 5004）
 """
 import json
+import gevent
 import logging
 import time
 import os
@@ -131,7 +132,7 @@ def app(environ, start_response):
             if not ws or ws.closed:
                 start_response("200 OK", [("Content-Type", "application/json")])
                 return [json.dumps({"success": False, "error": "offline"}).encode()]
-            ws.send(json.dumps(command))
+            gevent.spawn(ws.send, json.dumps(command))
             start_response("200 OK", [("Content-Type", "application/json")])
             return [json.dumps({"success": True}).encode()]
         except Exception as e:

@@ -4197,7 +4197,8 @@ def door_records_list():
 
 # ==================== 告警管理 ====================
 
-# @bp.route('/admin/alerts', methods=['GET', 'POST'])
+@bp.route('/admin/alerts', methods=['GET', 'POST'])
+@require_auth
 def alarms_list():
     try:
         page = int(request.args.get('page', 1))

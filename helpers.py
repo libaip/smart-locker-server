@@ -451,6 +451,13 @@ def send_open_all(device_id, protocol=None):
     if device_id not in pending_lock_commands:
         pending_lock_commands[device_id] = []
     pending_lock_commands[device_id].append(command)
+    try:
+        import urllib.request as _req
+        import json as _json
+        _body = _json.dumps({'device_id': device_id, 'command': command}).encode()
+        _req.urlopen('http://127.0.0.1:5004/send', data=_body, timeout=3)
+    except Exception as e:
+        logger.error(f'[send_open_all] {e}')
 
     import threading as _th, urllib.request as _req, json as _json
     try:

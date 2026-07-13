@@ -1402,3 +1402,15 @@ def add_whitelist_by_phone(phone, source, remain_count=-1):
         logger.warning("[add_whitelist_by_phone] phone=" + str(phone) + " no openid")
         return False
     return add_whitelist(openid, source, remain_count)
+
+
+def get_online_device_ids():
+    """从ws_proxy获取当前在线设备ID列表"""
+    try:
+        import urllib.request, json
+        resp = urllib.request.urlopen("http://127.0.0.1:5004/api/devices/online", timeout=2)
+        data = json.loads(resp.read())
+        return set(data.get("devices", []))
+    except Exception as e:
+        logger.error("[get_online_device_ids] %s", str(e))
+        return set()

@@ -461,7 +461,7 @@ def merchant_update_slot_status(cabinet_id, slot_id):
             return json_response(message='未登录', code=401)
         conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT merchant_id FROM merchants WHERE auth_token = %s", (token,))
+        c.execute("SELECT id FROM merchants WHERE auth_token = %s", (token,))
         m = c.fetchone()
         if not m:
             c.execute("SELECT merchant_id FROM employees WHERE auth_token = %s", (token,))
@@ -508,7 +508,7 @@ def merchant_open_all_slots(cabinet_id):
             return json_response(message='未登录', code=401)
         conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT merchant_id FROM merchants WHERE auth_token = %s", (token,))
+        c.execute("SELECT id FROM merchants WHERE auth_token = %s", (token,))
         m = c.fetchone()
         if not m:
             c.execute("SELECT merchant_id FROM employees WHERE auth_token = %s", (token,))
@@ -583,7 +583,7 @@ def merchant_query_door_status():
             return json_response(message='参数缺失', code=400)
         conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT merchant_id FROM merchants WHERE auth_token = %s", (token,))
+        c.execute("SELECT id FROM merchants WHERE auth_token = %s", (token,))
         m = c.fetchone()
         if not m:
             c.execute("SELECT merchant_id FROM employees WHERE auth_token = %s", (token,))

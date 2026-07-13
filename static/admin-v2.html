@@ -687,7 +687,7 @@ tr:hover td.action-col{background:#f5f7fa}
 <!-- Slot Grid Modal -->
 <div v-if="slotModal" class="modal-mask" @click.self="slotModal=false">
 <div class="modal-box md">
-<div class="modal-header"><h3>柜门管理 - {{cabinetForm.cabinet_code}}</h3><span class="close" @click="slotModal=false">&times;</span></div>
+<div class="modal-header"><h3>柜门管理 - {{cabinetForm.name}}（{{cabinetForm.location_name}}）</h3><span class="close" @click="slotModal=false">&times;</span></div>
 <div class="modal-body">
 <div style="margin-bottom:12px"><button class="btn btn-sm btn-orange" @click="openAllSlots">全部开门</button> <button class="btn btn-sm btn-blue" @click="showAddSlotModal()">添加柜门</button> <button class="btn btn-sm" @click="batchLabelSlots()">批量编号</button> <button class="btn btn-sm btn-red" @click="batchDeleteSlots()">批量删除</button> <button class="btn btn-sm btn-red" @click="clearAllSlots(cabinetForm)">清柜</button> <button class="btn btn-sm btn-green" @click="querySlotStatus()">查询</button> <button class="btn btn-sm btn-blue" @click="toggleSelectAll">{{selectedSlotIds.length===slotGridData.length&&slotGridData.length>0?'取消全选':'全选'}}</button><span v-if="selectedSlotIds.length>0" style="font-size:12px;color:#666;margin-left:6px">已选{{selectedSlotIds.length}}个</span></div>
 <div class="slot-grid">
@@ -944,7 +944,7 @@ Vue.component('page-machine-list',{template:'\
 <div class="search-item"><label>&nbsp;</label><button class="btn btn-sm btn-blue" @click="$parent.loadMachines(1)">查询</button></div>\
 </div>\
 <div class="table-scroll"><table><tr><th>ID</th><th>柜体编号</th><th>名称</th><th>网点</th><th>主板ID</th><th>来源</th><th>柜门数</th><th>收费</th><th>营业状态</th><th>设备状态</th><th>APP版本</th><th class="action-col">操作</th></tr>\
-<tr v-for="d in $parent.machines"><td>{{d.id}}</td><td>{{d.cabinet_code}}</td><td>{{d.name}}</td><td>{{d.location_name||\'-\'}}</td><td>{{d.name}}<br><small style=" color:#999>{{d.mainboard_device_id}}</small></td><td>{{d.mainboard_source||\'-\'}}</td><td>{{d.total_slots||0}}</td><td><span v-if="d.charge_mode===\'free\'" class="status-tag green">免费</span><span v-else>¥{{d.deposit_amount||0}}</span></td><td><span :class="\'status-tag \'+(d.business_status===\'open\'?\'green\':\'red\')">{{d.business_status===\'open\'?\'营业中\':\'已停业\'}}</span></td><td><span :class="\'status-tag \'+(d.is_online?\'green\':\'gray\')">{{d.is_online?\'在线\':\'离线\'}}</span></td><td><span :style="{color:d.app_version_code<104?\'#f56c6c\':\'#67c23a\',fontWeight:600}">{{d.app_version||\'-\'}}</span><span v-if="d.app_version_code<104&&d.app_version" style="color:#f56c6c;font-size:11px"> 有更新</span></td><td style="white-space:nowrap" class="action-col">\
+<tr v-for="d in $parent.machines"><td>{{d.id}}</td><td>{{d.cabinet_code}}</td><td>{{d.name}}</td><td>{{d.location_name||\'-\'}}</td><td>{{d.mainboard_device_id}}</td><td>{{d.mainboard_source||\'-\'}}</td><td>{{d.total_slots||0}}</td><td><span v-if="d.charge_mode===\'free\'" class="status-tag green">免费</span><span v-else>¥{{d.deposit_amount||0}}</span></td><td><span :class="\'status-tag \'+(d.business_status===\'open\'?\'green\':\'red\')">{{d.business_status===\'open\'?\'营业中\':\'已停业\'}}</span></td><td><span :class="\'status-tag \'+(d.is_online?\'green\':\'gray\')">{{d.is_online?\'在线\':\'离线\'}}</span></td><td><span :style="{color:d.app_version_code<104?\'#f56c6c\':\'#67c23a\',fontWeight:600}">{{d.app_version||\'-\'}}</span><span v-if="d.app_version_code<104&&d.app_version" style="color:#f56c6c;font-size:11px"> 有更新</span></td><td style="white-space:nowrap" class="action-col">\
 <button class="btn-sm" style="background:#409eff;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px" @click="$parent.showCabinetModal(d)">编辑</button>\
 <button class="btn-sm" style="background:#67c23a;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px" @click="$parent.showSlotModal(d)">柜门</button>\
 <button class="btn-sm" style="background:#909399;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px" @click="$parent.showDeviceDetail(d)">详情</button>\
@@ -1292,7 +1292,7 @@ Vue.component('page-withdraw-manage',{template:`
 </table>
 <div class="pagination"><span>共 {{$parent.withdrawalTotal}} 条</span><div><button :disabled="$parent.withdrawalPage<=1" @click="$parent.loadWithdrawals($parent.withdrawalPage-1)">上一页</button><span style="margin:0 8px">{{$parent.withdrawalPage}} / {{$parent.pageCount($parent.withdrawalTotal,10)||1}}</span><button :disabled="$parent.withdrawalPage>=$parent.pageCount($parent.withdrawalTotal,10)" @click="$parent.loadWithdrawals($parent.withdrawalPage+1)">下一页</button></div></div>
 </div>
-</div>`,created(){this.$parent.loadWithdrawals(1);}});
+</div>`,created(){var d=new Date();this.$parent.withdrawalDateEnd=d.toISOString().slice(0,10);d.setDate(d.getDate()-30);this.$parent.withdrawalDateStart=d.toISOString().slice(0,10);this.$parent.loadWithdrawals(1);}});
 Vue.component('page-company-list',{template:`
 <div class="page-box">
 <div class="box-header"><h3>公司管理</h3><button class="btn btn-sm btn-blue" style="float:right" @click="$parent.companyModal=true;$parent.companyForm={}">+ 新增</button></div>
@@ -1641,7 +1641,7 @@ Vue.component('page-alert-mgr',{template:`
 </div>
 
 <table class="data-table">
-<thead><tr><th>ID</th><th>设备ID</th><th>告警类型</th><th>详情</th><th>时间</th></tr></thead>
+<thead><tr><th>ID</th><th>设备ID</th><th>柜号</th><th>网点</th><th>告警类型</th><th>详情</th><th>时间</th><th>操作</th></tr></thead>
 <tbody>
 <tr v-for="a in $parent.alerts" :key="a.id">
 <td>{{a.id}}</td>
@@ -1958,7 +1958,7 @@ else if(v==='machine-list'){this.machines=[];this.loadMachines();this.loadLocati
 else if(v==='location-list'){this.locations=[];this.loadLocations();var self=this;if(this.locationRefreshTimer)clearInterval(this.locationRefreshTimer);this.locationRefreshTimer=setInterval(function(){self.loadLocations();},30000);}
 else if(v==='online-order'){this.orders=[];this.loadOrders();}else if(v==='alert-mgr')this.loadAlerts(1);
 else if(v==='member-list')this.loadMembers();
-else if(v==='member-withdraw')this.loadWithdrawals();
+else if(v==='member-withdraw'){var d=new Date();this.withdrawalDateEnd=d.toISOString().slice(0,10);d.setDate(d.getDate()-30);this.withdrawalDateStart=d.toISOString().slice(0,10);this.loadWithdrawals();}
 else if(v==='member-recharge')this.loadMembers();
 else if(v==='complaint-self'){this.complaintType='complaint';this.complaints=[];this.loadComplaints();var self=this;if(this.complaintRefreshTimer)clearInterval(this.complaintRefreshTimer);this.complaintRefreshTimer=setInterval(function(){self.loadComplaints();},5000);}
 else if(v==='complaint-wx'){this.complaintType='wechat';this.complaints=[];this.loadComplaints();var self=this;if(this.complaintRefreshTimer)clearInterval(this.complaintRefreshTimer);this.complaintRefreshTimer=setInterval(function(){self.loadComplaints();},5000);}
@@ -1972,7 +1972,7 @@ else if(v==='store-record')this.loadAfterSales();
 else if(v==='personal-info'){this.loadProfile();}
 else if(v==='change-pwd'){this.pwdForm={old:'',new1:'',new2:''};}
 else if(v==='settlement'){this.loadSettlementStats();this.loadSettlement(1);}
-else if(v==='withdraw-manage'){this.loadWithdrawals(1);}
+else if(v==='withdraw-manage'){var d=new Date();this.withdrawalDateEnd=d.toISOString().slice(0,10);d.setDate(d.getDate()-30);this.withdrawalDateStart=d.toISOString().slice(0,10);this.loadWithdrawals(1);}
 else if(v==='platform-flow'){this.loadPlatformFlow(1);}
 else if(v==='fund-flow'){this.loadFundFlow();}
 else if(v==='query-all'){this.queryResults=[];}

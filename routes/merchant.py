@@ -196,6 +196,7 @@ def merchant_cabinets():
             cursor.execute(f'SELECT c.*, MAX(l.name) as location_name, SUM(CASE WHEN cs.status = 1 THEN 1 ELSE 0 END) as available_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as occupied_slots, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault_slots, 0 as is_online FROM cabinets c JOIN locations l ON c.location_id = l.id LEFT JOIN cabinet_slots cs ON c.id = cs.cabinet_id WHERE {mfilter} GROUP BY c.id ORDER BY c.created_at DESC', (*mparams,))
         cabinets = cursor.fetchall()
         conn.close()
+        from helpers import get_online_device_ids
         _oids = get_online_device_ids()
         result = []
         for cab in cabinets:
@@ -541,6 +542,7 @@ def merchant_cabinet_status(cabinet_id):
         cursor.execute("SELECT mainboard_device_id FROM cabinets c WHERE c.id = %s", (cabinet_id,))
         _did_row = cursor.fetchone()
         _did = _did_row[0] if _did_row else None
+        from helpers import get_online_device_ids
         is_online = _did in get_online_device_ids() if _did else False
         cursor.execute('SELECT COUNT(*) as total, SUM(CASE WHEN cs.status = 1 THEN 1 ELSE 0 END) as free, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as using_cnt, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault FROM cabinet_slots cs WHERE cs.cabinet_id = %s', (cabinet_id,))
         slot_stats = cursor.fetchone()
@@ -822,6 +824,7 @@ def merchant_device_status():
         cursor.execute(sql, mparams)
         rows = cursor.fetchall()
         conn.close()
+        from helpers import get_online_device_ids
         _oids = get_online_device_ids()
         result = []
         for r in rows:

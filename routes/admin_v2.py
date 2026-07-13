@@ -4319,26 +4319,6 @@ def alerts_list():
                 d['cabinet_name'] = cabinet_cache[did].get('cabinet_name', '')
                 d['location_name'] = cabinet_cache[did].get('location_name', '')
             result_list.append(d)
-        # Add offline devices as pseudo-alerts
-        try:
-            cab_conn = get_db()
-            cab_c = cab_conn.cursor()
-            offline_sql = "SELECT c.id as cab_id, c.mainboard_device_id, c.cabinet_code, c.name as cab_name, l.name as loc_name, c.last_heartbeat FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.status=1 AND (c.last_heartbeat IS NULL OR c.last_heartbeat < NOW() - INTERVAL '90 seconds')"
-            cab_c.execute(offline_sql)
-            offline_rows = cab_c.fetchall()
-            counter = 0
-            for r in offline_rows:
-                counter += 1
-                offline_alert = {'id': -counter, 'device_id': r[1] or '', 'alert_type': 'device_offline', 'detail': '设备离线 (' + (r[2] or r[3] or '') + ')', 'created_at': str(r[5] or '')[:19]}
-                result_list.insert(0, offline_alert)
-            total = len(result_list)
-            cab_conn.close()
-        except Exception as _oe:
-            logger.error(f'[offline_alerts] {_oe}')
-        conn.close()
-        return jsonify({'code': 200, 'data': {'list': result_list, 'total': total, 'device_summaries': device_summaries}})
-    except Exception as e:
-        return jsonify({'code': 500, 'message': str(e)})
     finally:
         try:
             conn.close()

@@ -158,6 +158,13 @@ def admin_devices():
         page_size = int(request.args.get("limit", (data or {}).get("limit", 20)))
         conn = get_db()
         c = conn.cursor()
+        # Auto-deactivate cabinets with no heartbeat for 7+ days
+        try:
+            _dc = conn.cursor()
+            _dc.execute("UPDATE cabinets SET status=0 WHERE status=1 AND last_heartbeat < NOW() - INTERVAL '7 days'")
+            conn.commit()
+        except:
+            pass
         where, params = "1=1", []
         if keyword:
             where += ' AND (cabinet_code LIKE %s OR name LIKE %s OR mainboard_device_id LIKE %s)'

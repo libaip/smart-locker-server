@@ -803,6 +803,25 @@ def merchant_alerts():
 
 
 
+
+@bp.route('/merchant/device-status', methods=['GET'])
+@require_merchant_auth
+def merchant_device_status():
+    try:
+        merchant_id, mfilter, mparams = _get_merchant_filter()
+        conn = get_db()
+        cursor = conn.cursor()
+        sql = 'SELECT c.id, c.name, c.cabinet_code, c.mainboard_device_id, c.last_heartbeat, l.name as location_name, CASE WHEN c.last_heartbeat >= NOW() - INTERVAL ' + "'30 seconds'" + ' THEN 1 ELSE 0 END as is_online FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE ' + mfilter + ' ORDER BY l.name, c.name'
+        cursor.execute(sql, mparams)
+        rows = cursor.fetchall()
+        conn.close()
+        return json_response({'list': [dict(r) for r in rows]})
+    except Exception as e:
+        from helpers import logger
+        logger.error('[merchant_device_status] %s', str(e))
+        return json_response(message=str(e), code=500)
+
+
 @bp.route('/merchant/review-history', methods=['GET'])
 def merchant_review_history():
     try:

@@ -3264,6 +3264,36 @@ def get_settings():
         except Exception:
             pass
 
+
+@bp.route('/admin/alerts/delete', methods=['POST'])
+def alerts_delete():
+    """??????"""
+    try:
+        data = request.get_json() or {}
+        alert_id = data.get('id', '')
+        device_id = data.get('device_id', '')
+        days = int(data.get('days', 0))
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        if alert_id:
+            c.execute("DELETE FROM device_alerts WHERE id=?", (alert_id,))
+            msg = f'????? #{alert_id}'
+        elif device_id:
+            c.execute("DELETE FROM device_alerts WHERE device_id=?", (device_id,))
+            msg = f'????? {device_id} ???'
+        elif days > 0:
+            c.execute("DELETE FROM device_alerts WHERE created_at < datetime('now', ?)", ('-' + str(days) + ' days',))
+            msg = f'??? {days} ?????'
+        else:
+            c.execute("DELETE FROM device_alerts")
+            msg = '???????'
+        deleted = c.rowcount
+        conn.commit()
+        conn.close()
+        return jsonify({'code': 200, 'message': msg + f'???? {deleted} ??'})
+    except Exception as e:
+        return jsonify({'code': 500, 'message': str(e)})
+
 @bp.route('/settings/save', methods=['POST'])
 def save_settings():
     try:
@@ -4223,21 +4253,45 @@ def alerts_list():
             where += " AND alert_type=?"
             params.append(alert_type)
         if days > 0:
-            where += " AND created_at >= NOW() - INTERVAL '" + str(days) + " days'"
+            where += " AND created_at >= datetime('now', '-" + str(days) + " days')"
         total = c.execute(f"SELECT COUNT(*) FROM device_alerts {where}", params).fetchone()[0]
         rows = c.execute(f"SELECT * FROM device_alerts {where} ORDER BY id DESC LIMIT ? OFFSET ?", params + [limit, (page-1)*limit]).fetchall()
         result_list = []
+        # Cache cabinet info from PostgreSQL
+        cabinet_cache = {}
+        try:
+            cache_conn = get_db()
+            cache_cur = cache_conn.cursor()
+            cache_cur.execute("SELECT mainboard_device_id, cabinet_code, name, location_id FROM cabinets WHERE mainboard_device_id IS NOT NULL")
+            for cr in cache_cur.fetchall():
+                cabinet_cache[cr[0]] = {'cabinet_code': cr[1] or '', 'cabinet_name': cr[2] or '', 'location_id': cr[3]}
+            cache_conn.close()
+            # Get location names
+            cache_cur2 = get_db()
+            for did, cinfo in cabinet_cache.items():
+                if cinfo.get('location_id'):
+                    cache_cur2.execute("SELECT name FROM locations WHERE id=%s", (cinfo['location_id'],))
+                    lr = cache_cur2.fetchone()
+                    cinfo['location_name'] = lr[0] if lr else ''
+            cache_cur2.close()
+        except:
+            pass
         for r in rows:
             d = dict(r)
             ts = d.get('created_at', '')
             if ts and ' ' in str(ts):
                 d['created_at'] = str(ts)[:19]
+            did = d.get('device_id', '')
+            if did in cabinet_cache:
+                d['cabinet_code'] = cabinet_cache[did].get('cabinet_code', '')
+                d['cabinet_name'] = cabinet_cache[did].get('cabinet_name', '')
+                d['location_name'] = cabinet_cache[did].get('location_name', '')
             result_list.append(d)
         # Add offline devices as pseudo-alerts
         try:
             cab_conn = get_db()
             cab_c = cab_conn.cursor()
-            offline_sql = "SELECT c.id as cab_id, c.mainboard_device_id, c.cabinet_code, c.name as cab_name, l.name as loc_name, c.last_heartbeat FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.status=1 AND (c.last_heartbeat IS NULL OR c.last_heartbeat < datetime('now', '-90 seconds'))"
+            offline_sql = "SELECT c.id as cab_id, c.mainboard_device_id, c.cabinet_code, c.name as cab_name, l.name as loc_name, c.last_heartbeat FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.status=1 AND (c.last_heartbeat IS NULL OR c.last_heartbeat < NOW() - INTERVAL '90 seconds')"
             cab_c.execute(offline_sql)
             offline_rows = cab_c.fetchall()
             counter = 0

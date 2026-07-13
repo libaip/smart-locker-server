@@ -1450,7 +1450,7 @@ Vue.component('page-user-manage',{template:'\
 <div class="box-header"><h3>用户管理</h3><div><button class="btn btn-sm btn-blue" @click="$parent.showUserModal()">+ 新增用户</button></div></div>\
 <table><tr><th>ID</th><th>用户名</th><th>角色</th><th>创建时间</th><th>操作</th></tr>\
 <tr v-for="u in $parent.users"><td>{{u.id}}</td><td>{{u.username}}</td><td>{{u.role}}</td><td>{{u.created_at}}</td><td style="white-space:nowrap"><button class="btn-text" @click="$parent.showUserModal(u)">编辑</button><button class="btn-text red" @click="$parent.deleteUser(u)">删除</button></td></tr>\
-<tr v-if="!$parent.users.length"><td colspan="5" class="empty-row">暂无数据</td></tr>\
+<tr v-if="!$parent.users.length"><td colspan="8" class="empty-row">暂无数据</td></tr>\
 </table>\
 </div>\
 </div>'});
@@ -1467,7 +1467,7 @@ Vue.component('page-role-manage',{template:`
 <td>{{row.created_at}}</td>
 <td><button class="btn btn-sm" @click="$parent.roleForm=Object.assign({},row);$parent.roleModal=true">编辑</button></td>
 </tr>
-<tr v-if="$parent.roleList.length===0"><td colspan="5" style="text-align:center;color:#909399;padding:20px">暂无数据</td></tr>
+<tr v-if="$parent.roleList.length===0"><td colspan="8" style="text-align:center;color:#909399;padding:20px">暂无数据</td></tr>
 </tbody>
 </table>
 <div class="modal" v-if="$parent.roleModal" style="display:block;background:rgba(0,0,0,0.5);position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999">
@@ -1590,7 +1590,7 @@ Vue.component('page-device-logs',{template:`
 <tr v-for="log in $parent.deviceLogList" :key="log.id">
 <td>{{log.id}}</td><td>{{log.device_id}}</td><td>{{.logTypeText(log.log_type)}}</td><td>{{.logContentText(log.content)}}</td><td>{{.formatTime(log.created_at)}}</td>
 </tr>
-<tr v-if="$parent.deviceLogList.length===0"><td colspan="5" style="text-align:center;color:#909399;padding:20px">暂无数据</td></tr>
+<tr v-if="$parent.deviceLogList.length===0"><td colspan="8" style="text-align:center;color:#909399;padding:20px">暂无数据</td></tr>
 </tbody>
 </table>
 </div>`,created(){this.$parent.loadDeviceLogs();}});
@@ -1647,10 +1647,13 @@ Vue.component('page-alert-mgr',{template:`
 <td>{{a.id}}</td>
 <td>{{a.device_id||'-'}}</td>
 <td><span :style="{color:a.alert_type==='offline'?'#e74c3c':a.alert_type==='online'?'#1890ff':'#fa8c16',fontWeight:600}">{{a.alert_type==='offline'?'离线':a.alert_type==='online'?'在线':a.alert_type||'-'}}</span></td>
+<td>{{a.cabinet_code||a.cabinet_name||'-'}}</td>
+<td>{{a.location_name||'-'}}</td>
 <td>{{a.detail||'-'}}</td>
 <td style="font-family:monospace;font-size:13px">{{a.created_at}}</td>
+<td><button class="btn btn-xs btn-red" @click="$parent.deleteAlert(a.id)" title="??">??</button></td>
 </tr>
-<tr v-if="$parent.alerts.length===0"><td colspan="5" style="text-align:center;color:#909399;padding:20px">暂无告警记录</td></tr>
+<tr v-if="$parent.alerts.length===0"><td colspan="8" style="text-align:center;color:#909399;padding:20px">暂无告警记录</td></tr>
 </tbody>
 </table>
 <div class="pagination"><span>共 {{$parent.alertTotal}} 条</span><div><button :disabled="$parent.alertPage<=1" @click="$parent.loadAlerts($parent.alertPage-1)">上一页</button><span style="margin:0 8px">{{$parent.alertPage}} / {{Math.ceil($parent.alertTotal/10)||1}}</span><button :disabled="$parent.alertPage>=Math.ceil($parent.alertTotal/10)" @click="$parent.loadAlerts($parent.alertPage+1)">下一页</button></div></div>
@@ -1931,7 +1934,7 @@ resetRemoteOpenLogsFilter:function(){var today=new Date();var d3=new Date(today)
 loadDeviceLogs:function(){var self=this;this.api('/admin/device-logs',{page:this.deviceLogPage}).then(function(d){self.deviceLogList=d.data&&d.data.list||[];self.deviceLogTotal=d.data&&d.data.total||0;}).catch(function(e){self.toast(e.message||'加载失败','error');});},logTypeText:function(t){var m={heartbeat:'心跳',info:'信息',hb:'心跳',hb_time:'心跳时间',open:'开锁',close:'关锁',error:'错误',warn:'警告',alarm:'报警',online:'在线',offline:'离线',test:'测试'};return m[t]||t||'-';},
         logContentText:function(c){if(!c)return'-';try{var a=JSON.parse(c);if(Array.isArray(a)){var r=a[a.length-1];if(typeof r==='string'&&r.length<50)return r;return a.join(', ');}if(typeof a==='object')return JSON.stringify(a).substring(0,100);return String(a).substring(0,100);}catch(e){return String(c).substring(0,100);}},
         formatTime:function(t){if(!t)return'-';try{var d=new Date(t.replace(' ','T'));if(isNaN(d.getTime()))return t;var y=d.getFullYear(),mo=('0'+(d.getMonth()+1)).slice(-2),da=('0'+d.getDate()).slice(-2),h=d.getHours().toString().padStart(2,'0'),mi=d.getMinutes().toString().padStart(2,'0'),s=d.getSeconds().toString().padStart(2,'0');return y+'-'+mo+'-'+da+' '+h+':'+mi+':'+s;}catch(e){return t;}},
-loadDoorRecords:function(){var self=this;this.api('/admin/door-records',{page:this.doorRecordsPage},'GET').then(function(d){self.doorRecords=d.list||d.data||[];self.doorRecordsTotal=d.total||0;}).catch(function(e){self.toast(e.message||'加载失败','error');});},loadAlerts:function(page){var self=this;if(page)this.alertPage=page;var params={page:this.alertPage,limit:10,days:this.alertDays};if(this.alertFilterDevice)params.device_id=this.alertFilterDevice;if(this.alertFilterType)params.alert_type=this.alertFilterType;this.api('/admin/alerts',params,'GET').then(function(d){var data=d.data||d;self.alerts=data.list||[];self.alertTotal=data.total||0;self.alertDeviceSummaries=data.device_summaries||[];}).catch(function(e){self.toast(e.message||'加载失败','error');});},
+loadDoorRecords:function(){var self=this;this.api('/admin/door-records',{page:this.doorRecordsPage},'GET').then(function(d){self.doorRecords=d.list||d.data||[];self.doorRecordsTotal=d.total||0;}).catch(function(e){self.toast(e.message||'加载失败','error');});},deleteAlert:function(id){var self=this;if(!confirm('?????????'))return;this.api('/admin/alerts/delete',{id:id},'POST').then(function(d){self.toast(d.message||'???');self.loadAlerts(self.alertPage);}).catch(function(e){self.toast(e.message||'????','error');});},loadAlerts:function(page){var self=this;if(page)this.alertPage=page;var params={page:this.alertPage,limit:10,days:this.alertDays};if(this.alertFilterDevice)params.device_id=this.alertFilterDevice;if(this.alertFilterType)params.alert_type=this.alertFilterType;this.api('/admin/alerts',params,'GET').then(function(d){var data=d.data||d;self.alerts=data.list||[];self.alertTotal=data.total||0;self.alertDeviceSummaries=data.device_summaries||[];}).catch(function(e){self.toast(e.message||'加载失败','error');});},
 loadPendingCmds:function(){var self=this;this.api('/admin/pending-cmds',{page:this.pendingCmdsPage},'GET').then(function(d){self.pendingCmds=d.list||d.data||[];self.pendingCmdsTotal=d.total||0;}).catch(function(e){self.toast(e.message||'加载失败','error');});},
 cancelCmd:function(id){var self=this;this.confirm2('确定取消此命令?',function(){self.api('/admin/cancel-cmd',{id:id}).then(function(){self.toast('命令已取消');self.loadPendingCmds();}).catch(function(e){self.toast(e.message||'操作失败','error');});});},
 

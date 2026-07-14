@@ -97,6 +97,8 @@ def admin_dashboard():
         today_amount = c.fetchone()[0]
         c.execute('SELECT COUNT(*) FROM user_balances')
         user_count = c.fetchone()[0]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={
             'onlineIncome': f'{online_income:.2f}',
@@ -214,6 +216,8 @@ def admin_devices():
             d['app_version'] = d.get('app_version', '')
             d['app_version_code'] = d.get('app_version_code', 0) or 0
             devices.append(d)
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': devices, 'total': total})
     except Exception as e:
@@ -405,6 +409,8 @@ def admin_slots():
         else:
             c.execute('SELECT * FROM cabinet_slots ORDER BY cabinet_id, slot_number')
         slots = [dict(r) for r in c.fetchall()]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': slots})
     except Exception as e:
@@ -528,6 +534,8 @@ def admin_locations():
             WHERE {where} ORDER BY l.created_at DESC LIMIT %s OFFSET %s''',
                   params + [page_size, (page-1)*page_size])
         locations = [dict(r) for r in c.fetchall()]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': locations, 'total': total})
     except Exception as e:
@@ -729,6 +737,8 @@ def admin_orders():
                     if should_hide_order(d['merchant_id'], d['id'], d.get('user_phone', ''), loc['hide_ratio'], whitelist, d.get('logic_mark')):
                         d['logic_mark'] = 'Y'
             orders.append(d)
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': orders, 'total': total})
     except Exception as e:
@@ -1225,6 +1235,8 @@ def admin_members():
             FROM user_balances ub WHERE {where} ORDER BY ub.created_at DESC LIMIT %s OFFSET %s''',
                   params + [page_size, (page-1)*page_size])
         members = [dict(r) for r in c.fetchall()]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': members, 'total': total})
     except Exception as e:
@@ -1314,6 +1326,8 @@ def admin_withdrawals():
             d['created_at'] = _fmt_time(d.get('created_at'))
             d['approve_time'] = _fmt_time(d.get('approve_time'))
             withdrawals.append(d)
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': withdrawals, 'total': total})
     except Exception as e:
@@ -1468,6 +1482,8 @@ def admin_recharge_records():
         for r in rows:
             r["create_time"] = _fmt_time(r.pop("created_at"))
             r["amount"] = float(r["amount"])
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={"list": rows, "total": total})
     except Exception as e:
@@ -1683,6 +1699,8 @@ def admin_agents():
             FROM agents a WHERE {where} ORDER BY a.created_at DESC LIMIT %s OFFSET %s''',
                   params + [page_size, (page-1)*page_size])
         agents = [dict(r) for r in c.fetchall()]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': agents, 'total': total})
     except Exception as e:
@@ -1867,6 +1885,8 @@ def admin_merchants():
             WHERE {where} ORDER BY m.created_at DESC LIMIT %s OFFSET %s''',
                   params + [page_size, (page-1)*page_size])
         merchants = [dict(r) for r in c.fetchall()]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': merchants, 'total': total})
     except Exception as e:
@@ -1965,6 +1985,8 @@ def admin_employees():
             WHERE {where} ORDER BY e.created_at DESC LIMIT %s OFFSET %s''',
                   params + [page_size, (page-1)*page_size])
         employees = [dict(r) for r in c.fetchall()]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': employees, 'total': total})
     except Exception as e:
@@ -2199,6 +2221,8 @@ def admin_after_sales():
             WHERE {where} ORDER BY a.created_at DESC LIMIT %s OFFSET %s''',
                   params + [page_size, (page-1)*page_size])
         records = [dict(r) for r in c.fetchall()]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': records, 'total': total})
     except Exception as e:
@@ -2310,6 +2334,8 @@ def admin_stats():
                 'deposit_total': float(row['deposit_total'] if row else 0),
                 'refund_total': float(row['refund_total'] if row else 0)
             })
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'summary': summary, 'locations': locations, 'trend': trend})
     except Exception as e:
@@ -2539,6 +2565,8 @@ def admin_biz_stats():
                 'ad_fee': float(row[4] if row and row[4] else 0)
             })
         
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={
             'orderStats': orderStats,
@@ -2815,6 +2843,8 @@ def settlement_list():
             count_params.append(date_end)
         c.execute(count_sql, count_params)
         total = c.fetchone()[0]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': rows, 'total': total, 'page': page, 'size': size})
     except Exception as e:
@@ -2835,6 +2865,8 @@ def settlement_stats():
         completed = c.fetchone()[0]
         c.execute("SELECT COUNT(*) as refunded FROM orders WHERE status=3")
         refunded = c.fetchone()[0]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={
             'total_orders': row['total_orders'],
@@ -2879,6 +2911,8 @@ def withdrawals_list():
             count_params.append(int(status))
         c.execute(count_sql, count_params)
         total = c.fetchone()[0]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': rows, 'total': total, 'page': page, 'size': size})
     except Exception as e:
@@ -2946,6 +2980,8 @@ def platform_flow_list():
         total = c.fetchone()[0]
         c.execute("SELECT COALESCE(SUM(CASE WHEN type=1 THEN amount END),0) as total_deposit, COALESCE(SUM(CASE WHEN type=2 THEN amount END),0) as total_refund FROM payments WHERE status=1")
         summary = c.fetchone()
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={
             'list': rows, 'total': total, 'page': page, 'size': size,
@@ -2970,6 +3006,8 @@ def fund_flow_list():
         rows = [dict(r) for r in c.fetchall()]
         c.execute("SELECT COUNT(*) as total_users, COALESCE(SUM(balance),0) as total_balance FROM user_balances")
         summary = c.fetchone()
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': rows, 'total_users': summary['total_users'], 'total_balance': summary['total_balance']})
     except Exception as e:
@@ -3006,6 +3044,8 @@ def query_all_list():
                     WHERE c.cabinet_code LIKE %s OR c.name LIKE %s OR c.mainboard_device_id LIKE %s LIMIT 50""",
                     (f'%{keyword}%', f'%{keyword}%', f'%{keyword}%'))
             results = [dict(r) for r in c.fetchall()]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': results, 'total': len(results)})
     except Exception as e:
@@ -3022,6 +3062,8 @@ def companies_list():
         c = conn.cursor()
         c.execute("SELECT * FROM companies ORDER BY id DESC")
         rows = [dict(r) for r in c.fetchall()]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': rows, 'total': len(rows)})
     except Exception as e:
@@ -3079,6 +3121,8 @@ def blacklist_list():
                 FROM blacklist b LEFT JOIN cabinets c ON b.cabinet_id=c.id
                 ORDER BY b.id DESC""")
         rows = [dict(r) for r in c.fetchall()]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': rows, 'total': len(rows)})
     except Exception as e:
@@ -3173,6 +3217,8 @@ def location_alarms_list():
             else:
                 row['offline'] = True
                 row['heartbeat_age_min'] = 0
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': rows, 'total': len(rows)})
     except Exception as e:
@@ -3189,6 +3235,8 @@ def roles_list():
         c = conn.cursor()
         c.execute("SELECT id, username, role, created_at FROM admin_users ORDER BY id")
         rows = [dict(r) for r in c.fetchall()]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': rows, 'total': len(rows)})
     except Exception as e:
@@ -4016,6 +4064,8 @@ def admin_merchant_share_stats():
         total_orders = sum(d['order_count'] for d in details)
         total_share = sum(d['share_total'] for d in details)
         
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={
             'details': details,
@@ -4200,6 +4250,8 @@ def door_records_list():
                     params.append(o_str)
         total = c.execute(f"SELECT COUNT(*) FROM door_records {where}", params).fetchone()[0]
         rows = c.execute(f"SELECT * FROM door_records {where} ORDER BY id DESC LIMIT %s OFFSET %s", params + [limit, (page-1)*limit]).fetchall()
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': [dict(r) for r in rows], 'total': total})
     except Exception as e:
@@ -4378,6 +4430,8 @@ def admin_cabinet_groups():
             WHERE {where} ORDER BY cg.created_at DESC LIMIT %s OFFSET %s''',
                   params + [page_size, (page-1)*page_size])
         groups = [dict(r) for r in c.fetchall()]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'list': groups, 'total': total})
     except Exception as e:
@@ -4659,6 +4713,8 @@ def admin_location_qrcode():
         base_url = 'https://locker.cqdyxl.com/store'
         for g in groups:
             g['qr_url'] = base_url + g['group_code']
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'location': dict(location), 'groups': groups})
     except Exception as e:
@@ -4704,6 +4760,8 @@ def admin_slot_add():
         cnt = cur.fetchone()['cnt']
         cur.execute('UPDATE cabinets SET total_slots=%s WHERE id=%s', (cnt, cabinet_id))
         conn.commit()
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'added': added}, message=f'成功添加{added}个柜门(编号{max_num+1}-{max_num+slot_count})')
     except Exception as e:
@@ -4803,6 +4861,8 @@ def admin_slots_batch_delete():
             cnt = c.fetchone()['cnt']
             c.execute('UPDATE cabinets SET total_slots=%s WHERE id=%s', (cnt, cid))
         conn.commit()
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={'deleted': deleted}, message=f'成功删除{deleted}个柜门')
     except Exception as e:
@@ -6100,6 +6160,8 @@ def admin_v2_dashboard():
         c = conn.cursor()
         c.execute("SELECT COUNT(*) as total FROM cabinets")
         total_cabinets = c.fetchone()[0]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={"total_cabinets": total_cabinets})
     except Exception as e:
@@ -6118,6 +6180,8 @@ def admin_v2_devices():
         offset = (page - 1) * limit
         c.execute("SELECT c.*, l.name as location_name FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id ORDER BY c.id LIMIT %s OFFSET %s", (limit, offset))
         list_data = [dict(r) for r in c.fetchall()]
+        orderStats["fee_income"] = sum(d.get("fee_income", 0) for d in daily)
+        orderStats["ad_fee"] = sum(d.get("ad_fee", 0) for d in daily)
         conn.close()
         return json_response(data={"list": list_data, "total": total, "page": page, "limit": limit})
     except Exception as e:

@@ -1190,7 +1190,7 @@ Vue.component('page-biz-stat',{template:`
 <div class="stat-card"><div class="stat-label">进行中订单</div><div class="stat-value" style="color:#667eea">{{$parent.orderStats.active_count||0}}</div></div>
 <div class="stat-card"><div class="stat-label">押金总收入</div><div class="stat-value" style="color:#67c23a">¥{{($parent.orderStats.deposit_total||0).toFixed(2)}}</div></div>
 <div class="stat-card"><div class="stat-label">退款总额</div><div class="stat-value" style="color:#f56c6c">¥{{($parent.orderStats.refund_total||0).toFixed(2)}}</div></div>
-<div class="stat-card"><div class="stat-label">收益金额</div><div class="stat-value" style="color:#67c23a">¥{{($parent.orderStats.fee_income||0).toFixed(2)}}</div></div><div class="stat-card"><div class="stat-label">广告费</div><div class="stat-value" style="color:#e6a23c">¥{{($parent.orderStats.ad_fee||0).toFixed(2)}}</div></div><div class="stat-card"><div class="stat-label">净收入</div><div class="stat-value" style="color:#e6a23c">¥{{($parent.orderStats.net_income||0).toFixed(2)}}</div></div>
+<div class="stat-card"><div class="stat-label">净收入</div><div class="stat-value" style="color:#e6a23c">¥{{($parent.orderStats.net_income||0).toFixed(2)}}</div></div>
 </div>
 </div>
 <div class="page-box">
@@ -1200,19 +1200,17 @@ Vue.component('page-biz-stat',{template:`
 <div class="page-box" style="margin-top:16px">
 <div class="box-header"><h3>网点明细统计</h3></div>
 <table>
-<tr><th>日期</th><th v-if="$parent.statsFilter.location_id">网点</th><th>订单数(实际)</th><th>订单数(可见)</th><th>押金收入</th><th>收益金额</th><th>广告费</th><th>退款金额</th><th>余额</th></tr>
+<tr><th>日期</th><th v-if="$parent.statsFilter.location_id">网点</th><th>订单数(实际)</th><th>订单数(可见)</th><th>押金收入</th><th>退款金额</th><th>余额</th></tr>
 <tr v-for="loc in $parent.locationDetails" :key="loc.stat_date+'-'+(loc.location_id||'')">
 <td>{{loc.stat_date||'-'}}</td>
 <td v-if="$parent.statsFilter.location_id">{{loc.location_name}}</td>
 <td>{{loc.order_count}}</td>
 <td>{{loc.visible_count}}</td>
 <td style="color:#67c23a">¥{{(loc.deposit_total||0).toFixed(2)}}</td>
-<td style="color:#67c23a">¥{{(loc.fee_income||0).toFixed(2)}}</td>
-<td style="color:#e6a23c">¥{{(loc.ad_fee||0).toFixed(2)}}</td>
 <td style="color:#f56c6c">¥{{(loc.refund_total||0).toFixed(2)}}</td>
 <td style="color:#e6a23c;font-weight:bold">¥{{(loc.balance||0).toFixed(2)}}</td>
 </tr>
-<tr v-if="!$parent.locationDetails.length"><td :colspan="$parent.statsFilter.location_id ? 9 : 8" class="empty-row">暂无数据</td></tr>
+<tr v-if="!$parent.locationDetails.length"><td :colspan="$parent.statsFilter.location_id ? 7 : 6" class="empty-row">暂无数据</td></tr>
 </table>
 </div>
 </div>
@@ -1942,7 +1940,7 @@ loadPendingCmds:function(){var self=this;this.api('/admin/pending-cmds',{page:th
 cancelCmd:function(id){var self=this;this.confirm2('确定取消此命令?',function(){self.api('/admin/cancel-cmd',{id:id}).then(function(){self.toast('命令已取消');self.loadPendingCmds();}).catch(function(e){self.toast(e.message||'操作失败','error');});});},
 
 execReset:function(){var self=this;if(!confirm('确认清理选中的'+this.resetSelected.length+'个数据表?此操作不可逆!'))return;this.api('/data-reset/exec',{tables:this.resetSelected}).then(function(){self.toast('清理完成');self.loadResetStats();self.resetSelected=[];}).catch(function(e){self.toast(e.message||'操作失败','error');});},
-renderStatsChart:function(trend){var el=document.getElementById('statsChart');if(!el||typeof echarts==='undefined')return;var chart=echarts.init(el);var dates=[],orders=[],fees=[],ads=[];trend.forEach(function(d){dates.push(d.date);orders.push(d.order_count||0);fees.push(parseFloat(d.fee_income||0));ads.push(parseFloat(d.ad_fee||0));});chart.setOption({tooltip:{trigger:'axis'},legend:{data:['订单数','收益金额','广告费']},xAxis:{type:'category',data:dates},yAxis:[{type:'value',name:'订单数'},{type:'value',name:'金额(元)'}],series:[{name:'订单数',type:'bar',data:orders,itemStyle:{color:'#667eea'}},{name:'收益金额',type:'line',yAxisIndex:1,data:fees,itemStyle:{color:'#67c23a'}},{name:'广告费',type:'line',yAxisIndex:1,data:ads,itemStyle:{color:'#e6a23c'}}]});window.addEventListener('resize',function(){chart.resize();});},
+renderStatsChart:function(trend){var el=document.getElementById('statsChart');if(!el||typeof echarts==='undefined')return;var chart=echarts.init(el);var dates=[],orders=[],deposits=[],refunds=[];trend.forEach(function(d){dates.push(d.date);orders.push(d.order_count||0);deposits.push(parseFloat(d.deposit_total||0));refunds.push(parseFloat(d.refund_total||0));});chart.setOption({tooltip:{trigger:'axis'},legend:{data:['订单数','保证金收入','退款总额']},xAxis:{type:'category',data:dates},yAxis:[{type:'value',name:'订单数'},{type:'value',name:'金额(元)'}],series:[{name:'订单数',type:'bar',data:orders,itemStyle:{color:'#667eea'}},{name:'保证金收入',type:'line',yAxisIndex:1,data:deposits,itemStyle:{color:'#67c23a'}},{name:'退款总额',type:'line',yAxisIndex:1,data:refunds,itemStyle:{color:'#f56c6c'}}]});window.addEventListener('resize',function(){chart.resize();});},
 // Channels
 loadChannels:function(){var self=this;this.api('/admin/channels').then(function(d){self.channels=d.data||[];}).catch(function(){self.channels=[];});},
 showChannelModal:function(row){this.channelForm=row?JSON.parse(JSON.stringify(row)):{name:'',channel_type:'wechat',app_id:'',mch_id:'',api_key:'',app_secret:'',cert_name:'',status:1};this.certUploadMsg='';this.channelFormTitle=row?'编辑渠道':'添加渠道';this.channelModal=true;},

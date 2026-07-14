@@ -2405,14 +2405,11 @@ def admin_biz_stats():
                 o.id as order_id,
                 o.user_phone,
                 o.logic_mark,
-                o.status,
                 o.deposit_amount,
                 CASE WHEN date(o.refund_time)=date(o.created_at) THEN o.refund_amount ELSE 0 END as refund_amount,
                 l.merchant_id,
-                l.charge_mode,
                 l.hide_ratio,
-                l.whitelist_phones,
-                COALESCE(m.ad_fee_per_order,0) as ad_fee_per_order
+                l.whitelist_phones
                 FROM locations l
                 LEFT JOIN cabinets cab ON cab.location_id=l.id
                 LEFT JOIN orders o ON o.cabinet_id=cab.id
@@ -2424,14 +2421,11 @@ def admin_biz_stats():
                 o.id as order_id,
                 o.user_phone,
                 o.logic_mark,
-                o.status,
                 o.deposit_amount,
                 CASE WHEN date(o.refund_time)=date(o.created_at) THEN o.refund_amount ELSE 0 END as refund_amount,
                 l.merchant_id,
-                l.charge_mode,
                 l.hide_ratio,
-                l.whitelist_phones,
-                COALESCE(m.ad_fee_per_order,0) as ad_fee_per_order
+                l.whitelist_phones
                 FROM orders o
                 LEFT JOIN cabinets cab ON o.cabinet_id=cab.id
                 LEFT JOIN locations l ON cab.location_id=l.id
@@ -2443,7 +2437,7 @@ def admin_biz_stats():
         orders = []
         
         # 按(stat_date, location_id)分组
-        grouped = defaultdict(lambda: {'order_count': 0, 'visible_count': 0, 'deposit_total': 0, 'refund_total': 0, 'fee_income': 0, 'ad_fee': 0, 'location_name': ''})
+        grouped = defaultdict(lambda: {'order_count': 0, 'visible_count': 0, 'deposit_total': 0, 'refund_total': 0, 'location_name': ''})
         
         for row in c.fetchall():
             if has_location_filter:
@@ -2501,8 +2495,6 @@ def admin_biz_stats():
                     'visible_count': data['visible_count'],
                     'deposit_total': data['deposit_total'],
                     'refund_total': data['refund_total'],
-                    'fee_income': data['fee_income'],
-                    'ad_fee': data['ad_fee'],
                     'balance': data['deposit_total'] - data['refund_total']
                 })
             else:
@@ -2512,8 +2504,6 @@ def admin_biz_stats():
                     'visible_count': data['visible_count'],
                     'deposit_total': data['deposit_total'],
                     'refund_total': data['refund_total'],
-                    'fee_income': data['fee_income'],
-                    'ad_fee': data['ad_fee'],
                     'balance': data['deposit_total'] - data['refund_total']
                 })
         
@@ -2522,11 +2512,10 @@ def admin_biz_stats():
         days = 30
         for i in range(days):
             date = (datetime.now() - timedelta(days=days-1-i)).strftime('%Y-%m-%d')
-            c.execute(f'''SELECT COUNT(*) as cnt, COALESCE(SUM(o.deposit_amount),0) as dep, COALESCE(SUM(CASE WHEN o.status=4 THEN o.refund_amount ELSE 0 END),0) as ref, COALESCE(SUM(CASE WHEN o.status=4 AND (l.charge_mode IS NULL OR l.charge_mode != 'free') THEN GREATEST(o.deposit_amount - o.refund_amount, 0) ELSE 0 END),0) as fee, COALESCE(SUM(COALESCE(m.ad_fee_per_order,0)),0) as ad_fee
+            c.execute(f'''SELECT COUNT(*) as cnt, COALESCE(SUM(o.deposit_amount),0) as dep, COALESCE(SUM(CASE WHEN o.status=4 THEN o.refund_amount ELSE 0 END),0) as ref
                 FROM orders o
                 LEFT JOIN cabinets cab ON o.cabinet_id=cab.id
                 LEFT JOIN locations l ON cab.location_id=l.id
-                LEFT JOIN merchants m ON l.merchant_id=m.id
                 WHERE date(o.created_at)=%s
                 {(' AND ' + ' AND '.join(where_parts)) if where_parts else ''}''', [date] + params)
             row = c.fetchone()
@@ -2534,9 +2523,7 @@ def admin_biz_stats():
                 'date': date,
                 'order_count': row[0] if row else 0,
                 'deposit_total': float(row[1] if row and row[1] else 0),
-                'refund_total': float(row[2] if row and row[2] else 0),
-                'fee_income': float(row[3] if row and row[3] else 0),
-                'ad_fee': float(row[4] if row and row[4] else 0)
+                'refund_total': float(row[2] if row and row[2] else 0)
             })
         
         conn.close()

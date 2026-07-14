@@ -683,6 +683,28 @@ def merchant_business_stats():
         slot_where_sql = ' AND '.join(slot_where)
         cursor.execute(f'SELECT COUNT(*) as total_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as used_slots, SUM(CASE WHEN cs.status = 1 THEN 1 ELSE 0 END) as free_slots FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {slot_where_sql}', slot_params)
         slot_stats = cursor.fetchone()
+        # ===== 新增统计字段 =====
+        # 退款统计
+        cursor.execute(f"SELECT COUNT(*) as refund_orders, COALESCE(SUM(o.refund_amount),0) as refund_amount FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql} AND o.status = 4 AND (o.logic_mark IS NULL OR o.logic_mark != 'Y')", params)
+        rfs = cursor.fetchone()
+        # 有无收费网点
+        cursor.execute(f"SELECT COUNT(*) as cnt FROM locations l WHERE {mfilter} AND (l.charge_mode IS NOT NULL AND l.charge_mode != '' AND l.charge_mode != 'free')", mparams)
+        has_charge = cursor.fetchone()[0] > 0
+        # 商家广告费
+        cursor.execute(f"SELECT COALESCE(SUM(m.ad_fee_per_order),0) as ad_fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id JOIN merchants m ON l.merchant_id = m.id WHERE {where_sql} AND o.status NOT IN (1, 5) AND (o.logic_mark IS NULL OR o.logic_mark != 'Y')", params)
+        ad_fee_row = cursor.fetchone()
+        # 每日趋势图
+        from datetime import datetime as _dt, timedelta as _td
+        chart = []
+        for i in range(29, -1, -1):
+            d = (_dt.now() - _td(days=i)).strftime('%Y-%m-%d')
+            dp = params + [d]
+            dw = where_sql + " AND DATE(o.created_at) = %s"
+            cursor.execute(f"SELECT COUNT(*) as c FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {dw} AND o.status NOT IN (1, 5) AND (o.logic_mark IS NULL OR o.logic_mark != 'Y')", dp)
+            chart.append({"date": d, "orders": cursor.fetchone()[0] or 0})
+        # 收益金额（收费模式下的手续费，不含保证金）
+        cursor.execute(f"SELECT COALESCE(SUM(GREATEST(o.deposit_amount - COALESCE(o.refund_amount,0), 0)), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql} AND o.status = 4 AND (l.charge_mode IS NOT NULL AND l.charge_mode != '' AND l.charge_mode != 'free') AND (o.logic_mark IS NULL OR o.logic_mark != 'Y')", params)
+        fee_row = cursor.fetchone()
         conn.close()
         total_orders = order_stats['total_orders'] or 0
         is_agent = bool(session.get('is_agent'))
@@ -690,8 +712,15 @@ def merchant_business_stats():
             'total_orders': total_orders,
             'active_orders': order_stats['active_orders'] or 0,
             'completed_orders': order_stats['completed_orders'] or 0,
-            'total_income': income_stats['total_income'] or 0,
-            'is_agent': is_agent
+            'total_income': float(fee_row['fee'] or 0),
+            'total_refund_orders': rfs['refund_orders'] or 0,
+            'total_refund_amount': float(rfs['refund_amount'] or 0),
+            'merchant_ad_fee': float(ad_fee_row['ad_fee'] or 0),
+            'has_charge_location': has_charge,
+            'chart': chart,
+            'is_agent': is_agent,
+            'total_recharge': 0,
+            'total_withdraw': 0
         }
         if is_agent:
             result['deposit_collected'] = deposit_stats['deposit_collected'] or 0
@@ -807,7 +836,9 @@ def merchant_balance():
             'deposit_held': deposit_held or 0,
             'deposit_refunded': deposit_refunded or 0,
             'available': (total_income or 0),  # 可提现金额 = 使用费收入
-            'is_agent': is_agent
+            'is_agent': is_agent,
+            'total_recharge': 0,
+            'total_withdraw': 0
         })
     except Exception as e:
         logger.error(f'[merchant_balance] {e}')

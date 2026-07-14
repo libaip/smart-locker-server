@@ -1964,7 +1964,7 @@ else if(v==='member-recharge'){this.loadRechargeRecords();}
 else if(v==='complaint-self'){this.complaintType='complaint';this.complaints=[];this.loadComplaints();var self=this;if(this.complaintRefreshTimer)clearInterval(this.complaintRefreshTimer);this.complaintRefreshTimer=setInterval(function(){self.loadComplaints();},5000);}
 else if(v==='complaint-wx'){this.complaintType='wechat';this.complaints=[];this.loadComplaints();var self=this;if(this.complaintRefreshTimer)clearInterval(this.complaintRefreshTimer);this.complaintRefreshTimer=setInterval(function(){self.loadComplaints();},5000);}
 else if(v==='agent-list')this.loadAgents();
-else if(v==='merchant-list')this.loadMerchants();
+else if(v==='merchant-list'){this.loadMerchants();this.loadAgents();}
 else if(v==='employee-list')this.loadEmployees();
 else if(v==='user-manage')this.loadUsers();
 else if(v==='apk-version')this.loadApkVersion();

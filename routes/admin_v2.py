@@ -41,7 +41,7 @@ def _check_phone_uniqueness(cursor, phone, exclude_table=None, exclude_id=None):
         """
         cursor.execute(sql, (phone, phone, phone))
     else:
-        sql = "SELECT COUNT(*) FROM (SELECT contact_phone FROM agents UNION SELECT contact_phone FROM merchants UNION SELECT phone FROM employees) p WHERE p.phone=%s"
+        sql = "SELECT COUNT(*) FROM (SELECT contact_phone FROM agents UNION SELECT contact_phone FROM merchants UNION SELECT phone FROM employees) p WHERE p.contact_phone=%s"
         cursor.execute(sql, (phone,))
         row = cursor.fetchone()
         return row[0] > 0

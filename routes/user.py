@@ -257,21 +257,8 @@ def store_init():
         payment_channel = select_payment_channel()
         payment_channel_id = payment_channel['id'] if payment_channel else None
 
-        _wn1 = ''
-        if openid:
-            _wnc = conn.cursor()
-            _wnc.execute("SELECT wechat_name FROM user_profiles WHERE openid = %s AND wechat_name IS NOT NULL AND length(wechat_name) > 0 LIMIT 1", (openid,))
-            _wnr = _wnc.fetchone()
-            if _wnr and _wnr[0]:
-                _wn1 = _wnr[0]
-        if not _wn1:
-            _wnc2 = conn.cursor()
-            _wnc2.execute("SELECT wechat_name FROM phone_openids WHERE phone = %s AND wechat_name IS NOT NULL AND length(wechat_name) > 0 LIMIT 1", (user_phone,))
-            _wnr2 = _wnc2.fetchone()
-            if _wnr2 and _wnr2[0]:
-                _wn1 = _wnr2[0]
-        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, payment_channel_id, openid, unionid, mp_openid, wechat_name) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s) RETURNING id',
-                       (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, datetime.now(), payment_channel_id, openid, unionid, mp_openid, _wn1))
+        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, payment_channel_id, openid, unionid, mp_openid) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s) RETURNING id',
+                       (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, datetime.now(), payment_channel_id, openid, unionid, mp_openid))
         row = cursor.fetchone()
         if not row:
             conn.close()
@@ -284,7 +271,7 @@ def store_init():
                               'slot_id': slot['id'], 'cabinet_id': cabinet_id, 'compartment_number': compartment_display, 'compartment_label': slot['slot_label'] if 'slot_label' in slot.keys() and slot['slot_label'] else '',
                               'slot_size': slot['slot_size'], 'deposit_amount': deposit_amount})
     except Exception as e:
-        logger.error(f'[store_init] 错误: {e}')
+        import traceback; logger.error(f'[store_init] 错误: {e}'); logger.error(traceback.format_exc())
         return json_response(message=str(e), code=500)
 
 

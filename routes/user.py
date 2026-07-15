@@ -260,13 +260,13 @@ def store_init():
         _wn1 = ''
         if openid:
             _wnc = conn.cursor()
-            _wnc.execute("SELECT wechat_name FROM user_profiles WHERE openid = %s AND wechat_name IS NOT NULL AND wechat_name != '' LIMIT 1", (openid,))
+            _wnc.execute("SELECT wechat_name FROM user_profiles WHERE openid = %s AND wechat_name IS NOT NULL AND length(wechat_name) > 0 LIMIT 1", (openid,))
             _wnr = _wnc.fetchone()
             if _wnr and _wnr[0]:
                 _wn1 = _wnr[0]
         if not _wn1:
             _wnc2 = conn.cursor()
-            _wnc2.execute("SELECT wechat_name FROM phone_openids WHERE phone = %s AND wechat_name IS NOT NULL AND wechat_name != '' LIMIT 1", (user_phone,))
+            _wnc2.execute("SELECT wechat_name FROM phone_openids WHERE phone = %s AND wechat_name IS NOT NULL AND length(wechat_name) > 0 LIMIT 1", (user_phone,))
             _wnr2 = _wnc2.fetchone()
             if _wnr2 and _wnr2[0]:
                 _wn1 = _wnr2[0]

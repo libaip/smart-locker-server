@@ -260,9 +260,19 @@ def pay_notify():
                     cursor.execute('UPDATE user_balances SET total_deposited = total_deposited + %s, phone = %s, mp_openid = COALESCE(NULLIF(mp_openid, ''), %s) WHERE mp_openid = %s',
                                    (order['deposit_amount'], order['user_phone'], _o_mp_openid, _o_mp_openid))
                 else:
-                    # 没找到：插入新记录
-                    cursor.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, 0, 0, %s)',
-                                   (order['user_phone'], _o_openid, _o_unionid, _o_mp_openid, datetime.now()))
+                    # 没找到：插入新记录（补齐wechat_name）
+                    _wn_name = ''
+                    cursor.execute("SELECT wechat_name FROM phone_openids WHERE phone = %s AND wechat_name IS NOT NULL AND wechat_name != '' LIMIT 1", (order['user_phone'],))
+                    _wn_r = cursor.fetchone()
+                    if _wn_r:
+                        _wn_name = _wn_r['wechat_name']
+                    if not _wn_name and _o_openid:
+                        cursor.execute("SELECT wechat_name FROM user_profiles WHERE openid = %s AND wechat_name IS NOT NULL AND wechat_name != '' LIMIT 1", (_o_openid,))
+                        _wn_r = cursor.fetchone()
+                        if _wn_r:
+                            _wn_name = _wn_r['wechat_name']
+                    cursor.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, 0, 0, %s)',
+                                   (order['user_phone'], _o_openid, _o_unionid, _o_mp_openid, _wn_name, datetime.now()))
             except Exception as e:
                 logger.error(f'[支付回调更新余额失败] {e}')
 

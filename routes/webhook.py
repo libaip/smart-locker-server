@@ -123,3 +123,81 @@ def get_cabinets_by_group_code(group_code):
     except Exception as e:
         logger.error("[get_cabinets_by_group_code] %s" % str(e))
         return json_response({"code": 500, "message": str(e)})
+import hashlib
+import time
+import xml.etree.ElementTree as ET
+
+@bp.route('/wx/message', methods=['GET', 'POST'])
+def wechat_message():
+    """????????? - ????"""
+    try:
+        WX_TOKEN = 'smartlocker2024'
+
+        if request.method == 'GET':
+            signature = request.args.get('signature', '')
+            timestamp = request.args.get('timestamp', '')
+            nonce = request.args.get('nonce', '')
+            echostr = request.args.get('echostr', '')
+            tmp_list = sorted([WX_TOKEN, timestamp, nonce])
+            tmp_str = hashlib.sha1(''.join(tmp_list).encode()).hexdigest()
+            if tmp_str == signature:
+                return echostr
+            return 'verify failed', 403
+
+        xml_data = request.data.decode('utf-8')
+        root = ET.fromstring(xml_data)
+        msg = {child.tag: child.text for child in root}
+
+        from_user = msg.get('FromUserName', '')
+        to_user = msg.get('ToUserName', '')
+        msg_type = msg.get('MsgType', '')
+        event = msg.get('Event', '')
+        content_raw = msg.get('Content', msg.get('EventKey', ''))
+        ts = str(int(time.time()))
+
+        # ??????????????
+        try:
+            _conn_msg = get_db()
+            _cur_msg = _conn_msg.cursor()
+            _phone = ''
+            _cur_msg.execute("SELECT phone FROM phone_openids WHERE openid = %s AND phone IS NOT NULL AND phone != '' LIMIT 1", (from_user,))
+            _r_msg = _cur_msg.fetchone()
+            if _r_msg:
+                _phone = _r_msg[0]
+            _cur_msg.execute("INSERT INTO wx_oa_messages (openid, phone, msg_type, content, event, raw_msg) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                           (from_user, _phone, msg_type, content_raw[:500], event, xml_data[:1000]))
+            _msg_id_row = _cur_msg.fetchone()
+            _msg_id_val = _msg_id_row[0] if _msg_id_row else None
+            if _phone and _msg_id_val:
+                _cur_msg.execute("SELECT id FROM complaints WHERE user_phone = %s AND status = '0' ORDER BY id DESC LIMIT 1", (_phone,))
+                _exist_cr = _cur_msg.fetchone()
+                if _exist_cr:
+                    _cid = _exist_cr[0]
+                    _cur_msg.execute("UPDATE complaints SET content = content || chr(10) || %s, reply_time = NOW() WHERE id = %s", (content_raw[:500], _cid))
+                else:
+                    _cur_msg.execute("INSERT INTO complaints (user_phone, content, openid, type, status) VALUES (%s, %s, %s, 'self', '0') RETURNING id", (_phone, content_raw[:500], from_user))
+                    _cid_row = _cur_msg.fetchone()
+                    _cid = _cid_row[0] if _cid_row else 0
+                if _cid:
+                    _cur_msg.execute("UPDATE wx_oa_messages SET complaint_id = %s WHERE id = %s", (_cid, _msg_id_val))
+            _conn_msg.commit()
+            _conn_msg.close()
+        except:
+            pass
+
+        def _reply(text):
+            return '<xml><ToUserName><![CDATA[' + from_user + ']]></ToUserName><FromUserName><![CDATA[' + to_user + ']]></FromUserName><CreateTime>' + ts + '</CreateTime><MsgType><![CDATA[text]]></MsgType><Content><![CDATA[' + text + ']]></Content></xml>'
+
+        if msg_type == 'event':
+            if event == 'subscribe':
+                return _reply('''\u6b22\u8fce\u5173\u6ce8\u667a\u80fd\u5bc4\u5b58\u67dc\uff01\u70b9\u51fb\u83dc\u5355\u5373\u53ef\u4f7f\u7528\u5bc4\u5b58\u670d\u52a1\u3002\u5ba2\u670d\u7535\u8bdd\uff1a400-698-1010''')
+            elif event == 'unsubscribe':
+                return '', 200
+
+        if msg_type == 'text':
+            return _reply('''\u60a8\u597d\uff0c\u5df2\u8bb0\u5f55\u60a8\u7684\u7559\u8a00\uff0c\u5ba2\u670d\u4eba\u5458\u5c06\u5c3d\u5feb\u5904\u7406\u3002\u5ba2\u670d\u7535\u8bdd\uff1a400-698-1010''')
+
+        return '', 200
+    except Exception as e:
+        logger.error(f'[\u5fae\u4fe1\u6d88\u606f] \u5904\u7406\u5931\u8d25: {e}')
+        return '', 200

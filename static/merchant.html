@@ -65,12 +65,12 @@ body { background: #f5f5f5; font-family: -apple-system, sans-serif; min-height: 
 <div class="page" id="pageHome">
   <div class="dashboard-grid" id="dashGrid"></div>
   <div class="menu-list">
-    <div class="menu-item" onclick="navigateTo('devices');"><div class="left"><span class="icon">📡</span>设备管理</div><div class="right">›</div></div>
-    <div class="menu-item" onclick="navigateTo('orders');"><div class="left"><span class="icon">📋</span>订单管理</div><div class="right">›</div></div>
-    <div class="menu-item" onclick="navigateTo('statistics');"><div class="left"><span class="icon">📊</span>统计分析</div><div class="right">›</div></div>
-    <div class="menu-item" onclick="navigateTo('locations');"><div class="left"><span class="icon">📍</span>网点管理</div><div class="right">›</div></div>
-    <div class="menu-item" onclick="navigateTo('withdrawals');"><div class="left"><span class="icon">💰</span>提现管理</div><div class="right">›</div></div>
-    <div class="menu-item" onclick="navigateTo('alerts');"><div class="left"><span class="icon">🔔</span>告警管理</div><div class="right">›</div></div>
+    <div class="menu-item" data-perm="devices" onclick="navigateTo('devices');"><div class="left"><span class="icon">📡</span>设备管理</div><div class="right">›</div></div>
+    <div class="menu-item" data-perm="orders" onclick="navigateTo('orders');"><div class="left"><span class="icon">📋</span>订单管理</div><div class="right">›</div></div>
+    <div class="menu-item" data-perm="statistics" onclick="navigateTo('statistics');"><div class="left"><span class="icon">📊</span>统计分析</div><div class="right">›</div></div>
+    <div class="menu-item" data-perm="locations" onclick="navigateTo('locations');"><div class="left"><span class="icon">📍</span>网点管理</div><div class="right">›</div></div>
+    <div class="menu-item" data-perm="withdrawal" onclick="navigateTo('withdrawals');"><div class="left"><span class="icon">💰</span>提现管理</div><div class="right">›</div></div>
+    <div class="menu-item" data-perm="alerts" onclick="navigateTo('alerts');"><div class="left"><span class="icon">🔔</span>告警管理</div><div class="right">›</div></div>
   </div>
 </div>
 
@@ -83,7 +83,7 @@ body { background: #f5f5f5; font-family: -apple-system, sans-serif; min-height: 
   <div class="balance-cards" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:-20px 16px 0;position:relative;z-index:1;">
     <div class="dash-card"><div class="num" id="balanceWithdrawn">0.00</div><div class="label" id="labelWithdrawn">已提现</div></div>
     <div class="dash-card"><div class="num" id="balanceReserve">0.00</div><div class="label" id="labelReserve">储备金</div></div>
-    <div class="dash-card"><div class="num" id="balanceCashback">0.00</div><div class="label" id="labelCashback">返现收入</div></div>
+    <div class="dash-card" id="cashbackCard"><div class="num" id="balanceCashback">0.00</div><div class="label" id="labelCashback">广告收入</div></div>
   </div>
   <div class="menu-list" id="merchantMenu"></div>
 </div>
@@ -110,7 +110,9 @@ var token = (location.search.match(/token=([^&]*)/) || [])[1] || '';
 var currentPage = 'home';
 
 var merchantInfo = {};
+var permUrl = (location.search.match(/perms=([^&]*)/) || [])[1] || '';
 var permissions = [];
+try { permissions = permUrl ? JSON.parse(decodeURIComponent(permUrl)) : []; } catch(e) { permissions = []; }
 
 function showPage(id) {
   var pages = ['pageLogin','pageHome','pageProfile','pagePlaceholder','pageDevices','pageOrders','pageStatistics','pageLocations','pageWithdrawals','pageAlerts','pageMerchantEdit','pagePayment','pagePrivacy','pageAgreement'];
@@ -175,6 +177,11 @@ function loadProfile() {
       document.getElementById('balanceWithdrawn').textContent = d.data.withdrawn || '0.00';
       document.getElementById('balanceReserve').textContent = d.data.reserve || '0.00';
       document.getElementById('balanceCashback').textContent = d.data.cashback || '0.00';
+      if (d.data.is_employee) {
+        var cbc = document.getElementById('cashbackCard');
+        if (cbc) cbc.style.display = 'none';
+      }
+
       if (d.data.text_labels) {
         if (d.data.text_labels.withdrawn) document.getElementById('labelWithdrawn').textContent = d.data.text_labels.withdrawn;
         if (d.data.text_labels.reserve) document.getElementById('labelReserve').textContent = d.data.text_labels.reserve;
@@ -185,6 +192,7 @@ function loadProfile() {
   .catch(function(){});
   loadMerchantInfo();
   loadMenuItems();
+  var mi = document.querySelectorAll('#pageHome .menu-item[data-perm]'); for (var mi2 = 0; mi2 < mi.length; mi2++) { var p = mi[mi2].getAttribute('data-perm'); if (permissions.indexOf(p) === -1) mi[mi2].style.display = 'none'; }
 }
 
 function loadMerchantInfo() {
@@ -210,6 +218,7 @@ function loadMenuItems() {
   ];
   var html = '';
   items.forEach(function(item) {
+    if (item.perm && permissions.indexOf(item.perm) === -1) return;
     html += '<div class="menu-item" onclick="' + (item.fn ? item.fn+'()' : 'navigateTo(\''+item.key+'\')') + '"><div class="left"><span class="icon">' + item.icon + '</span>' + item.label + '</div><div class="right">›</div></div>';
   });
   menu.innerHTML = html;
@@ -310,7 +319,44 @@ function handleLogout() {
   if (typeof wx !== "undefined" && wx.miniProgram) {
     wx.miniProgram.postMessage({ data: { logout: true } });
   }
-  showPage("pageLogin");
+  wx.miniProgram.reLaunch({ url: "/pages/login/login" });
+}
+
+
+function showPasswordModal() {
+  document.getElementById("pwdModal").style.display = "flex";
+}
+
+function hidePasswordModal() {
+  document.getElementById("pwdModal").style.display = "none";
+}
+
+function handleChangePassword() {
+  var oldPwd = document.getElementById("oldPwd").value.trim();
+  var newPwd = document.getElementById("newPwd").value.trim();
+  if (!oldPwd || !newPwd) { alert("??????????"); return; }
+  if (newPwd.length < 6) { alert("?????6?"); return; }
+  document.getElementById("pwdBtn").disabled = true;
+  document.getElementById("pwdBtn").textContent = "???...";
+  fetch("https://locker.cqdyxl.com/api/merchant/change-password", {
+    method: "POST",
+    headers: {"Content-Type":"application/json", "Authorization":"Bearer " + token},
+    body: JSON.stringify({old_password: oldPwd, new_password: newPwd})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    if (d.code === 200) {
+      alert("??????");
+      hidePasswordModal();
+    } else {
+      alert(d.message || "????");
+    }
+  })
+  .catch(function(){ alert("????"); })
+  .then(function(){
+    document.getElementById("pwdBtn").disabled = false;
+    document.getElementById("pwdBtn").textContent = "????";
+  });
 }
 </script>
 </body>

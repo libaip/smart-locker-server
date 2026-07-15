@@ -37,6 +37,58 @@ def _db_st(did,st):
 
 lock_results_buffer = []
 
+def _update_version(device_id, version, version_code=0):
+    try:
+        import psycopg2
+        co = psycopg2.connect(**DB_CONF)
+        cu = co.cursor()
+        cu.execute("UPDATE cabinets SET app_version=%s, app_version_code=%s WHERE mainboard_device_id=%s",
+                   (version, version_code, device_id))
+        co.commit()
+        cu.close()
+        co.close()
+    except Exception as e:
+        logger.error(f"[DB_VER] {e}")
+
+def _update_version(device_id, version, version_code=0):
+    try:
+        import psycopg2
+        co = psycopg2.connect(**DB_CONF)
+        cu = co.cursor()
+        cu.execute("UPDATE cabinets SET app_version=%s, app_version_code=%s WHERE mainboard_device_id=%s",
+                   (version, version_code, device_id))
+        co.commit()
+        cu.close()
+        co.close()
+    except Exception as e:
+        logger.error(f"[DB_VER] {e}")
+
+def _update_version(device_id, version, version_code=0):
+    try:
+        import psycopg2
+        co = psycopg2.connect(**DB_CONF)
+        cu = co.cursor()
+        cu.execute("UPDATE cabinets SET app_version=%s, app_version_code=%s WHERE mainboard_device_id=%s",
+                   (version, version_code, device_id))
+        co.commit()
+        cu.close()
+        co.close()
+    except Exception as e:
+        logger.error(f"[DB_VER] {e}")
+
+def _update_version(device_id, version, version_code=0):
+    try:
+        import psycopg2
+        co = psycopg2.connect(**DB_CONF)
+        cu = co.cursor()
+        cu.execute("UPDATE cabinets SET app_version=%s, app_version_code=%s WHERE mainboard_device_id=%s",
+                   (version, version_code, device_id))
+        co.commit()
+        cu.close()
+        co.close()
+    except Exception as e:
+        logger.error(f"[DB_VER] {e}")
+
 def handle_ws(ws, device_id):
     """处理单个 WebSocket 连接"""
     device_connections[device_id] = ws
@@ -60,7 +112,12 @@ def handle_ws(ws, device_id):
                     lock_results_buffer.append((device_id, msg))
                 elif t == "register":
                     try:
+                        logger.info(f"[WS_REGISTER] device={device_id}, msg={msg}")
                         ws.send(json.dumps({"type": "register_ack", "device_id": device_id}))
+                        reg_ver = msg.get("version", "")
+                        reg_code = msg.get("version_code", 0) or 0
+                        if reg_ver:
+                            _update_version(device_id, reg_ver, reg_code)
                     except:
                         pass
             except:

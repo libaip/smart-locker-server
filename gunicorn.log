@@ -11,3 +11,27 @@ nohup: failed to run command 'gunicorn': No such file or directory
 [2026-07-12 00:13:28 +0800] [3687568] [INFO] Booting worker with pid: 3687568
 [2026-07-12 00:13:28 +0800] [3687569] [INFO] Booting worker with pid: 3687569
 [2026-07-12 00:13:28 +0800] [3687554] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+[2026-07-15 23:15:11 +0800] [1014871] [INFO] Starting gunicorn 26.0.0
+[2026-07-15 23:15:11 +0800] [1014871] [INFO] Listening at: http://127.0.0.1:5001 (1014871)
+[2026-07-15 23:15:11 +0800] [1014871] [INFO] Using worker: geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+[2026-07-15 23:15:11 +0800] [1014877] [INFO] Booting worker with pid: 1014877
+[2026-07-15 23:15:11 +0800] [1014878] [INFO] Booting worker with pid: 1014878
+[2026-07-15 23:15:11 +0800] [1014879] [INFO] Booting worker with pid: 1014879
+[2026-07-15 23:15:11 +0800] [1014880] [INFO] Booting worker with pid: 1014880
+[2026-07-15 23:15:11 +0800] [1014881] [INFO] Booting worker with pid: 1014881
+[2026-07-15 23:15:11 +0800] [1014882] [INFO] Booting worker with pid: 1014882
+[2026-07-15 23:15:11 +0800] [1014883] [INFO] Booting worker with pid: 1014883
+[2026-07-15 23:15:11 +0800] [1014884] [INFO] Booting worker with pid: 1014884
+[2026-07-15 23:15:11 +0800] [1014871] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+[2026-07-15 23:15:28 +0800] [1015040] [INFO] Starting gunicorn 26.0.0
+[2026-07-15 23:15:28 +0800] [1015040] [INFO] Listening at: http://127.0.0.1:5001 (1015040)
+[2026-07-15 23:15:28 +0800] [1015040] [INFO] Using worker: geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+[2026-07-15 23:15:28 +0800] [1015042] [INFO] Booting worker with pid: 1015042
+[2026-07-15 23:15:28 +0800] [1015043] [INFO] Booting worker with pid: 1015043
+[2026-07-15 23:15:28 +0800] [1015044] [INFO] Booting worker with pid: 1015044
+[2026-07-15 23:15:28 +0800] [1015045] [INFO] Booting worker with pid: 1015045
+[2026-07-15 23:15:28 +0800] [1015046] [INFO] Booting worker with pid: 1015046
+[2026-07-15 23:15:28 +0800] [1015047] [INFO] Booting worker with pid: 1015047
+[2026-07-15 23:15:28 +0800] [1015048] [INFO] Booting worker with pid: 1015048
+[2026-07-15 23:15:28 +0800] [1015049] [INFO] Booting worker with pid: 1015049
+[2026-07-15 23:15:28 +0800] [1015040] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl

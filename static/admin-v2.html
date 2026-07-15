@@ -695,7 +695,7 @@ tr:hover td.action-col{background:#f5f7fa}
 <span>{{s.slot_label||s.slot_number}}</span>
 <span style="font-size:11px;font-weight:normal">{{s.status===1?'空闲':s.status===2?'占用':s.status===3?'故障':'锁定'}}</span>
 
-<input type="checkbox" :checked="selectedSlotIds.includes(s.id)" @change="toggleSlotSelection($event, s.id)" title="选择柜门" style="position:absolute;top:2px;left:2px;width:14px;height:14px;margin:0;cursor:pointer;z-index:2">
+<input type="checkbox" :checked="selectedSlotIds.includes(s.id)" @change="toggleSlotSelection($event, s.id)" @click.stop title="选择柜门" style="position:absolute;top:2px;left:2px;width:14px;height:14px;margin:0;cursor:pointer;z-index:2">
 </div>
 </div>
 <div style="margin-top:8px;color:#909399;font-size:12px">点击柜门修改状态</div>
@@ -973,7 +973,6 @@ Vue.component('page-location-list',{template:'\
 <table><tr><th>ID</th><th>名称</th><th>地址</th><th>商家</th><th>设备数</th><th>在线</th><th>活跃订单</th><th>状态</th><th class="action-col">操作</th></tr>\
 <tr v-for="l in $parent.locations"><td>{{l.id}}</td><td>{{l.name}}</td><td>{{l.address||\'-\'}}</td><td>{{l.merchant_name||\'-\'}}</td><td>{{l.cabinet_count||0}}</td><td><span :class="\'status-tag \'+(l.online_count>0?\'green\':\'gray\')">{{l.online_count||0}}</span></td><td>{{l.active_orders||0}}</td><td><span :class="\'status-tag \'+(l.status===1?\'green\':\'red\')">{{l.status===1?\'正常\':\'停用\'}}</span></td><td style="white-space:nowrap" class="action-col">\
 <button class="btn-text blue" @click="$parent.showLocationModal(l)">编辑</button>\
-<button class="btn-text teal" @click="$parent.showLocationQrcode(l)">二维码</button>\
 <button class="btn-text red" @click="$parent.deleteLocation(l)">删除</button>\
 </td></tr>\
 <tr v-if="!$parent.locations.length"><td colspan="10" class="empty-row">暂无数据</td></tr>\
@@ -1643,16 +1642,7 @@ Vue.component('page-alert-mgr',{template:`
 <table class="data-table">
 <thead><tr><th>ID</th><th>设备ID</th><th>柜号</th><th>网点</th><th>告警类型</th><th>详情</th><th>时间</th><th>操作</th></tr></thead>
 <tbody>
-<tr v-for="a in $parent.alerts" :key="a.id">
-<td>{{a.id}}</td>
-<td>{{a.device_id||'-'}}</td>
-<td><span :style="{color:a.alert_type==='offline'?'#e74c3c':a.alert_type==='online'?'#1890ff':'#fa8c16',fontWeight:600}">{{a.alert_type==='offline'?'离线':a.alert_type==='online'?'在线':a.alert_type||'-'}}</span></td>
-<td>{{a.cabinet_code||a.cabinet_name||'-'}}</td>
-<td>{{a.location_name||'-'}}</td>
-<td>{{a.detail||'-'}}</td>
-<td style="font-family:monospace;font-size:13px">{{a.created_at}}</td>
-<td><button class="btn btn-xs btn-red" @click="$parent.deleteAlert(a.id)" title="??">??</button></td>
-</tr>
+<tr v-for="a in $parent.alerts" :key="a.id"><td>{{a.id}}</td><td>{{a.device_id||'-'}}</td><td>{{a.cabinet_code||a.cabinet_name||'-'}}</td><td>{{a.location_name||'-'}}</td><td><span :style="{color:a.alert_type==='offline'?'#e74c3c':a.alert_type==='online'?'#1890ff':'#fa8c16',fontWeight:600}">{{a.alert_type==='offline'?'离线':a.alert_type==='online'?'在线':a.alert_type||'-'}}</span></td><td>{{a.detail||'-'}}</td><td style="font-family:monospace;font-size:13px">{{a.created_at}}</td><td><button class="btn btn-xs btn-red" @click="$parent.deleteAlert(a.id)" title="??">??</button></td></tr>
 <tr v-if="$parent.alerts.length===0"><td colspan="8" style="text-align:center;color:#909399;padding:20px">暂无告警记录</td></tr>
 </tbody>
 </table>
@@ -1922,7 +1912,6 @@ loadResetStats:function(){var self=this;this.api('/data-reset/stats').then(funct
 loadSettings:function(){var self=this;this.api('/settings').then(function(d){var sd={};if(d&&d.length){d.forEach(function(r){sd[r.setting_key]={value:r.setting_value,desc:r.description||r.setting_key};});}self.settingsData=sd;}).catch(function(e){self.toast(e.message||'加载失败','error');});},
 saveSettings:function(){var self=this;var arr=[];for(var k in this.settingsData){arr.push({setting_key:k,setting_value:this.settingsData[k].value});}this.api('/settings/save',{settings:arr}).then(function(){self.toast('保存成功');}).catch(function(e){self.toast(e.message||'保存失败','error');});},
 loadOfflineOrders:function(){var self=this;this.api('/admin/offline-orders',{page:this.offlineOrdersPage},'GET').then(function(d){self.offlineOrders=d.data&&d.data.list||[];self.offlineOrdersTotal=d.data&&d.data.total||0;}).catch(function(e){self.toast(e.message||'加载失败','error');});},
-showLocationQrcode:function(loc){var self=this;this.api('/admin/location/qrcode',{location_id:loc.id},'GET').then(function(d){self.locationQrcode=d.data;self.locationQrcodeModal=true;}).catch(function(e){self.toast(e.message||'加载失败','error');});},
 showDeviceDetail:function(dev){var self=this;this.api('/admin/device/detail',{id:dev.id}).then(function(d){self.deviceDetail=d.data;self.deviceDetailModal=true;}).catch(function(e){self.toast(e.message||'加载失败','error');});},unbindDevice:function(dev){var self=this;if(!confirm("确定解绑该设备吗？解绑后屏幕上需要重新设置。"))return;self.api("/admin/device/unbind",{"cabinet_id":dev.id}).then(function(d){self.toast(d.message||"解绑成功");self.deviceDetailModal=false;self.loadMachines();}).catch(function(e){self.toast(e.message||"解绑失败","error");});},showDeviceQrcode:function(dev){var self=this;this.api('/admin/device/qrcode',{id:dev.id}).then(function(d){self.deviceQrcode=d.data;if(typeof QRCode!=='undefined'){try{var qr=new QRCode(document.createElement('div'),{text:d.data.qr_url,width:200,height:200});setTimeout(function(){var img=qr._el.querySelector('img');if(img){self.$set(self.deviceQrcode,'qrcode_img',img.src);}self.deviceQrcodeModal=true;},100);}catch(ee){self.deviceQrcodeModal=true;}}else{self.deviceQrcodeModal=true;}}).catch(function(e){self.toast(e.message||'加载失败','error');});},downloadDeviceQrcode:function(){var self=this;if(!self.deviceQrcode||!self.deviceQrcode.qrcode_img)return;var link=document.createElement('a');link.download='ID'+(self.deviceQrcode.id||'')+'_'+(self.deviceQrcode.cabinet_code||'device')+'_qrcode.png';link.href=self.deviceQrcode.qrcode_img;link.click();},
 openSingleSlot:function($event,slot){if($event&&$event.target&&$event.target.tagName==='INPUT')return;var self=this;this.confirm2('确定开柜格 '+slot.slot_number+'?',function(){self.api('/admin/device/slot-open',{slot_id:slot.id}).then(function(){self.toast('开门指令已发送');self.loadSlots(self.slotModal?self.cabinetForm.id:self.deviceDetail&&self.deviceDetail.id);}).catch(function(e){self.toast(e.message||'失败','error');});});},
 loadCabinetGroups:function(p){var self=this;if(p)this.cabinetGroupsPage=p;this.api('/admin/cabinet-groups',{page:this.cabinetGroupsPage},'GET').then(function(d){self.cabinetGroups=d.data&&d.data.list||[];self.cabinetGroupsTotal=d.data&&d.data.total||0;}).catch(function(e){self.toast(e.message||'加载失败','error');});},

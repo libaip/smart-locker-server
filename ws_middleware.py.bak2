@@ -18,7 +18,6 @@ _rules_logger = _logging.getLogger('ws_middleware')
 
 # 设备在线状态追踪表 {device_id: True/False}，只记录状态变化，避免重复告警
 device_online_status = {}
-_version_query_pending = {}
 
 
 def _record_alert(device_id, alert_type, message):
@@ -317,9 +316,9 @@ def fix_websocket(app):
                                                 if _ar:
                                                     db.execute("UPDATE cabinets SET last_heartbeat=NOW(), app_version=%s, app_version_code=%s WHERE mainboard_device_id=%s", (_ar[0], _ar[1] or 0, device_id))
                                                 else:
-                                                    db.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (device_id,))
+                                                    db.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (device_id,)) (device_id,))
                                             except:
-                                                db.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (device_id,))
+                                                db.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (device_id,)) (device_id,))
                                         db.commit()
                                         db.close()
                                         logger.info(f'[WS-MW] 注册更新版本: device={device_id}, ver={reg_ver}, code={reg_ver_code}')
@@ -366,23 +365,6 @@ def fix_websocket(app):
                                         db.execute(
                                             "UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (device_id,))
                                     db.commit()
-                                    # check if app_version is NULL
-                                    try:
-                                        _cv = db.cursor()
-                                        _cv.execute("SELECT app_version FROM cabinets WHERE mainboard_device_id=%s", (device_id,))
-                                        _crow = _cv.fetchone()
-                                        if _crow and (not _crow[0] or _crow[0] == ""):
-                                            import time
-                                            _now_ts = time.time()
-                                            _last_q = _version_query_pending.get(device_id, 0)
-                                            if _now_ts - _last_q > 60:
-                                                _version_query_pending[device_id] = _now_ts
-                                                logger.info("[WS-MW] device " + str(device_id) + " version null, force reconnect")
-                                                _record_alert(device_id, "offline", "forced reconnect for version")
-                                                ws.close()
-                                                break
-                                    except Exception as __qv:
-                                        logger.error("[WS-MW] version query error: " + str(__qv))
                                     db.close()
                                     # 版本更新改为推送下载模式，通过 /api/admin/device/push-update 手动触发
                                 except:

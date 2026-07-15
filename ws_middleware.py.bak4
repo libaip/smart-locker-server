@@ -366,6 +366,7 @@ def fix_websocket(app):
                                         db.execute(
                                             "UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (device_id,))
                                     db.commit()
+                                    db.close()
                                     # check if app_version is NULL
                                     try:
                                         _cv = db.cursor()
@@ -383,7 +384,6 @@ def fix_websocket(app):
                                                 break
                                     except Exception as __qv:
                                         logger.error("[WS-MW] version query error: " + str(__qv))
-                                    db.close()
                                     # 版本更新改为推送下载模式，通过 /api/admin/device/push-update 手动触发
                                 except:
                                     pass

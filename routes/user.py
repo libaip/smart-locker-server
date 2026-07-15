@@ -257,8 +257,21 @@ def store_init():
         payment_channel = select_payment_channel()
         payment_channel_id = payment_channel['id'] if payment_channel else None
 
-        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, payment_channel_id, openid, unionid, mp_openid) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s) RETURNING id',
-                       (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, datetime.now(), payment_channel_id, openid, unionid, mp_openid))
+        _wn1 = ''
+        if openid:
+            _wnc = conn.cursor()
+            _wnc.execute("SELECT wechat_name FROM user_profiles WHERE openid = %s AND wechat_name IS NOT NULL AND wechat_name != '' LIMIT 1", (openid,))
+            _wnr = _wnc.fetchone()
+            if _wnr and _wnr[0]:
+                _wn1 = _wnr[0]
+        if not _wn1:
+            _wnc2 = conn.cursor()
+            _wnc2.execute("SELECT wechat_name FROM phone_openids WHERE phone = %s AND wechat_name IS NOT NULL AND wechat_name != '' LIMIT 1", (user_phone,))
+            _wnr2 = _wnc2.fetchone()
+            if _wnr2 and _wnr2[0]:
+                _wn1 = _wnr2[0]
+        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, payment_channel_id, openid, unionid, mp_openid, wechat_name) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s) RETURNING id',
+                       (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, datetime.now(), payment_channel_id, openid, unionid, mp_openid, _wn1))
         row = cursor.fetchone()
         if not row:
             conn.close()
@@ -734,8 +747,21 @@ def create_deposit_order():
         compartment_display = slot['slot_label'] if 'slot_label' in slot.keys() and slot['slot_label'] else (slot['display_number'] if slot['display_number'] else slot['slot_number'])
         # Mark slot as occupied immediately to prevent double allocation
         cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (slot['id'],))
-        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, payment_channel_id, openid, unionid, mp_openid) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s) RETURNING id',
-                       (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, datetime.now(), payment_channel_id, openid, unionid))
+        _wn2 = chr(39)+chr(39)
+        if openid:
+            _wnc3 = conn.cursor()
+            _wnc3.execute("SELECT wechat_name FROM user_profiles WHERE openid = %s AND wechat_name IS NOT NULL AND wechat_name != "+chr(39)+chr(39)+" LIMIT 1", (openid,))
+            _wnr3 = _wnc3.fetchone()
+            if _wnr3 and _wnr3[0]:
+                _wn2 = _wnr3[0]
+        if not _wn2 or _wn2 == chr(39)+chr(39):
+            _wnc4 = conn.cursor()
+            _wnc4.execute("SELECT wechat_name FROM phone_openids WHERE phone = %s AND wechat_name IS NOT NULL AND wechat_name != "+chr(39)+chr(39)+" LIMIT 1", (user_phone,))
+            _wnr4 = _wnc4.fetchone()
+            if _wnr4 and _wnr4[0]:
+                _wn2 = _wnr4[0]
+        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, payment_channel_id, openid, unionid, mp_openid, wechat_name) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s) RETURNING id',
+                       (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, datetime.now(), payment_channel_id, openid, unionid, _wn2))
         row = cursor.fetchone()
         order_id = row["id"]
         conn.commit()
@@ -929,8 +955,21 @@ def h5_store():
         # 选择支付渠道（轮转）
         payment_channel = select_payment_channel()
         payment_channel_id = payment_channel['id'] if payment_channel else None
-        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, group_id, cabinet_code, cabinet_name, slot_size, payment_channel_id, openid) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
-                       (order_no, phone, slot['id'], cabinet_id, slot['slot_number'], pwd, deposit, datetime.now(), cabinet['group_id'], cabinet['cabinet_code'], cabinet['name'], slot['slot_size'], payment_channel_id, openid))
+        _wn3 = chr(39)+chr(39)
+        if openid:
+            _wnc5 = conn.cursor()
+            _wnc5.execute("SELECT wechat_name FROM user_profiles WHERE openid = %s AND wechat_name IS NOT NULL AND wechat_name != "+chr(39)+chr(39)+" LIMIT 1", (openid,))
+            _wnr5 = _wnc5.fetchone()
+            if _wnr5 and _wnr5[0]:
+                _wn3 = _wnr5[0]
+        if not _wn3 or _wn3 == chr(39)+chr(39):
+            _wnc6 = conn.cursor()
+            _wnc6.execute("SELECT wechat_name FROM phone_openids WHERE phone = %s AND wechat_name IS NOT NULL AND wechat_name != "+chr(39)+chr(39)+" LIMIT 1", (phone,))
+            _wnr6 = _wnc6.fetchone()
+            if _wnr6 and _wnr6[0]:
+                _wn3 = _wnr6[0]
+        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, group_id, cabinet_code, cabinet_name, slot_size, payment_channel_id, openid, wechat_name) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
+                       (order_no, phone, slot['id'], cabinet_id, slot['slot_number'], pwd, deposit, datetime.now(), cabinet['group_id'], cabinet['cabinet_code'], cabinet['name'], slot['slot_size'], payment_channel_id, openid, _wn3))
         row = cursor.fetchone()
         order_id = row["id"]
         conn.commit()

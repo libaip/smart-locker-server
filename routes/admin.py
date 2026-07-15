@@ -1370,7 +1370,7 @@ def withdrawal_apply():
                     from helpers import do_real_refund
                     success, refund_id, msg = do_real_refund(order_id=order_id, order_no=eligible['order_no'], amount=amount, payment_channel_id=eligible['payment_channel_id'])
                     # 无论成功失败，先扣余额并创建记录
-                    cursor.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE mp_openid = %s', (amount, amount, _real_openid))
+                    cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE mp_openid = %s', (amount, amount, _real_openid))
                     if success:
                         # 退款成功
                         cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, auto_approve_time, openid) VALUES (%s, %s, %s, 2, %s, 'system', NOW(), %s, %s)",
@@ -1638,7 +1638,7 @@ def approve_withdrawal(withdrawal_id):
         bal = cursor.fetchone()
         _wd_real_openid = bal['rec_openid'] if bal else _wd_openid
         if bal and bal['balance'] >= amount:
-            cursor.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE mp_openid = %s', (amount, amount, _wd_real_openid))
+            cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE mp_openid = %s', (amount, amount, _wd_real_openid))
         # 真正退款
         if order_id:
             from helpers import do_real_refund

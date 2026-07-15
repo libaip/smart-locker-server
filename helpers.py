@@ -209,15 +209,17 @@ def require_merchant_auth(f):
                             utype = tok_row['user_type']
                             uid = tok_row['user_id']
                             if utype == 'agent':
-                                ag = cursor.execute('SELECT id, name FROM agents WHERE id=%s', (uid,)).fetchone()
+                                ag = cursor.execute('SELECT id, name, permissions FROM agents WHERE id=%s', (uid,)).fetchone()
                                 if ag:
                                     session['agent_id'] = ag['id']; session['agent_name'] = ag['name']; session['is_agent'] = True
+                                    session['permissions'] = json.loads(ag['permissions'] or '[]')
                                     db.close(); return f(*args, **kwargs)
                             elif utype == 'employee':
-                                emp = cursor.execute('SELECT e.id, e.merchant_id, e.name, m.name as merchant_name FROM employees e LEFT JOIN merchants m ON e.merchant_id=m.id WHERE e.id=%s', (uid,)).fetchone()
+                                emp = cursor.execute('SELECT e.id, e.merchant_id, e.name, e.permissions, m.name as merchant_name FROM employees e LEFT JOIN merchants m ON e.merchant_id=m.id WHERE e.id=%s', (uid,)).fetchone()
                                 if emp:
                                     session['merchant_id'] = emp['merchant_id']; session['merchant_name'] = emp['merchant_name'] or emp['name']
                                     session['employee_id'] = emp['id']; session['is_employee'] = True
+                                    session['permissions'] = json.loads(emp['permissions'] or '[]')
                                     db.close(); return f(*args, **kwargs)
                             else:
                                 mch = cursor.execute('SELECT id, name FROM merchants WHERE id=%s', (uid,)).fetchone()
@@ -235,21 +237,23 @@ def require_merchant_auth(f):
                         db.close()
                         return f(*args, **kwargs)
                     # Check agent table
-                    row = cursor.execute('SELECT id, name FROM agents WHERE auth_token=%s', (token,)).fetchone()
+                    row = cursor.execute('SELECT id, name, permissions FROM agents WHERE auth_token=%s', (token,)).fetchone()
                     if row:
                         session['agent_id'] = row['id']
                         session['agent_name'] = row['name']
                         session['is_agent'] = True
+                        session['permissions'] = json.loads(row['permissions'] or '[]')
                         db.close()
                         return f(*args, **kwargs)
                     # Check employee table (before db.close())
                     try:
-                        row = cursor.execute("SELECT e.id, e.merchant_id, e.name, m.name as merchant_name FROM employees e LEFT JOIN merchants m ON e.merchant_id = m.id WHERE e.auth_token=%s", (token,)).fetchone()
+                        row = cursor.execute("SELECT e.id, e.merchant_id, e.name, e.permissions, m.name as merchant_name FROM employees e LEFT JOIN merchants m ON e.merchant_id = m.id WHERE e.auth_token=%s", (token,)).fetchone()
                         if row:
                             session['merchant_id'] = row['merchant_id']
                             session['merchant_name'] = row['merchant_name'] or row['name']
                             session['employee_id'] = row['id']
                             session['is_employee'] = True
+                            session['permissions'] = json.loads(row['permissions'] or '[]')
                             db.close()
                             return f(*args, **kwargs)
                     except Exception as e:

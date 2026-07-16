@@ -175,6 +175,7 @@ def store_init():
         access_code = data.get('access_code')
         openid = data.get('openid', '')
         unionid = data.get('unionid', '')
+        # [FIX-20260716] 禁止改成 "or openid" 回退！openid可能是公众号openid，会导致订阅消息40003
         mp_openid = data.get('mp_openid', '')
         if not mp_openid and user_phone:
             _conn_mp = get_db()
@@ -1280,6 +1281,7 @@ def deposit_end_storage():
                 _nconn = psycopg2.connect(_NURL, connect_timeout=5)
                 _ncur = _nconn.cursor()
                 # first check user_balances mp_openid (has correct mini-program openid)
+                # [FIX-20260716] 必须排除 oLhbm2 前缀（公众号openid），只保留 oWrA8 前缀的小程序openid
                 _ncur.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid NOT LIKE 'oLhbm2%%' ORDER BY id DESC LIMIT 1", (order['user_phone'],))
                 _nrow = _ncur.fetchone()
                 logger.info(f"[end_storage_debug] user_balances mp_openid query: {_nrow}")

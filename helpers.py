@@ -1448,7 +1448,8 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None):
             try:
                 _conn = get_db()
                 _cur = _conn.cursor()
-                # 第一级：user_balances.mp_openid (小程序openid)
+                # [FIX-20260716] 必须查 mp_openid（小程序openid），禁止查 openid（可能是公众号openid会导致40003）
+                # 同时排除 oLhbm2 前缀（公众号openid），只接受 oWrA8 前缀的小程序openid
                 _cur.execute("SELECT mp_openid FROM user_balances WHERE phone=%s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid NOT LIKE 'oLhbm2%%' ORDER BY id DESC LIMIT 1", (phone,))
                 _row = _cur.fetchone()
                 if _row and _row[0]:

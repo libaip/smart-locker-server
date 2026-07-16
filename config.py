@@ -27,6 +27,7 @@ WX_APP_ID = 'wxd85204d0ec930d46'
 WX_APP_SECRET = '552e27fa9a260a6640bf6983bd3470f5'
 WX_MP_APP_ID = 'wx57eaea52dcfff4e8'
 WX_MP_APP_SECRET = 'eac6e21d37bf5621730633d4e249275b'
+WX_MP_TOKEN = 'smartlocker2024'
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WX_CERT_PATH = os.path.join(BASE_DIR, 'cert', 'apiclient_cert.pem')

@@ -82,6 +82,8 @@ def update_payment_channel(channel_id):
         updates, params = [], []
         for field in ['name', 'channel_type', 'mch_id', 'api_key', 'app_id', 'app_secret', 'cert_name', 'is_active', 'weight', 'daily_limit']:
             if field in data:
+                if field == 'api_key' and not data[field]:
+                    continue
                 updates.append(f'{field} = %s')
                 params.append(data[field])
         if 'extra_config' in data:
@@ -260,8 +262,30 @@ def pay_notify():
                     cursor.execute('UPDATE user_balances SET total_deposited = total_deposited + %s, phone = %s, mp_openid = COALESCE(NULLIF(mp_openid, ''), %s) WHERE mp_openid = %s',
                                    (order['deposit_amount'], order['user_phone'], _o_mp_openid, _o_mp_openid))
                 else:
-                    # 没找到：插入新记录（补齐wechat_name）
-                    _wn_name = ''
+                    # 没找到，先用 phone 查，避免重复
+                    _dup = None
+                    try:
+                        cursor.execute("SELECT id FROM user_balances WHERE phone = %s LIMIT 1", (order['user_phone'],))
+                        _dup = cursor.fetchone()
+                    except:
+                        pass
+                    if _dup:
+                        # phone_openids 桥接，获取正确的 mp_openid
+                        try:
+                            cursor.execute("SELECT mp_openid, openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1", (order['user_phone'],))
+                            _po_r = cursor.fetchone()
+                            if _po_r:
+                                if _po_r['mp_openid']:
+                                    _o_mp_openid = _po_r['mp_openid']
+                                if _po_r['openid']:
+                                    _o_openid = _po_r['openid']
+                        except:
+                            pass
+                        cursor.execute('UPDATE user_balances SET openid = %s, mp_openid = %s, total_deposited = total_deposited + %s WHERE id = %s',
+                                       (_o_openid, _o_mp_openid, order['deposit_amount'], _dup['id']))
+                    else:
+                        # 真的没找到，插入新记录
+                        _wn_name = ''
                     cursor.execute("SELECT wechat_name FROM phone_openids WHERE phone = %s AND wechat_name IS NOT NULL AND wechat_name != '' LIMIT 1", (order['user_phone'],))
                     _wn_r = cursor.fetchone()
                     if _wn_r:

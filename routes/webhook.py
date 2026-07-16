@@ -6,9 +6,9 @@ import json
 import urllib.request
 import urllib.parse
 from flask import Blueprint, request, redirect, jsonify
-from config import WX_APP_ID as WX_OA_ID, WX_APP_SECRET as WX_OA_SECRET, WX_MP_APP_ID, WX_MP_APP_SECRET
+from config import WX_APP_ID as WX_OA_ID, WX_APP_SECRET as WX_OA_SECRET, WX_MP_APP_ID, WX_MP_APP_SECRET, WX_MP_TOKEN
 from database import get_db
-from helpers import json_response, logger
+from helpers import json_response, logger, get_access_token
 
 bp = Blueprint('webhook', __name__)
 
@@ -86,10 +86,7 @@ def generate_wx_scheme():
         import json as json_lib
         req_data = request.get_json() or {}
         path = req_data.get('path', 'pages/deposit/deposit')
-        token_url = 'https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s' % (WX_MP_APP_ID, WX_MP_APP_SECRET)
-        resp = urllib.request.urlopen(token_url, timeout=10)
-        token_data = json_lib.loads(resp.read().decode())
-        token = token_data.get('access_token', '')
+        token = get_access_token()
         if not token:
             return jsonify({'code': 500, 'message': 'token failed'})
         scheme_url = 'https://api.weixin.qq.com/wxa/generatescheme?access_token=' + token
@@ -160,10 +157,30 @@ def wechat_message():
             _conn_msg = get_db()
             _cur_msg = _conn_msg.cursor()
             _phone = ''
-            _cur_msg.execute("SELECT phone FROM phone_openids WHERE openid = %s AND phone IS NOT NULL AND phone != '' LIMIT 1", (from_user,))
+            _cur_msg.execute("SELECT phone FROM phone_openids WHERE (openid = %s OR mp_openid = %s) AND phone IS NOT NULL AND phone != '' LIMIT 1", (from_user, from_user,))
             _r_msg = _cur_msg.fetchone()
             if _r_msg:
                 _phone = _r_msg[0]
+            # 如果通过openid没找到手机号，尝试通过unionid查找
+            if not _phone:
+                try:
+                    import urllib.request as _urllib_req, json as _json, logging as _logging
+                    _token_url = "https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s" % (WX_OA_ID, WX_OA_SECRET)
+                    _token_resp = _urllib_req.urlopen(_token_url, timeout=5)
+                    _token_data = _json.loads(_token_resp.read().decode())
+                    _oa_token = _token_data.get("access_token", "")
+                    if _oa_token:
+                        _userinfo_url = "https://api.weixin.qq.com/cgi-bin/user/info?access_token=%s&openid=%s&lang=zh_CN" % (_oa_token, from_user)
+                        _info_resp = _urllib_req.urlopen(_userinfo_url, timeout=5)
+                        _info_data = _json.loads(_info_resp.read().decode())
+                        _unionid = _info_data.get("unionid", "")
+                        if _unionid:
+                            _cur_msg.execute("SELECT phone FROM phone_openids WHERE unionid = %s AND phone IS NOT NULL AND phone != '' LIMIT 1", (_unionid,))
+                            _r2 = _cur_msg.fetchone()
+                            if _r2:
+                                _phone = _r2[0]
+                except Exception as _union_err:
+                    pass
             _cur_msg.execute("INSERT INTO wx_oa_messages (openid, phone, msg_type, content, event, raw_msg) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
                            (from_user, _phone, msg_type, content_raw[:500], event, xml_data[:1000]))
             _msg_id_row = _cur_msg.fetchone()
@@ -190,12 +207,12 @@ def wechat_message():
 
         if msg_type == 'event':
             if event == 'subscribe':
-                return _reply('''\u6b22\u8fce\u5173\u6ce8\u667a\u80fd\u5bc4\u5b58\u67dc\uff01\u70b9\u51fb\u83dc\u5355\u5373\u53ef\u4f7f\u7528\u5bc4\u5b58\u670d\u52a1\u3002\u5ba2\u670d\u7535\u8bdd\uff1a400-698-1010''')
+                return _reply('''\u6b22\u8fce\u5173\u6ce8\u667a\u80fd\u5bc4\u5b58\u67dc\uff01\u70b9\u51fb\u83dc\u5355\u5373\u53ef\u4f7f\u7528\u5bc4\u5b58\u670d\u52a1\u3002\u5ba2\u670d\u7535\u8bdd\uff1a4006981080''')
             elif event == 'unsubscribe':
                 return '', 200
 
         if msg_type == 'text':
-            return _reply('''\u60a8\u597d\uff0c\u5df2\u8bb0\u5f55\u60a8\u7684\u7559\u8a00\uff0c\u5ba2\u670d\u4eba\u5458\u5c06\u5c3d\u5feb\u5904\u7406\u3002\u5ba2\u670d\u7535\u8bdd\uff1a400-698-1010''')
+            return _reply('''\u60a8\u597d\uff0c\u5df2\u8bb0\u5f55\u60a8\u7684\u7559\u8a00\uff0c\u5ba2\u670d\u4eba\u5458\u5c06\u5c3d\u5feb\u5904\u7406\u3002\u5ba2\u670d\u7535\u8bdd\uff1a4006981080''')
 
         return '', 200
     except Exception as e:

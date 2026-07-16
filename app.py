@@ -36,6 +36,13 @@ def h5_merchant_devices():
 def h5_merchant_open_logs():
     return send_from_directory('static', 'open-logs.html')
 
+@app.route('/h5/store')
+def h5_store_page():
+    device = request.args.get("device", "")
+    from flask import render_template
+    return render_template('store.html', mode='store', device=device)
+
+
 app.secret_key = SECRET_KEY
 app.config['DATABASE'] = DATABASE
 app.config['DEBUG'] = DEBUG
@@ -673,18 +680,9 @@ def wx_generate_scheme():
             path = path[1:]
         query = _raw.get('query', '')
 
-        _tk_key = 'wx_scheme_token'
-        _td = getattr(app, _tk_key, None)
-        if _td and _time.time() - _td['ts'] < 7000:
-            _at = _td['token']
-        else:
-            _tu = 'https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=' + _appid + '&secret=' + _secret
-            _tr = _urllib.urlopen(_tu, timeout=5)
-            _tj = _json.loads(_tr.read())
-            _at = _tj.get('access_token', '')
-            if not _at:
-                return jsonify({'code': -1, 'msg': 'token failed'})
-            setattr(app, _tk_key, {'token': _at, 'ts': _time.time()})
+        _at = get_access_token()
+        if not _at:
+            return jsonify({'code': -1, 'msg': 'token failed'})
 
         if '%s' in path and not query:
             query = path.split('%s', 1)[1]

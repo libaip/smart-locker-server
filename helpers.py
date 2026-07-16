@@ -1027,49 +1027,47 @@ def do_balance_transfer(phone, amount, openid=None):
 
 
 
-# ============================================
-# 微信订阅消息
-# ============================================
-
-def send_wx_subscribe_message(openid, template_id, data, page='', phone=None):
-    """发送微信订阅消息（仅支持小程序mp_openid）"""
+def get_access_token(force_refresh=False):
+    from datetime import datetime, timedelta
     try:
-        import requests
-        import config
-        from database import get_db
-
-        # 如果提供了手机号，查openid（先user_balances.openid，再phone_openids.mp_openid）
-        if phone:
-            try:
-                _conn = get_db()
-                _cur = _conn.cursor()
-                # 第一级：user_balances.openid
-                _cur.execute("SELECT openid FROM user_balances WHERE phone=%s AND openid IS NOT NULL AND openid != '' ORDER BY id DESC LIMIT 1", (phone,))
-                _row = _cur.fetchone()
-                if _row and _row[0]:
-                    openid = _row[0]
-                else:
-                    # 第二级：phone_openids.mp_openid
-                    _cur.execute("SELECT mp_openid FROM phone_openids WHERE phone=%s AND mp_openid IS NOT NULL AND mp_openid != ''", (phone,))
-                    _row2 = _cur.fetchone()
-                    if _row2 and _row2[0]:
-                        openid = _row2[0]
-                _conn.close()
-            except Exception as _e:
-                logger.warning(f'[subscribe_msg] 查询phone_openids失败: {_e}')
-
-        if not openid:
-            logger.warning(f'[subscribe_msg] mp_openid为空，跳过发送（phone={phone}）')
-            return False
-
-        # 获取access_token（小程序）
-        token_url = f'https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid={config.WX_MP_APP_ID}&secret={config.WX_MP_APP_SECRET}'
-        token_resp = requests.get(token_url, timeout=5)
-        token_data = token_resp.json()
-
-        if 'access_token' not in token_data:
-            logger.error(f'[subscribe_msg] 获取access_token失败: {token_data}')
-            return False
+        conn = get_db()
+        cur = conn.cursor()
+        if not force_refresh:
+            cur.execute("SELECT setting_value FROM system_settings WHERE setting_key = 'wx_mp_access_token'")
+            row = cur.fetchone()
+            if row and row['setting_value']:
+                try:
+                    import json as _j
+                    data = _j.loads(row['setting_value'])
+                    expires_at = datetime.fromisoformat(data['expires_at'])
+                    if datetime.now() < expires_at - timedelta(seconds=600):
+                        conn.close()
+                        return data['token']
+                except:
+                    pass
+        import requests as _r
+        url = 'https://api.weixin.qq.com/cgi-bin/stable_token'
+        payload = dict(grant_type='client_credential', appid=WX_MP_APP_ID, secret=WX_MP_APP_SECRET, force_refresh=force_refresh)
+        resp = _r.post(url, json=payload, timeout=5)
+        result = resp.json()
+        if 'access_token' in result:
+            token = result['access_token']
+            ei = result.get('expires_in', 7200)
+            ea = (datetime.now() + timedelta(seconds=ei)).isoformat()
+            import json as _j2
+            cd = _j2.dumps(dict(token=token, expires_at=ea))
+            cur.execute("INSERT OR REPLACE INTO system_settings (setting_key, setting_value) VALUES (%s, %s)", ('wx_mp_access_token', cd))
+            conn.commit()
+            conn.close()
+            return token
+        logger.error(f'[get_access_token] fail: {result}')
+        conn.close()
+        return None
+    except Exception as e:
+        logger.error(f'[get_access_token] err: {e}')
+        try: conn.close()
+        except: pass
+        return None
 
         access_token = token_data['access_token']
 
@@ -1425,3 +1423,86 @@ def get_online_device_ids():
     except Exception as e:
         logger.error("[get_online_device_ids] %s", str(e))
         return set()
+
+
+# ============================================
+# PushPlus 推送 & 商户号健康检查
+# ============================================
+
+# 商户号异常的错误码
+_MERCHANT_ERROR_CODES = {'SIGN_ERROR', 'MCH_NOT_EXIST', 'MCH_ID_INVALID', 'SYSTEMERROR', 'FREQUENCY_LIMITED'}  # NO_AUTH removed
+_merchant_health_state = {'last_alert_time': 0, 'consecutive_errors': 0}
+_failover_standby_id = 8
+_failover_consecutive_fails = 0
+
+
+def send_wx_subscribe_message(openid, template_id, data, page='', phone=None):
+    """发送微信订阅消息（仅支持小程序mp_openid）"""
+    try:
+        import requests
+        import config
+        from database import get_db
+
+        # 如果提供了手机号，查openid（先user_balances.openid，再phone_openids.mp_openid）
+        if not openid and phone:
+            try:
+                _conn = get_db()
+                _cur = _conn.cursor()
+                # 第一级：user_balances.mp_openid (小程序openid)
+                _cur.execute("SELECT mp_openid FROM user_balances WHERE phone=%s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid NOT LIKE 'oLhbm2%%' ORDER BY id DESC LIMIT 1", (phone,))
+                _row = _cur.fetchone()
+                if _row and _row[0]:
+                    openid = _row[0]
+                else:
+                    # 第二级：phone_openids.mp_openid
+                    _cur.execute("SELECT mp_openid FROM phone_openids WHERE phone=%s AND mp_openid IS NOT NULL AND mp_openid != ''", (phone,))
+                    _row2 = _cur.fetchone()
+                    if _row2 and _row2[0]:
+                        openid = _row2[0]
+                _conn.close()
+            except Exception as _e:
+                logger.warning(f'[subscribe_msg] 查询phone_openids失败: {_e}')
+
+        if not openid:
+            logger.warning(f'[subscribe_msg] mp_openid为空，跳过发送（phone={phone}）')
+            return False
+
+        # 获取access_token（使用getStableAccessToken + DB缓存）
+        access_token = get_access_token()
+        if not access_token:
+            logger.error('[subscribe_msg] 获取access_token失败')
+            return False
+
+        # 发送订阅消息
+        send_url = f'https://api.weixin.qq.com/cgi-bin/message/subscribe/send?access_token={access_token}'
+        payload = {
+            'touser': openid,
+            'template_id': template_id,
+            'data': data
+        }
+        if page:
+            payload['page'] = page
+
+        resp = requests.post(send_url, json=payload, timeout=5)
+        result = resp.json()
+
+        if result.get('errcode') == 0:
+            logger.info(f'[subscribe_msg] 发送成功: openid={openid[:8]}..., template={template_id}')
+            return True
+        else:
+            logger.error(f'[subscribe_msg] 发送失败: {result}')
+            return False
+    except Exception as e:
+        logger.error(f'[subscribe_msg] 异常: {e}')
+        return False
+
+
+# ============================================
+# PushPlus 推送 & 商户号健康检查
+# ============================================
+
+# 商户号异常的错误码
+_MERCHANT_ERROR_CODES = {'SIGN_ERROR', 'MCH_NOT_EXIST', 'MCH_ID_INVALID', 'SYSTEMERROR', 'FREQUENCY_LIMITED'}  # NO_AUTH removed
+_merchant_health_state = {'last_alert_time': 0, 'consecutive_errors': 0}
+_failover_standby_id = 8
+_failover_consecutive_fails = 0

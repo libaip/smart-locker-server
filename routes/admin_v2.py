@@ -860,7 +860,7 @@ def admin_order_refund():
                   (order_id, amount, transaction_id, refund_no, datetime.now()))
         # 如果订单是已结算(3)，保证金已从余额退过，需要扣回余额
         if order_dict.get('status') == 3 and order_dict.get('user_phone'):
-            c.execute('UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s',
+            c.execute('UPDATE user_balances SET balance = GREATEST(COALESCE(balance,0) - %s, 0), total_withdrawn = COALESCE(total_withdrawn,0) + %s WHERE phone = %s',
                       (amount, amount, order_dict['user_phone']))
         # 如果订单还在使用中(2)，释放柜格
         # [Agent-modified 2026-07-04] 退款时释放格口：无论订单是使用中(2)还是已结算(3)，都要释放格口为空闲(0)
@@ -914,7 +914,7 @@ def admin_order_close():
             c.execute('SELECT id FROM user_balances WHERE phone = %s', (order_dict['user_phone'],))
             ub_row = c.fetchone()
             if ub_row:
-                c.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, openid = COALESCE(NULLIF(openid, ''), %s), unionid = COALESCE(NULLIF(unionid, ''), %s) WHERE phone = %s',
+                c.execute("UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, openid = COALESCE(NULLIF(openid, ''), %s), unionid = COALESCE(NULLIF(unionid, ''), %s) WHERE phone = %s",
                           (deposit_amount, deposit_amount, order_dict.get('openid', ''), order_dict.get('unionid', ''), order_dict['user_phone']))
             else:
                 c.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, balance, total_deposited, total_withdrawn, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, 0, NOW())',
@@ -925,7 +925,22 @@ def admin_order_close():
         conn.commit()
         
         # 发送寄存结束订阅消息
-        if order_dict.get('openid'):
+        ntf_openid = order_dict.get('openid') or order_dict.get('mp_openid', '')
+        if not ntf_openid and order_dict.get('user_phone'):
+            try:
+                c2 = conn.cursor(cursor_factory=RealDictCursor)
+                c2.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (order_dict['user_phone'],))
+                _r = c2.fetchone()
+                if _r and _r['mp_openid']:
+                    ntf_openid = _r['mp_openid']
+                if not ntf_openid:
+                    c2.execute("SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s AND (mp_openid IS NOT NULL AND mp_openid != '' OR openid IS NOT NULL AND openid != '') ORDER BY updated_at DESC LIMIT 1", (order_dict['user_phone'],))
+                    _r = c2.fetchone()
+                    if _r and _r['openid']:
+                        ntf_openid = _r['openid']
+            except Exception as _e:
+                logger.warning(f"[order_close] ?openid??: {_e}")
+        if ntf_openid:
             try:
                 from helpers import send_wx_subscribe_message
                 subscribe_data = {
@@ -934,11 +949,10 @@ def admin_order_close():
                     'thing7': {'value': '已退还至小程序用户钱包'},
                     'thing2': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                 }
-                send_wx_subscribe_message(order_dict['openid'], '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data, phone=order_dict.get('user_phone'))
+                send_wx_subscribe_message(ntf_openid, '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data, phone=order_dict.get('user_phone'))
                 # 退款通知在用户提现时发送，不在结束寄存时发送
             except Exception as e:
-                logger.error(f"[order_close发送订阅消息失败] {e}")
-        
+                logger.error(f"[order_close发送订阅消息失败] {e}") 
         conn.close()
         # 通知APK刷新柜格状态
         try:
@@ -984,7 +998,7 @@ def admin_member_refund():
             conn.close()
             return json_response(message='用户余额不足', code=400)
         refund_amount = min(amount, user['balance'] or 0)
-        c.execute('UPDATE user_balances SET balance=balance-%s, total_withdrawn=total_withdrawn+%s WHERE phone=%s', (refund_amount, refund_amount, phone))
+        c.execute('UPDATE user_balances SET balance = GREATEST(COALESCE(balance,0) - %s, 0), total_withdrawn = COALESCE(total_withdrawn,0) + %s WHERE phone = %s', (refund_amount, refund_amount, phone))
         c.execute("SELECT id, order_no, transaction_id, deposit_amount, payment_channel_id FROM orders WHERE user_phone=%s AND status != 4 AND refund_status!='refunded' ORDER BY id DESC LIMIT 1", (phone,))
         order = c.fetchone()
         refund_no = 'RF_M' + datetime.now().strftime('%Y%m%d%H%M%S') + str(phone)[-4:]
@@ -2190,7 +2204,7 @@ def admin_biz_stats():
             COUNT(CASE WHEN o.logic_mark IS NULL OR o.logic_mark != 'Y' THEN 1 END) as visible_count,
             SUM(CASE WHEN o.status=2 THEN 1 ELSE 0 END) as active_count,
             COALESCE(SUM(o.deposit_amount),0) as deposit_total,
-            COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL AND date(o.store_time)=date(o.refund_time) THEN o.refund_amount ELSE 0 END),0) as refund_total
+            COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END),0) as refund_total
             FROM orders o
             LEFT JOIN cabinets cab ON o.cabinet_id=cab.id
             LEFT JOIN locations l ON cab.location_id=l.id
@@ -2233,7 +2247,7 @@ def admin_biz_stats():
                 o.user_phone,
                 o.logic_mark,
                 o.deposit_amount,
-                CASE WHEN date(o.refund_time)=date(o.created_at) THEN o.refund_amount ELSE 0 END as refund_amount,
+                CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END as refund_amount,
                 l.merchant_id,
                 l.hide_ratio,
                 l.whitelist_phones
@@ -2249,7 +2263,7 @@ def admin_biz_stats():
                 o.user_phone,
                 o.logic_mark,
                 o.deposit_amount,
-                CASE WHEN date(o.refund_time)=date(o.created_at) THEN o.refund_amount ELSE 0 END as refund_amount,
+                CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END as refund_amount,
                 l.merchant_id,
                 l.hide_ratio,
                 l.whitelist_phones
@@ -2714,9 +2728,17 @@ def withdrawals_approve():
         if record['status'] != 0:
             conn.close()
             return json_response(message='该记录已处理', code=400)
-        new_status = 1 if action == 'approve' else 2
-        c.execute("UPDATE withdrawal_records SET status=%s, approve_time=NOW(), approver=%s WHERE id=%s",
-                  (new_status, session.get('admin_user', 'admin'), wid))
+        if action == 'approve':
+            c.execute("UPDATE withdrawal_records SET status=1, approve_time=NOW(), approver=%s WHERE id=%s",
+                      (session.get('admin_user', 'admin'), wid))
+        elif action == 'reject':
+            c.execute("SELECT user_phone, amount FROM withdrawal_records WHERE id=%s", (wid,))
+            r = c.fetchone()
+            if r and r['user_phone']:
+                c.execute("UPDATE user_balances SET balance=balance+%s,total_withdrawn=total_withdrawn-%s WHERE phone=%s",
+                          (r['amount'], r['amount'], r['user_phone']))
+            c.execute("UPDATE withdrawal_records SET status=3, approve_time=NOW(), approver=%s WHERE id=%s",
+                      (session.get('admin_user', 'admin'), wid))
         conn.commit()
         conn.close()
         return json_response(message='处理成功')
@@ -3712,10 +3734,12 @@ def withdrawal_batch_auto():
                 ord = c2.fetchone()
                 if ord:
                     success, refund_id, msg = do_real_refund(order_id=order_id, order_no=ord['order_no'], amount=amt, payment_channel_id=ord['payment_channel_id'])
-                    c2.execute("UPDATE withdrawal_records SET status=2, approve_time=datetime('now'), approver='自动' WHERE id=%s", (r['id'],))
                     if success:
+                        c2.execute("UPDATE withdrawal_records SET status=2, approve_time=datetime('now'), approver='自动' WHERE id=%s", (r['id'],))
                         c2.execute("UPDATE orders SET status=4, refund_id=%s, refund_time=datetime('now') WHERE id=%s", (refund_id, order_id))
-                    approved += 1
+                        approved += 1
+                    else:
+                        c2.execute("UPDATE withdrawal_records SET status=1, approve_time=datetime('now'), approver='自动' WHERE id=%s", (r['id'],))
             else:
                 # ?????????????
                 c.execute("UPDATE user_balances SET balance = balance + %s, total_withdrawn = total_withdrawn - %s WHERE phone = %s",

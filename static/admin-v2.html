@@ -1946,7 +1946,7 @@ if(this.complaintRefreshTimer&&v!=='complaint-self'&&v!=='complaint-wx'){clearIn
 if(v==='dashboard'){this.orders=[];this.stats={};this.loadDashboard();}
 else if(v==='machine-list'){this.machines=[];this.loadMachines();this.loadLocations();this.loadAgents();}
 else if(v==='location-list'){this.locations=[];this.loadLocations();var self=this;if(this.locationRefreshTimer)clearInterval(this.locationRefreshTimer);this.locationRefreshTimer=setInterval(function(){self.loadLocations();},30000);}
-else if(v==='online-order'){this.orders=[];this.loadOrders();}else if(v==='alert-mgr')this.loadAlerts(1);
+else if(v==='online-order'){this.orders=[];this.loadLocations();this.loadMachines(1);this.loadOrders();}else if(v==='alert-mgr')this.loadAlerts(1);
 else if(v==='member-list')this.loadMembers();
 else if(v==='member-withdraw'){var d=new Date();this.withdrawalDateEnd=d.toISOString().slice(0,10);d.setDate(d.getDate()-30);this.withdrawalDateStart=d.toISOString().slice(0,10);this.loadWithdrawals();}
 else if(v==='member-recharge'){this.loadRechargeRecords();}

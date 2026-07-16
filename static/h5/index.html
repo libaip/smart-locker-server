@@ -129,7 +129,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','P
 function getPhone(){
   var params=new URLSearchParams(window.location.search);
   var p=params.get('phone')||localStorage.getItem('phone')||'';
-  var openid=params.get('openid')||localStorage.getItem('openid')||'';
+  var _oa=params.getAll('openid');var openid='';for(var _oi=_oa.length-1;_oi>=0;_oi--){if(_oa[_oi]){openid=_oa[_oi];break;}}if(!openid){openid=localStorage.getItem('openid')||'';}
   if(openid) localStorage.setItem('openid',openid);
   if(p){localStorage.setItem('phone',p);return p;}
   // If no phone but have openid, try to get phone from backend

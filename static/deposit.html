@@ -817,8 +817,13 @@
     var s=typeof ssr_cabinet!="undefined"?{ssr_cabinet}:{};var DI="{device}";var OI="{openid}";var CI="{cabinet_id}";var DA=typeof deposit_amount!="undefined"?{deposit_amount}:{};
     var params = new URLSearchParams(window.location.search);
     if (params.get("page") === "profile") {
-        var newUrl = "/static/h5/index.html" + window.location.search;
-        window.location.replace(newUrl);
+        var _oidList = params.getAll("openid");
+        var _hasOid = false;
+        for (var _i2 = 0; _i2 < _oidList.length; _i2++) { if (_oidList[_i2]) { _hasOid = true; break; } }
+        if (_hasOid) {
+            var newUrl = "/static/h5/index.html" + window.location.search;
+            window.location.replace(newUrl);
+        }
     }
     var API_BASE = window.location.origin;
     var currentCabinetId = CI || params.get('cabinet_id') || '';
@@ -846,8 +851,14 @@
         } catch(e2) {}
     }
     if (!currentCabinetId) currentCabinetId = '8';
-    var wxOpenid = params.get('openid') || (OI && OI.indexOf('{') !== 0 && OI.length > 5 ? OI : '');
-    var wxWechatName = params.get('wechat_name') || '';
+    // get last non-empty openid/wechat_name (skip empty initial values)
+    var _oidAll = params.getAll('openid');
+    var wxOpenid = '';
+    for (var _i = _oidAll.length - 1; _i >= 0; _i--) { if (_oidAll[_i]) { wxOpenid = _oidAll[_i]; break; } }
+    if (!wxOpenid) { wxOpenid = (OI && OI.indexOf('{') !== 0 && OI.length > 5 ? OI : ''); }
+    var _wnAll = params.getAll('wechat_name');
+    var wxWechatName = '';
+    for (var _j = _wnAll.length - 1; _j >= 0; _j--) { if (_wnAll[_j]) { wxWechatName = _wnAll[_j]; break; } }
     if (wxWechatName) { try { localStorage.setItem('locker_wx_name', decodeURIComponent(wxWechatName)); } catch(e){} } else { wxWechatName = localStorage.getItem('locker_wx_name') || ''; }
     var wxUnionid = params.get('unionid') || '';
     var isWechat = /MicroMessenger/i.test(navigator.userAgent);
@@ -1285,7 +1296,7 @@
         btn.disabled = true; btn.textContent = '处理中...';
         // 如果已有预占订单（onStep1Next时已锁定柜门），直接获取支付参数
         if (currentOrderId) {
-            fetch(API_BASE + '/api/deposit/get-pay-params', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentOrderId, phone: phone, openid: wxOpenid}) })
+            fetch(API_BASE + '/api/deposit/get-pay-params', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentOrderId, phone: phone, openid: wxOpenid, wechat_name: localStorage.getItem('locker_wx_name') || ''}) })
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 if ((data.code === 0 || data.code === 200) && data.data) {

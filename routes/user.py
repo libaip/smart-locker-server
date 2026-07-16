@@ -46,18 +46,40 @@ def _resolve_mp_openid(cursor, mp_openid='', openid='', phone=''):
                 return _r['mp_openid']
         except Exception:
             pass
-        # 最后从 phone_openids 按 openid 查
+        # 从 phone_openids 按 openid 查（mp_openid 或 openid 都行）
         try:
-            cursor.execute("SELECT mp_openid FROM phone_openids WHERE openid = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (openid,))
+            cursor.execute("SELECT mp_openid, openid FROM phone_openids WHERE openid = %s LIMIT 1", (openid,))
+            _r = cursor.fetchone()
+            if _r:
+                if _r['mp_openid']:
+                    return _r['mp_openid']
+                elif _r['openid']:
+                    return _r['openid']
+        except Exception:
+            pass
+        # 从 phone_openids 按 mp_openid 查（小程序openid存这里）
+        try:
+            cursor.execute("SELECT mp_openid FROM phone_openids WHERE mp_openid = %s LIMIT 1", (openid,))
             _r = cursor.fetchone()
             if _r and _r['mp_openid']:
                 return _r['mp_openid']
         except Exception:
             pass
+        # 从 user_balances 按 openid 查（公众号openid可能在这里）
+        try:
+            cursor.execute("SELECT mp_openid, openid FROM user_balances WHERE openid = %s LIMIT 1", (openid,))
+            _r = cursor.fetchone()
+            if _r:
+                if _r['mp_openid']:
+                    return _r['mp_openid']
+                elif _r['openid']:
+                    return _r['openid']
+        except Exception:
+            pass
     # 3. 用 phone 反查 mp_openid
     if phone:
         try:
-            cursor.execute("SELECT mp_openid FROM phone_openids WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' ORDER BY updated_at DESC LIMIT 1", (phone,))
+            cursor.execute("SELECT mp_openid, openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1", (phone,))
             _r = cursor.fetchone()
             if _r and _r['mp_openid']:
                 return _r['mp_openid']
@@ -153,7 +175,7 @@ def store_init():
         access_code = data.get('access_code')
         openid = data.get('openid', '')
         unionid = data.get('unionid', '')
-        mp_openid = data.get('mp_openid', '') or openid
+        mp_openid = data.get('mp_openid', '')
         if not mp_openid and user_phone:
             _conn_mp = get_db()
             _cur_mp = _conn_mp.cursor()
@@ -284,6 +306,7 @@ def get_pay_params_api():
         phone = data.get('phone', '')
         openid = data.get('openid', '')
         unionid = data.get('unionid', '')
+        wechat_name = data.get("wechat_name", "")
         if not order_id:
             return json_response(message='缺少订单ID', code=400)
         conn = get_db()
@@ -299,6 +322,12 @@ def get_pay_params_api():
         if order['status'] != 1:
             conn.close()
             return json_response(message='订单状态异常', code=400)
+        if wechat_name and phone:
+            try:
+                cursor.execute("UPDATE phone_openids SET wechat_name = %s WHERE phone = %s AND (wechat_name IS NULL OR wechat_name = \"\")", (wechat_name, phone))
+                conn.commit()
+            except:
+                pass
         # 检查是否过期（15分钟）
         from datetime import timedelta
         if order['store_time'] and (datetime.now() - order['store_time']).total_seconds() > 900:
@@ -651,7 +680,8 @@ def create_deposit_order():
         openid = data.get('openid', '')
         unionid = data.get('unionid', '')
         unionid = data.get('unionid', '')
-        mp_openid = data.get('mp_openid', '') or openid
+        mp_openid = data.get('mp_openid', '')
+        wechat_name = data.get('wechat_name', '')
         if not all([cabinet_id, user_phone]):
             return json_response(message='参数不完整', code=400)
         sms_enabled = get_setting('sms_enabled', 'false').lower() == 'true'
@@ -908,27 +938,32 @@ def h5_store():
             return json_response(message='请输入至少4位密码', code=400)
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT id, mainboard_device_id, mainboard_source, deposit_amount, group_id, cabinet_code, name FROM cabinets WHERE mainboard_device_id = %s', (device,))
+        cursor.execute('SELECT id, mainboard_device_id, mainboard_source, deposit_amount, group_id, cabinet_code, name, last_heartbeat FROM cabinets WHERE mainboard_device_id = %s', (device,))
         cabinet = cursor.fetchone()
         if not cabinet:
-            cursor.execute('SELECT id, mainboard_device_id, mainboard_source, deposit_amount, group_id, cabinet_code, name FROM cabinets WHERE cabinet_code = %s', (device,))
+            cursor.execute('SELECT id, mainboard_device_id, mainboard_source, deposit_amount, group_id, cabinet_code, name, last_heartbeat FROM cabinets WHERE cabinet_code = %s', (device,))
             cabinet = cursor.fetchone()
         if not cabinet:
             try:
-                cursor.execute('SELECT id, mainboard_device_id, mainboard_source, deposit_amount, group_id, cabinet_code, name FROM cabinets WHERE id = %s', (int(device),))
+                cursor.execute('SELECT id, mainboard_device_id, mainboard_source, deposit_amount, group_id, cabinet_code, name, last_heartbeat FROM cabinets WHERE id = %s', (int(device),))
                 cabinet = cursor.fetchone()
             except (ValueError, TypeError):
                 pass
         if not cabinet:
             conn.close()
             return json_response(message='设备不存在', code=404)
-        # 检查设备是否在线
-        from helpers import connected_devices
+        # 检查设备是否在线（5分钟内有心跳即认为在线）
         dev_id = cabinet['mainboard_device_id'] or ''
-        if not dev_id or dev_id not in connected_devices:
-            conn.close()
-            return json_response(message='设备未在线，暂时无法使用', code=503)
+        if dev_id:
+            hb = cabinet.get('last_heartbeat')
+            if not hb or (datetime.now() - hb).total_seconds() > 300:
+                conn.close()
+                return json_response(message='设备离线，请稍后再试', code=400)
         cabinet_id = cabinet['id']
+        # 检查网点是否允许跳转小程序
+        cursor.execute("SELECT l.allow_h5_to_mp FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE c.id = %s", (cabinet_id,))
+        _lr = cursor.fetchone()
+        need_redirect = bool(_lr and _lr['allow_h5_to_mp'])
         cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs LEFT JOIN orders o ON o.slot_id = cs.id WHERE cs.cabinet_id = %s AND cs.status = 1 GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1', (cabinet_id,))
         slot = cursor.fetchone()
         if not slot:
@@ -960,7 +995,7 @@ def h5_store():
         row = cursor.fetchone()
         order_id = row["id"]
         conn.commit()
-        result = {'order_id': order_id, 'order_no': order_no, 'slot_number': str(slot['slot_number']), 'pwd': pwd, 'deposit': str(deposit), 'cabinet_id': cabinet_id, 'cabinet_device_id': cabinet['mainboard_device_id'], 'board_no': 1}
+        result = {'order_id': order_id, 'order_no': order_no, 'need_redirect': need_redirect, 'slot_number': str(slot['slot_number']), 'pwd': pwd, 'deposit': str(deposit), 'cabinet_id': cabinet_id, 'cabinet_device_id': cabinet['mainboard_device_id'], 'board_no': 1}
         try:
             pay_params = get_payment_params(order_id, order_no, deposit, phone, openid, payment_channel=payment_channel, payment_channel_id=payment_channel_id)
             result['pay_params'] = pay_params
@@ -1245,7 +1280,7 @@ def deposit_end_storage():
                 _nconn = psycopg2.connect(_NURL, connect_timeout=5)
                 _ncur = _nconn.cursor()
                 # first check user_balances mp_openid (has correct mini-program openid)
-                _ncur.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid NOT LIKE 'oWrA8%%' ORDER BY id DESC LIMIT 1", (order['user_phone'],))
+                _ncur.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid NOT LIKE 'oLhbm2%%' ORDER BY id DESC LIMIT 1", (order['user_phone'],))
                 _nrow = _ncur.fetchone()
                 logger.info(f"[end_storage_debug] user_balances mp_openid query: {_nrow}")
                 if _nrow and _nrow[0]:
@@ -1658,7 +1693,7 @@ def cabinet_screen_info():
                                   'system_name': system_name, 'total_slots': slot_stats['total_slots'] or 0,
                                   'available_slots': slot_stats['available_slots'] or 0, 'occupied_slots': slot_stats['occupied_slots'] or 0,
                                   'deposit_amount': float(get_setting('deposit_amount', '20'))})
-        cursor.execute('SELECT c.id as cabinet_id, c.cabinet_code, c.name as cabinet_name, c.total_slots, l.name as location_name, l.address as location_address FROM cabinets c LEFT JOIN locations l ON c.location_id = l.id WHERE c.cabinet_code = %s', (cabinet_code,))
+        cursor.execute('SELECT c.id as cabinet_id, c.cabinet_code, c.name as cabinet_name, c.total_slots, c.mainboard_device_id, l.name as location_name, l.address as location_address, l.allow_h5_to_mp, l.force_follow_mp, l.show_qr_follow, l.h5_url, l.id as loc_id FROM cabinets c LEFT JOIN locations l ON c.location_id = l.id WHERE c.cabinet_code = %s', (cabinet_code,))
         cabinet = cursor.fetchone()
         if not cabinet:
             conn.close()
@@ -1666,10 +1701,23 @@ def cabinet_screen_info():
         cursor.execute('SELECT COUNT(*) as available FROM cabinet_slots WHERE cabinet_id = %s AND status = 1', (cabinet['cabinet_id'],))
         available_count = cursor.fetchone()['available']
         conn.close()
-        return json_response({'cabinet_id': cabinet['cabinet_id'], 'cabinet_code': cabinet['cabinet_code'], 'cabinet_name': cabinet['cabinet_name'],
-                              'location_name': cabinet['location_name'], 'location_address': cabinet['location_address'],
-                              'total_slots': cabinet['total_slots'], 'available_slots': available_count,
-                              'deposit_amount': float(get_setting('deposit_amount', '20'))})
+        device_id = cabinet.get('mainboard_device_id', '') or ''
+        need_redirect = bool(cabinet.get('allow_h5_to_mp')) if cabinet.get('allow_h5_to_mp') is not None else False
+        data = {
+            'cabinet_id': cabinet['cabinet_id'], 'cabinet_code': cabinet['cabinet_code'],
+            'cabinet_name': cabinet['cabinet_name'], 'location_name': cabinet['location_name'],
+            'location_address': cabinet['location_address'], 'total_slots': cabinet['total_slots'],
+            'available_slots': available_count,
+            'deposit_amount': float(get_setting('deposit_amount', '20')),
+            'url': f'/h5/store?device={device_id}' if device_id else '',
+            'need_redirect': need_redirect
+        }
+        if need_redirect and device_id:
+            if cabinet.get('force_follow_mp'):
+                data['mp_url'] = f'https://mp.weixin.qq.com/mp/redirect?wx_redirect=/h5/store?device={device_id}'
+            else:
+                data['mp_url'] = f'/h5/store?device={device_id}'
+        return json_response(data)
     except Exception as e:
         logger.error(f'[cabinet_screen_info] 错误: {e}')
         return json_response(message=str(e), code=500)
@@ -1889,6 +1937,28 @@ def wx_login():
                 except Exception as _e2:
                     logger.error(f'[wx_login] 更新老用户mp_openid失败: {_e2}')
             
+            # 自动合并重复的 user_balances 记录
+            if _phone:
+                try:
+                    _mg = get_db()
+                    _mgc = _mg.cursor()
+                    _mgc.execute("SELECT COUNT(*) FROM user_balances WHERE phone = %s", (_phone,))
+                    if _mgc.fetchone()[0] > 1:
+                        _mgc.execute("SELECT mp_openid FROM phone_openids WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (_phone,))
+                        _mgr = _mgc.fetchone()
+                        if _mgr and _mgr[0]:
+                            _mgc.execute("SELECT id FROM user_balances WHERE phone = %s AND mp_openid = %s LIMIT 1", (_phone, _mgr[0]))
+                            _mgid = _mgc.fetchone()
+                            if _mgid:
+                                for _dup in _mgc.execute("SELECT id, balance, total_deposited, total_withdrawn FROM user_balances WHERE phone = %s AND id != %s", (_phone, _mgid[0])).fetchall():
+                                    _mgc.execute("UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, total_withdrawn = total_withdrawn + %s WHERE id = %s", (_dup[1], _dup[2], _dup[3], _mgid[0]))
+                                    _mgc.execute("DELETE FROM user_balances WHERE id = %s", (_dup[0],))
+                                _mg.commit()
+                                logger.info(f'[auto_merge] \u5408\u5e76\u5b8c\u6bd5: {_phone}')
+                    _mgc.close()
+                    _mg.close()
+                except Exception as _mge:
+                    logger.warning(f'[auto_merge] \u5931\u8d25: {_mge}')
             _resp = {'openid': result['openid'], 'session_key': result.get('session_key', '')}
             if _phone:
                 _resp['phone'] = _phone
@@ -2028,12 +2098,29 @@ def get_user_orders():
         phone = request.args.get('phone', '')
         openid = request.args.get('openid', '')
         
-        if phone:
+        # 如果有openid，查出这个人的所有手机号
+        phones_list = []
+        if openid:
+            try:
+                poc = get_db()
+                pocu = poc.cursor()
+                pocu.execute("SELECT phone FROM phone_openids WHERE openid = %s OR mp_openid = %s", (openid, openid))
+                phones_list = [r[0] for r in pocu.fetchall()]
+                pocu.close()
+                poc.close()
+            except:
+                pass
+
+        if phones_list:
+            placeholders = ','.join(['%s'] * len(phones_list))
+            query_condition = f'o.user_phone IN ({placeholders}) AND o.status != 1'
+            query_param = tuple(phones_list)
+        elif phone:
             query_condition = 'o.user_phone = %s AND o.status != 1'
             query_param = (phone,)
         else:
             return json_response(message='请先登录', code=400)
-        
+
         conn = get_db()
         cur = conn.cursor()
         cur.execute(f'''
@@ -2098,7 +2185,7 @@ def get_user_balance():
     try:
         phone = request.args.get('phone')
         openid = request.args.get('openid', '') or ''
-        mp_openid = request.args.get('mp_openid', '') or openid
+        mp_openid = request.args.get('mp_openid', '')
         cabinet_id = request.args.get('cabinet_id') or ''
 
         conn = get_db()
@@ -2111,6 +2198,9 @@ def get_user_balance():
             return json_response(message='用户未登录', code=400)
         cur.execute("SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at FROM user_balances WHERE mp_openid = %s", (mp_openid,))
         row = cur.fetchone()
+        if not row:
+            cur.execute("SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at FROM user_balances WHERE openid = %s", (mp_openid,))
+            row = cur.fetchone()
         has_pending_withdrawal = False
         # 使用matched记录的phone
         _check_phone = row["phone"] if row else phone
@@ -2245,7 +2335,8 @@ def user_withdraw():
         phone = str(data.get('phone') or data.get('user_phone') or '').strip()
         openid = data.get('openid', '') or ''
         unionid = data.get('unionid', '') or ''
-        mp_openid = data.get('mp_openid', '') or openid
+        mp_openid = data.get('mp_openid', '')
+        wechat_name = data.get('wechat_name', '')
         amount = data.get('amount', 0)
 
         if not mp_openid and not openid and not phone:
@@ -2268,6 +2359,13 @@ def user_withdraw():
             return json_response(message='用户不存在', code=404)
         
         balance = row['balance']
+        try:
+            cursor.execute("SELECT COALESCE(SUM(balance),0) FROM user_balances WHERE phone = %s", (phone,))
+            _tb = float(cursor.fetchone()[0])
+            if _tb > balance:
+                balance = _tb
+        except:
+            pass
         if balance <= 0:
             conn.rollback()
             conn.close()
@@ -2333,8 +2431,8 @@ def user_withdraw():
                 return json_response(message='没有可退款的金额', code=400)
             actual_amount = min(float(amount), total_refundable)
             # 扣除余额
-            cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE mp_openid = %s',
-                           (actual_amount, actual_amount, mp_openid))
+            cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE phone = %s AND balance > 0',
+                           (actual_amount, actual_amount, phone))
             # 立即微信退款
             from helpers import do_real_refund
             remaining = actual_amount
@@ -2405,7 +2503,7 @@ def user_withdraw():
             wl_record = check_whitelist(openid) if openid else None
             if wl_record:
                 # 白名单免审，直接退款
-                cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE mp_openid = %s', (actual_amount, actual_amount, mp_openid))
+                cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE phone = %s AND balance > 0', (actual_amount, actual_amount, phone))
                 import json as _json_cons
                 remaining = actual_amount
                 _total_refunded = 0.0
@@ -2440,7 +2538,7 @@ def user_withdraw():
             reject_cnt = cursor.fetchone()['cnt']
             if reject_cnt > 0 and openid:
                 add_whitelist(openid, 'reject_retry', -1)
-                cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE mp_openid = %s', (actual_amount, actual_amount, mp_openid))
+                cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE phone = %s AND balance > 0', (actual_amount, actual_amount, phone))
                 import json as _json_cons3; remaining = actual_amount; _total_refunded = 0.0; _all_order_ids = []; _first_err = None; _first_oid_openid = None
                 for oid, refundable, br in order_plan:
                     if remaining <= 0.001: break

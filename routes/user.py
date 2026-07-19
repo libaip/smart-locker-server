@@ -25,39 +25,6 @@ bp = Blueprint('user', __name__)
 
 def _resolve_user(cursor, openid='', mp_openid='', phone='', unionid=''):
     """统一解析出 user_id。找不到则自动创建。"""
-    # [USER_ID] 新表查询（users/user_phones/user_openids）
-    if unionid:
-        try:
-            cursor.execute("SELECT id, app_user_id FROM users WHERE unionid = %s AND id > 0 LIMIT 1", (unionid,))
-            r = cursor.fetchone()
-            if r and r["app_user_id"]:
-                return r["app_user_id"]
-        except:
-            pass
-    if mp_openid:
-        try:
-            cursor.execute("SELECT u.id, u.app_user_id FROM user_openids uo JOIN users u ON uo.user_id = u.id WHERE uo.source='mp' AND uo.openid = %s LIMIT 1", (mp_openid,))
-            r = cursor.fetchone()
-            if r and r["app_user_id"]:
-                return r["app_user_id"]
-        except:
-            pass
-    if openid:
-        try:
-            cursor.execute("SELECT u.id, u.app_user_id FROM user_openids uo JOIN users u ON uo.user_id = u.id WHERE uo.source IN ('mp','gzh') AND uo.openid = %s LIMIT 1", (openid,))
-            r = cursor.fetchone()
-            if r and r["app_user_id"]:
-                return r["app_user_id"]
-        except:
-            pass
-    if phone:
-        try:
-            cursor.execute("SELECT u.id, u.app_user_id FROM user_phones up JOIN users u ON up.user_id = u.id WHERE up.phone = %s LIMIT 1", (phone,))
-            r = cursor.fetchone()
-            if r and r["app_user_id"]:
-                return r["app_user_id"]
-        except:
-            pass
     # 1. 直接按 user_id 查（如果调用方已有）
     # 2. 按 unionid 查
     if unionid:

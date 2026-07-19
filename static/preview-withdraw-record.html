@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=375,initial-scale=1,maximum-scale=1">
+<title>小程序 - 提现记录 预览</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{width:375px;min-height:812px;background:#f5f6fa;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+.nav{display:flex;align-items:center;padding:14px 16px;background:#fff;border-bottom:1px solid #f0f0f0;position:relative;}
+.nav .arrow{font-size:22px;color:#333;margin-right:8px;}
+.nav-title{font-size:17px;font-weight:500;position:absolute;left:50%;transform:translateX(-50%);color:#333;}
+.content{padding:12px 16px;}
+.record-card{background:#fff;border-radius:12px;padding:16px;margin-bottom:12px;box-shadow:0 1px 6px rgba(0,0,0,0.04);}
+.record-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;}
+.record-amount{font-size:20px;font-weight:bold;color:#4ECDC4;display:flex;flex-direction:column;}
+.fee-small{font-size:12px;font-weight:normal;color:#999;margin-top:2px;}
+.record-time{font-size:12px;color:#999;}
+.status-row{display:flex;align-items:center;gap:8px;margin-top:8px;}
+.status-refund{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:12px;font-size:12px;background:#E8F8F7;color:#4ECDC4;font-weight:500;}
+.dot{width:6px;height:6px;border-radius:50%;background:#4ECDC4;}
+.status-done{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:12px;font-size:12px;background:#f0f0f0;color:#888;}
+.check-icon{font-size:14px;color:#888;}
+.tips{border-radius:6px;padding:8px 12px;font-size:11px;color:#D4A843;line-height:1.5;margin-top:10px;background:#FFFDF5;}
+</style></head>
+<body>
+<div class="nav"><span class="arrow">‹</span><span class="nav-title">提现记录</span></div>
+<div class="content">
+  <div class="record-card">
+    <div class="record-top"><div class="record-amount"><span>+10.00元</span><span class="fee-small">手续费0.00元</span></div></div>
+    <div class="record-time">提现时间: 2026-07-18 15:30:22</div>
+    <div class="status-row"><div class="status-refund"><div class="dot"></div><span>退款成功</span></div><div class="status-done"><span class="check-icon">✓</span><span>已到账</span></div></div>
+  </div>
+  <div class="record-card">
+    <div class="record-top"><div class="record-amount"><span>+5.00元</span><span class="fee-small">手续费0.00元</span></div></div>
+    <div class="record-time">提现时间: 2026-07-18 20:15:08</div>
+    <div class="status-row"><div class="status-refund"><div class="dot"></div><span>退款成功</span></div></div>
+    <div class="tips">预计1-3个工作日到账 请耐心等待…<br>超时请联系客服</div>
+  </div>
+  <div class="record-card">
+    <div class="record-top"><div class="record-amount"><span>+8.50元</span><span class="fee-small">手续费0.00元</span></div></div>
+    <div class="record-time">提现时间: 2026-07-17 10:05:33</div>
+    <div class="status-row"><div class="status-refund"><div class="dot"></div><span>退款成功</span></div><div class="status-done"><span class="check-icon">✓</span><span>已到账</span></div></div>
+  </div>
+</div>
+</body></html>

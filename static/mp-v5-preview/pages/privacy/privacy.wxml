@@ -1,0 +1,94 @@
+<!-- pages/privacy/privacy.wxml - 隐私政策 -->
+<view class="container">
+  <view class="content-card">
+    <text class="title">隐私政策</text>
+    <text class="date">更新日期：2024年1月1日</text>
+    
+    <view class="section">
+      <text class="section-title">一、信息收集</text>
+      <text class="section-content">
+        智能寄存柜小程序郑重承诺尊重并保护用户的个人隐私。在您使用本服务时，我们可能会收集以下信息：
+      </text>
+      <text class="section-content">
+        1. 手机号码：用于注册账号、接收取物验证码、完成押金退还等核心功能。
+      </text>
+      <text class="section-content">
+        2. 微信OpenID：用于识别用户身份，提供个性化服务。
+      </text>
+      <text class="section-content">
+        3. 订单信息：包括存、取物品的时间、地点、柜格编号等，用于订单管理和售后服务。
+      </text>
+      <text class="section-content">
+        4. 设备信息：包括设备型号、操作系统版本等，用于优化服务体验。
+      </text>
+    </view>
+
+    <view class="section">
+      <text class="section-title">二、信息使用</text>
+      <text class="section-content">
+        我们收集的信息将用于以下目的：
+      </text>
+      <text class="section-content">
+        1. 提供存取包服务：包括开柜、存物、取物等核心功能。
+      </text>
+      <text class="section-content">
+        2. 订单管理：记录、查询、管理您的寄存订单。
+      </text>
+      <text class="section-content">
+        3. 押金管理：处理押金的收取与退还。
+      </text>
+      <text class="section-content">
+        4. 客服服务：响应您的咨询、投诉与建议。
+      </text>
+      <text class="section-content">
+        5. 服务优化：分析使用数据，提升服务质量。
+      </text>
+    </view>
+
+    <view class="section">
+      <text class="section-title">三、信息共享</text>
+      <text class="section-content">
+        我们承诺不会向任何第三方出售、出租或以其他方式泄露您的个人信息，但以下情况除外：
+      </text>
+      <text class="section-content">
+        1. 获得您的明确同意。
+      </text>
+      <text class="section-content">
+        2. 根据法律法规、政府部门或司法机关的要求。
+      </text>
+      <text class="section-content">
+        3. 为保护我们的合法权益而必要披露。
+      </text>
+    </view>
+
+    <view class="section">
+      <text class="section-title">四、信息存储</text>
+      <text class="section-content">
+        我们将采用合理的安全措施保护您的个人信息，防止数据遭到未经授权的访问、使用、修改或泄露。您的个人信息将存储在中华人民共和国境内的服务器上。
+      </text>
+    </view>
+
+    <view class="section">
+      <text class="section-title">五、您的权利</text>
+      <text class="section-content">
+        您有权查询、更正、删除您的个人信息。如需行使上述权利，请通过以下方式联系我们：
+      </text>
+      <text class="section-content">
+        联系电话：400-000-0000
+      </text>
+    </view>
+
+    <view class="section">
+      <text class="section-title">六、联系我们</text>
+      <text class="section-content">
+        如您对本隐私政策有任何疑问，请联系我们：
+      </text>
+      <text class="section-content">
+        联系电话：400-000-0000
+      </text>
+      <text class="section-content">
+        运营主体：智能寄存柜运营团队
+      </text>
+    </view>
+  </view>
+</view>

@@ -1,0 +1,57 @@
+<view class="page">
+  <!-- 导航栏 -->
+  <view class="header" style="padding-top:{{statusBarHeight}}px;">
+    <view class="back" bindtap="goBack">
+      <image class="back-icon" src="/images/mine_back_arrow_black.png" mode="aspectFit"/>
+    </view>
+    <text class="title">我的钱包</text>
+  </view>
+
+  <!-- 余额卡片 -->
+  <view class="balance-card">
+    <view class="balance-decor"></view>
+    <text class="balance-label">可用余额</text>
+    <view class="balance-row">
+      <text class="balance-currency">¥</text>
+      <text class="balance-amount">{{balance || '0.00'}}</text>
+    </view>
+    <view class="balance-actions">
+      <view class="btn-withdraw" bindtap="handleWithdraw">提现</view>
+      <view class="btn-rule" bindtap="showRule">提现规则</view>
+    </view>
+  </view>
+
+  <!-- 列表 -->
+  <view class="list-section">
+    <view class="list-item" bindtap="goWithdrawRecord">
+      <view class="list-icon">
+        <image class="list-icon-img" src="/images/wallet_withdraw_record.png" mode="aspectFit"/>
+      </view>
+      <text class="label">提现记录</text>
+      <image class="arrow" src="/images/mine_arrow_right.png" mode="aspectFit"/>
+    </view>
+    <view class="list-item" bindtap="goTransactions">
+      <view class="list-icon">
+        <image class="list-icon-img" src="/images/wallet_transactions.png" mode="aspectFit"/>
+      </view>
+      <text class="label">交易明细</text>
+      <image class="arrow" src="/images/mine_arrow_right.png" mode="aspectFit"/>
+    </view>
+  </view>
+
+  <!-- 浮动按钮 -->
+  <view class="floating-btns">
+    <view class="float-btn" bindtap="goCustomerService">
+      <view class="float-icon robot">
+        <image class="float-icon-img" src="/images/mine_float_robot.png" mode="aspectFit"/>
+      </view>
+      <text class="float-label">联系客服</text>
+    </view>
+    <view class="float-btn" bindtap="goComplaint">
+      <view class="float-icon complaint">
+        <image class="float-icon-img" src="/images/mine_float_complaint.png" mode="aspectFit"/>
+      </view>
+      <text class="float-label">投诉商家</text>
+    </view>
+  </view>
+</view>

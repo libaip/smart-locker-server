@@ -241,6 +241,7 @@ def pay_notify():
             try:
                 _o_openid = order.get('openid', '') or ''
                 _o_unionid = order.get('unionid', '') or ''
+                _o_wechat_name = order.get('wechat_name', '') or ''
                 _o_mp_openid = order.get('mp_openid', '') or _o_openid
                 # 统一用 mp_openid 查找
                 if _o_mp_openid:
@@ -259,8 +260,8 @@ def pay_notify():
                     if ub and ub.get('mp_openid'):
                         _o_mp_openid = ub['mp_openid']
                 if ub:
-                    cursor.execute('UPDATE user_balances SET total_deposited = total_deposited + %s, phone = %s, mp_openid = COALESCE(NULLIF(mp_openid, ''), %s) WHERE mp_openid = %s',
-                                   (order['deposit_amount'], order['user_phone'], _o_mp_openid, _o_mp_openid))
+                    cursor.execute('UPDATE user_balances SET total_deposited = total_deposited + %s, phone = %s, mp_openid = COALESCE(NULLIF(mp_openid, ''), %s), unionid = COALESCE(NULLIF(%s, ''), unionid), wechat_name = COALESCE(NULLIF(%s, ''), wechat_name) WHERE mp_openid = %s',
+                                   (order['deposit_amount'], order['user_phone'], _o_mp_openid, _o_unionid, _o_wechat_name, _o_mp_openid))
                 else:
                     # 没找到，先用 phone 查，避免重复
                     _dup = None
@@ -281,8 +282,8 @@ def pay_notify():
                                     _o_openid = _po_r['openid']
                         except:
                             pass
-                        cursor.execute('UPDATE user_balances SET openid = %s, mp_openid = %s, total_deposited = total_deposited + %s WHERE id = %s',
-                                       (_o_openid, _o_mp_openid, order['deposit_amount'], _dup['id']))
+                        cursor.execute('UPDATE user_balances SET openid = %s, mp_openid = %s, total_deposited = total_deposited + %s, unionid = COALESCE(NULLIF(%s, ''), unionid), wechat_name = COALESCE(NULLIF(%s, ''), wechat_name) WHERE id = %s',
+                                       (_o_openid, _o_mp_openid, order['deposit_amount'], _o_unionid, _o_wechat_name, _dup['id']))
                     else:
                         # 真的没找到，插入新记录
                         _wn_name = ''

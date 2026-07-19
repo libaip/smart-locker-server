@@ -190,10 +190,10 @@ def _cleanup_expired_orders():
             released = 0
             for order in expired:
                 if order['slot_id']:
-                    cur.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s AND status = 2', (order['slot_id'],))
+                    cur.execute('UPDATE cabinet_slots SET status = 1 WHERE id = ? AND status = 2', (order['slot_id'],))
                     if cur.rowcount > 0:
                         released += 1
-                cur.execute('UPDATE orders SET status = 5 WHERE id = %s', (order['id'],))
+                cur.execute('UPDATE orders SET status = 5 WHERE id = ?', (order['id'],))
             if expired:
                 db.commit()
                 logger.info(f'[超时清理] 清理{len(expired)}笔未付款订单,释放{released}个柜格')
@@ -348,9 +348,9 @@ def store_page():
         conn.row_factory = _sq.Row
         c = conn.cursor()
         if device:
-            c.execute("SELECT c.id,c.name,c.deposit_amount,c.charge_mode,c.per_use_price,c.mainboard_device_id,c.last_heartbeat,l.name as loc_name,l.address as loc_addr,l.allow_h5_to_mp FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.mainboard_device_id=%s", (device,))
+            c.execute("SELECT c.id,c.name,c.deposit_amount,c.charge_mode,c.per_use_price,c.mainboard_device_id,c.last_heartbeat,l.name as loc_name,l.address as loc_addr,l.allow_h5_to_mp FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.mainboard_device_id=?", (device,))
         elif _cabinet_id:
-            c.execute("SELECT c.id,c.name,c.deposit_amount,c.charge_mode,c.per_use_price,c.mainboard_device_id,c.last_heartbeat,l.name as loc_name,l.address as loc_addr,l.allow_h5_to_mp FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.id=%s", (_cabinet_id,))
+            c.execute("SELECT c.id,c.name,c.deposit_amount,c.charge_mode,c.per_use_price,c.mainboard_device_id,c.last_heartbeat,l.name as loc_name,l.address as loc_addr,l.allow_h5_to_mp FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.id=?", (_cabinet_id,))
         else:
             c.execute("SELECT c.id,c.name,c.deposit_amount,c.charge_mode,c.per_use_price,c.mainboard_device_id,c.last_heartbeat,l.name as loc_name,l.address as loc_addr,l.allow_h5_to_mp FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.id=8")
         row = c.fetchone()
@@ -368,7 +368,7 @@ def store_page():
 #            # 每次有人扫码加载存包页面就刷新心跳
 #            try:
 #                _up = conn.cursor()
-# _up.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE id=%s", (row["id"],))
+# _up.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE id=?", (row["id"],))
             # 计算设备在线状态
             if row.get("last_heartbeat"):
                 try:
@@ -383,7 +383,7 @@ def store_page():
             if _cabinet_id:
                 try:
                     c2 = conn.cursor()
-                    c2.execute("SELECT slot_label FROM cabinet_slots WHERE cabinet_id=%s AND status=1 ORDER BY slot_number LIMIT 1", (_cabinet_id,))
+                    c2.execute("SELECT slot_label FROM cabinet_slots WHERE cabinet_id=? AND status=1 ORDER BY slot_number LIMIT 1", (_cabinet_id,))
                     r2 = c2.fetchone()
                     if r2:
                         _ssr["door_number"] = str(r2["slot_label"])
@@ -422,7 +422,7 @@ def retrieve_page():
         _db = _sq.connect(DATABASE)
         _db.row_factory = _sq.Row
         _cur = _db.cursor()
-        _cur.execute('SELECT id FROM cabinets WHERE mainboard_device_id=%s', (device,))
+        _cur.execute('SELECT id FROM cabinets WHERE mainboard_device_id=?', (device,))
         _row = _cur.fetchone()
         _db.close()
         if _row:
@@ -494,7 +494,7 @@ def scan_qr():
         db = sqlite3.connect(DATABASE)
         db.row_factory = sqlite3.Row
         cur = db.cursor()
-        cur.execute('SELECT * FROM cabinets WHERE mainboard_device_id=%s', (device,))
+        cur.execute('SELECT * FROM cabinets WHERE mainboard_device_id=?', (device,))
         cabinet = cur.fetchone()
         db.close()
         if not cabinet:
@@ -728,7 +728,7 @@ def store_end_app(order_id):
         data = request.get_json(force=True) or {}
         conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT * FROM orders WHERE id = %s", (order_id,))
+        c.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
         row = c.fetchone()
         if not row:
             conn.close()
@@ -739,8 +739,8 @@ def store_end_app(order_id):
             return jsonify({"code": -1, "msg": "order status invalid"})
         slot_id = order_dict.get("slot_id")
         if slot_id:
-            c.execute("UPDATE cabinet_slots SET status=1 WHERE id=%s", (slot_id,))
-        c.execute("UPDATE orders SET status=3, retrieve_time=CURRENT_TIMESTAMP WHERE id=%s", (order_id,))
+            c.execute("UPDATE cabinet_slots SET status=1 WHERE id=?", (slot_id,))
+        c.execute("UPDATE orders SET status=3, retrieve_time=CURRENT_TIMESTAMP WHERE id=?", (order_id,))
         conn.commit()
         conn.close()
         return jsonify({"code": 0, "msg": "success", "data": {"order_id": order_id}})
@@ -800,7 +800,7 @@ def push_update():
             import sqlite3
             conn_db = sqlite3.connect(DATABASE)
             cur_db = conn_db.cursor()
-            cur_db.execute("SELECT last_heartbeat FROM cabinets WHERE mainboard_device_id=%s", (device_id,))
+            cur_db.execute("SELECT last_heartbeat FROM cabinets WHERE mainboard_device_id=?", (device_id,))
             row = cur_db.fetchone()
             conn_db.close()
             if row and row[0]:
@@ -964,11 +964,11 @@ def _auto_clear_cabinet_scheduler():
                     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
                     for o in active_orders:
-                        c.execute("UPDATE orders SET status=3, retrieve_time=%s, pickup_time=%s, updated_at=%s, refund_mark=1 WHERE id=%s",
+                        c.execute("UPDATE orders SET status=3, retrieve_time=%s, pickup_time=%s, updated_at=%s, refund_mark=1 WHERE id=?",
                                   (now_str, now_str, now_str, o["id"]))
 
                         if o["slot_id"]:
-                            c.execute("UPDATE cabinet_slots SET status=1 WHERE id=%s", (o["slot_id"],))
+                            c.execute("UPDATE cabinet_slots SET status=1 WHERE id=?", (o["slot_id"],))
 
                         deposit_amount = float(o["deposit_amount"] or 0)
                         if deposit_amount > 0 and o["user_phone"]:
@@ -1003,7 +1003,7 @@ def _auto_clear_cabinet_scheduler():
                     conn.commit()
 
                     # 【修复2】commit成功后才更新数据库标记
-                    c.execute("UPDATE locations SET last_clear_date=%s WHERE id=%s", (today_str, loc_id))
+                    c.execute("UPDATE locations SET last_clear_date=%s WHERE id=?", (today_str, loc_id))
                     conn.commit()
 
                     if total_ended > 0:

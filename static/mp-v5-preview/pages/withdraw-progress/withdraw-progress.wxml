@@ -1,0 +1,76 @@
+<view class="page">
+  <!-- 导航栏 -->
+  <view class="nav" style="padding-top:{{statusBarHeight}}px;">
+    <view class="nav-inner">
+      <view class="nav-back" bindtap="goBack">
+        <image class="nav-back-icon" src="/images/mine_back_arrow_black.png" mode="aspectFit"/>
+      </view>
+      <text class="nav-title">提现进度</text>
+    </view>
+  </view>
+
+  <view style="padding-top:calc(88rpx + {{statusBarHeight}}px);">
+    <!-- 时钟图标 -->
+    <view class="clock">
+      <image class="clock-img" src="/images/wp_clock.png" mode="aspectFit"/>
+    </view>
+
+    <!-- 主卡片 -->
+    <view class="card">
+      <text class="amount">¥ {{amount}}</text>
+
+      <!-- 三步时间线 -->
+      <view class="timeline">
+        <!-- 步骤1 -->
+        <view class="step done visible">
+          <view class="step-dot done"></view>
+          <view class="step-line done-line"></view>
+          <view class="step-info">
+            <text class="step-title">申请提现</text>
+            <text class="step-desc">已将退款申请提交至微信</text>
+          </view>
+        </view>
+        <!-- 步骤2 -->
+        <view class="step visible">
+          <view class="step-dot current"></view>
+          <view class="step-line"></view>
+          <view class="step-info">
+            <text class="step-title">微信处理中</text>
+            <view class="step-desc-wrap">
+              <view class="spinner"></view>
+              <text class="step-desc">微信将退款原路退回支付账户</text>
+            </view>
+          </view>
+        </view>
+        <!-- 步骤3 -->
+        <view class="step visible">
+          <view class="step-dot pending"></view>
+          <view class="step-info">
+            <text class="step-title">提现成功</text>
+            <text class="step-desc">预计1-3个工作日内到账
+请耐心等待，超时请联系客服</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 详情 -->
+      <view class="details">
+        <view class="detail-row">
+          <text class="detail-label">提现时间:</text>
+          <text class="detail-value">{{wdTime}}</text>
+        </view>
+        <view class="detail-row">
+          <text class="detail-label">手机号:</text>
+          <text class="detail-value">{{wdPhone}}</text>
+        </view>
+        <view class="detail-row">
+          <text class="detail-label">退款至:</text>
+          <text class="detail-value">退回原支付账户</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="submit-btn" bindtap="goRecord">查看提现记录</view>
+    <view class="confirm-btn" bindtap="goWallet">确认</view>
+  </view>
+</view>

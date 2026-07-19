@@ -191,10 +191,7 @@ def require_merchant_auth(f):
     """商家/代理商权限验证 - 同时支持session cookie和Bearer token"""
     @wraps(f)
     def decorated(*args, **kwargs):
-        # 1. Check Flask session first
-        if 'merchant_id' in session or 'agent_id' in session:
-            return f(*args, **kwargs)
-        # 2. Fall back to Bearer token
+        # 1. Check Bearer token first (overrides stale session cookies)
         auth_header = request.headers.get('Authorization', '')
         if auth_header.startswith('Bearer '):
             token = auth_header[7:].strip()
@@ -261,6 +258,9 @@ def require_merchant_auth(f):
                     db.close()
                 except Exception as e:
                     logger.error(f'Auth failed: {e}')
+        # 2. Fall back to session cookie
+        if 'merchant_id' in session or 'agent_id' in session:
+            return f(*args, **kwargs)
         return json_response(message='未登录，请先登录', code=401)
     return decorated
 
@@ -729,10 +729,8 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
         try:
             from database import get_db
             _db = get_db()
-            _db.execute('UPDATE payment_channels SET total_count = total_count + 1 WHERE id = %s', (current_channel['id'],))
-            _db.commit()
             _db.close()
-            logger.info(f'[WX-PAY] channel {current_channel["id"]} failed, count incremented')
+            logger.info(f'[WX-PAY] channel {current_channel["id"]} failed, not counting')
         except Exception as _e:
             logger.error(f'[WX-PAY] update channel stats failed: {_e}')
 

@@ -431,7 +431,7 @@
                                 <el-table-column prop="contact_name" label="联系人" width="100"></el-table-column>
                                 <el-table-column prop="contact_phone" label="联系电话" width="130"></el-table-column>
                                 <el-table-column prop="status" label="状态" width="80">
-                                    <template slot-scope="scope"><span :class="'status-tag status-' + (scope.row.status === 1 ? '3' : '0')">{{scope.row.status === 1 ? '正常' : '停用'}}</span></template>
+                                    <template slot-scope="scope"><span :class="'status-tag status-' + (scope.row.is_active === 1 ? '3' : '0')">{{scope.row.is_active === 1 ? '正常' : '停用'}}</span></template>
                                 </el-table-column>
                                 <el-table-column label="操作" fixed="right" width="200">
                                     <template slot-scope="scope">
@@ -460,13 +460,13 @@
                                 <el-table-column prop="contact_name" label="联系人" width="100"></el-table-column>
                                 <el-table-column prop="contact_phone" label="联系电话" width="130"></el-table-column>
                                 <el-table-column prop="status" label="状态" width="80">
-                                    <template slot-scope="scope"><span :class="'status-tag status-' + (scope.row.status === 1 ? '3' : '0')">{{scope.row.status === 1 ? '正常' : '停用'}}</span></template>
+                                    <template slot-scope="scope"><span :class="'status-tag status-' + (scope.row.is_active === 1 ? '3' : '0')">{{scope.row.is_active === 1 ? '正常' : '停用'}}</span></template>
                                 </el-table-column>
                                 <el-table-column prop="created_at" label="创建时间" width="160"></el-table-column>
                                 <el-table-column label="操作" fixed="right" width="180">
                                     <template slot-scope="scope">
                                         <el-button type="text" @click="showMerchantDialog(scope.row)">编辑</el-button>
-                                        <el-button type="text" @click="toggleMerchantStatus(scope.row)">{{scope.row.status === 1 ? '停用' : '启用'}}</el-button>
+                                        <el-button type="text" @click="toggleMerchantStatus(scope.row)">{{scope.row.is_active === 1 ? '停用' : '启用'}}</el-button>
                                         <el-button type="text" @click="deleteMerchant(scope.row)" style="color: #ff4d4f;">删除</el-button>
                                     </template>
                                 </el-table-column>
@@ -492,12 +492,12 @@
                                     <template slot-scope="scope">{{scope.row.role === 'admin' ? '管理员' : '操作员'}}</template>
                                 </el-table-column>
                                 <el-table-column prop="status" label="状态" width="80">
-                                    <template slot-scope="scope"><span :class="'status-tag status-' + (scope.row.status === 1 ? '3' : '0')">{{scope.row.status === 1 ? '正常' : '停用'}}</span></template>
+                                    <template slot-scope="scope"><span :class="'status-tag status-' + (scope.row.is_active === 1 ? '3' : '0')">{{scope.row.is_active === 1 ? '正常' : '停用'}}</span></template>
                                 </el-table-column>
                                 <el-table-column label="操作" fixed="right" width="180">
                                     <template slot-scope="scope">
                                         <el-button type="text" @click="showEmployeeDialog(scope.row)">编辑</el-button>
-                                        <el-button type="text" @click="toggleEmployeeStatus(scope.row)">{{scope.row.status === 1 ? '停用' : '启用'}}</el-button>
+                                        <el-button type="text" @click="toggleEmployeeStatus(scope.row)">{{scope.row.is_active === 1 ? '停用' : '启用'}}</el-button>
                                         <el-button type="text" @click="deleteEmployee(scope.row)" style="color: #ff4d4f;">删除</el-button>
                                     </template>
                                 </el-table-column>
@@ -524,7 +524,7 @@
                             <el-table-column prop="merchant_name" label="所属商家" width="150"></el-table-column>
                             <el-table-column prop="address" label="地址" min-width="200"></el-table-column>
                             <el-table-column prop="status" label="状态" width="80">
-                                <template slot-scope="scope"><span :class="'status-tag status-' + (scope.row.status === 1 ? '3' : '0')">{{scope.row.status === 1 ? '正常' : '停用'}}</span></template>
+                                <template slot-scope="scope"><span :class="'status-tag status-' + (scope.row.is_active === 1 ? '3' : '0')">{{scope.row.is_active === 1 ? '正常' : '停用'}}</span></template>
                             </el-table-column>
                             <el-table-column prop="created_at" label="创建时间" width="160"></el-table-column>
                             <el-table-column label="操作" fixed="right" width="180">
@@ -602,7 +602,7 @@
                                     
                                     <el-button type="text" style="color:#409EFF" @click="showMainboardDialog(scope.row)">主板管理</el-button>
                                     <el-button type="text" @click="showCabinetSlotDialog(scope.row)">柜门管理</el-button>
-                                    <el-button type="text" @click="toggleCabinetStatus(scope.row)">{{scope.row.status === 1 ? '停用' : '启用'}}</el-button>
+                                    <el-button type="text" @click="toggleCabinetStatus(scope.row)">{{scope.row.is_active === 1 ? '停用' : '启用'}}</el-button>
                                     <el-button type="text" style="color:#E6A23C" @click="forceUpdateDevice(scope.row)" :disabled="!scope.row.is_online">更新</el-button>
                                     <el-button type="text" style="color:#F56C6C" @click="resetActivation(scope.row)">重置激活</el-button>
                                 </template>
@@ -661,7 +661,7 @@
                                     <el-table-column prop="amount" label="提现金额" width="100"><template slot-scope="scope">¥{{scope.row.amount}}</template></el-table-column>
                                     <el-table-column prop="status" label="状态" width="90">
                                         <template slot-scope="scope">
-                                            <span v-if="scope.row.status === 1" class="status-tag status-2">待审核</span>
+                                            <span v-if="scope.row.is_active === 1" class="status-tag status-2">待审核</span>
                                             <span v-else-if="scope.row.status === 2" class="status-tag status-3">已通过</span>
                                             <span v-else-if="scope.row.status === 3" class="status-tag status-4">已拒绝</span>
                                             <span v-else-if="scope.row.status === 4" class="status-tag status-1">已退款</span>
@@ -670,7 +670,7 @@
                                     <el-table-column prop="approver" label="审批人" width="100"></el-table-column>
                                     <el-table-column label="操作" fixed="right" width="180">
                                         <template slot-scope="scope">
-                                            <template v-if="scope.row.status === 1">
+                                            <template v-if="scope.row.is_active === 1">
                                                 <el-button type="text" @click="approveWithdrawal(scope.row)">通过</el-button>
                                                 <el-button type="text" @click="showRejectDialog(scope.row)">拒绝</el-button>
                                             </template>
@@ -843,7 +843,7 @@
                                     <el-table-column prop="app_id" label="APP_ID" min-width="200"></el-table-column>
                                     <el-table-column label="状态" width="80">
                                         <template slot-scope="scope">
-                                            <el-switch :value="scope.row.status === 1" @change="toggleChannel(scope.row)"></el-switch>
+                                            <el-switch :value="scope.row.is_active === 1" @change="toggleChannel(scope.row)"></el-switch>
                                         </template>
                                     </el-table-column>
                                     <el-table-column prop="created_at" label="创建时间" width="160"></el-table-column>
@@ -2195,7 +2195,7 @@ showCabinetDialog(row = null) {
                     else { this.$message.error(res.message); }
                 },
                 async deleteChannel(row) { await this.$confirm('确认删除该渠道?', '提示', { type: 'warning' }); const res = await this.request('DELETE', '/api/payment-channels/' + row.id); if (res.code === 200) { this.$message.success('删除成功'); this.loadPaymentChannels(); } },
-                async toggleChannel(row) { const status = row.status === 1 ? 0 : 1; const res = await this.request('PUT', '/api/payment-channels/' + row.id, { status }); if (res.code === 200) { this.$message.success('状态已更新'); this.loadPaymentChannels(); } else { this.$message.error(res.message); } },
+                async toggleChannel(row) { const res = await this.request('POST', '/api/payment-channels/' + row.id + '/toggle'); if (res.code === 200) { this.$message.success('状态已更新'); this.loadPaymentChannels(); } else { this.$message.error(res.message); } },
                 onChannelTypeChange() { },
                 
                 // 代理商

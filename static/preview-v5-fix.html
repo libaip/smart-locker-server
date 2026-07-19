@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>v5 页面预览 - 修复版</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif; background: #f5f6fa; }
+
+/* Tab切换 */
+.tab-bar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 999;
+  background: #fff; display: flex; border-bottom: 1px solid #eee;
+}
+.tab-bar .tab {
+  flex: 1; text-align: center; padding: 14px 0; font-size: 15px;
+  color: #666; cursor: pointer; border-bottom: 2px solid transparent;
+}
+.tab-bar .tab.active { color: #4ECDC4; border-bottom-color: #4ECDC4; font-weight: 500; }
+
+.page { display: none; padding-top: 50px; min-height: 100vh; }
+.page.active { display: block; }
+
+/* 导航 */
+.nav-bar { background: #fff; border-bottom: 1px solid #f0f0f0; }
+.nav-content { display: flex; align-items: center; height: 44px; padding: 0 16px; }
+.nav-back { width: 40px; font-size: 24px; color: #333; font-weight: bold; cursor: pointer; }
+.nav-title { flex: 1; font-size: 17px; font-weight: 500; text-align: center; }
+.nav-placeholder { width: 40px; }
+
+/* 列表容器 */
+.list-container { padding: 12px 16px; }
+
+/* === 提现记录 === */
+.order-item {
+  background: #fff; border-radius: 12px; padding: 16px;
+  margin-bottom: 10px; box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+}
+.order-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 12px;
+}
+.order-no { font-size: 14px; color: #333; font-weight: 500; }
+
+/* 状态标签 - 严格对齐H5 */
+.status-badge {
+  font-size: 12px; padding: 2px 8px; border-radius: 4px; font-weight: 500;
+}
+.status-pending { color: #faad14; background: #fff7e6; }
+.status-success { color: #52c41a; background: #f6ffed; }
+.status-refunded { color: #999; background: #f5f5f5; }
+
+.order-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 4px 0;
+}
+.row-label { font-size: 13px; color: #666; }
+.row-value { font-size: 13px; color: #333; }
+.amount-red { color: #ff4d4f; }
+.amount-blue { color: #1890ff; }
+
+.order-footer {
+  display: flex; justify-content: flex-end;
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid #f5f5f5;
+}
+.order-time { font-size: 12px; color: #999; }
+
+/* === 交易明细 - 严格对齐H5 === */
+.tx-card {
+  background: #fff; border-radius: 12px; padding: 16px;
+  margin-bottom: 10px; box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+}
+.tx-main { display: flex; justify-content: space-between; align-items: center; }
+.tx-left { display: flex; align-items: center; }
+.tx-icon {
+  width: 36px; height: 36px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  margin-right: 10px;
+}
+.tx-icon span { font-size: 16px; color: #fff; font-weight: bold; }
+.tx-type { font-size: 15px; font-weight: 500; }
+.tx-right { display: flex; align-items: center; }
+.tx-amount { font-size: 18px; font-weight: bold; }
+
+.tx-footer {
+  display: flex; justify-content: space-between;
+  margin-top: 10px; padding-top: 8px; border-top: 1px solid #f5f5f5;
+}
+.tx-order { font-size: 12px; color: #999; }
+.tx-time { font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+
+<!-- 顶部Tab -->
+<div class="tab-bar">
+  <div class="tab active" onclick="switchPage('withdraw')">提现记录</div>
+  <div class="tab" onclick="switchPage('transactions')">交易明细</div>
+</div>
+
+<!-- 提现记录 -->
+<div class="page active" id="page-withdraw">
+  <div class="nav-bar">
+    <div class="nav-content">
+      <div class="nav-back">‹</div>
+      <div class="nav-title">提现记录</div>
+      <div class="nav-placeholder"></div>
+    </div>
+  </div>
+  <div class="list-container">
+    <!-- 已到账 -->
+    <div class="order-item">
+      <div class="order-header">
+        <span class="order-no">提现单号: W101</span>
+        <span class="status-badge status-success">已到账</span>
+      </div>
+      <div class="order-row">
+        <span class="row-label">提现金额</span>
+        <span class="row-value amount-red">-50.00元</span>
+      </div>
+      <div class="order-row">
+        <span class="row-label">手续费</span>
+        <span class="row-value">¥1.00</span>
+      </div>
+      <div class="order-row">
+        <span class="row-label">实到金额</span>
+        <span class="row-value amount-blue">+49.00元</span>
+      </div>
+      <div class="order-footer">
+        <span class="order-time">2026-07-18 14:30</span>
+      </div>
+    </div>
+    <!-- 处理中 -->
+    <div class="order-item">
+      <div class="order-header">
+        <span class="order-no">提现单号: W102</span>
+        <span class="status-badge status-pending">处理中</span>
+      </div>
+      <div class="order-row">
+        <span class="row-label">提现金额</span>
+        <span class="row-value amount-red">-30.00元</span>
+      </div>
+      <div class="order-footer">
+        <span class="order-time">2026-07-17 09:15</span>
+      </div>
+    </div>
+    <!-- 已退款 -->
+    <div class="order-item">
+      <div class="order-header">
+        <span class="order-no">提现单号: W103</span>
+        <span class="status-badge status-refunded">已退款</span>
+      </div>
+      <div class="order-row">
+        <span class="row-label">提现金额</span>
+        <span class="row-value amount-red">-20.00元</span>
+      </div>
+      <div class="order-footer">
+        <span class="order-time">2026-07-16 16:45</span>
+      </div>
+    </div>
+    <!-- 已到账 -->
+    <div class="order-item">
+      <div class="order-header">
+        <span class="order-no">提现单号: W104</span>
+        <span class="status-badge status-success">已到账</span>
+      </div>
+      <div class="order-row">
+        <span class="row-label">提现金额</span>
+        <span class="row-value amount-red">-15.00元</span>
+      </div>
+      <div class="order-footer">
+        <span class="order-time">2026-07-15 11:20</span>
+      </div>
+    </div>
+    <!-- 已到账(含手续费) -->
+    <div class="order-item">
+      <div class="order-header">
+        <span class="order-no">提现单号: W105</span>
+        <span class="status-badge status-success">已到账</span>
+      </div>
+      <div class="order-row">
+        <span class="row-label">提现金额</span>
+        <span class="row-value amount-red">-8.50元</span>
+      </div>
+      <div class="order-row">
+        <span class="row-label">手续费</span>
+        <span class="row-value">¥0.50</span>
+      </div>
+      <div class="order-row">
+        <span class="row-label">实到金额</span>
+        <span class="row-value amount-blue">+8.00元</span>
+      </div>
+      <div class="order-footer">
+        <span class="order-time">2026-07-14 08:00</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 交易明细 -->
+<div class="page" id="page-transactions">
+  <div class="nav-bar">
+    <div class="nav-content">
+      <div class="nav-back">‹</div>
+      <div class="nav-title">交易明细</div>
+      <div class="nav-placeholder"></div>
+    </div>
+  </div>
+  <div class="list-container">
+    <!-- 充值(收入) -->
+    <div class="tx-card">
+      <div class="tx-main">
+        <div class="tx-left">
+          <div class="tx-icon" style="background:#52c41a"><span>↑</span></div>
+          <span class="tx-type" style="color:#52c41a">充值</span>
+        </div>
+        <div class="tx-right">
+          <span class="tx-amount" style="color:#52c41a">+¥50.00</span>
+        </div>
+      </div>
+      <div class="tx-footer">
+        <span class="tx-order">订单号: ORD20260718001</span>
+        <span class="tx-time">2026-07-18 14:30:22</span>
+      </div>
+    </div>
+    <!-- 提现(支出) -->
+    <div class="tx-card">
+      <div class="tx-main">
+        <div class="tx-left">
+          <div class="tx-icon" style="background:#ff4d4f"><span>↓</span></div>
+          <span class="tx-type" style="color:#ff4d4f">提现</span>
+        </div>
+        <div class="tx-right">
+          <span class="tx-amount" style="color:#ff4d4f">-¥20.00</span>
+        </div>
+      </div>
+      <div class="tx-footer">
+        <span class="tx-order">订单号: ORD20260718002</span>
+        <span class="tx-time">2026-07-18 10:15:33</span>
+      </div>
+    </div>
+    <!-- 收入 -->
+    <div class="tx-card">
+      <div class="tx-main">
+        <div class="tx-left">
+          <div class="tx-icon" style="background:#52c41a"><span>↑</span></div>
+          <span class="tx-type" style="color:#52c41a">收入</span>
+        </div>
+        <div class="tx-right">
+          <span class="tx-amount" style="color:#52c41a">+¥12.00</span>
+        </div>
+      </div>
+      <div class="tx-footer">
+        <span class="tx-order">订单号: ORD20260717003</span>
+        <span class="tx-time">2026-07-17 18:05:11</span>
+      </div>
+    </div>
+    <!-- 扣费(支出) -->
+    <div class="tx-card">
+      <div class="tx-main">
+        <div class="tx-left">
+          <div class="tx-icon" style="background:#ff4d4f"><span>↓</span></div>
+          <span class="tx-type" style="color:#ff4d4f">扣费</span>
+        </div>
+        <div class="tx-right">
+          <span class="tx-amount" style="color:#ff4d4f">-¥8.00</span>
+        </div>
+      </div>
+      <div class="tx-footer">
+        <span class="tx-order">订单号: ORD20260717002</span>
+        <span class="tx-time">2026-07-17 09:15:33</span>
+      </div>
+    </div>
+    <!-- 退款(收入) -->
+    <div class="tx-card">
+      <div class="tx-main">
+        <div class="tx-left">
+          <div class="tx-icon" style="background:#52c41a"><span>↑</span></div>
+          <span class="tx-type" style="color:#52c41a">退款</span>
+        </div>
+        <div class="tx-right">
+          <span class="tx-amount" style="color:#52c41a">+¥25.00</span>
+        </div>
+      </div>
+      <div class="tx-footer">
+        <span class="tx-order">订单号: ORD20260716005</span>
+        <span class="tx-time">2026-07-16 20:42:08</span>
+      </div>
+    </div>
+    <!-- 消费(支出) -->
+    <div class="tx-card">
+      <div class="tx-main">
+        <div class="tx-left">
+          <div class="tx-icon" style="background:#ff4d4f"><span>↓</span></div>
+          <span class="tx-type" style="color:#ff4d4f">消费</span>
+        </div>
+        <div class="tx-right">
+          <span class="tx-amount" style="color:#ff4d4f">-¥20.00</span>
+        </div>
+      </div>
+      <div class="tx-footer">
+        <span class="tx-order">订单号: ORD20260716003</span>
+        <span class="tx-time">2026-07-16 16:45:19</span>
+      </div>
+    </div>
+    <!-- 充值(收入) -->
+    <div class="tx-card">
+      <div class="tx-main">
+        <div class="tx-left">
+          <div class="tx-icon" style="background:#52c41a"><span>↑</span></div>
+          <span class="tx-type" style="color:#52c41a">充值</span>
+        </div>
+        <div class="tx-right">
+          <span class="tx-amount" style="color:#52c41a">+¥100.00</span>
+        </div>
+      </div>
+      <div class="tx-footer">
+        <span class="tx-order">订单号: ORD20260715002</span>
+        <span class="tx-time">2026-07-15 13:28:55</span>
+      </div>
+    </div>
+    <!-- 提现(支出) -->
+    <div class="tx-card">
+      <div class="tx-main">
+        <div class="tx-left">
+          <div class="tx-icon" style="background:#ff4d4f"><span>↓</span></div>
+          <span class="tx-type" style="color:#ff4d4f">提现</span>
+        </div>
+        <div class="tx-right">
+          <span class="tx-amount" style="color:#ff4d4f">-¥15.00</span>
+        </div>
+      </div>
+      <div class="tx-footer">
+        <span class="tx-order">订单号: ORD20260715001</span>
+        <span class="tx-time">2026-07-15 11:20:44</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function switchPage(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('page-' + name).classList.add('active');
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!-- pages/agreement/agreement.wxml - 用户服务协议 -->
+<view class="container">
+  <view class="content-card">
+    <text class="title">用户服务协议</text>
+    <text class="date">更新日期：2024年1月1日</text>
+    
+    <view class="section">
+      <text class="section-title">一、服务说明</text>
+      <text class="section-content">
+        智能寄存柜小程序（以下简称"本服务"）为用户提供便捷的物品寄存服务。用户可通过扫描柜体二维码，使用空闲柜格临时寄存物品，并在需要时凭手机号和取物码取回物品。
+      </text>
+    </view>
+
+    <view class="section">
+      <text class="section-title">二、服务流程</text>
+      <text class="section-content">
+        1. 存物流程：
+      </text>
+      <text class="section-content">
+        （1）扫描柜体上的二维码；
+      </text>
+      <text class="section-content">
+        （2）选择空闲柜格；
+      </text>
+      <text class="section-content">
+        （3）输入手机号码并设置4位取物码；
+      </text>
+      <text class="section-content">
+        （4）支付保证金（押金）后，柜门将自动打开；
+      </text>
+      <text class="section-content">
+        （5）放入物品并关闭柜门。
+      </text>
+      <text class="section-content">
+        2. 取物流程：
+      </text>
+      <text class="section-content">
+        （1）返回柜体，扫描二维码或点击"快速取物"；
+      </text>
+      <text class="section-content">
+        （2）输入手机号和取物码；
+      </text>
+      <text class="section-content">
+        （3）柜门将自动打开，取走物品并关闭柜门；
+      </text>
+      <text class="section-content">
+        （4）押金将在取物成功后自动原路退还。
+      </text>
+    </view>
+
+    <view class="section">
+      <text class="section-title">三、押金规则</text>
+      <text class="section-content">
+        1. 保证金（押金）金额以页面显示为准。
+      </text>
+      <text class="section-content">
+        2. 押金将在取物成功后自动原路退还，退款时间根据支付渠道不同可能需要1-7个工作日。
+      </text>
+      <text class="section-content">
+        3. 如柜门异常未关闭，系统可能继续收取费用。
+      </text>
+    </view>
+
+    <view class="section">
+      <text class="section-title">四、用户责任</text>
+      <text class="section-content">
+        1. 用户应妥善保管取物码，因个人泄露导致物品丢失，责任自负。
+      </text>
+      <text class="section-content">
+        2. 禁止存放易燃、易爆、有毒、有害、放射性、腐蚀性等危险物品及违禁品。
+      </text>
+      <text class="section-content">
+        3. 禁止存放现金、珠宝首饰、有价证券等贵重物品，如有丢失概不负责。
+      </text>
+      <text class="section-content">
+        4. 用户应确保物品包装完好，不泄漏、不渗出液体。
+      </text>
+      <text class="section-content">
+        5. 超过24小时未取回的物品，本服务有权进行处理，且不负责赔偿。
+      </text>
+    </view>
+
+    <view class="section">
+      <text class="section-title">五、服务限制</text>
+      <text class="section-content">
+        1. 本服务仅提供临时寄存服务，不提供保管服务。
+      </text>
+      <text class="section-content">
+        2. 寄存物品价值超过500元的，用户应自行承担风险。
+      </text>
+      <text class="section-content">
+        3. 因不可抗力（如地震、洪水、战争等）导致服务中断，本服务不承担责任。
+      </text>
+    </view>
+
+    <view class="section">
+      <text class="section-title">六、联系我们</text>
+      <text class="section-content">
+        如您对本协议有任何疑问，请联系我们：
+      </text>
+      <text class="section-content">
+        联系电话：400-000-0000
+      </text>
+      <text class="section-content">
+        运营主体：智能寄存柜运营团队
+      </text>
+    </view>
+  </view>
+</view>

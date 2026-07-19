@@ -1,0 +1,236 @@
+/* pages/order-detail/order-detail.wxss - 订单详情页面样式 */
+
+.container {
+  min-height: 100vh;
+  background-color: #F5F5F5;
+  padding-bottom: 120rpx;
+}
+
+/* 加载状态 */
+.loading-state {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 200rpx 0;
+  font-size: 28rpx;
+  color: #999999;
+}
+
+/* 状态卡片 */
+.status-card {
+  background: linear-gradient(135deg, #6C5CE7 0%, #A29BFE 100%);
+  padding: 40rpx 30rpx;
+  margin: 24rpx 30rpx;
+  border-radius: 20rpx;
+}
+
+.status-header {
+  display: flex;
+  align-items: center;
+}
+
+.status-icon {
+  width: 80rpx;
+  height: 80rpx;
+  background-color: rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36rpx;
+  margin-right: 24rpx;
+}
+
+.status-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.status-text {
+  font-size: 36rpx;
+  font-weight: 600;
+  color: #FFFFFF;
+  margin-bottom: 8rpx;
+}
+
+.status-text.pending {
+  color: #FFD700;
+}
+
+.status-text.retrieved {
+  color: #90EE90;
+}
+
+.status-text.timeout {
+  color: #FFA500;
+}
+
+.order-no {
+  font-size: 24rpx;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* 通用卡片区域 */
+.section {
+  margin: 0 30rpx 24rpx;
+  background-color: #FFFFFF;
+  border-radius: 16rpx;
+  padding: 30rpx;
+}
+
+.section-title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #333333;
+  margin-bottom: 24rpx;
+  padding-bottom: 20rpx;
+  border-bottom: 1rpx solid #F0F0F0;
+}
+
+.info-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16rpx 0;
+  border-bottom: 1rpx solid #F8F8F8;
+}
+
+.info-row:last-child {
+  border-bottom: none;
+}
+
+.info-row.highlight {
+  background-color: #F8F8FF;
+  margin: 0 -20rpx;
+  padding: 16rpx 20rpx;
+  border-radius: 8rpx;
+}
+
+.info-label {
+  font-size: 28rpx;
+  color: #666666;
+}
+
+.info-value {
+  font-size: 28rpx;
+  color: #333333;
+  font-weight: 500;
+}
+
+.text-purple {
+  color: #6C5CE7;
+  font-weight: 600;
+}
+
+.text-warning {
+  color: #FF9800;
+}
+
+.text-success {
+  color: #4CAF50;
+}
+
+.text-primary {
+  color: #6C5CE7;
+  font-weight: 600;
+}
+
+/* 操作按钮区域 */
+.action-section {
+  padding: 30rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+}
+
+.btn-withdraw {
+  width: 100%;
+  height: 88rpx;
+  background: linear-gradient(135deg, #52C41A 0%, #73D13D 100%);
+  border-radius: 44rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #FFFFFF;
+  border: none;
+}
+
+.btn-withdraw[disabled] {
+  background: #CCCCCC;
+  color: #FFFFFF;
+}
+
+.btn-withdraw::after {
+  border: none;
+}
+
+.btn-secondary {
+  width: 100%;
+  height: 88rpx;
+  background-color: #FFFFFF;
+  border: 2rpx solid #6C5CE7;
+  border-radius: 44rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32rpx;
+  font-weight: 500;
+  color: #6C5CE7;
+}
+
+.btn-secondary::after {
+  border: none;
+}
+
+/* 底部操作 */
+.bottom-actions {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  padding: 20rpx 30rpx;
+  padding-bottom: calc(20rpx + env(safe-area-inset-bottom));
+  background-color: #FFFFFF;
+  box-shadow: 0 -4rpx 16rpx rgba(0, 0, 0, 0.05);
+}
+
+.action-item {
+  display: flex;
+  align-items: center;
+  padding: 16rpx 40rpx;
+  background-color: #F5F5F5;
+  border-radius: 32rpx;
+}
+
+.action-item:active {
+  background-color: #EEEEEE;
+}
+
+.action-icon {
+  font-size: 28rpx;
+  margin-right: 8rpx;
+}
+
+.action-text {
+  font-size: 28rpx;
+  color: #666666;
+}
+
+/* 空状态 */
+.empty-state {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 200rpx 0;
+  font-size: 28rpx;
+  color: #999999;
+}

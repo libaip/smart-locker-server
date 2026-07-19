@@ -1,0 +1,43 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>历史数据导入</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;background:#f0f2f5;padding:20px}
+.container{max-width:600px;margin:40px auto;background:#fff;border-radius:8px;padding:30px}
+h2{text-align:center;margin-bottom:24px;font-size:18px}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;color:#666;margin-bottom:6px;font-size:13px}
+.form-group select,.form-group input[type=file]{width:100%;padding:8px 12px;border:1px solid #dcdfe6;border-radius:4px}
+.btn{padding:8px 20px;border:0;border-radius:4px;cursor:pointer;color:#fff;font-size:14px}
+.btn-blue{background:#409eff}
+.btn-red{background:#f56c6c}
+.msg{padding:12px;border-radius:4px;margin-top:12px;display:none}
+.msg.success{background:#f0f9eb;color:#67c23a}
+.msg.error{background:#fef0f0;color:#f56c6c}
+</style>
+</head>
+<body>
+<div class="container">
+<h2>历史数据导入</h2>
+<div class="form-group"><label>选择网点</label><select id="locationSelect"><option value="">加载中...</option></select></div>
+<div class="form-group"><label>上传文件(.xlsx/.csv，第1列日期YYYYMMDD，第3列可见订单数)</label><input type="file" id="fileInput"></div>
+<div style="display:flex;gap:8px">
+<button class="btn btn-blue" onclick="doImport()">开始导入</button>
+<button class="btn btn-red" onclick="doDelete()">删除该网点数据</button>
+</div>
+<div id="msg" class="msg"></div>
+</div>
+<script>
+var API="/api";
+function showMsg(t,ty){var m=document.getElementById("msg");m.textContent=t;m.className="msg "+(ty||"success");m.style.display="block"}
+function loadLocations(){fetch(API+"/admin/locations",{credentials:"same-origin"}).then(function(r){return r.json()}).then(function(d){var s=document.getElementById("locationSelect");if(d.code===0||d.code===200){var lst=Array.isArray(d.data)?d.data:(d.data&&d.data.list||[]);s.innerHTML="<option value=''>- 请选择 -</option>"+lst.map(function(l){return "<option value='"+l.id+"'>"+l.name+"</option>"}).join("")}}).catch(function(){document.getElementById("locationSelect").innerHTML="<option value=''>加载失败</option>"})}
+function doImport(){var s=document.getElementById("locationSelect"),f=document.getElementById("fileInput");if(!s.value){showMsg("请选择网点","error");return}if(!f.files||!f.files[0]){showMsg("请选择文件","error");return}var fd=new FormData();fd.append("file",f.files[0]);fd.append("location_id",s.value);fetch(API+"/admin/historical-orders/import",{method:"POST",body:fd,credentials:"same-origin"}).then(function(r){return r.json()}).then(function(j){if(j.code===0||j.code===200){showMsg(j.message+" [导入"+j.data.imported+"条]","success")}else{showMsg(j.message||"导入失败","error")}}).catch(function(){showMsg("导入请求失败","error")})}
+function doDelete(){var s=document.getElementById("locationSelect");if(!s.value){showMsg("请选择网点","error");return}if(!confirm("确定删除该网点的所有历史导入数据？"))return;fetch(API+"/admin/historical-orders/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({location_id:parseInt(s.value)}),credentials:"same-origin"}).then(function(r){return r.json()}).then(function(j){if(j.code===0||j.code===200){showMsg(j.message,"success")}else{showMsg(j.message||"删除失败","error")}}).catch(function(){showMsg("删除请求失败","error")})}
+loadLocations();
+</script>
+</body>
+</html>

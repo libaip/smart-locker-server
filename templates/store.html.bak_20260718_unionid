@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>存包</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f5;min-height:100vh;color:#333}
+.page{padding:20px}
+.header{text-align:center;font-size:20px;font-weight:700;padding:16px 0;background:#fff;border-bottom:1px solid #eee}
+.form-group{margin:24px 0}
+.form-group label{display:block;font-size:16px;color:#666;margin-bottom:8px}
+.form-group input{width:100%;height:52px;border:1px solid #ddd;border-radius:8px;padding:0 16px;font-size:18px;outline:none;background:#fff}
+.form-group input:focus{border-color:#f5a623}
+.pwd-row{position:relative}
+.pwd-row input{padding-right:60px}
+.toggle-pwd{position:absolute;right:16px;top:50%;transform:translateY(-50%);color:#999;font-size:14px;cursor:pointer}
+.btn-next{width:100%;height:52px;background:#f5a623;color:#fff;font-size:18px;font-weight:700;border:none;border-radius:8px;margin-top:36px;cursor:pointer}
+.overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:100;align-items:center;justify-content:center}
+.overlay.show{display:flex}
+.confirm-dialog{background:#fff;border-radius:16px;width:85%;max-width:340px;overflow:hidden;animation:popIn .2s}
+@keyframes popIn{from{transform:scale(0.9);opacity:0}to{transform:scale(1);opacity:1}}
+.confirm-header{display:flex;justify-content:space-between;align-items:center;padding:18px 20px;border-bottom:1px solid #eee}
+.confirm-header span:first-child{font-size:16px;font-weight:700}
+.close-btn{font-size:22px;color:#999;cursor:pointer;line-height:1}
+.confirm-body{padding:28px 20px;text-align:center}
+.confirm-phone{font-size:28px;font-weight:700;margin-bottom:18px;word-break:break-all}
+.confirm-pwd{font-size:36px;font-weight:700;color:#e53935;letter-spacing:12px}
+.confirm-footer{display:flex;border-top:1px solid #eee}
+.btn-back{flex:1;height:50px;background:#f5f0e8;color:#8b7355;font-size:16px;border:none;cursor:pointer}
+.btn-confirm{flex:1;height:50px;background:#f5a623;color:#000;font-size:16px;font-weight:700;border:none;cursor:pointer}
+.pay-page{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:#fff;z-index:50}
+.pay-page.show{display:flex;flex-direction:column;align-items:center}
+.pay-header{width:100%;text-align:center;font-size:20px;font-weight:700;padding:16px 0;border-bottom:1px solid #eee}
+.pay-amount{font-size:48px;font-weight:700;color:#e53935;margin:40px 0 12px}
+.pay-amount .yen{font-size:28px}
+.pay-info{text-align:center;margin:24px 0}
+.pay-slot{font-size:42px;font-weight:700;margin-bottom:12px}
+.pay-countdown{font-size:14px;color:#999}
+.btn-pay{width:calc(100% - 40px);height:52px;background:#f5a623;color:#000;font-size:18px;font-weight:700;border:none;border-radius:8px;margin-top:auto;margin-bottom:40px;cursor:pointer}
+#successPage{text-align:center;padding-top:80px;display:none}
+.success-icon{width:64px;height:64px;background:#4caf50;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:36px;margin-bottom:20px}
+.success-title{font-size:24px;font-weight:700;margin-bottom:24px}
+.success-slot{font-size:20px;margin-bottom:10px}
+.success-pwd{font-size:22px;color:#e53935;letter-spacing:4px}
+</style>
+</head>
+<body>
+<div class="page" id="inputPage">
+<div class="header">存包</div>
+<div class="form-group">
+<label>手机号</label>
+<input type="tel" id="phone" maxlength="11" placeholder="请输入手机号">
+</div>
+<div class="form-group">
+<label>取包密码</label>
+<div class="pwd-row">
+<input type="password" id="pwd" maxlength="4" placeholder="请输入4位密码">
+<span class="toggle-pwd" onclick="togglePwd()">显示</span>
+</div>
+</div>
+<button class="btn-next" onclick="confirmInfo()">下一步</button>
+</div>
+<div id="confirmOverlay" class="overlay">
+<div class="confirm-dialog">
+<div class="confirm-header">
+<span>请确认手机号和取包密码</span>
+<span class="close-btn" onclick="closeConfirm()">✕</span>
+</div>
+<div class="confirm-body">
+<div class="confirm-phone" id="confirmPhone"></div>
+<div class="confirm-pwd" id="confirmPwd"></div>
+</div>
+<div class="confirm-footer">
+<button class="btn-back" onclick="closeConfirm()">返回修改</button>
+<button class="btn-confirm" onclick="doStore()">确定</button>
+</div>
+</div>
+</div>
+<div id="payPage" class="pay-page">
+<div class="pay-header">确认支付</div>
+<div class="pay-amount"><span class="yen">¥</span><span id="payAmount">0</span></div>
+<div class="pay-info">
+<div class="pay-slot">柜门号：<span id="paySlot">--</span></div>
+<div class="pay-countdown" id="payCountdown">支付剩余时间 05:00</div>
+</div>
+<button class="btn-pay" onclick="doPay()">支付开门</button>
+</div>
+<div id="successPage">
+<div class="success-icon">✓</div>
+<div class="success-title">存包成功</div>
+<div class="success-slot" id="successSlot"></div>
+<div class="success-pwd" id="successPwd"></div>
+</div>
+<script>if(window.location.hostname!=="locker.cqdyxl.com"){window.location.href=window.location.href.replace(window.location.hostname,"locker.cqdyxl.com");}var DEVICE='{device}';var storeData={};var payTimer=null;
+    const openid = new URLSearchParams(window.location.search).get('openid') || '';
+    if(!openid && window.location.hostname==='locker.cqdyxl.com'){window.location.href='/api/wx/oauth?redirect_uri='+encodeURIComponent(window.location.href);}
+function togglePwd(){var p=document.getElementById('pwd');p.type=p.type==='password'?'text':'password';}
+function confirmInfo(){var phone=document.getElementById('phone').value.trim();var pwd=document.getElementById('pwd').value.trim();if(!phone||phone.length<11){alert('请输入正确的手机号');return;}if(!pwd||pwd.length!==4){alert('请输入4位密码');return;}document.getElementById('confirmPhone').textContent=phone;document.getElementById('confirmPwd').textContent=pwd.split('').join(' ');document.getElementById('confirmOverlay').classList.add('show');}
+function closeConfirm(){document.getElementById('confirmOverlay').classList.remove('show');}
+function doStore(){closeConfirm();var phone=document.getElementById('phone').value.trim();var pwd=document.getElementById('pwd').value.trim();fetch('/api/h5/store?openid=' + openid,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:phone,pwd:pwd,device:DEVICE})}).then(function(r){return r.json();}).then(function(d){if(d.code==200){storeData=d.data;
+if(storeData.need_redirect){location.href="weixin://dl/business/?appid="+'wx57eaea52dcfff4e8'+"&path="+encodeURIComponent('pages/deposit/deposit'+"?openid="+openid+"&device="+DEVICE+"&orderId="+storeData.order_id);return;}document.getElementById('inputPage').style.display='none';document.getElementById('payPage').classList.add('show');document.getElementById('payAmount').textContent=d.data.deposit||'0';document.getElementById('paySlot').textContent=d.data.slot_number||'--';var sec=300;payTimer=setInterval(function(){sec--;var m=Math.floor(sec/60);var s=sec%60;document.getElementById('payCountdown').textContent='\u652f\u4ed8\u5269\u4f59\u65f6\u95f4 '+(m<10?'0':'')+m+':'+(s<10?'0':'')+s;if(sec<=0){clearInterval(payTimer);alert('\u652f\u4ed8\u8d85\u65f6\uff0c\u8bf7\u91cd\u65b0\u64cd\u4f5c');location.reload();}},1000);}else{alert(d.message||'\u64cd\u4f5c\u5931\u8d25');}}).catch(function(e){alert('\u7f51\u7edc\u9519\u8bef');});}
+function doPay(){
+if(payTimer)clearInterval(payTimer);
+if(storeData.pay_params){
+var pp=storeData.pay_params;
+if(pp.mode==="h5"&&pp.mweb_url){location.href=pp.mweb_url;return;}
+else if(pp.mode==="jsapi"&&pp.jsapi_params){
+if(typeof WeixinJSBridge!=="undefined"){
+WeixinJSBridge.invoke("getBrandWCPayRequest",pp.jsapi_params,function(res){
+if(res.err_msg==="get_brand_wcpay_request:ok"){pollPayStatus();}
+else{alert("支付取消");}
+});
+}else{
+document.addEventListener("WeixinJSBridgeReady",function(){
+WeixinJSBridge.invoke("getBrandWCPayRequest",pp.jsapi_params,function(res){
+if(res.err_msg==="get_brand_wcpay_request:ok"){pollPayStatus();}
+else{alert("支付取消");}
+});
+});
+}
+return;
+}else if(pp.mode==="mock"){callStorePay();return;}
+}
+callStorePay();
+}
+function callStorePay(){
+fetch("/api/store/pay",{method:"POST",headers:{"Content-Type":"application/json"},
+body:JSON.stringify({order_id:storeData.order_id})}).then(function(r){return r.json();}).then(function(d){
+if(d.code==200){if(d.data&&d.data.pay_url){location.href=d.data.pay_url;}else{showSuccess();}}
+else if(d.code==301){if(d.data&&d.data.pay_url){var w=window.open(d.data.pay_url,"_blank");var cw=setInterval(function(){if(w.closed){clearInterval(cw);location.reload();}},500);}}
+else{alert(d.message||"支付失败");}}).catch(function(e){alert("网络错误");});
+}
+function pollPayStatus(){
+var count=0;var si=setInterval(function(){count++;
+if(count>30){clearInterval(si);alert("支付超时");location.reload();return;}
+fetch("/api/store/pay",{method:"POST",headers:{"Content-Type":"application/json"},
+body:JSON.stringify({order_id:storeData.order_id})}).then(function(r){return r.json();}).then(function(d){
+if(d.code==200){clearInterval(si);showSuccess();}
+});
+},3000);
+}
+function showSuccess(){
+document.getElementById("payPage").classList.remove("show");
+document.getElementById("payPage").style.display="none";
+document.getElementById("successPage").style.display="block";
+document.getElementById("successSlot").textContent="柜门号："+(storeData.slot_number||"--")+"号";
+document.getElementById("successPwd").textContent="取包密码："+storeData.pwd.split("").join(" ");
+}
+
+    var _sp = localStorage.getItem('locker_saved_phone');
+    if (_sp) { var _pe = document.getElementById('phone'); if (_pe) _pe.value = _sp; }
+</script>
+</body>
+</html>

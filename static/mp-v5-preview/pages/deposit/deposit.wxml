@@ -1,0 +1,256 @@
+<!-- pages/deposit/deposit.wxml - 存包页面 -->
+<view class="container">
+  <!-- 步骤指示器 -->
+  <view class="step-indicator">
+    <view class="step-item">
+      <view class="step-circle {{currentStep >= 1 ? 'active' : ''}} {{currentStep > 1 ? 'completed' : ''}}">
+        <text wx:if="{{currentStep <= 1}}">1</text>
+        <text wx:else>✓</text>
+      </view>
+      <text class="step-text {{currentStep >= 1 ? 'active' : ''}}">选择柜格</text>
+    </view>
+    <view class="step-line {{currentStep > 1 ? 'completed' : ''}}"></view>
+    <view class="step-item">
+      <view class="step-circle {{currentStep >= 2 ? 'active' : ''}} {{currentStep > 2 ? 'completed' : ''}}">
+        <text wx:if="{{currentStep <= 2}}">2</text>
+        <text wx:else>✓</text>
+      </view>
+      <text class="step-text {{currentStep >= 2 ? 'active' : ''}}">填写信息</text>
+    </view>
+    <view class="step-line {{currentStep > 2 ? 'completed' : ''}}"></view>
+    <view class="step-item">
+      <view class="step-circle {{currentStep >= 3 ? 'active' : ''}} {{currentStep > 3 ? 'completed' : ''}}">
+        <text wx:if="{{currentStep <= 3}}">3</text>
+        <text wx:else>✓</text>
+      </view>
+      <text class="step-text {{currentStep >= 3 ? 'active' : ''}}">支付</text>
+    </view>
+    <view class="step-line {{currentStep > 3 ? 'completed' : ''}}"></view>
+    <view class="step-item">
+      <view class="step-circle {{currentStep >= 4 ? 'active' : ''}}">
+        <text>4</text>
+      </view>
+      <text class="step-text {{currentStep >= 4 ? 'active' : ''}}">完成</text>
+    </view>
+  </view>
+
+  <!-- 步骤1：选择柜格 -->
+  <view class="step-content" wx:if="{{currentStep === 1}}">
+    <view class="cabinet-info card">
+      <view class="cabinet-name">
+        <text>{{cabinetInfo.name || '寄存柜'}}</text>
+      </view>
+      <view class="cabinet-location">
+        <text class="location-icon">📍</text>
+        <text>{{cabinetInfo.location || '位置信息'}}</text>
+      </view>
+    </view>
+
+    <view class="slot-section">
+      <text class="section-title">请选择柜格大小</text>
+      <view class="slot-list">
+        <view 
+          class="slot-card {{selectedSlot === 'S' ? 'selected' : ''}} {{slots.S > 0 ? '' : 'disabled'}}"
+          bindtap="onSelectSlot" 
+          data-size="S"
+        >
+          <view class="slot-icon">S</view>
+          <view class="slot-info">
+            <text class="slot-name">小柜</text>
+            <text class="slot-desc">手机、钱包等小件</text>
+          </view>
+          <view class="slot-count {{slots.S > 0 ? '' : 'empty'}}">
+            <text wx:if="{{slots.S > 0}}">{{slots.S}}个可用</text>
+            <text wx:else>已满</text>
+          </view>
+        </view>
+
+        <view 
+          class="slot-card {{selectedSlot === 'M' ? 'selected' : ''}} {{slots.M > 0 ? '' : 'disabled'}}"
+          bindtap="onSelectSlot" 
+          data-size="M"
+        >
+          <view class="slot-icon">M</view>
+          <view class="slot-info">
+            <text class="slot-name">中柜</text>
+            <text class="slot-desc">背包、手提包等</text>
+          </view>
+          <view class="slot-count {{slots.M > 0 ? '' : 'empty'}}">
+            <text wx:if="{{slots.M > 0}}">{{slots.M}}个可用</text>
+            <text wx:else>已满</text>
+          </view>
+        </view>
+
+        <view 
+          class="slot-card {{selectedSlot === 'L' ? 'selected' : ''}} {{slots.L > 0 ? '' : 'disabled'}}"
+          bindtap="onSelectSlot" 
+          data-size="L"
+        >
+          <view class="slot-icon">L</view>
+          <view class="slot-info">
+            <text class="slot-name">大柜</text>
+            <text class="slot-desc">行李箱、大型背包</text>
+          </view>
+          <view class="slot-count {{slots.L > 0 ? '' : 'empty'}}">
+            <text wx:if="{{slots.L > 0}}">{{slots.L}}个可用</text>
+            <text wx:else>已满</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view class="step-footer">
+      <button class="btn-primary" bindtap="onNextStep1" disabled="{{!selectedSlot}}">
+        <text>下一步</text>
+      </button>
+    </view>
+  </view>
+
+  <!-- 步骤2：填写信息 -->
+  <view class="step-content" wx:if="{{currentStep === 2}}">
+    <view class="form-section card">
+      <view class="input-wrapper">
+        <text class="input-label">手机号</text>
+        <input 
+          class="input-field" 
+          type="number" 
+          maxlength="11" 
+          placeholder="请输入手机号" 
+          bindinput="onPhoneInput"
+          value="{{phone}}"
+        />
+      </view>
+      
+      <view class="input-wrapper">
+        <text class="input-label">设置4位取物码</text>
+        <input 
+          class="input-field" 
+          type="number" 
+          maxlength="4" 
+          placeholder="请输入4位数字" 
+          bindinput="onCodeInput"
+          value="{{accessCode}}"
+        />
+        <text class="input-hint">取物时请输入此码，请牢记！</text>
+      </view>
+
+      <!-- 验证码区域（可选，根据后端配置决定是否显示） -->
+      <view class="input-wrapper" wx:if="{{needSmsCode}}">
+        <text class="input-label">短信验证码</text>
+        <view class="code-input-wrapper">
+          <view class="input-wrapper" style="margin-bottom: 0; margin-right: 20rpx;">
+            <input 
+              class="input-field" 
+              type="number" 
+              maxlength="6" 
+              placeholder="请输入验证码" 
+              bindinput="onSmsCodeInput"
+              value="{{smsCode}}"
+            />
+          </view>
+          <button 
+            class="code-btn" 
+            bindtap="onSendSms"
+            disabled="{{smsCountdown > 0}}"
+          >
+            <text wx:if="{{smsCountdown > 0}}">{{smsCountdown}}s</text>
+            <text wx:else>获取验证码</text>
+          </button>
+        </view>
+      </view>
+    </view>
+
+    <view class="step-footer">
+      <button class="btn-default" bindtap="onPrevStep">上一步</button>
+      <button class="btn-primary" bindtap="onNextStep2" style="margin-top: 20rpx;">
+        <text>下一步</text>
+      </button>
+    </view>
+  </view>
+
+  <!-- 步骤3：支付 -->
+  <view class="step-content" wx:if="{{currentStep === 3}}">
+    <view class="pay-section card">
+      <view class="order-summary">
+        <text class="summary-title">订单摘要</text>
+        <view class="summary-item">
+          <text>柜格大小</text>
+          <text class="text-purple">{{slotSizeName}}</text>
+        </view>
+        <view class="summary-item">
+          <text>手机号</text>
+          <text>{{maskedPhone}}</text>
+        </view>
+        <view class="summary-item">
+          <text>取物码</text>
+          <text class="text-purple">{{maskedCode}}</text>
+        </view>
+      </view>
+
+      <view class="pay-amount">
+        <text class="amount-label">保证金</text>
+        <view class="amount-value">
+          <text class="currency">¥</text>
+          <text class="money">{{depositAmount}}</text>
+        </view>
+      </view>
+
+      <view class="pay-tip">
+        <text class="tip-icon">ℹ️</text>
+        <text class="tip-text">取物结束后保证金将原路退还</text>
+      </view>
+    </view>
+
+    <view class="step-footer">
+      <button class="btn-default" bindtap="onPrevStep">上一步</button>
+      <button class="btn-primary btn-pay" bindtap="onPay" style="margin-top: 20rpx;">
+        <text>确认支付 ¥{{depositAmount}}</text>
+      </button>
+    </view>
+  </view>
+
+  <!-- 步骤4：完成 -->
+  <view class="step-content" wx:if="{{currentStep === 4}}">
+    <view class="success-section">
+      <view class="success-icon">
+        <text>✓</text>
+      </view>
+      <text class="success-title">存包成功</text>
+      <text class="success-desc">请在{{countdown}}分钟内取走物品</text>
+    </view>
+
+    <view class="code-display card">
+      <view class="code-label">您的取物码</view>
+      <view class="code-value">
+        <text>{{orderInfo.access_code}}</text>
+      </view>
+      <view class="code-tip">
+        <text>请妥善保管取物码，取物时需输入</text>
+      </view>
+    </view>
+
+    <view class="order-info card">
+      <view class="info-row">
+        <text class="info-label">柜格号</text>
+        <text class="info-value">{{orderInfo.slot_no || '--'}}</text>
+      </view>
+      <view class="info-row">
+        <text class="info-label">柜格位置</text>
+        <text class="info-value">{{cabinetInfo.name || '寄存柜'}}</text>
+      </view>
+      <view class="info-row">
+        <text class="info-label">手机号</text>
+        <text class="info-value">{{maskedPhone}}</text>
+      </view>
+    </view>
+
+    <view class="step-footer">
+      <button class="btn-secondary" bindtap="onOpenDoor">
+        <text>开门放物</text>
+      </button>
+      <button class="btn-primary" bindtap="onDone" style="margin-top: 20rpx;">
+        <text>完成</text>
+      </button>
+    </view>
+  </view>
+</view>

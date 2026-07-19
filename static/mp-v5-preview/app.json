@@ -1,0 +1,31 @@
+{
+    "pages": [
+        "pages/mine/mine",
+        "pages/index/index",
+        "pages/deposit/deposit",
+        "pages/retrieve/retrieve",
+        "pages/orders/orders",
+        "pages/complaint/complaint",
+        "pages/complaint-list/complaint-list",
+        "pages/order-detail/order-detail",
+        "pages/privacy/privacy",
+        "pages/agreement/agreement",
+        "pages/wallet/wallet",
+        "pages/withdraw/withdraw",
+        "pages/customer-service/customer-service",
+        "pages/withdraw-record/withdraw-record",
+        "pages/withdraw-progress/withdraw-progress",
+        "pages/transactions/transactions"
+    ],
+    "window": {
+        "navigationBarBackgroundColor": "#43B581",
+        "navigationBarTitleText": "智能寄存柜",
+        "navigationBarTextStyle": "white",
+        "backgroundColor": "#F5F5F5",
+        "backgroundTextStyle": "dark",
+        "enablePullDownRefresh": false
+    },
+    "style": "v2",
+    "sitemapLocation": "sitemap.json",
+    "lazyCodeLoading": "requiredComponents"
+}

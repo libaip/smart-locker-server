@@ -1648,7 +1648,7 @@ def approve_withdrawal(withdrawal_id):
             wd_openid = record['openid'] if 'openid' in record.keys() and record['openid'] else None
             refund_success, refund_id, refund_msg = do_balance_transfer(phone, amount, openid=wd_openid)
         if refund_success:
-            cursor.execute('UPDATE withdrawal_records SET status = 2, approver = %s, approve_time = %s, refund_id = %s WHERE id = %s', (approver, datetime.now(), refund_id, withdrawal_id))
+            cursor.execute('UPDATE withdrawal_records SET status = 1, approver = %s, approve_time = %s, refund_id = %s WHERE id = %s', (approver, datetime.now(), refund_id, withdrawal_id))
             if order_id:
                 cursor.execute('UPDATE orders SET status = 4, refund_id = %s, refund_time = %s WHERE id = %s', (refund_id, datetime.now(), order_id))
                 if record.get('slot_id') or (order_id and True):

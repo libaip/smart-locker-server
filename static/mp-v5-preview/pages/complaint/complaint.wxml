@@ -1,0 +1,62 @@
+<view class="page">
+  <!-- 导航栏 -->
+  <view class="nav" style="padding-top:{{statusBarHeight}}px;">
+    <view class="nav-inner">
+      <view class="nav-back" bindtap="goBack">
+        <image class="nav-back-icon" src="/images/mine_back_arrow_black.png" mode="aspectFit"/>
+      </view>
+      <text class="nav-title">投诉商家</text>
+    </view>
+  </view>
+
+  <!-- 表单区域 -->
+  <block wx:if="{{!submitted}}">
+    <!-- Hero -->
+    <view class="hero" style="margin-top:calc(88rpx + {{statusBarHeight}}px);">
+      <view class="hero-text">
+        <text class="hero-title">非常抱歉给您带来不便</text>
+        <text class="hero-desc">我们重视每一位用户体验，请填写信息帮助我们明确问题。</text>
+      </view>
+    </view>
+
+    <view class="content">
+      <!-- 投诉人信息卡片 -->
+      <view class="card">
+        <text class="card-title">投诉人信息</text>
+        <view class="form-item">
+          <text class="form-label">联系电话</text>
+          <input class="form-input" type="tel" placeholder="请输入联系电话" maxlength="11" bindinput="onPhoneInput" value="{{userPhone}}"/>
+        </view>
+      </view>
+
+      <!-- 投诉内容卡片 -->
+      <view class="card">
+        <text class="card-title">投诉内容</text>
+        <view class="form-item">
+          <text class="form-label">扣费订单号</text>
+          <picker bindchange="onOrderSelect" value="{{orderIndex}}" range="{{orderNames}}">
+            <view class="form-select">{{orderNames[orderIndex] || '请选择'}}</view>
+          </picker>
+        </view>
+        <view class="form-item">
+          <text class="form-label">投诉描述</text>
+          <textarea class="form-textarea" placeholder="请输入投诉内容" maxlength="140" bindinput="onContentInput" value="{{content}}"/>
+          <text class="char-count">{{content.length || 0}}/140</text>
+        </view>
+      </view>
+
+      <!-- 提交按钮 -->
+      <view class="submit-btn {{isSubmitting?'disabled':''}}" bindtap="onSubmit">
+        <text>{{isSubmitting ? '提交中...' : '提交'}}</text>
+      </view>
+    </view>
+  </block>
+
+  <!-- 成功提示 -->
+  <view class="success-area" wx:if="{{submitted}}">
+    <image class="success-icon" src="/images/complaint_success.png" mode="aspectFit"/>
+    <text class="msg-title">投诉已提交</text>
+    <text class="msg-desc">我们会尽快处理您的投诉</text>
+    <view class="back-btn" bindtap="goBack">返回</view>
+  </view>
+</view>

@@ -14,6 +14,14 @@ from helpers import (json_response, require_merchant_auth, get_setting, logger, 
 
 bp = Blueprint('merchant', __name__)
 
+@bp.after_request
+def add_no_cache(response):
+    if '/merchant/dashboard' in request.path:
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    return response
+
 def _get_merchant_filter():
     """Get merchant_id and SQL filter based on session (merchant or agent)"""
     if session.get('is_agent'):
@@ -173,8 +181,17 @@ def merchant_dashboard():
         month_start = datetime.now().strftime('%Y-%m-01')
         cursor.execute(f'SELECT COUNT(*) as count FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND DATE(o.created_at) >= %s AND o.status NOT IN (1, 5)  {hide_filter}', (*mparams, month_start))
         month_orders = cursor.fetchone()['count']
+        # merge this month's historical data
+        cursor.execute(f'SELECT COALESCE(SUM(visible_count),0) FROM historical_order_counts h JOIN locations l ON h.location_id=l.id WHERE l.merchant_id={mparams[0]} AND date>=%s', (month_start,))
+        # merge this month's historical data
+        cursor.execute(f'SELECT COALESCE(SUM(visible_count),0) FROM historical_order_counts h JOIN locations l ON h.location_id=l.id WHERE l.merchant_id={mparams[0]} AND date>=%s', (month_start,))
+        h_val = cursor.fetchone()[0] or 0
+        month_orders = (month_orders or 0) + h_val
+
+
         cursor.execute(f'SELECT COALESCE(SUM(COALESCE(p.amount, 0)), 0) as total FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND p.type = 1 AND p.status = 1 AND o.status NOT IN (0, 1, 5)  {hide_filter} AND DATE(o.created_at) >= %s', (*mparams, month_start))
         month_income = cursor.fetchone()['total']
+
         # 寄存收益（收费模式完成订单）
         cursor.execute(f"SELECT COALESCE(SUM(GREATEST(o.deposit_amount - COALESCE(o.refund_amount,0), 0)), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND o.status = 4 AND (l.charge_mode IS NOT NULL AND l.charge_mode != '' AND l.charge_mode != 'free')  {hide_filter} AND DATE(o.created_at) = %s", (*mparams, today))
         today_storage_income = cursor.fetchone()['fee']
@@ -695,6 +712,7 @@ def merchant_get_slot_status(cabinet_id, slot_id):
 
 
 # 业务统计
+@bp.route('/merchant/business-stats', methods=['GET'])
 @bp.route('/merchant/stats/business', methods=['GET'])
 @require_merchant_auth
 def merchant_business_stats():
@@ -761,17 +779,47 @@ def merchant_business_stats():
         # 每日趋势图
         from datetime import datetime as _dt, timedelta as _td
         chart = []
-        for i in range(29, -1, -1):
-            d = (_dt.now() - _td(days=i)).strftime('%Y-%m-%d')
-            dp = params + [d]
-            dw = where_sql + " AND DATE(o.created_at) = %s"
-            cursor.execute(f"SELECT COUNT(*) as c FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {dw} AND o.status NOT IN (1, 5)  {hide_filter}", dp)
-            chart.append({"date": d, "orders": cursor.fetchone()[0] or 0})
+        if start_date and end_date:
+            d1 = _dt.strptime(start_date, '%Y-%m-%d')
+            d2 = _dt.strptime(end_date.split()[0], '%Y-%m-%d')
+            day_count = (d2 - d1).days + 1
+            for i in range(day_count):
+                d = (d1 + _td(days=i)).strftime('%Y-%m-%d')
+                dp = params + [d]
+                dw = where_sql + " AND DATE(o.created_at) = %s"
+                cursor.execute(f"SELECT COUNT(*) as c FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {dw} AND o.status NOT IN (1, 5)  {hide_filter}", dp)
+                chart.append({"date": d, "orders": cursor.fetchone()[0] or 0})
+        else:
+            for i in range(29, -1, -1):
+                d = (_dt.now() - _td(days=i)).strftime('%Y-%m-%d')
+                dp = params + [d]
+                dw = where_sql + " AND DATE(o.created_at) = %s"
+                cursor.execute(f"SELECT COUNT(*) as c FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {dw} AND o.status NOT IN (1, 5)  {hide_filter}", dp)
+                chart.append({"date": d, "orders": cursor.fetchone()[0] or 0})
         # 收益金额（收费模式下的手续费，不含保证金）
         cursor.execute(f"SELECT COALESCE(SUM(GREATEST(o.deposit_amount - COALESCE(o.refund_amount,0), 0)), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql} AND o.status = 4 AND (l.charge_mode IS NOT NULL AND l.charge_mode != '' AND l.charge_mode != 'free')  {hide_filter}", params)
         fee_row = cursor.fetchone()
         conn.close()
         total_orders = order_stats['total_orders'] or 0
+        # merge historical data
+        try:
+            hist_parts = [mfilter]
+            hist_params = list(mparams)
+            if start_date:
+                hist_parts.append('date >= %s')
+                hist_params.append(start_date)
+            if end_date:
+                hist_parts.append('date <= %s')
+                hist_params.append(end_date)
+            if location_id:
+                hist_parts.append('h.location_id = %s')
+                hist_params.append(location_id)
+            hist_where = ' AND '.join(hist_parts)
+            cursor.execute(f'SELECT COALESCE(SUM(visible_count),0) as h FROM historical_order_counts h JOIN locations l ON h.location_id = l.id WHERE {hist_where}', hist_params)
+            total_orders = (total_orders or 0) + (cursor.fetchone()['h'] or 0)
+        except Exception:
+            pass
+
         is_agent = bool(session.get('is_agent'))
         result = {
             'total_orders': total_orders,

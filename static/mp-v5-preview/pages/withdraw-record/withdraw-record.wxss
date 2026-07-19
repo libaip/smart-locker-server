@@ -1,0 +1,39 @@
+.page { background: #f7f8fa; min-height: 100vh; }
+.nav-bar { display: flex; align-items: center; justify-content: space-between; padding: 24rpx 24rpx 20rpx; background: #fff; }
+.nav-back { padding: 10rpx; }
+.nav-arrow { font-size: 48rpx; color: #323233; }
+.nav-title { font-size: 34rpx; font-weight: 500; color: #323233; }
+.nav-placeholder { width: 48rpx; }
+
+.empty { text-align: center; padding: 120rpx 0; color: #969799; font-size: 28rpx; }
+
+.card-list { padding: 20rpx 24rpx; }
+.wr-card { background: #fff; border-radius: 16rpx; padding: 28rpx 28rpx 20rpx; margin-bottom: 20rpx; }
+.wr-row { display: flex; align-items: center; margin-bottom: 16rpx; font-size: 28rpx; }
+.wr-label { color: #323233; flex-shrink: 0; }
+.wr-value { color: #323233; }
+.wr-copy { margin-left: 10rpx; }
+.wr-copy-icon { font-size: 28rpx; color: #969799; }
+
+.wr-right { margin-left: auto; display: flex; align-items: center; }
+.wr-amount-plus { color: #323233; font-size: 28rpx; margin-right: 16rpx; }
+
+.wr-status-tag { padding: 4rpx 16rpx; border-radius: 6rpx; }
+.wr-status-tag.status-done { background: #07c160; }
+.wr-status-tag.status-done .wr-status-text { color: #fff; font-size: 24rpx; }
+.wr-status-tag.status-pending { background: transparent; border: 2rpx solid #c8c9cc; }
+.wr-status-tag.status-pending .wr-status-text { color: #969799; font-size: 24rpx; }
+.wr-status-tag.status-fail { background: #ee0a24; }
+.wr-status-tag.status-fail .wr-status-text { color: #fff; font-size: 24rpx; }
+
+.wr-refund-success { color: #07c160; font-size: 28rpx; }
+.wr-refund-fail { color: #ee0a24; font-size: 28rpx; }
+
+.wr-arrived-outline { padding: 4rpx 16rpx; border: 2rpx solid #c8c9cc; border-radius: 6rpx; color: #969799; font-size: 24rpx; }
+
+.wr-pending-tip { margin-top: 4rpx; margin-bottom: 8rpx; }
+.wr-pending-text { color: #ff976a; font-size: 24rpx; }
+
+.wr-faq { display: flex; align-items: center; justify-content: center; padding: 30rpx 0 60rpx; }
+.wr-faq-icon { width: 36rpx; height: 36rpx; border-radius: 50%; background: #07c160; color: #fff; font-size: 24rpx; text-align: center; line-height: 36rpx; margin-right: 10rpx; }
+.wr-faq-text { color: #323233; font-size: 28rpx; }

@@ -1,0 +1,109 @@
+<!-- pages/complaint-list/complaint-list.wxml - 投诉记录页面 -->
+<view class="container">
+  <!-- 查询区域 -->
+  <view class="search-section card">
+    <view class="search-header">
+      <text class="search-title">查询投诉记录</text>
+    </view>
+    <view class="search-form">
+      <view class="input-wrapper">
+        <text class="input-label">手机号</text>
+        <input 
+          class="input-field" 
+          type="number" 
+          maxlength="11" 
+          placeholder="请输入手机号查询投诉记录" 
+          bindinput="onPhoneInput"
+          value="{{phone}}"
+        />
+      </view>
+      <button 
+        class="btn-primary" 
+        bindtap="onSearch"
+        disabled="{{!canSearch}}"
+      >
+        <text>查询</text>
+      </button>
+    </view>
+  </view>
+
+  <!-- 投诉列表 -->
+  <view class="complaints-section" wx:if="{{hasSearched}}">
+    <!-- 空状态 -->
+    <view class="empty-state" wx:if="{{complaints.length === 0 && !loading}}">
+      <view class="empty-icon">
+        <text>📝</text>
+      </view>
+      <text class="empty-text">暂无投诉记录</text>
+    </view>
+
+    <!-- 投诉列表 -->
+    <view class="complaint-list" wx:if="{{complaints.length > 0}}">
+      <view 
+        class="complaint-card card" 
+        wx:for="{{complaints}}" 
+        wx:key="id"
+        bindtap="onViewDetail"
+        data-id="{{item.id}}"
+      >
+        <view class="complaint-header">
+          <view class="complaint-type">
+            <text class="type-icon">📋</text>
+            <text>{{item.type_text}}</text>
+          </view>
+          <view class="complaint-status {{item.status_class}}">
+            <text>{{item.status_text}}</text>
+          </view>
+        </view>
+        
+        <view class="complaint-body">
+          <view class="complaint-content">
+            <text class="content-label">投诉内容：</text>
+            <text class="content-text">{{item.content_summary}}</text>
+          </view>
+          
+          <view class="complaint-order" wx:if="{{item.order_no}}">
+            <text class="order-label">关联订单：</text>
+            <text class="order-text">{{item.order_no}}</text>
+          </view>
+          
+          <view class="complaint-reply" wx:if="{{item.reply}}">
+            <view class="reply-header">
+              <text class="reply-icon">💬</text>
+              <text class="reply-label">回复：</text>
+            </view>
+            <text class="reply-text">{{item.reply}}</text>
+          </view>
+        </view>
+
+        <view class="complaint-footer">
+          <text class="create-time">{{item.create_time}}</text>
+          <view class="view-detail">
+            <text>查看详情</text>
+            <view class="arrow"></view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 加载中 -->
+    <view class="loading-state" wx:if="{{loading}}">
+      <text>加载中...</text>
+    </view>
+  </view>
+
+  <!-- 提示 -->
+  <view class="tips-section" wx:if="{{!hasSearched}}">
+    <view class="tips-card card">
+      <view class="tips-header">
+        <text class="tips-icon">💡</text>
+        <text class="tips-title">温馨提示</text>
+      </view>
+      <view class="tips-content">
+        <text>• 输入手机号即可查询该号码下所有投诉记录</text>
+        <text>• 点击卡片可查看投诉详情</text>
+        <text>• 投诉处理进度会实时更新</text>
+      </view>
+    </view>
+  </view>
+</view>

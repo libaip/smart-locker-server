@@ -1,0 +1,32 @@
+.page { background: #fff; min-height: 100vh; }
+
+.nav-bar { display: flex; align-items: center; justify-content: space-between; padding-left: 24rpx; padding-right: 24rpx; padding-bottom: 20rpx; background: #fff; }
+.nav-back { padding: 10rpx; }
+.nav-arrow { font-size: 48rpx; color: #323233; }
+.nav-title { font-size: 34rpx; font-weight: 500; color: #323233; }
+.nav-rule { padding: 10rpx; }
+.nav-rule-text { color: #576b95; font-size: 28rpx; }
+
+.amount-section { text-align: center; padding: 60rpx 0 40rpx; }
+.amount-label { font-size: 28rpx; color: #323233; display: block; margin-bottom: 16rpx; }
+.amount-value { font-size: 96rpx; font-weight: 700; color: #323233; display: block; }
+
+.input-section { padding: 0 48rpx; margin-bottom: 20rpx; }
+.input-row { border-bottom: 2rpx solid #ebedf0; padding: 20rpx 0; }
+.amount-input { font-size: 32rpx; color: #323233; width: 100%; }
+.input-placeholder { color: #c8c9cc; font-size: 32rpx; }
+.all-withdraw { padding: 16rpx 0; }
+.all-withdraw-text { color: #07c160; font-size: 28rpx; }
+
+.fee-row { display: flex; justify-content: space-between; padding: 24rpx 48rpx; font-size: 28rpx; }
+.fee-label { color: #323233; }
+.fee-value { color: #323233; }
+
+.btn-area { padding: 40rpx 48rpx 20rpx; }
+.withdraw-btn { background: #07c160; border-radius: 48rpx; height: 88rpx; display: flex; align-items: center; justify-content: center; }
+.withdraw-btn.disabled { opacity: 0.4; }
+.withdraw-btn-text { color: #fff; font-size: 32rpx; font-weight: 500; }
+
+.tips-section { padding: 40rpx 48rpx; }
+.tips-title { font-size: 28rpx; color: #323233; font-weight: 500; display: block; margin-bottom: 16rpx; }
+.tips-item { font-size: 24rpx; color: #969799; display: block; line-height: 40rpx; }

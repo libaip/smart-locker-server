@@ -749,6 +749,7 @@
     }
     if (!currentCabinetId) currentCabinetId = '8';
     var wxOpenid = params.get('openid') || '';
+var wxUnionid = params.get('unionid') || localStorage.getItem('wxUnionid') || '';    var wxWechatName = params.get('wechat_name') || localStorage.getItem('wxWechatName') || '';    if (wxUnionid) localStorage.setItem('wxUnionid', wxUnionid);    if (wxWechatName) localStorage.setItem('wxWechatName', wxWechatName);
     var isWechat = /MicroMessenger/i.test(navigator.userAgent);
     var allowH5ToMp = 0;
     var mpAppId = '';
@@ -861,7 +862,10 @@
     function launchMp() {
         document.getElementById('mpTipModal').classList.remove('show');
         if (isWechat && mpAppId) {
-            wx.miniProgram.launchMiniProgram({ appId: mpAppId, path: mpPath || 'pages/index/index' });
+            var _p = mpPath || 'pages/subscribe/subscribe';
+            var _sep = _p.indexOf('?') >= 0 ? '&' : '?';
+            _p += _sep + 'phone=' + encodeURIComponent(currentPhone) + '&access_code=' + encodeURIComponent(currentAccessCode) + '&openid=' + encodeURIComponent(wxOpenid);
+            wx.miniProgram.launchMiniProgram({ appId: mpAppId, path: _p });
         } else {
             alert('请在微信中打开以使用小程序');
         }
@@ -999,6 +1003,8 @@
         btn.disabled = true; btn.textContent = '处理中...';
         var fetchBody = { cabinet_id: parseInt(currentCabinetId), phone: phone, access_code: currentAccessCode, slot_size: selectedSize };
         if (wxOpenid) fetchBody.openid = wxOpenid;
+        if (wxUnionid) fetchBody.unionid = wxUnionid;
+        if (wxWechatName) fetchBody.wechat_name = wxWechatName;
         fetch(API_BASE + '/api/deposit/create-order', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(fetchBody) })
         .then(function(res) { return res.json(); })
         .then(function(data) {

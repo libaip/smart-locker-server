@@ -1,0 +1,1458 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>智能寄存柜</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #eef1f5; min-height: 100vh; overflow-x: hidden; }
+        .container { max-width: 500px; margin: 0 auto; min-height: 100vh; position: relative; background: #fff; }
+        .page-hidden { display: none !important; }
+
+        /* 顶部导航栏 */
+        .top-nav { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; background: #fff; border-bottom: 1px solid #f0f0f0; position: sticky; top: 0; z-index: 50; }
+        .top-nav-close { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+        .top-nav-close::before, .top-nav-close::after { content: ''; position: absolute; width: 16px; height: 2px; background: #333; }
+        .top-nav-close::before { transform: rotate(45deg); }
+        .top-nav-close::after { transform: rotate(-45deg); }
+        .top-nav-center { text-align: center; }
+        .top-nav-title { font-size: 16px; font-weight: 600; color: #333; }
+        .top-nav-domain { font-size: 11px; color: #bbb; }
+        .top-nav-more { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; }
+        .top-nav-more span { display: flex; gap: 3px; }
+        .top-nav-more span::before, .top-nav-more span::after, .top-nav-more i { content: ''; width: 4px; height: 4px; border-radius: 50%; background: #333; }
+
+        /* 首页 */
+        .home-page { padding: 0 16px 80px; }
+        .help-banner { display: flex; align-items: center; justify-content: space-between; background: linear-gradient(135deg, #FFF3E0, #FFE0B2); border-radius: 14px; padding: 18px 16px; margin-top: 14px; }
+        .help-banner-left { flex: 1; }
+        .help-banner-title { font-size: 17px; font-weight: 700; color: #1a1a1a; margin-bottom: 10px; }
+        .help-banner-btn { display: inline-block; background: #FFC107; color: #1a1a1a; border: none; border-radius: 18px; padding: 7px 20px; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .help-banner-btn:active { opacity: 0.8; }
+        .help-banner-illust { flex-shrink: 0; margin-left: 10px; width: 110px; height: 90px; position: relative; }
+        .illust-cabinet { position: absolute; right: 0; bottom: 0; width: 60px; height: 70px; }
+        .illust-cab-body { width: 60px; height: 55px; background: #FFC107; border-radius: 6px; position: absolute; bottom: 0; display: grid; grid-template-columns: repeat(3,1fr); grid-template-rows: repeat(2,1fr); gap: 3px; padding: 5px; }
+        .illust-cab-cell { background: #FFD54F; border-radius: 2px; }
+        .illust-cab-screen { position: absolute; top: 5px; left: 50%; transform: translateX(-50%); width: 14px; height: 10px; background: #42A5F5; border-radius: 2px; }
+        .illust-box1 { position: absolute; right: 65px; bottom: 5px; width: 22px; height: 18px; background: #8D6E63; border-radius: 3px; }
+        .illust-box2 { position: absolute; right: 55px; bottom: 0; width: 18px; height: 15px; background: #A1887F; border-radius: 2px; }
+        .illust-cat { position: absolute; right: 40px; bottom: 2px; width: 20px; height: 24px; }
+        .illust-cat-body { width: 16px; height: 14px; background: #FFC107; border-radius: 8px 8px 4px 4px; position: absolute; bottom: 0; }
+        .illust-cat-head { width: 12px; height: 12px; background: #FFC107; border-radius: 50%; position: absolute; bottom: 12px; left: 2px; }
+        .illust-cat-ear1, .illust-cat-ear2 { position: absolute; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 6px solid #FFC107; }
+        .illust-cat-ear1 { top: -4px; left: 0; }
+        .illust-cat-ear2 { top: -4px; right: 0; }
+        .illust-star1 { position: absolute; top: 5px; right: 15px; color: #E91E63; font-size: 10px; }
+        .illust-star2 { position: absolute; top: 15px; right: 5px; color: #FFC107; font-size: 8px; }
+        .illust-star3 { position: absolute; top: 2px; right: 30px; color: #42A5F5; font-size: 7px; }
+        .illust-cloud { position: absolute; top: 8px; right: 50px; width: 28px; height: 12px; background: #E0E0E0; border-radius: 6px; }
+        .help-detail { display: none; background: #fff; border-radius: 10px; padding: 14px; margin-top: 10px; font-size: 13px; color: #666; line-height: 1.8; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+        .help-detail.show { display: block; }
+        .action-cards { display: flex; gap: 12px; margin-top: 18px; }
+        .action-card { flex: 1; border-radius: 16px; padding: 24px 14px 20px; text-align: center; cursor: pointer; transition: transform 0.15s; position: relative; overflow: hidden; }
+        .action-card:active { transform: scale(0.97); }
+        .action-card-store { background: #FFFDE7; border: 1.5px solid #FFE082; }
+        .action-card-fetch { background: #F5F5F5; border: 1.5px solid #E0E0E0; }
+        .action-card-bg-char { font-size: 72px; font-weight: 900; opacity: 0.1; position: absolute; top: -8px; left: 50%; transform: translateX(-50%); pointer-events: none; }
+        .action-card-store .action-card-bg-char { color: #FFC107; }
+        .action-card-fetch .action-card-bg-char { color: #9E9E9E; }
+        .action-card-en { font-size: 11px; font-weight: 600; letter-spacing: 3px; color: #999; margin-top: 8px; position: relative; }
+        .action-card-desc { font-size: 12px; color: #bbb; margin-top: 2px; position: relative; }
+        .action-card-store .action-card-desc { color: #F9A825; }
+        .action-card-fetch .action-card-desc { color: #9E9E9E; }
+        .action-card-btn { display: inline-block; margin-top: 14px; padding: 8px 32px; border-radius: 22px; font-size: 15px; font-weight: 700; cursor: pointer; border: none; position: relative; }
+        .action-card-store .action-card-btn { background: #FFC107; color: #1a1a1a; }
+        .action-card-fetch .action-card-btn { background: #E0E0E0; color: #333; }
+        .site-info { text-align: center; margin-top: 18px; padding: 12px; background: #FAFAFA; border-radius: 10px; }
+        .site-info-name { font-size: 14px; font-weight: 600; color: #333; }
+        .site-info-addr { font-size: 12px; color: #999; margin-top: 3px; }
+
+        /* 右侧浮标 */
+        .float-buttons { position: fixed; right: 12px; bottom: 90px; z-index: 90; display: flex; flex-direction: column; gap: 14px; }
+        .float-circle { width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; color: #fff; cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,0.15); text-align: center; line-height: 1.2; padding: 4px; }
+        .float-circle:active { opacity: 0.8; transform: scale(0.95); }
+        .float-circle-service { background: #42A5F5; }
+        .float-circle-complaint { background: #FF9800; }
+
+        /* 底部导航 */
+        .bottom-nav { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 500px; background: #fff; display: flex; border-top: 1px solid #eee; padding: 8px 0 env(safe-area-inset-bottom, 8px); z-index: 100; }
+        .nav-item { flex: 1; text-align: center; cursor: pointer; padding: 4px 0; }
+        .nav-item-icon svg { width: 24px; height: 24px; }
+        .nav-item-text { font-size: 11px; color: #999; margin-top: 2px; }
+        .nav-item.active .nav-item-text { color: #F9A825; font-weight: 600; }
+        .nav-item.active .nav-item-icon svg { color: #F9A825; fill: #F9A825; }
+
+        /* ===== 通用页头 ===== */
+        .page-header { display: flex; align-items: center; padding: 12px 16px; background: #fff; position: sticky; top: 0; z-index: 50; border-bottom: 1px solid #f0f0f0; }
+        .page-back { background: none; border: none; font-size: 18px; cursor: pointer; padding: 4px 8px 4px 0; color: #333; display: flex; align-items: center; gap: 2px; }
+        .page-back svg { width: 20px; height: 20px; fill: #333; }
+        .page-title { font-size: 17px; font-weight: 700; color: #1a1a1a; flex: 1; text-align: center; }
+        .page-actions { display: flex; gap: 12px; align-items: center; }
+        .page-actions svg { width: 22px; height: 22px; fill: #666; }
+
+        /* ===== 存包第一步：设置密码 ===== */
+        .step1-page { background: #eef1f5; min-height: 100vh; padding-bottom: 30px; }
+        .info-card { background: #fff; margin: 10px 12px; border-radius: 12px; padding: 16px; }
+        .info-row { display: flex; justify-content: space-between; align-items: center; padding: 11px 0; border-bottom: 1px solid #f2f2f2; }
+        .info-row:last-child { border-bottom: none; }
+        .info-label { font-size: 14px; color: #666; }
+        .info-value { font-size: 14px; color: #333; font-weight: 500; }
+        .info-price { color: #E65100; font-weight: 700; font-size: 15px; }
+        .size-bar { display: flex; gap: 8px; margin: 10px 0; padding: 6px 0; border-bottom: 1px solid #f2f2f2; }
+        .size-btn { flex: 1; text-align: center; padding: 8px 0; border: 1.5px solid #e0e0e0; border-radius: 8px; font-size: 13px; color: #666; cursor: pointer; background: #fff; transition: all 0.15s; }
+        .size-btn.active { border-color: #FFC107; color: #F57F17; background: #FFFDE7; font-weight: 600; }
+        .size-btn:active { transform: scale(0.97); }
+        .notes { padding: 10px 0; border-bottom: 1px solid #f2f2f2; }
+        .notes-title { font-size: 14px; color: #333; font-weight: 600; margin-bottom: 6px; }
+        .note-item { font-size: 12px; color: #888; line-height: 2; position: relative; padding-left: 10px; }
+        .note-item::before { content: '\2022'; position: absolute; left: 0; color: #ccc; }
+        .door-row { border-bottom: none !important; }
+        .door-num { color: #FF9800; font-size: 20px; font-weight: 800; }
+        .cred-title { font-size: 16px; font-weight: 700; color: #333; margin-bottom: 14px; }
+        .cred-group { margin-bottom: 12px; }
+        .cred-label { font-size: 13px; color: #888; margin-bottom: 5px; }
+        .cred-input { width: 100%; padding: 12px 14px; border: 1.5px solid #e0e0e0; border-radius: 10px; font-size: 15px; outline: none; background: #fafafa; transition: border-color 0.2s, background 0.2s; }
+        .cred-input:focus { border-color: #FFC107; background: #fff; }
+        .cred-row { display: flex; gap: 10px; }
+        .cred-row .cred-input { flex: 1; }
+        .sms-btn { background: #FFC107; color: #1a1a1a; border: none; border-radius: 10px; padding: 0 16px; font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+        .sms-btn:disabled { background: #ccc; color: #999; }
+        .next-btn { display: block; width: 100%; padding: 14px; background: #FFC107; color: #1a1a1a; border: none; border-radius: 24px; font-size: 17px; font-weight: 700; cursor: pointer; margin-top: 6px; }
+        .next-btn:active { opacity: 0.85; }
+        .usage-tips { margin: 12px 12px 0; padding: 14px 16px; background: #fff; border-radius: 10px; font-size: 12px; color: #999; line-height: 2.2; }
+        .usage-tips b { color: #FF9800; }
+
+        /* ===== 存包第二步：支付确认 ===== */
+        .step2-page { background: #eef1f5; min-height: 100vh; padding-bottom: 30px; }
+        .pay-countdown { text-align: center; padding: 16px 0 0; font-size: 13px; color: #999; }
+        .pay-countdown span { color: #E65100; font-weight: 700; font-size: 15px; }
+        .pay-amount-card { background: #fff; margin: 10px 12px; border-radius: 12px; padding: 28px 20px; text-align: center; }
+        .pay-amount-label { font-size: 13px; color: #999; }
+        .pay-amount-value { font-size: 44px; font-weight: 900; color: #E65100; margin: 6px 0 2px; }
+        .pay-amount-value small { font-size: 20px; }
+        .pay-amount-sub { font-size: 12px; color: #bbb; }
+        .pay-detail-card { background: #fff; margin: 10px 12px; border-radius: 12px; padding: 16px; }
+        .pay-detail-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #f2f2f2; }
+        .pay-detail-row:last-child { border-bottom: none; }
+        .pay-detail-label { font-size: 14px; color: #666; }
+        .pay-detail-value { font-size: 14px; color: #333; font-weight: 600; }
+        .pay-detail-door { color: #FF9800; font-size: 18px; font-weight: 800; }
+        .pay-warning { margin: 10px 12px; padding: 12px 14px; background: #FFF8E1; border-radius: 10px; display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: #E65100; line-height: 1.6; }
+        .pay-warning-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+        .pay-action-area { margin: 20px 12px 0; }
+        .pay-open-btn { display: block; width: 100%; padding: 15px; background: #FFC107; color: #1a1a1a; border: none; border-radius: 24px; font-size: 17px; font-weight: 700; cursor: pointer; }
+        .pay-open-btn:active { opacity: 0.85; }
+        .pay-open-btn:disabled { background: #ccc; color: #999; }
+        .pay-agreement { display: flex; align-items: center; justify-content: center; margin-top: 12px; gap: 6px; font-size: 12px; color: #999; }
+        .pay-agreement input[type="checkbox"] { width: 16px; height: 16px; accent-color: #FFC107; }
+        .pay-agreement a { color: #4CAF50; text-decoration: none; font-weight: 500; }
+
+        /* ===== 押金协议弹窗 ===== */
+        .agreement-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 300; align-items: flex-end; justify-content: center; }
+        .agreement-overlay.show { display: flex; }
+        .agreement-box { background: #fff; border-radius: 16px 16px 0 0; width: 100%; max-width: 500px; max-height: 75vh; display: flex; flex-direction: column; }
+        .agreement-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid #f0f0f0; }
+        .agreement-title { font-size: 16px; font-weight: 700; color: #333; }
+        .agreement-close { background: none; border: none; font-size: 22px; color: #999; cursor: pointer; }
+        .agreement-body { padding: 16px 20px; overflow-y: auto; font-size: 13px; color: #666; line-height: 2; flex: 1; }
+        .agreement-body h3 { font-size: 15px; color: #333; margin: 14px 0 6px; }
+        .agreement-body p { margin-bottom: 8px; }
+
+        /* 取包页 */
+        .retrieve-page { background: #eef1f5; min-height: 100vh; padding-bottom: 30px; }
+        .store-section { background: #fff; margin: 12px 16px; border-radius: 14px; padding: 20px; }
+        .form-group { margin-bottom: 14px; }
+        .form-label { font-size: 13px; color: #888; margin-bottom: 6px; }
+        .form-input { width: 100%; padding: 12px 14px; border: 1.5px solid #e0e0e0; border-radius: 10px; font-size: 15px; outline: none; }
+        .form-input:focus { border-color: #FFC107; }
+        .btn-main { display: block; width: calc(100% - 32px); margin: 20px auto 0; padding: 15px; background: linear-gradient(135deg, #FFC107, #FF9800); color: #1a1a1a; border: none; border-radius: 14px; font-size: 17px; font-weight: 700; cursor: pointer; }
+        .btn-main:active { opacity: 0.85; }
+
+        /* 开门中 */
+        .opening-page { background: #fff; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; }
+        .opening-icon { font-size: 64px; margin-bottom: 20px; animation: bounce 1s infinite; }
+        @keyframes bounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+        .opening-title { font-size: 22px; font-weight: 800; color: #1a1a1a; margin-bottom: 8px; }
+        .opening-door-num { font-size: 48px; font-weight: 900; color: #FF9800; margin: 10px 0; }
+        .opening-desc { font-size: 14px; color: #999; }
+        .opening-bar-wrap { width: 80%; max-width: 280px; height: 6px; background: #f0f0f0; border-radius: 3px; margin-top: 30px; overflow: hidden; }
+        .opening-bar { height: 100%; background: linear-gradient(90deg, #FFC107, #FF9800); border-radius: 3px; width: 0; transition: width 0.4s; }
+
+        /* 完成页 */
+        .done-page { background: #fff; min-height: 100vh; padding: 40px 20px; text-align: center; }
+        .done-icon { font-size: 64px; margin-bottom: 16px; }
+        .done-title { font-size: 22px; font-weight: 800; color: #1a1a1a; margin-bottom: 20px; }
+        .done-info-card { background: #FAFAFA; border-radius: 14px; padding: 20px; text-align: left; margin: 0 16px; }
+        .done-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #f0f0f2; }
+        .done-row:last-child { border-bottom: none; }
+        .done-label { font-size: 14px; color: #888; }
+        .done-value { font-size: 14px; color: #333; font-weight: 600; }
+        .done-actions { margin-top: 24px; display: flex; gap: 12px; padding: 0 16px; }
+        .done-btn-reopen { flex: 1; padding: 14px; border: 2px solid #FF9800; border-radius: 12px; background: #fff; color: #FF9800; font-size: 15px; font-weight: 600; cursor: pointer; }
+        .done-btn-finish { flex: 1; padding: 14px; border: none; border-radius: 12px; background: linear-gradient(135deg, #FFC107, #FF9800); color: #1a1a1a; font-size: 15px; font-weight: 700; cursor: pointer; }
+
+        /* 取包确认页 */
+        .retrieve-confirm-page { background: #fff; min-height: 100vh; padding: 40px 20px; text-align: center; }
+        .rc-icon { font-size: 64px; margin-bottom: 16px; }
+        .rc-title { font-size: 20px; font-weight: 700; color: #1a1a1a; margin-bottom: 20px; }
+        .rc-card { background: #FAFAFA; border-radius: 14px; padding: 20px; margin: 0 16px; text-align: left; }
+        .rc-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #f0f0f2; }
+        .rc-row:last-child { border-bottom: none; }
+        .rc-label { font-size: 14px; color: #888; }
+        .rc-value { font-size: 14px; color: #333; font-weight: 600; }
+        .rc-actions { margin-top: 24px; display: flex; gap: 12px; padding: 0 16px; }
+        .rc-btn-mid { flex: 1; padding: 14px; border: 2px solid #FF9800; border-radius: 12px; background: #fff; color: #FF9800; font-size: 15px; font-weight: 600; cursor: pointer; }
+        .rc-btn-end { flex: 1; padding: 14px; border: none; border-radius: 12px; background: linear-gradient(135deg, #FFC107, #FF9800); color: #1a1a1a; font-size: 15px; font-weight: 700; cursor: pointer; }
+
+        /* ===== 个人中心 - 改造后（青绿色主题） ===== */
+        .profile-page { background: #eef1f5; min-height: 100vh; padding-bottom: 80px; }
+        .profile-header { background: linear-gradient(135deg, #26A69A, #4DB6AC); padding: 30px 20px 40px; text-align: center; color: #fff; position: relative; overflow: hidden; }
+        .profile-header::before { content: ''; position: absolute; bottom: -20px; left: -20px; right: -20px; height: 40px; background: #fff; border-radius: 50% 50% 0 0; }
+        .profile-top-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+        .profile-top-actions { display: flex; gap: 10px; }
+        .profile-top-btn { background: rgba(255,255,255,0.25); border: none; border-radius: 18px; padding: 5px 14px; font-size: 12px; color: #fff; cursor: pointer; }
+        .profile-main { display: flex; align-items: center; gap: 16px; position: relative; z-index: 1; }
+        .profile-avatar { width: 64px; height: 64px; border-radius: 50%; background: rgba(255,255,255,0.9); border: 3px solid rgba(255,255,255,0.5); margin: 0 auto; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .profile-avatar svg { width: 36px; height: 36px; }
+        .profile-info { flex: 1; }
+        .profile-phone { font-size: 18px; font-weight: 600; color: #fff; }
+        .profile-menu { margin: 14px 16px; }
+        .pm-item { background: #fff; display: flex; align-items: center; justify-content: space-between; padding: 16px; margin-bottom: 1px; cursor: pointer; }
+        .pm-item:first-child { border-radius: 12px 12px 0 0; }
+        .pm-item:last-child { border-radius: 0 0 12px 12px; margin-bottom: 0; }
+        .pm-item-left { display: flex; align-items: center; gap: 10px; font-size: 15px; color: #333; }
+        .pm-item-left span { font-size: 18px; }
+        .pm-item-right { color: #ccc; font-size: 14px; }
+
+        /* ===== 余额页面 ===== */
+        .balance-page { background: #eef1f5; min-height: 100vh; padding-bottom: 80px; }
+        .balance-card { background: linear-gradient(135deg, #E3F2FD, #BBDEFB); margin: 16px; border-radius: 16px; padding: 28px 20px; position: relative; overflow: hidden; }
+        .balance-card::before { content: '¥'; position: absolute; left: -10px; bottom: -20px; font-size: 120px; color: rgba(255,255,255,0.4); font-weight: 700; }
+        .balance-card-label { font-size: 14px; color: #666; margin-bottom: 8px; }
+        .balance-card-amount { font-size: 42px; font-weight: 900; color: #1976D2; margin-bottom: 16px; position: relative; z-index: 1; }
+        .balance-card-amount small { font-size: 20px; }
+        .balance-card-actions { display: flex; gap: 12px; position: relative; z-index: 1; }
+        .balance-withdraw-btn { background: linear-gradient(135deg, #FF9800, #FFB74D); color: #fff; border: none; border-radius: 22px; padding: 10px 28px; font-size: 15px; font-weight: 700; cursor: pointer; }
+        .balance-withdraw-btn:disabled { background: #ccc; color: #999; cursor: not-allowed; }
+        .balance-tip { font-size: 12px; color: #999; padding: 0 16px; margin-top: 12px; }
+        .refunding-bar { background: #FFF8E1; margin: 0 16px; padding: 12px 16px; border-radius: 10px; display: flex; align-items: center; gap: 10px; }
+        .refunding-bar-icon { font-size: 20px; }
+        .refunding-bar-text { font-size: 13px; color: #F57C00; }
+
+        /* 订单页 */
+        .orders-page { background: #eef1f5; min-height: 100vh; padding: 0 16px 80px; }
+        .order-card { background: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; }
+        .order-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .order-no { font-size: 13px; color: #999; }
+        .order-status { font-size: 12px; padding: 3px 10px; border-radius: 10px; font-weight: 600; }
+        .order-status.pending { background: #FFF3E0; color: #E65100; }
+        .order-status.completed { background: #E8F5E9; color: #2E7D32; }
+        .order-status.refunded { background: #E3F2FD; color: #1565C0; }
+        .order-status.refunding { background: #FFF8E1; color: #F57C00; }
+        .order-info { display: flex; flex-wrap: wrap; gap: 8px; }
+        .order-tag { font-size: 12px; color: #888; background: #F5F5F5; padding: 3px 8px; border-radius: 6px; }
+        .order-empty { text-align: center; padding: 60px 20px; }
+        .order-empty-icon { font-size: 48px; margin-bottom: 12px; }
+        .order-empty-text { font-size: 14px; color: #999; }
+
+        /* 弹窗 */
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 200; align-items: center; justify-content: center; }
+        .modal-overlay.show { display: flex; }
+        .modal-box { background: #fff; border-radius: 16px; padding: 24px 20px; width: 85%; max-width: 360px; }
+        .modal-title { font-size: 17px; font-weight: 700; color: #1a1a1a; margin-bottom: 14px; text-align: center; }
+        .modal-btns { display: flex; gap: 12px; margin-top: 18px; }
+        .modal-btn { flex: 1; padding: 12px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; border: none; }
+        .modal-btn-cancel { background: #f0f0f0; color: #666; }
+        .modal-btn-confirm { background: #FF9800; color: #fff; }
+        .complaint-type-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+        .complaint-type-btn { padding: 6px 14px; border: 1.5px solid #e0e0e0; border-radius: 18px; font-size: 13px; background: #fff; color: #666; cursor: pointer; }
+        .complaint-type-btn.active { border-color: #FF9800; color: #FF9800; background: #FFF3E0; }
+        .complaint-textarea { width: 100%; height: 80px; border: 1.5px solid #e0e0e0; border-radius: 10px; padding: 10px; font-size: 14px; resize: none; outline: none; }
+        .complaint-textarea:focus { border-color: #FFC107; }
+
+        /* 使用帮助弹窗 */
+        .help-modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 200; align-items: flex-end; justify-content: center; }
+        .help-modal-overlay.show { display: flex; }
+        .help-modal-box { background: #fff; border-radius: 16px 16px 0 0; width: 100%; max-width: 500px; max-height: 80vh; display: flex; flex-direction: column; }
+        .help-modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid #f0f0f0; }
+        .help-modal-title { font-size: 16px; font-weight: 700; color: #333; }
+        .help-modal-close { background: none; border: none; font-size: 22px; color: #999; cursor: pointer; }
+        .help-modal-body { padding: 16px 20px; overflow-y: auto; font-size: 14px; color: #666; line-height: 2; }
+        .help-modal-body h4 { font-size: 15px; color: #333; margin: 12px 0 6px; }
+        .help-modal-body h4:first-child { margin-top: 0; }
+        .help-step { display: flex; gap: 10px; margin: 8px 0; }
+        .help-step-num { width: 22px; height: 22px; background: #4DB6AC; color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+        .help-step-text { flex: 1; }
+    
+        .done-door-big {
+            font-size: 96px;
+            font-weight: 900;
+            color: #1a73e8;
+            text-align: center;
+            margin: 20px 0 0 0;
+            line-height: 1.1;
+        }
+        .done-door-label {
+            font-size: 24px;
+            font-weight: 700;
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        /* 白屏检测提示 */
+        .blank-screen-check { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #fff; z-index: 9999; display: none; align-items: center; justify-content: center; flex-direction: column; }
+        .blank-screen-check.show { display: flex; }
+        .blank-screen-spinner { width: 40px; height: 40px; border: 4px solid #f0f0f0; border-top-color: #4DB6AC; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .blank-screen-text { margin-top: 16px; font-size: 14px; color: #999; }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <!-- ========== 首页 ========== -->
+    <div id="homePage" class="home-page">
+        <div class="top-nav">
+            <div class="top-nav-close"></div>
+            <div class="top-nav-center">
+                <div class="top-nav-title">扫一扫</div>
+                <div class="top-nav-domain">locker.cqdyxl.com</div>
+            </div>
+            <div class="top-nav-more"><span><i></i></span></div>
+        </div>
+        <div class="help-banner" onclick="toggleHelp()">
+            <div class="help-banner-left">
+                <div class="help-banner-title">使用帮助</div>
+                <div class="help-banner-btn">去查看</div>
+            </div>
+            <div class="help-banner-illust">
+                <div class="illust-cloud"></div>
+                <div class="illust-star1">★</div><div class="illust-star2">★</div><div class="illust-star3">★</div>
+                <div class="illust-cabinet">
+                    <div class="illust-cab-body">
+                        <div class="illust-cab-cell"></div><div class="illust-cab-cell"></div><div class="illust-cab-cell"></div>
+                        <div class="illust-cab-cell"></div><div class="illust-cab-cell"></div><div class="illust-cab-cell"></div>
+                    </div>
+                    <div class="illust-cab-screen"></div>
+                </div>
+                <div class="illust-box1"></div><div class="illust-box2"></div>
+                <div class="illust-cat">
+                    <div class="illust-cat-body"></div>
+                    <div class="illust-cat-head"><div class="illust-cat-ear1"></div><div class="illust-cat-ear2"></div></div>
+                </div>
+            </div>
+        </div>
+        <div id="helpContent" class="help-detail">
+            1. 点击「存」按钮，选择柜格大小<br>
+            2. 输入手机号和4位取件码<br>
+            3. 支付押金后柜门自动打开<br>
+            4. 取包时点击「取」，输入手机号+取件码<br>
+            5. 取出物品关好柜门，押金原路退回
+        </div>
+        <div class="action-cards">
+            <div class="action-card action-card-store" onclick="goToStoreStep1()">
+                <div class="action-card-bg-char">存</div>
+                <div class="action-card-en">STORE</div>
+                <div class="action-card-desc">点击存入</div>
+                <div class="action-card-btn">存</div>
+            </div>
+            <div class="action-card action-card-fetch" onclick="goToRetrievePage()">
+                <div class="action-card-bg-char">取</div>
+                <div class="action-card-en">FETCH</div>
+                <div class="action-card-desc">点击取出</div>
+                <div class="action-card-btn">取</div>
+            </div>
+        </div>
+        <div class="site-info">
+            <div class="site-info-name" id="siteName">智能寄存柜</div>
+            <div class="site-info-addr" id="siteAddr">加载中...</div>
+        </div>
+    </div>
+
+    <!-- ========== 存包第一步：设置密码 ========== -->
+    <div id="step1Page" class="step1-page page-hidden">
+        <div class="page-header">
+            <button class="page-back" onclick="goToHomePage()">
+                <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                首页
+            </button>
+            <div class="page-title">设置密码</div>
+            <div class="page-actions">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+            </div>
+        </div>
+        <!-- 网点信息 -->
+        <div class="info-card">
+            <div class="info-row">
+                <span class="info-label">寄存网点</span>
+                <span class="info-value" id="s1SiteName">智能寄存柜</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">运营时间</span>
+                <span class="info-value">00:00~24:00</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">收费规则</span>
+                <span class="info-price">预付：¥<span id="s1Price">20</span></span>
+            </div>
+            <div class="size-bar">
+                <div class="size-btn" data-size="S" onclick="selectSize('S')">小柜 ¥<span id="priceS">10</span></div>
+                <div class="size-btn active" data-size="M" onclick="selectSize('M')">中柜 ¥<span id="priceM">20</span></div>
+                <div class="size-btn" data-size="L" onclick="selectSize('L')">大柜 ¥<span id="priceL">30</span></div>
+            </div>
+            <div class="notes">
+                <div class="notes-title">注意事项</div>
+                <div class="note-item">存放时间截止到当日23:00，请提前取走物品</div>
+                <div class="note-item">为避免柜门无效占用，需支付押金¥<span id="s1DepositNote">20</span></div>
+                <div class="note-item">寄存结束后押金即可退回，请务必关好柜门</div>
+            </div>
+            <div class="info-row door-row">
+                <span class="info-label">柜门号</span>
+                <span class="door-num" id="s1DoorNum">待分配</span>
+            </div>
+        </div>
+        <!-- 设置取包凭证 -->
+        <div class="info-card">
+            <div class="cred-title">设置取包凭证</div>
+            <div class="cred-group">
+                <div class="cred-label">电话号码</div>
+                <input class="cred-input" id="userPhone" type="tel" maxlength="11" placeholder="请输入手机号">
+            </div>
+            <div id="smsCodeGroup" class="cred-group" style="display:none">
+                <div class="cred-label">验证码</div>
+                <div class="cred-row">
+                    <input class="cred-input" id="smsCode" type="text" maxlength="6" placeholder="输入验证码">
+                    <button class="sms-btn" id="sendCodeBtn" onclick="sendSmsCode()">发送验证码</button>
+                </div>
+            </div>
+            <div class="cred-group">
+                <div class="cred-label">取包密码</div>
+                <input class="cred-input" id="accessCode" type="text" maxlength="4" placeholder="设置4位数密码" inputmode="numeric" pattern="[0-9]*">
+            </div>
+            <button class="next-btn" onclick="onStep1Next()">下一步</button>
+        </div>
+        <!-- 存取包说明 -->
+        <div class="usage-tips">
+            <b>存包</b>，先下单再认准"手机上提示的柜门号"存放<br>
+            <b>取包</b>，在屏幕上输入凭证"手机号+密码"取包
+        </div>
+    </div>
+
+    <!-- ========== 存包第二步：支付确认 ========== -->
+    <div id="step2Page" class="step2-page page-hidden">
+        <div class="page-header">
+            <button class="page-back" onclick="goToStoreStep1()">
+                <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                首页
+            </button>
+            <div class="page-title">存包</div>
+            <div class="page-actions">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+            </div>
+        </div>
+        <div class="pay-countdown">支付剩余时间 <span id="payCountdown">05:00</span></div>
+        <div class="pay-amount-card">
+            <div class="pay-amount-label">预付费</div>
+            <div class="pay-amount-value"><small>¥</small><span id="payAmount">20</span></div>
+            <div class="pay-amount-sub">预付费</div>
+        </div>
+        <div class="pay-detail-card">
+            <div class="pay-detail-row">
+                <span class="pay-detail-label">租借店铺</span>
+                <span class="pay-detail-value" id="paySiteName">智能寄存柜</span>
+            </div>
+            <div class="pay-detail-row">
+                <span class="pay-detail-label">计费规则</span>
+                <span class="pay-detail-value" id="payRule">预付：¥20</span>
+            </div>
+            <div class="pay-detail-row">
+                <span class="pay-detail-label">柜门号</span>
+                <span class="pay-detail-door" id="payDoorNum">待分配</span>
+            </div>
+        </div>
+        <div class="pay-warning">
+            <span class="pay-warning-icon">⚠️</span>
+            <span>请支付后使用设备，结束使用后押金可申请原路退回。</span>
+        </div>
+        <div class="pay-action-area">
+            <button class="pay-open-btn" id="payBtn" onclick="payDeposit()">支付开门</button>
+            <div class="pay-agreement">
+                <input type="checkbox" id="agreementCheck" checked>
+                <span>请仔细阅读<a href="javascript:void(0)" onclick="showAgreement()">《用户押金协议》</a>，勾选即同意协议。</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== 取包页 ========== -->
+    <div id="retrievePage" class="retrieve-page page-hidden">
+        <div class="page-header">
+            <button class="page-back" onclick="goToHomePage()">
+                <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                首页
+            </button>
+            <div class="page-title">取包</div>
+            <div class="page-actions"></div>
+        </div>
+        <div class="store-section">
+            <div class="form-group">
+                <div class="form-label">手机号</div>
+                <input class="form-input" id="retrievePhone" type="tel" maxlength="11" placeholder="请输入存包时的手机号">
+            </div>
+            <div class="form-group">
+                <div class="form-label">取件码</div>
+                <input class="form-input" id="retrieveCode" type="text" maxlength="4" placeholder="请输入4位取件码">
+            </div>
+        </div>
+        <button class="btn-main" onclick="retrieveOrder()">📦 取包开柜</button>
+    </div>
+
+    <!-- ========== 开门中 ========== -->
+    <div id="openingPage" class="opening-page page-hidden">
+        <div class="opening-icon">🚪</div>
+        <div class="opening-title">正在开门</div>
+        <div class="opening-door-num" id="openingDoor">-</div>
+        <div class="opening-desc">请稍候，柜门即将打开...</div>
+        <div class="opening-bar-wrap"><div class="opening-bar" id="openingBar"></div></div>
+    </div>
+
+    <!-- ========== 存包完成 ========== -->
+    <div id="donePage" class="done-page page-hidden">
+        <div class="done-icon">✅</div>
+        <div class="done-title">存包成功</div>
+        <div class="done-door-big" id="doneDoorBig">-</div>
+        <div class="done-door-label">号柜门</div>
+        <div class="done-actions">
+            <button class="done-btn-reopen" onclick="reopenCabinet()">再开一次</button>
+            <button class="done-btn-finish" onclick="finishDeposit()">完成</button>
+        </div>
+    </div>
+
+    <!-- ========== 取包确认 ========== -->
+    <div id="retrieveConfirmPage" class="retrieve-confirm-page page-hidden">
+        <div class="rc-icon">📦</div>
+        <div class="rc-title">取包确认</div>
+        <div class="rc-card">
+            <div class="rc-row"><span class="rc-label">柜格号</span><span class="rc-value" id="rcCompartment">-</span></div>
+            <div class="rc-row"><span class="rc-label">存入时间</span><span class="rc-value" id="rcTime">-</span></div>
+            <div class="rc-row"><span class="rc-label">押金</span><span class="rc-value" id="rcDeposit">-</span></div>
+        </div>
+        <div class="rc-actions">
+            <button class="rc-btn-mid" onclick="midOpen()">中途开柜</button>
+            <button class="rc-btn-end" onclick="endRetrieval()">取包结束</button>
+        </div>
+    </div>
+
+    <!-- ========== 个人中心 - 改造后 ========== -->
+    <div id="profilePage" class="profile-page page-hidden">
+        <div class="profile-header">
+            <div class="profile-top-row">
+                <div></div>
+                <div class="profile-top-actions">
+                    <button class="profile-top-btn" onclick="showHelpModal()">使用帮助</button>
+                </div>
+            </div>
+            <div class="profile-main">
+                <div class="profile-avatar">
+                    <svg viewBox="0 0 24 24" fill="#BDBDBD">
+                        <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+                    </svg>
+                </div>
+                <div class="profile-info">
+                    <div class="profile-phone" id="profilePhone">未登录</div>
+                </div>
+            </div>
+        </div>
+        <div class="profile-menu">
+            <div class="pm-item" onclick="goToOrdersPage()"><div class="pm-item-left"><span>📋</span>我的订单</div><div class="pm-item-right">›</div></div>
+            <div class="pm-item" onclick="goToBalancePage()"><div class="pm-item-left"><span>💰</span>我的余额</div><div class="pm-item-right">›</div></div>
+            <div class="pm-item" onclick="showHelpModal()"><div class="pm-item-left"><span>❓</span>使用帮助</div><div class="pm-item-right">›</div></div>
+            <div class="pm-item" onclick="clearCache()"><div class="pm-item-left"><span>🗑️</span>清除缓存</div><div class="pm-item-right">›</div></div>
+        </div>
+    </div>
+
+    <!-- ========== 我的订单 ========== -->
+    <div id="ordersPage" class="orders-page page-hidden">
+        <div class="page-header">
+            <button class="page-back" onclick="goToProfilePage()">
+                <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                返回
+            </button>
+            <div class="page-title">我的订单</div>
+            <div class="page-actions"></div>
+        </div>
+        <div id="ordersList"></div>
+    </div>
+
+    <!-- ========== 我的余额 ========== -->
+    <div id="balancePage" class="balance-page page-hidden">
+        <div class="page-header">
+            <button class="page-back" onclick="goToProfilePage()">
+                <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                返回
+            </button>
+            <div class="page-title">我的余额</div>
+            <div class="page-actions"></div>
+        </div>
+        <div class="balance-card">
+            <div class="balance-card-label">我的余额(元)</div>
+            <div class="balance-card-amount">¥<span id="balanceAmount">0.00</span></div>
+            <div class="balance-card-actions">
+                <button class="balance-withdraw-btn" id="withdrawBtn" onclick="handleWithdraw()">立即提现</button>
+            </div>
+        </div>
+        <div id="refundingBar" class="refunding-bar" style="display:none">
+            <span class="refunding-bar-icon">⏳</span>
+            <span class="refunding-bar-text">有退款正在处理中，请耐心等待</span>
+        </div>
+        <div class="balance-tip">余额来源：寄存订单完成后，押金将退回到余额中</div>
+    </div>
+
+    <!-- ========== 右侧浮标 ========== -->
+    <div id="complaintFloat" class="float-buttons">
+        <div class="float-circle float-circle-service" onclick="callComplaint()">联系<br>客服</div>
+        <div class="float-circle float-circle-complaint" onclick="showComplaintModal()">投诉<br>建议</div>
+    </div>
+
+    <!-- ========== 底部导航 ========== -->
+    <div class="bottom-nav">
+        <div class="nav-item active" id="navHome" onclick="goToHomePage()">
+            <div class="nav-item-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm13.5-9 1.96 2.5H17V9.5h2.5zm-1.5 9c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg></div>
+            <div class="nav-item-text">存/取包</div>
+        </div>
+        <div class="nav-item" id="navProfile" onclick="goToProfilePage()">
+            <div class="nav-item-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg></div>
+            <div class="nav-item-text">个人中心</div>
+        </div>
+    </div>
+
+    <!-- ========== H5支付弹窗 ========== -->
+    <div id="h5PayModal" class="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-title">确认支付</div>
+            <p style="text-align:center;font-size:14px;color:#666;margin-bottom:10px">即将跳转到微信支付</p>
+            <div class="modal-btns">
+                <button class="modal-btn modal-btn-cancel" onclick="cancelH5Pay()">取消</button>
+                <button class="modal-btn modal-btn-confirm" onclick="checkPayResult()">去支付</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== 小程序跳转提示 ========== -->
+    <div id="mpTipModal" class="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-title">存包提示</div>
+            <p id="mpTipDesc" style="text-align:center;font-size:14px;color:#666;margin-bottom:10px">建议使用小程序完成存包，体验更佳</p>
+            <div class="modal-btns">
+                <button class="modal-btn modal-btn-cancel" onclick="closeMpTipModal()">继续H5存包</button>
+                <button class="modal-btn modal-btn-confirm" onclick="launchMp()">打开小程序</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== 押金协议弹窗 ========== -->
+    <div id="agreementOverlay" class="agreement-overlay" onclick="if(event.target===this)closeAgreement()">
+        <div class="agreement-box">
+            <div class="agreement-header">
+                <div class="agreement-title">用户押金协议</div>
+                <button class="agreement-close" onclick="closeAgreement()">&times;</button>
+            </div>
+            <div class="agreement-body">
+                <h3>一、押金说明</h3>
+                <p>1. 用户在使用寄存柜服务时，需按照柜格类型支付对应金额的押金（预付费）。</p>
+                <p>2. 押金仅作为寄存期间的有效使用担保，不属于寄存费用。</p>
+                <p>3. 当前押金标准：小柜¥10、中柜¥20、大柜¥30，具体以页面显示为准。</p>
+                <h3>二、押金退还</h3>
+                <p>1. 用户取包并关好柜门后，押金将在1-3个工作日内原路退回至支付账户。</p>
+                <p>2. 如超时未取包，系统将根据网点规则处理，押金退还规则以网点公示为准。</p>
+                <p>3. 退款仅支持原路退回，不支持更换退款账户。</p>
+                <h3>三、用户责任</h3>
+                <p>1. 请勿存放违禁物品、贵重物品及易腐烂变质的物品。</p>
+                <p>2. 用户应妥善保管取包凭证（手机号+密码），因凭证泄露导致的损失由用户自行承担。</p>
+                <p>3. 存放物品如有损坏或遗失，赔偿金额不超过押金金额。</p>
+                <h3>四、免责条款</h3>
+                <p>1. 因不可抗力（停电、网络故障、设备损坏等）导致无法正常存取的，运营方将尽快修复并及时通知用户。</p>
+                <p>2. 用户超过网点规定寄存时间未取走的物品，运营方有权进行清理，但会提前公示通知。</p>
+                <h3>五、其他</h3>
+                <p>1. 本协议自用户勾选同意后生效。</p>
+                <p>2. 运营方保留对本协议的最终解释权，如有变更将在页面公示。</p>
+                <p>3. 如有疑问，请联系客服电话：4006981080。</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== 使用帮助弹窗 ========== -->
+    <div id="helpModalOverlay" class="help-modal-overlay" onclick="if(event.target===this)closeHelpModal()">
+        <div class="help-modal-box">
+            <div class="help-modal-header">
+                <div class="help-modal-title">使用帮助</div>
+                <button class="help-modal-close" onclick="closeHelpModal()">&times;</button>
+            </div>
+            <div class="help-modal-body">
+                <h4>如何存包？</h4>
+                <div class="help-step"><div class="help-step-num">1</div><div class="help-step-text">点击首页「存」按钮，选择合适的柜格大小</div></div>
+                <div class="help-step"><div class="help-step-num">2</div><div class="help-step-text">输入手机号，设置4位取件密码</div></div>
+                <div class="help-step"><div class="help-step-num">3</div><div class="help-step-text">完成支付后，柜门自动打开</div></div>
+                <div class="help-step"><div class="help-step-num">4</div><div class="help-step-text">将物品放入柜门，记住房门号</div></div>
+                <h4>如何取包？</h4>
+                <div class="help-step"><div class="help-step-num">1</div><div class="help-step-text">点击首页「取」按钮</div></div>
+                <div class="help-step"><div class="help-step-num">2</div><div class="help-step-text">输入存包时的手机号和取件密码</div></div>
+                <div class="help-step"><div class="help-step-num">3</div><div class="help-step-text">柜门打开，取走物品并关好柜门</div></div>
+                <h4>押金说明</h4>
+                <p>• 押金仅作为使用担保，不属于费用</p>
+                <p>• 取包并关好柜门后，押金退回至余额</p>
+                <p>• 可在「我的余额」中查看和提现</p>
+                <h4>常见问题</h4>
+                <p><strong>Q: 取件密码忘记了怎么办？</strong></p>
+                <p>A: 联系客服400-698-1080，提供手机号核实后可查询。</p>
+                <p><strong>Q: 押金多久能退回？</strong></p>
+                <p>A: 取包成功后1-3个工作日内原路退回。</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== 投诉弹窗 ========== -->
+    <div id="complaintModal" class="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-title">投诉建议</div>
+            <div class="complaint-type-btns">
+                <div class="complaint-type-btn active" data-type="设备故障" onclick="selectComplaintType(this)">设备故障</div>
+                <div class="complaint-type-btn" data-type="柜门问题" onclick="selectComplaintType(this)">柜门问题</div>
+                <div class="complaint-type-btn" data-type="支付问题" onclick="selectComplaintType(this)">支付问题</div>
+                <div class="complaint-type-btn" data-type="其他" onclick="selectComplaintType(this)">其他</div>
+            </div>
+            <input class="form-input" id="complaintPhone" type="tel" maxlength="11" placeholder="手机号" style="margin-bottom:10px">
+            <textarea class="complaint-textarea" id="complaintContent" placeholder="请描述您的问题或建议..."></textarea>
+            <div class="modal-btns">
+                <button class="modal-btn modal-btn-cancel" onclick="closeComplaintModal()">取消</button>
+                <button class="modal-btn modal-btn-confirm" onclick="submitComplaint()">提交</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    var params = new URLSearchParams(window.location.search);
+    var API_BASE = window.location.origin;
+    var currentCabinetId = params.get('cabinet_id') || '';
+    var _deviceParam = params.get('device') || '';
+    if (!currentCabinetId && _deviceParam) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', API_BASE + '/api/cabinets/by-mainboard/' + encodeURIComponent(_deviceParam), false);
+        try { xhr.send(); var _r = JSON.parse(xhr.responseText); if (_r.code===200 && _r.data && _r.data.id) { currentCabinetId = String(_r.data.id); } } catch(e) {}
+    }
+    if (!currentCabinetId) currentCabinetId = '8';
+    var wxOpenid = params.get('openid') || '';
+    var wxUnionid = params.get('unionid') || '';
+    var wxWechatName = decodeURIComponent(params.get('wechat_name') || '');
+    
+    // 更新用户信息的函数，在获取手机号后调用
+    function updateUser() {
+        var phoneInput = document.getElementById('phone');
+        var phone = phoneInput ? phoneInput.value : '';
+        if (phone && wxOpenid) {
+            fetch('/api/user/update_user_info', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    phone: phone,
+                    openid: wxOpenid,
+                    unionid: wxUnionid || '',
+                    wechat_name: wxWechatName || ''
+                })
+            }).catch(e => console.log('update_user_info failed:', e));
+        }
+    }
+
+    var isWechat = /MicroMessenger/i.test(navigator.userAgent);
+    var allowH5ToMp = 0;
+    var mpAppId = '';
+    var mpPath = '';
+
+    if (!wxOpenid && isWechat) { window.location.href = API_BASE + '/api/wx/oauth?redirect_uri=' + encodeURIComponent(window.location.href); }
+
+    var selectedSize = 'M';
+    var cabinetSizes = [];
+    var currentOrderId = null;
+    var currentOrderNo = null;
+    var currentAccessCode = null;
+    var currentCompartmentNumber = null;
+    var currentRetrieveOrderId = null;
+    var smsEnabled = false;
+    var h5RedirectUrl = '';
+    var sizeNames = { 'S': '小柜', 'M': '中柜', 'L': '大柜' };
+    var depositPrices = { 'S': 10, 'M': 20, 'L': 30 };
+    var selectedComplaintType = '设备故障';
+    var countdownTimer = null;
+    var countdownSeconds = 300;
+
+    var savedPhone = localStorage.getItem('locker_saved_phone') || localStorage.getItem('userPhone') || '';
+    var currentPhone = savedPhone;
+
+    // 白屏检测
+    (function() {
+        var checkPassed = false;
+        var checkTimer = setTimeout(function() {
+            if (!checkPassed) {
+                var el = document.getElementById('homePage');
+                if (el && !el.classList.contains('page-hidden')) {
+                    // 页面已正常渲染
+                } else {
+                    // 可能白屏，强制刷新
+                    localStorage.clear();
+                    sessionStorage.clear();
+                    window.location.href = window.location.pathname + '?t=' + Date.now();
+                }
+            }
+        }, 3000);
+        window.addEventListener('load', function() {
+            checkPassed = true;
+            clearTimeout(checkTimer);
+        });
+    })();
+
+    function showPage(id) {
+        var pages = document.querySelectorAll('.container > div[id]');
+        for (var i = 0; i < pages.length; i++) {
+            if (pages[i].id && pages[i].id !== 'complaintFloat') pages[i].classList.add('page-hidden');
+        }
+        document.getElementById(id).classList.remove('page-hidden');
+        var navHome = document.getElementById('navHome');
+        var navProfile = document.getElementById('navProfile');
+        if (navHome && navProfile) {
+            navHome.classList.remove('active');
+            navProfile.classList.remove('active');
+            if (id === 'homePage' || id === 'step1Page' || id === 'step2Page' || id === 'openingPage' || id === 'donePage' || id === 'retrievePage' || id === 'retrieveConfirmPage') {
+                navHome.classList.add('active');
+            } else if (id === 'profilePage' || id === 'ordersPage' || id === 'balancePage') {
+                navProfile.classList.add('active');
+            }
+        }
+        var floatEl = document.getElementById('complaintFloat');
+        if (floatEl) {
+            floatEl.style.display = (id === 'homePage' || id === 'profilePage') ? 'flex' : 'none';
+        }
+        window.scrollTo(0, 0);
+    }
+
+    function goToHomePage() {
+        showPage('homePage');
+        loadCabinetInfo();
+        if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+    }
+
+    function goToStoreStep1() {
+        showPage('step1Page');
+        fillSavedPhone();
+    }
+
+    function onStep1Next() {
+        var phone = document.getElementById('userPhone').value.trim();
+        var accessCode = document.getElementById('accessCode').value.trim();
+        if (!phone || !/^1[3-9]\d{9}$/.test(phone)) { alert('请输入正确的手机号'); return; }
+        if (smsEnabled) {
+            var code = document.getElementById('smsCode').value.trim();
+            if (!code) { alert('请输入验证码'); return; }
+        }
+        if (!accessCode || !/^\d{4}$/.test(accessCode)) { alert('请设置4位数字密码'); return; }
+
+        currentAccessCode = accessCode;
+        currentPhone = phone;
+        localStorage.setItem('locker_saved_phone', phone);
+        localStorage.setItem('userPhone', phone);
+
+        if (allowH5ToMp === 1 && mpAppId) {
+            document.getElementById('mpTipModal').classList.add('show');
+            return;
+        }
+        goToStep2Direct();
+    }
+
+    function closeMpTipModal() {
+        document.getElementById('mpTipModal').classList.remove('show');
+        goToStep2Direct();
+    }
+
+    function launchMp() {
+        document.getElementById('mpTipModal').classList.remove('show');
+        if (isWechat && mpAppId) {
+            wx.miniProgram.launchMiniProgram({ appId: mpAppId, path: mpPath || 'pages/index/index' });
+        } else {
+            alert('请在微信中打开以使用小程序');
+        }
+    }
+
+    function goToStep2Direct() {
+        var price = depositPrices[selectedSize];
+        document.getElementById('payAmount').textContent = price;
+        document.getElementById('paySiteName').textContent = document.getElementById('s1SiteName').textContent;
+        document.getElementById('payRule').textContent = '预付：¥' + price;
+        document.getElementById('payDoorNum').textContent = '支付后分配';
+        startCountdown();
+        showPage('step2Page');
+    }
+
+    function goToRetrievePage() {
+        showPage('retrievePage');
+        var rPhone = document.getElementById('retrievePhone');
+        if (savedPhone && rPhone && !rPhone.value) rPhone.value = savedPhone;
+    }
+    function goToProfilePage() { showPage('profilePage'); loadUserProfile(); }
+    function goToOrdersPage() { showPage('ordersPage'); loadUserOrders(); }
+
+    function fillSavedPhone() {
+        var phoneEl = document.getElementById('userPhone');
+        if (savedPhone && phoneEl && !phoneEl.value) phoneEl.value = savedPhone;
+    }
+
+    function startCountdown() {
+        if (countdownTimer) clearInterval(countdownTimer);
+        countdownSeconds = 300;
+        updateCountdownDisplay();
+        countdownTimer = setInterval(function() {
+            countdownSeconds--;
+            if (countdownSeconds <= 0) {
+                clearInterval(countdownTimer); countdownTimer = null;
+                alert('支付超时，请重新下单');
+                goToStoreStep1();
+                return;
+            }
+            updateCountdownDisplay();
+        }, 1000);
+    }
+
+    function updateCountdownDisplay() {
+        var m = Math.floor(countdownSeconds / 60);
+        var s = countdownSeconds % 60;
+        document.getElementById('payCountdown').textContent = (m < 10 ? '0' + m : m) + ':' + (s < 10 ? '0' + s : s);
+    }
+
+    function toggleHelp() { document.getElementById('helpContent').classList.toggle('show'); }
+
+    function selectSize(size) {
+        selectedSize = size;
+        var btns = document.querySelectorAll('.size-btn');
+        for (var i = 0; i < btns.length; i++) btns[i].classList.remove('active');
+        var target = document.querySelector('.size-btn[data-size="'+size+'"]');
+        if (target) target.classList.add('active');
+        var price = depositPrices[size];
+        document.getElementById('s1Price').textContent = price;
+        document.getElementById('s1DepositNote').textContent = price;
+    }
+
+    function loadAvailableSizes() {
+        if (!currentCabinetId) return;
+        fetch(API_BASE + '/api/cabinet/' + currentCabinetId + '/available-sizes')
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 200 && data.data && data.data.sizes) {
+                cabinetSizes = data.data.sizes;
+                var sizeBar = document.querySelector('.size-bar');
+                if (!sizeBar) return;
+                if (cabinetSizes.length <= 1) {
+                    sizeBar.style.display = 'none';
+                    if (cabinetSizes.length === 1) {
+                        selectedSize = cabinetSizes[0].size;
+                        var price = depositPrices[selectedSize] || 0;
+                        document.getElementById('s1Price').textContent = price;
+                        document.getElementById('s1DepositNote').textContent = price;
+                    }
+                } else {
+                    sizeBar.style.display = 'flex';
+                    var btns = sizeBar.querySelectorAll('.size-btn');
+                    for (var i = 0; i < btns.length; i++) {
+                        var sz = btns[i].getAttribute('data-size');
+                        var found = false;
+                        for (var j = 0; j < cabinetSizes.length; j++) {
+                            if (cabinetSizes[j].size === sz && cabinetSizes[j].available > 0) { found = true; break; }
+                        }
+                        btns[i].style.display = found ? '' : 'none';
+                    }
+                    var currentAvail = false;
+                    for (var k = 0; k < cabinetSizes.length; k++) {
+                        if (cabinetSizes[k].size === selectedSize && cabinetSizes[k].available > 0) { currentAvail = true; break; }
+                    }
+                    if (!currentAvail) {
+                        for (var m = 0; m < cabinetSizes.length; m++) {
+                            if (cabinetSizes[m].available > 0) { selectSize(cabinetSizes[m].size); break; }
+                        }
+                    }
+                }
+            }
+        })
+        .catch(function() {});
+    }
+
+    function sendSmsCode() {
+        var phone = document.getElementById('userPhone').value.trim();
+        if (!phone || !/^1[3-9]\d{9}$/.test(phone)) { alert('请输入正确的手机号'); return; }
+        var btn = document.getElementById('sendCodeBtn');
+        btn.disabled = true;
+        fetch(API_BASE + '/api/sms/send', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({phone: phone}) })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 200) {
+                document.getElementById('smsCodeGroup').style.display = 'block';
+                smsEnabled = true;
+                var sec = 60;
+                btn.textContent = sec + 's';
+                var timer = setInterval(function() {
+                    sec--;
+                    btn.textContent = sec + 's';
+                    if (sec <= 0) { clearInterval(timer); btn.textContent = '发送验证码'; btn.disabled = false; }
+                }, 1000);
+            } else { alert(data.message || '发送失败'); btn.disabled = false; }
+        })
+        .catch(function() { alert('网络错误'); btn.disabled = false; });
+    }
+
+    function payDeposit() {
+        var agreeCheck = document.getElementById('agreementCheck');
+        if (agreeCheck && !agreeCheck.checked) { alert('请先阅读并同意《用户押金协议》'); return; }
+        var phone = document.getElementById('userPhone').value.trim();
+        updateUser();  // 在存包前更新用户信息
+        var btn = document.getElementById('payBtn');
+        btn.disabled = true; btn.textContent = '处理中...';
+        var fetchBody = { cabinet_id: parseInt(currentCabinetId), phone: phone, access_code: currentAccessCode, slot_size: selectedSize };
+        if (wxOpenid) fetchBody.openid = wxOpenid;
+        if (wxUnionid) fetchBody.unionid = wxUnionid;
+        if (wxWechatName) fetchBody.wechat_name = wxWechatName;
+        fetch(API_BASE + '/api/deposit/create-order', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(fetchBody) })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 200 && data.data) {
+                if (data.data.order_status === 'paid' || data.data.status === 2) { stopCountdown(); showOpeningPage(); return; }
+                currentOrderId = data.data.order_id;
+                currentOrderNo = data.data.order_no;
+                currentCompartmentNumber = data.data.compartment_number;
+                if (currentCompartmentNumber) document.getElementById('payDoorNum').textContent = currentCompartmentNumber + '号';
+                if (data.data.pay_params) {
+                    if (data.data.pay_params.mode === 'jsapi' && data.data.pay_params.jsapi_params) { callWxPay(data.data.pay_params.jsapi_params); }
+                    else if (data.data.pay_params.mode === 'h5' && data.data.pay_params.mweb_url) {
+                        sessionStorage.setItem('pendingOrderId', String(currentOrderId));
+                        sessionStorage.setItem('pendingCabinetId', String(currentCabinetId));
+                        sessionStorage.setItem('pendingOrderNo', currentOrderNo || '');
+                        sessionStorage.setItem('pendingCompartment', currentCompartmentNumber || '');
+                        sessionStorage.setItem('pendingAccessCode', currentAccessCode || '');
+                        window.location.href = data.data.pay_params.mweb_url;
+                    } else { callWxPay(data.data.pay_params); }
+                }
+                else if (data.data.pay_url) { h5RedirectUrl = data.data.pay_url; document.getElementById('h5PayModal').classList.add('show'); }
+                else { stopCountdown(); showOpeningPage(); }
+            } else if (data.message && data.message.indexOf('支付') > -1) { stopCountdown(); showOpeningPage(); }
+            else { alert(data.message || '下单失败'); }
+            btn.disabled = false; btn.textContent = '支付开门';
+        })
+        .catch(function() { alert('网络错误'); btn.disabled = false; btn.textContent = '支付开门'; });
+    }
+    function stopCountdown() { if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; } }
+
+    var payPollingTimer = null;
+    function startPayPolling() {
+        if (payPollingTimer) clearInterval(payPollingTimer);
+        var count = 0;
+        payPollingTimer = setInterval(function() {
+            count++;
+            if (count > 30 || !currentOrderId) { clearInterval(payPollingTimer); return; }
+            fetch(API_BASE + '/api/order/' + currentOrderId + '/pay-status')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.code === 200 && d.data && (d.data.status === 2 || d.data.status === 3 || d.data.status === 'paid')) {
+                    clearInterval(payPollingTimer); stopCountdown(); showOpeningPage();
+                }
+            });
+        }, 2000);
+    }
+
+    function callWxPay(params) {
+        if (typeof WeixinJSBridge !== 'undefined') {
+            WeixinJSBridge.invoke('getBrandWCPayRequest', params, function(res) {
+                if (res.err_msg === 'get_brand_wcpay_request:ok') { if(payPollingTimer)clearInterval(payPollingTimer); stopCountdown(); showOpeningPage(); }
+                else { startPayPolling(); }
+            });
+            startPayPolling();
+        } else {
+            document.addEventListener('WeixinJSBridgeReady', function() {
+                WeixinJSBridge.invoke('getBrandWCPayRequest', params, function(res) {
+                    if (res.err_msg === 'get_brand_wcpay_request:ok') { if(payPollingTimer)clearInterval(payPollingTimer); stopCountdown(); showOpeningPage(); }
+                    else { startPayPolling(); }
+                });
+            });
+            startPayPolling();
+        }
+    }
+
+    function showOpeningPage() {
+        showPage('openingPage');
+        document.getElementById('openingDoor').textContent = currentCompartmentNumber || '-';
+        var progress = 30;
+        var bar = document.getElementById('openingBar');
+        bar.style.width = progress + '%';
+        var timer = setInterval(function() {
+            progress += 10;
+            bar.style.width = progress + '%';
+            if (progress >= 100) { clearInterval(timer); setTimeout(showDonePage, 500); }
+        }, 400);
+    }
+
+    function showDonePage() {
+        document.getElementById('doneDoorBig').textContent = currentCompartmentNumber || '-';
+        showPage('donePage');
+        setTimeout(function() {
+            var p = new URLSearchParams(window.location.search);
+            var device = p.get('device') || '';
+            var openid = p.get('openid') || '';
+            var qs = device ? '?device=' + device : '';
+            if (openid) qs += (qs ? '&' : '?') + 'openid=' + openid;
+            window.location.href = window.location.origin + '/store' + qs;
+        }, 8000);
+    }
+
+    function finishDeposit() { goToHomePage(); }
+    function reopenCabinet() {
+        if (!currentOrderId) return;
+        fetch(API_BASE + '/api/order/' + currentOrderId + '/reopen', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code === 200) { showToast('开门指令已发送'); }
+            else { showToast(data.message || '开门失败'); }
+        })
+        .catch(function() { showToast('网络错误'); });
+    }
+
+    function checkPayResult() {
+        document.getElementById('h5PayModal').classList.remove('show');
+        if (h5RedirectUrl) {
+            sessionStorage.setItem('pendingOrderId', String(currentOrderId));
+            sessionStorage.setItem('pendingCabinetId', String(currentCabinetId));
+            sessionStorage.setItem('pendingOrderNo', currentOrderNo || '');
+            sessionStorage.setItem('pendingCompartment', currentCompartmentNumber || '');
+            sessionStorage.setItem('pendingAccessCode', currentAccessCode || '');
+            window.location.href = h5RedirectUrl;
+        } else { checkPayStatus(); }
+    }
+    function cancelH5Pay() { document.getElementById('h5PayModal').classList.remove('show'); }
+
+    function checkPayStatus() {
+        if (!currentOrderId) return;
+        fetch(API_BASE + '/api/order/' + currentOrderId + '/pay-status')
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 200 && data.data && data.data.status === 'paid') { showOpeningPage(); }
+            else { alert('未查询到支付成功，请重试'); }
+        })
+        .catch(function() { alert('网络错误'); });
+    }
+
+    function retrieveOrder() {
+        var phone = document.getElementById('retrievePhone').value.trim();
+        var code = document.getElementById('retrieveCode').value.trim();
+        if (!phone || !/^1[3-9]\d{9}$/.test(phone)) { alert('请输入正确的手机号'); return; }
+        if (!code || !/^\d{4}$/.test(code)) { alert('请输入4位取件码'); return; }
+        fetch(API_BASE + '/api/retrieve/verify', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({phone: phone, access_code: code, cabinet_id: parseInt(currentCabinetId)}) })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 200 && data.data) {
+                currentRetrieveOrderId = data.data.order_id;
+                document.getElementById('rcCompartment').textContent = data.data.compartment_number || '-';
+                document.getElementById('rcTime').textContent = data.data.created_at || '-';
+                document.getElementById('rcDeposit').textContent = '¥' + (data.data.deposit_amount || 0);
+                showPage('retrieveConfirmPage');
+            } else { alert(data.message || '验证失败'); }
+        })
+        .catch(function() { alert('网络错误'); });
+    }
+
+    function endRetrieval() {
+        if (!currentRetrieveOrderId) return;
+        fetch(API_BASE + '/api/retrieve/confirm', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentRetrieveOrderId, action: 'end'}) })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 200 && data.data && data.data.need_confirm) {
+                if (confirm(data.data.message || '存放时间不足，确定要结束订单吗？')) {
+                    forceEndRetrieval();
+                }
+            } else if (data.code === 200) {
+                alert('押金将原路退还，请关好柜门'); goToHomePage();
+            } else { alert(data.message || '操作失败'); }
+        })
+        .catch(function() { alert('网络错误'); });
+    }
+
+    function forceEndRetrieval() {
+        if (!currentRetrieveOrderId) return;
+        fetch(API_BASE + '/api/retrieve/confirm', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentRetrieveOrderId, action: 'end', force_end: true}) })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 200) { alert('押金将原路退还，请关好柜门'); goToHomePage(); }
+            else { alert(data.message || '操作失败'); }
+        })
+        .catch(function() { alert('网络错误'); });
+    }
+
+    function midOpen() {
+        if (!currentRetrieveOrderId) return;
+        fetch(API_BASE + '/api/deposit/mid-retrieve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentRetrieveOrderId}) })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 200) { showToast('柜门已开，取物后请关好柜门'); }
+            else { showToast(data.message || '操作失败'); }
+        })
+        .catch(function() { showToast('网络错误'); });
+    }
+
+    function loadCabinetInfo() {
+        var infoUrl = _deviceParam ? (API_BASE + '/api/cabinets/by-mainboard/' + encodeURIComponent(_deviceParam)) : (API_BASE + '/api/cabinets/by-mainboard/' + currentCabinetId);
+        fetch(infoUrl)
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 200 && data.data) {
+                var loc = data.data;
+                var name = loc.site_name || loc.name || loc.location_name || '';
+                var addr = loc.site_address || loc.location_address || '';
+                if (name) {
+                    document.getElementById('siteName').textContent = name;
+                    document.getElementById('s1SiteName').textContent = name;
+                }
+                if (addr) document.getElementById('siteAddr').textContent = addr;
+                allowH5ToMp = loc.allow_h5_to_mp || 0;
+                mpAppId = loc.mp_appid || '';
+                mpPath = loc.mp_path || '';
+            }
+        })
+        .catch(function() {});
+    }
+
+    function loadSettings() {
+        fetch(API_BASE + '/api/settings')
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 200 && data.data) {
+                var s = data.data;
+                if (s.deposit_price_s) { depositPrices['S'] = parseFloat(s.deposit_price_s); document.getElementById('priceS').textContent = depositPrices['S']; }
+                if (s.deposit_price_m) { depositPrices['M'] = parseFloat(s.deposit_price_m); document.getElementById('priceM').textContent = depositPrices['M']; }
+                if (s.deposit_price_l) { depositPrices['L'] = parseFloat(s.deposit_price_l); document.getElementById('priceL').textContent = depositPrices['L']; }
+                document.getElementById('s1Price').textContent = depositPrices[selectedSize];
+                document.getElementById('s1DepositNote').textContent = depositPrices[selectedSize];
+                if (s.site_name) {
+                    document.getElementById('siteName').textContent = s.site_name;
+                    document.getElementById('s1SiteName').textContent = s.site_name;
+                }
+                if (s.site_address) document.getElementById('siteAddr').textContent = s.site_address;
+            }
+        })
+        .catch(function() {});
+    }
+
+    // 个人中心 - 改造后
+    function loadUserProfile() {
+        var phone = currentPhone || localStorage.getItem('locker_saved_phone') || '';
+        document.getElementById('profilePhone').textContent = phone ? phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2') : '未登录';
+    }
+
+    // 余额页面
+    function goToBalancePage() { showPage('balancePage'); loadBalancePage(); }
+
+    function loadBalancePage() {
+        var phone = currentPhone || localStorage.getItem('locker_saved_phone') || '';
+        if (!phone) {
+            document.getElementById('balanceAmount').textContent = '0.00';
+            document.getElementById('withdrawBtn').disabled = true;
+            return;
+        }
+        fetch(API_BASE + '/api/user/balance?phone=' + phone)
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 200 && data.data) {
+                var balance = data.data.balance || 0;
+                document.getElementById('balanceAmount').textContent = balance.toFixed(2);
+                document.getElementById('withdrawBtn').disabled = balance <= 0;
+                // 显示退款中状态条（后端控制）
+                if (data.data.show_refunding_status === true) {
+                    document.getElementById('refundingBar').style.display = 'flex';
+                } else {
+                    document.getElementById('refundingBar').style.display = 'none';
+                }
+            } else {
+                document.getElementById('balanceAmount').textContent = '0.00';
+                document.getElementById('withdrawBtn').disabled = true;
+                document.getElementById('refundingBar').style.display = 'none';
+            }
+        })
+        .catch(function() {
+            document.getElementById('balanceAmount').textContent = '0.00';
+            document.getElementById('withdrawBtn').disabled = true;
+            document.getElementById('refundingBar').style.display = 'none';
+        });
+    }
+
+    function handleWithdraw() {
+        var phone = currentPhone || localStorage.getItem('locker_saved_phone') || '';
+        if (!phone) { showToast('请先登录'); return; }
+        var balance = 0;
+        var balanceEl = document.getElementById('balanceAmount');
+        if (balanceEl) balance = parseFloat(balanceEl.textContent.replace(/[^0-9.]/g, '')) || 0;
+        if (balance <= 0) { showToast('余额不足，无法提现'); return; }
+        var h = '<div class="modal-overlay" id="withdrawModalOverlay" style="display:flex;align-items:center;justify-content:center;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:10000">';
+        h += '<div style="background:#fff;border-radius:16px;padding:24px;width:85%;max-width:360px;text-align:center">';
+        h += '<h3 style="margin:0 0 12px;font-size:18px">申请提现</h3>';
+        h += '<p style="color:#666;margin:0 0 8px;font-size:14px">可提现余额：<b style="color:#FF9800">￥' + balance.toFixed(2) + '</b></p>';
+        h += '<div style="margin:12px 0"><input id="withdrawAmountInput" type="number" step="0.01" min="0.01" max="' + balance.toFixed(2) + '" placeholder="请输入提现金额" style="width:80%;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:16px;text-align:center"></div>';
+        h += '<div style="display:flex;gap:12px;justify-content:center;margin-top:16px">';
+        h += '<button onclick="closeWithdrawModal()" style="padding:10px 24px;border:1px solid #ddd;border-radius:20px;background:#fff;color:#666;font-size:15px">取消</button>';
+        h += '<button onclick="submitWithdraw()" style="padding:10px 24px;border:none;border-radius:20px;background:linear-gradient(135deg,#FF9800,#FFB74D);color:#fff;font-size:15px;font-weight:700">确认提现</button>';
+        h += '</div></div></div>';
+        document.body.insertAdjacentHTML('beforeend', h);
+    }
+
+    function closeWithdrawModal() {
+        var m = document.getElementById('withdrawModalOverlay');
+        if (m) m.remove();
+    }
+
+    function submitWithdraw() {
+        var phone = currentPhone || localStorage.getItem('locker_saved_phone') || '';
+        var amount = parseFloat(document.getElementById('withdrawAmountInput').value);
+        var balance = 0;
+        var balanceEl = document.getElementById('balanceAmount');
+        if (balanceEl) balance = parseFloat(balanceEl.textContent.replace(/[^0-9.]/g, '')) || 0;
+        if (!amount || amount <= 0) { showToast('请输入有效金额'); return; }
+        if (amount > balance) { showToast('提现金额不能超过余额'); return; }
+        fetch('/api/withdrawal/apply', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({phone: phone, amount: amount})
+        }).then(function(r) { return r.json(); }).then(function(data) {
+            closeWithdrawModal();
+            if (data.code === 200) {
+                showToast('提现申请已提交');
+                loadUserBalance();
+            } else {
+                showToast(data.message || '提现失败');
+            }
+        }).catch(function(e) {
+            closeWithdrawModal();
+            showToast('网络错误，请重试');
+        });
+    }
+
+    // 使用帮助弹窗
+    function showHelpModal() { document.getElementById('helpModalOverlay').classList.add('show'); }
+    function closeHelpModal() { document.getElementById('helpModalOverlay').classList.remove('show'); }
+
+    function loadUserOrders() {
+        var phone = currentPhone || localStorage.getItem('locker_saved_phone') || '';
+        var ordersList = document.getElementById('ordersList');
+        if (!phone) {
+            ordersList.innerHTML = '<div class="order-empty"><div class="order-empty-icon">👤</div><div class="order-empty-text">请先在存包页面输入手机号</div></div>';
+            return;
+        }
+        fetch(API_BASE + '/api/user/orders?phone=' + phone)
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 200 && data.data && data.data.length > 0) {
+                var html = '';
+                data.data.forEach(function(order) {
+                    var statusText = '', statusClass = '';
+                    if (order.status === 1) { statusText = '待支付'; statusClass = 'pending'; }
+                    else if (order.status === 2 || order.status === 'paid') { statusText = '使用中'; statusClass = 'pending'; }
+                    else if (order.status === 3) { statusText = '已完成'; statusClass = 'completed'; }
+                    else if (order.status === 4) { statusText = '已退款'; statusClass = 'refunded'; }
+                    else if (order.status === 5) { statusText = '退款中'; statusClass = 'refunding'; }
+                    else { statusText = '进行中'; statusClass = 'pending'; }
+                    html += '<div class="order-card"><div class="order-header"><span class="order-no">' + (order.order_no||'-') + '</span><span class="order-status ' + statusClass + '">' + statusText + '</span></div><div class="order-info"><span class="order-tag">📦 ' + (order.slot_size||'M') + '柜</span><span class="order-tag">📍 ' + (order.compartment_number||'-') + '号柜</span><span class="order-tag">💰 ¥' + (order.deposit_amount||0) + '</span><span class="order-tag">⏰ ' + (order.created_at||order.store_time||'-') + '</span></div></div>';
+                });
+                ordersList.innerHTML = html;
+            } else {
+                ordersList.innerHTML = '<div class="order-empty"><div class="order-empty-icon">📦</div><div class="order-empty-text">暂无订单记录</div></div>';
+            }
+        })
+        .catch(function() {
+            ordersList.innerHTML = '<div class="order-empty"><div class="order-empty-icon">❌</div><div class="order-empty-text">加载失败，请重试</div></div>';
+        });
+    }
+
+    // 增强版清除缓存
+    function clearCache() {
+        localStorage.removeItem('locker_saved_phone');
+        localStorage.removeItem('userPhone');
+        sessionStorage.clear();
+        // 清除所有localStorage
+        localStorage.clear();
+        // 尝试清除caches
+        if ('caches' in window) {
+            caches.keys().then(function(names) {
+                names.forEach(function(name) {
+                    caches.delete(name);
+                });
+            });
+        }
+        alert('缓存已清理，页面将重新加载');
+        window.location.href = window.location.pathname + '?t=' + Date.now();
+    }
+
+    function callComplaint() { window.location.href = 'tel:4006981080'; }
+    function showComplaintModal() { document.getElementById('complaintModal').classList.add('show'); var phone = localStorage.getItem('locker_saved_phone') || ''; document.getElementById('complaintPhone').value = phone; }
+    function closeComplaintModal() { document.getElementById('complaintModal').classList.remove('show'); }
+    function selectComplaintType(btn) { var btns = document.querySelectorAll('.complaint-type-btn'); btns.forEach(function(b){b.classList.remove('active');}); btn.classList.add('active'); selectedComplaintType = btn.getAttribute('data-type'); }
+    function submitComplaint() {
+        var phone = document.getElementById('complaintPhone').value.trim();
+        var content = document.getElementById('complaintContent').value.trim();
+        if (!phone || !/^1[3-9]\d{9}$/.test(phone)) { alert('请输入正确的手机号'); return; }
+        if (!content) { alert('请输入投诉内容'); return; }
+        fetch(API_BASE + '/api/complaints', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({phone:phone, type:selectedComplaintType, content:content}) })
+        .then(function(res){return res.json();})
+        .then(function(data){ if(data.code===200){alert('投诉提交成功，我们会尽快处理！');closeComplaintModal();document.getElementById('complaintContent').value='';}else{alert(data.message||'提交失败，请重试');} })
+        .catch(function(){alert('网络错误');});
+    }
+
+    function showAgreement() { document.getElementById('agreementOverlay').classList.add('show'); }
+    function closeAgreement() { document.getElementById('agreementOverlay').classList.remove('show'); }
+
+    loadSettings();
+    loadCabinetInfo();
+    loadAvailableSizes();
+
+    if (savedPhone) { var phoneEl = document.getElementById('userPhone'); if (phoneEl) phoneEl.value = savedPhone; }
+
+    // H5支付返回检测
+    (function() {
+        var pendingId = sessionStorage.getItem('pendingOrderId');
+        if (pendingId) {
+            currentOrderId = parseInt(pendingId);
+            currentCabinetId = sessionStorage.getItem('pendingCabinetId') || currentCabinetId;
+            currentOrderNo = sessionStorage.getItem('pendingOrderNo') || '';
+            currentCompartmentNumber = sessionStorage.getItem('pendingCompartment') || '';
+            currentAccessCode = sessionStorage.getItem('pendingAccessCode') || '';
+            sessionStorage.removeItem('pendingOrderId');
+            sessionStorage.removeItem('pendingCabinetId');
+            sessionStorage.removeItem('pendingOrderNo');
+            sessionStorage.removeItem('pendingCompartment');
+            sessionStorage.removeItem('pendingAccessCode');
+            var btn = document.getElementById('payBtn');
+            if (btn) { btn.disabled = true; btn.textContent = '支付确认中...'; }
+            showPage('step2Page');
+            startCountdown();
+            var count = 0;
+            var si = setInterval(function() {
+                count++;
+                if (count > 40) { clearInterval(si); if(btn){btn.disabled=false;btn.textContent='支付开门';} return; }
+                fetch(API_BASE + '/api/order/' + currentOrderId + '/pay-status')
+                .then(function(r){return r.json();})
+                .then(function(d){
+                    if (d.code===200 && d.data && (d.data.status===2||d.data.status===3)) {
+                        clearInterval(si); stopCountdown(); showOpeningPage();
+                    }
+                });
+            }, 1500);
+        }
+    })();
+</script>
+</body>
+</html>

@@ -13,7 +13,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from database import get_db
 import threading, uuid
 from helpers import json_response, manage_user_tokens, require_auth, logger, connected_devices, should_hide_order
-from config import WX_API_V3_KEY, WX_MCH_ID, WX_CERT_SERIAL_NO, WX_KEY_PATH, WX_CERT_PATH, WX_MP_APP_ID, WX_MP_APP_SECRET
+from config import WX_API_V3_KEY, WX_MCH_ID, WX_CERT_SERIAL_NO, WX_KEY_PATH, WX_CERT_PATH, WX_APP_ID, WX_APP_SECRET, WX_MP_APP_ID, WX_MP_APP_SECRET
 def _fmt_time(t):
     """格式化时间: YYYY-MM-DD HH:MM:SS"""
     if not t:
@@ -658,7 +658,7 @@ def admin_orders():
             params.extend([start_date, end_date])
         elif not start_date and not end_date:
             # Default: last 30 days
-            where += " AND o.created_at>=NOW() - interval '30 days'"
+            where_parts.append("o.created_at>=NOW() - INTERVAL '30 days'")
         c.execute(f'SELECT COUNT(*) FROM orders o LEFT JOIN cabinets c ON o.cabinet_id=c.id LEFT JOIN locations l ON c.location_id=l.id LEFT JOIN (SELECT DISTINCT ON (phone) * FROM user_balances ORDER BY phone, id DESC) ub ON o.user_phone=ub.phone LEFT JOIN phone_openids po ON o.user_phone=po.phone LEFT JOIN user_profiles up ON po.openid=up.openid WHERE {where}', params)
         total = c.fetchone()[0]
         c.execute(f"""SELECT o.id, o.order_no, o.user_phone, o.access_code as password, o.compartment_number, o.deposit_amount, CASE WHEN o.status=4 THEN COALESCE(o.refund_amount,0) ELSE 0 END as refund_amount, o.status,
@@ -744,7 +744,8 @@ def admin_order_detail():
         # 查remote_open_logs(通过device_id+slot_id，限定订单时间范围)
         slot_id = order_dict.get("slot_id") or 0
         if slot_id:
-            dev_row = c.execute("SELECT c.mainboard_device_id FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id=c.id WHERE cs.id=%s", (slot_id,)).fetchone()
+            dev_row = c.execute("SELECT c.mainboard_device_id FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id=c.id WHERE cs.id=%s", (slot_id,))
+            dev_row = c.fetchone()
             if dev_row and dev_row["mainboard_device_id"]:
                 device_id = dev_row["mainboard_device_id"]
                 # 只查询订单时间范围内的开门记录
@@ -1337,7 +1338,7 @@ def admin_withdrawal_approve():
             refund_id = 'BALANCE_' + datetime.now().strftime('%Y%m%d%H%M%S')
             refund_msg = '余额提现成功'
         if refund_success or (" 订单已全额退款" in str(refund_msg)):
-            c.execute('UPDATE withdrawal_records SET status=2, approver=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s',
+            c.execute('UPDATE withdrawal_records SET status=1, approver=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s',
                        (session.get('admin_username', 'admin'), withdrawal_id))
             if order_id:
                 c.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=%s WHERE id=%s', (refund_id, datetime.now(), order_id))
@@ -1580,7 +1581,6 @@ def admin_agent_save():
         elif data.get('password'):
             resp_data = {'password': data['password']}
         return json_response(data=resp_data, message='保存成功')
-        return resp
     except Exception as e:
         logger.error(f'[agent_save] {e}')
         return json_response(message=str(e), code=500)
@@ -2119,7 +2119,7 @@ def admin_stats():
             SUM(CASE WHEN status=2 THEN 1 ELSE 0 END) as active_count,
             COALESCE(SUM(o.deposit_amount),0) as deposit_total,
             COALESCE(SUM(CASE WHEN o.status=4 THEN o.refund_amount ELSE 0 END),0) as refund_total
-            FROM orders{where_clause}''', params)
+            FROM orders o{where_clause}''', params)
         summary = dict(c.fetchone())
         summary['net_income'] = float(summary.get('deposit_total',0)) - float(summary.get('refund_total',0))
         # Location stats - join through cabinets since orders have no location_id
@@ -2350,22 +2350,40 @@ def admin_biz_stats():
         
         # 按天聚合趋势
         daily = []
-        days = 30
-        for i in range(days):
-            date = (datetime.now() - timedelta(days=days-1-i)).strftime('%Y-%m-%d')
-            c.execute(f'''SELECT COUNT(*) as cnt, COALESCE(SUM(o.deposit_amount),0) as dep, COALESCE(SUM(CASE WHEN o.status=4 THEN o.refund_amount ELSE 0 END),0) as ref
+        if start_date and end_date:
+            day_count = (datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days + 1
+            for i in range(day_count):
+                date = (datetime.strptime(start_date, "%Y-%m-%d") + timedelta(days=i)).strftime("%Y-%m-%d")
+                c.execute(f'''SELECT COUNT(*) as cnt, COALESCE(SUM(o.deposit_amount),0) as dep, COALESCE(SUM(CASE WHEN o.status=4 THEN o.refund_amount ELSE 0 END),0) as ref
                 FROM orders o
                 LEFT JOIN cabinets cab ON o.cabinet_id=cab.id
                 LEFT JOIN locations l ON cab.location_id=l.id
                 WHERE date(o.created_at)=%s
                 {(' AND ' + ' AND '.join(where_parts)) if where_parts else ''}''', [date] + params)
-            row = c.fetchone()
-            daily.append({
+                row = c.fetchone()
+                daily.append({
                 'date': date,
                 'order_count': row[0] if row else 0,
                 'deposit_total': float(row[1] if row and row[1] else 0),
                 'refund_total': float(row[2] if row and row[2] else 0)
-            })
+                })
+        else:
+            day_count = 30
+            for i in range(day_count):
+                date = (datetime.now() - timedelta(days=day_count-1-i)).strftime("%Y-%m-%d")
+                c.execute(f'''SELECT COUNT(*) as cnt, COALESCE(SUM(o.deposit_amount),0) as dep, COALESCE(SUM(CASE WHEN o.status=4 THEN o.refund_amount ELSE 0 END),0) as ref
+                FROM orders o
+                LEFT JOIN cabinets cab ON o.cabinet_id=cab.id
+                LEFT JOIN locations l ON cab.location_id=l.id
+                WHERE date(o.created_at)=%s
+                {(' AND ' + ' AND '.join(where_parts)) if where_parts else ''}''', [date] + params)
+                row = c.fetchone()
+                daily.append({
+                'date': date,
+                'order_count': row[0] if row else 0,
+                'deposit_total': float(row[1] if row and row[1] else 0),
+                'refund_total': float(row[2] if row and row[2] else 0)
+                })
         
         conn.close()
         return json_response(data={
@@ -2403,7 +2421,7 @@ def admin_channel_save():
         conn = get_db()
         c = conn.cursor()
         if data.get('id'):
-            fields = ['name','channel_type','app_id','mch_id','api_key','app_secret','cert_name','is_active']
+            fields = ['name','channel_type','app_id','mch_id','api_key','app_secret','cert_name','cert_serial_no','is_active','rotation_index']
             sets, params = [], []
             for f in fields:
                 if f in data:
@@ -2415,13 +2433,24 @@ def admin_channel_save():
             # 防重复：检查 mch_id 是否已存在
             mch_id = data.get('mch_id', '').strip()
             if mch_id:
-                c.execute('SELECT id FROM payment_channels WHERE mch_id=%s', (mch_id,))
+                c.execute('SELECT id FROM payment_channels WHERE mch_id=%s AND is_active=1', (mch_id,))
                 if c.fetchone():
                     conn.close()
                     return json_response(message=f'商户号 {mch_id} 已存在，请勿重复添加', code=400)
-            c.execute('''INSERT INTO payment_channels (name,channel_type,app_id,mch_id,api_key,app_secret,cert_name,is_active) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)''',
+            # Auto extract cert serial from file
+            cert_serial = ''
+            cert_name_file = data.get('cert_name', '')
+            if cert_name_file:
+                import os
+                pem = f'/home/ubuntu/smart-locker/cert/{cert_name_file}_cert.pem'
+                if os.path.exists(pem):
+                    import subprocess
+                    r = subprocess.run(['openssl', 'x509', '-in', pem, '-noout', '-serial'], capture_output=True, text=True)
+                    if r.returncode == 0:
+                        cert_serial = r.stdout.strip().replace('serial=', '')
+            c.execute('''INSERT INTO payment_channels (name,channel_type,app_id,mch_id,api_key,app_secret,cert_name,cert_serial_no,is_active,rotation_index) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
                       (data.get('name'), data.get('channel_type'), data.get('app_id') or WX_APP_ID,
-                       data.get('mch_id'), data.get('api_key'), data.get('app_secret') or WX_APP_SECRET, data.get('cert_name'), data.get('status',1)))
+                       data.get('mch_id'), data.get('api_key'), data.get('app_secret') or WX_APP_SECRET, data.get('cert_name'), cert_serial, data.get('status',1), data.get('rotation_index', 0)))
         conn.commit()
         conn.close()
         return json_response(message='保存成功')
@@ -2478,7 +2507,7 @@ def admin_channel_upload_cert():
                 if serial:
                     conn = get_db()
                     c = conn.cursor()
-                    c.execute("UPDATE payment_channels SET cert_serial_no=%s WHERE mch_id=%s", (serial, mch_id))
+                    c.execute("UPDATE payment_channels SET cert_serial_no=%s WHERE mch_id=%s AND is_active=1", (serial, mch_id))
                     conn.commit()
                     conn.close()
                     uploaded.append("serial_no: " + serial[:20] + "...")
@@ -5187,7 +5216,7 @@ def wechat_complaint_notify():
                 try:
                     conn5 = get_db()
                     c5 = conn5.cursor()
-                    c5.execute("SELECT cert_serial_no, cert_name FROM payment_channels WHERE mch_id=%s", (complainted_mchid,))
+                    c5.execute("SELECT cert_serial_no, cert_name FROM payment_channels WHERE mch_id=%s AND is_active=1", (complainted_mchid,))
                     pc5 = c5.fetchone()
                     if pc5:
                         _cert_serial = pc5[0]
@@ -5690,7 +5719,7 @@ def _complaint_scheduler():
                     if cmch:
                         try:
                             c3 = conn2.cursor()
-                            c3.execute('SELECT cert_serial_no, cert_name FROM payment_channels WHERE mch_id=%s', (cmch,))
+                            c3.execute('SELECT cert_serial_no, cert_name FROM payment_channels WHERE mch_id=%s AND is_active=1', (cmch,))
                             pc = c3.fetchone()
                             if pc:
                                 ccert = pc[0]
@@ -5800,4 +5829,157 @@ def admin_v2_devices():
         return json_response(data={"list": list_data, "total": total, "page": page, "limit": limit})
     except Exception as e:
         logger.error(f"[devices] {e}")
+        return json_response(message=str(e), code=500)
+import os
+from flask import request
+from datetime import datetime
+from database import get_db
+from helpers import json_response, logger
+
+@bp.route('/admin/historical-orders/import', methods=['POST'])
+def historical_import():
+    try:
+        location_id = request.form.get('location_id', type=int)
+        file = request.files.get('file')
+        if not location_id:
+            return json_response(message='请选择网点', code=400)
+        if not file:
+            return json_response(message='请选择文件', code=400)
+
+        fn = file.filename.lower()
+        if fn.endswith('.csv'):
+            import csv, io
+            content = file.read().decode('utf-8-sig')
+            reader = csv.reader(io.StringIO(content))
+            rows = []
+            for i, row in enumerate(reader):
+                if i == 0 and (row[0].strip() == 'date' or not row[0].strip()):
+                    continue
+                if len(row) < 3:
+                    continue
+                date_str = row[0].strip()
+                try:
+                    d = datetime.strptime(date_str, '%Y%m%d').date()
+                except:
+                    try:
+                        d = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    except:
+                        continue
+                count = int(float(row[2].strip()))
+                rows.append((location_id, d, count))
+        else:
+            import openpyxl
+            wb = openpyxl.load_workbook(file, read_only=True)
+            ws = wb.active
+            rows = []
+            for i, row in enumerate(ws.iter_rows(values_only=True)):
+                if i == 0:
+                    continue
+                if not row or not row[0]:
+                    continue
+                date_str = str(row[0]).strip()
+                try:
+                    d = datetime.strptime(date_str, '%Y%m%d').date()
+                except:
+                    try:
+                        d = datetime.strptime(str(row[0])[:10], '%Y-%m-%d').date()
+                    except:
+                        continue
+                count = int(float(row[2])) if row[2] else 0
+                rows.append((location_id, d, count))
+
+        if not rows:
+            return json_response(message='未解析到有效数据', code=400)
+
+        conn = get_db()
+        c = conn.cursor()
+        imported = 0
+        for loc_id, d, cnt in rows:
+            c.execute("""
+                INSERT INTO historical_order_counts (location_id, date, visible_count)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (location_id, date) DO UPDATE SET visible_count = EXCLUDED.visible_count
+            """, (loc_id, d, cnt))
+            imported += 1
+        conn.commit()
+        conn.close()
+        logger.info(f'[historical] imported {imported} records for location {location_id}')
+        return json_response(data={'imported': imported}, message=f'导入成功')
+    except Exception as e:
+        logger.error(f'[historical import] {e}')
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/admin/historical-orders/delete', methods=['POST'])
+def historical_delete():
+    try:
+        data = request.get_json()
+        location_id = data.get('location_id')
+        if not location_id:
+            return json_response(message='请选择网点', code=400)
+        conn = get_db()
+        c = conn.cursor()
+        c.execute('DELETE FROM historical_order_counts WHERE location_id = %s', (location_id,))
+        deleted = c.rowcount
+        conn.commit()
+        conn.close()
+        logger.info(f'[historical] deleted {deleted} records for location {location_id}')
+        return json_response(message=f'已删除{deleted}条记录')
+    except Exception as e:
+        logger.error(f'[historical delete] {e}')
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/admin/historical-orders/list', methods=['GET'])
+def historical_list():
+    try:
+        location_id = request.args.get('location_id', type=int)
+        conn = get_db()
+        c = conn.cursor()
+        if location_id:
+            c.execute("""
+                SELECT h.id, h.location_id, l.name as location_name, h.date, h.visible_count, h.created_at
+                FROM historical_order_counts h
+                JOIN locations l ON h.location_id = l.id
+                WHERE h.location_id = %s
+                ORDER BY h.date DESC
+            """, (location_id,))
+        else:
+            c.execute("""
+                SELECT h.id, h.location_id, l.name as location_name, h.date, h.visible_count, h.created_at
+                FROM historical_order_counts h
+                JOIN locations l ON h.location_id = l.id
+                ORDER BY h.date DESC LIMIT 100
+            """)
+        rows = [dict(r) for r in c.fetchall()]
+        conn.close()
+        return json_response(data={'list': rows, 'total': len(rows)})
+    except Exception as e:
+        logger.error(f'[historical list] {e}')
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/admin/historical-orders/setting', methods=['GET', 'POST'])
+def historical_setting():
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        if request.method == 'POST':
+            data = request.get_json() or {}
+            enabled = data.get('enabled', False)
+            c.execute("""
+                INSERT INTO system_configs (key, value) VALUES (%s, %s)
+                ON CONFLICT (key) DO UPDATE SET value = %s
+            """, ('show_history_enabled', '1' if enabled else '0', '1' if enabled else '0'))
+            conn.commit()
+            conn.close()
+            return json_response(message='设置已保存')
+        else:
+            c.execute("SELECT value FROM system_configs WHERE key = %s", ('show_history_enabled',))
+            row = c.fetchone()
+            conn.close()
+            enabled = (row and row[0] == '1')
+            return json_response(data={'enabled': enabled})
+    except Exception as e:
+        logger.error(f'[historical setting] {e}')
         return json_response(message=str(e), code=500)

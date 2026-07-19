@@ -1,0 +1,170 @@
+<view class="page">
+  <!-- ========== 个人中心主页 ========== -->
+  <block wx:if="{{currentPage === 'main'}}">
+    <!-- 头部导航 -->
+    <view class="header">
+      <view class="back" bindtap="goBack">
+        <image class="header-icon" src="/images/mine_back_arrow.png" mode="aspectFit"/>
+      </view>
+      <text class="title">个人中心</text>
+      <view class="menu">
+        <image class="header-icon" src="/images/mine_menu_dots.png" mode="aspectFit"/>
+        <image class="header-icon" src="/images/mine_menu_circle.png" mode="aspectFit"/>
+      </view>
+    </view>
+
+    <!-- 用户卡片 -->
+    <view class="user-card">
+      <view class="avatar">
+        <image wx:if="{{avatarUrl}}" src="{{avatarUrl}}" class="avatar-img" mode="aspectFill"/>
+        <image wx:else class="avatar-icon" src="/images/mine_avatar.png" mode="aspectFit"/>
+      </view>
+      <view class="user-info">
+        <text class="phone">{{phone || '微信用户'}}</text>
+      </view>
+    </view>
+
+    <!-- 内容卡片 -->
+    <view class="content-card">
+      <!-- 大卡片 -->
+      <view class="big-cards">
+        <view class="big-card orders" bindtap="onMyOrders">
+          <view class="card-icon">
+            <image class="card-icon-img" src="/images/mine_card_orders.png" mode="aspectFit"/>
+          </view>
+          <view class="card-text">
+            <text class="card-label">我的订单</text>
+            <text class="card-sub">{{orderCountText || ''}}</text>
+          </view>
+        </view>
+        <view class="big-card wallet" bindtap="showBalancePage">
+          <view class="card-icon">
+            <image class="card-icon-img" src="/images/mine_card_wallet.png" mode="aspectFit"/>
+          </view>
+          <view class="card-text">
+            <text class="card-label">我的钱包</text>
+            <text class="card-sub">¥{{balance || '0.00'}}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 列表 -->
+      <view class="list-section">
+        <view class="list-item" bindtap="showComplaintModal">
+          <view class="list-icon">
+            <image class="list-icon-img" src="/images/mine_list_complaint.png" mode="aspectFit"/>
+          </view>
+          <text class="label">投诉反馈</text>
+          <image class="arrow-icon" src="/images/mine_arrow_right.png" mode="aspectFit"/>
+        </view>
+        <view class="list-item" bindtap="callService">
+          <view class="list-icon">
+            <image class="list-icon-img" src="/images/mine_list_service.png" mode="aspectFit"/>
+          </view>
+          <text class="label">联系客服</text>
+          <image class="arrow-icon" src="/images/mine_arrow_right.png" mode="aspectFit"/>
+        </view>
+      </view>
+
+      <!-- 常见问题 -->
+      <view class="common-q" bindtap="showRulesPage">
+        <image class="question-icon" src="/images/mine_question.png" mode="aspectFit"/>
+        <text class="common-q-text">常见问题</text>
+      </view>
+    </view>
+
+    <!-- 浮动按钮 -->
+    <view class="floating-btns">
+      <view class="float-btn float-btn-1" bindtap="callService">
+        <view class="float-icon robot">
+          <image class="float-icon-img" src="/images/mine_float_robot.png" mode="aspectFit"/>
+        </view>
+        <text class="float-label">联系客服</text>
+      </view>
+      <view class="float-btn float-btn-2" bindtap="showComplaintModal">
+        <view class="float-icon complaint">
+          <image class="float-icon-img" src="/images/mine_float_complaint.png" mode="aspectFit"/>
+        </view>
+        <text class="float-label">投诉商家</text>
+      </view>
+    </view>
+  </block>
+
+  <!-- ========== 余额页面 ========== -->
+  <block wx:if="{{currentPage === 'balance'}}">
+    <view class="header white">
+      <view class="back" bindtap="backToMain">
+        <image class="header-icon-dark" src="/images/mine_back_arrow_black.png" mode="aspectFit"/>
+      </view>
+      <text class="title black">我的钱包</text>
+    </view>
+
+    <view class="balance-card">
+      <view class="balance-decor"></view>
+      <text class="balance-label">可用余额</text>
+      <view class="balance-row">
+        <text class="currency">¥</text>
+        <text class="amount">{{balance || '0.00'}}</text>
+      </view>
+      <view class="balance-actions">
+        <view class="btn-withdraw" bindtap="handleWithdraw">提现</view>
+        <view class="btn-rule" bindtap="showRulesPage">提现规则</view>
+      </view>
+    </view>
+
+    <view class="list-section">
+      <view class="list-item" bindtap="showWithdrawHistory">
+        <view class="list-icon">
+          <image class="list-icon-img" src="/images/mine_list_withdraw_record.png" mode="aspectFit"/>
+        </view>
+        <text class="label">提现记录</text>
+        <image class="arrow-icon" src="/images/mine_arrow_right.png" mode="aspectFit"/>
+      </view>
+      <view class="list-item" bindtap="showTransactions">
+        <view class="list-icon">
+          <image class="list-icon-img" src="/images/mine_list_transactions.png" mode="aspectFit"/>
+        </view>
+        <text class="label">交易明细</text>
+        <image class="arrow-icon" src="/images/mine_arrow_right.png" mode="aspectFit"/>
+      </view>
+    </view>
+
+    <!-- 浮动按钮 -->
+    <view class="floating-btns">
+      <view class="float-btn float-btn-1" bindtap="callService">
+        <view class="float-icon big robot">
+          <image class="float-icon-img big" src="/images/mine_float_robot.png" mode="aspectFit"/>
+        </view>
+        <text class="float-label">联系客服</text>
+      </view>
+    </view>
+  </block>
+
+  <!-- ========== 提现规则页面 ========== -->
+  <block wx:if="{{currentPage === 'rules'}}">
+    <view class="header white">
+      <view class="back" bindtap="backToBalance">
+        <image class="header-icon-dark" src="/images/mine_back_arrow_black.png" mode="aspectFit"/>
+      </view>
+      <text class="title black">提现规则</text>
+    </view>
+    <view class="rules-content">
+      <text class="rules-title">提现规则说明</text>
+      <text class="rules-text">1. 提现金额需大于0元</text>
+      <text class="rules-text">2. 提现将在1-3个工作日内到账</text>
+      <text class="rules-text">3. 如有疑问请联系客服</text>
+    </view>
+  </block>
+
+  <!-- ========== 投诉弹窗 ========== -->
+  <view class="modal-mask" wx:if="{{showComplaint}}" bindtap="closeComplaintModal">
+    <view class="modal-content" catchtap="">
+      <text class="modal-title">投诉反馈</text>
+      <textarea class="modal-input" placeholder="请描述您的问题..." value="{{complaintText}}" bindinput="onComplaintInput"/>
+      <view class="modal-btns">
+        <view class="modal-btn cancel" bindtap="closeComplaintModal">取消</view>
+        <view class="modal-btn confirm" bindtap="submitComplaint">提交</view>
+      </view>
+    </view>
+  </view>
+</view>

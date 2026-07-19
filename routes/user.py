@@ -23,6 +23,137 @@ from models import BRAND_DEFAULTS
 
 bp = Blueprint('user', __name__)
 
+def _resolve_user(cursor, openid='', mp_openid='', phone='', unionid=''):
+    """统一解析出 user_id。找不到则自动创建。"""
+    # 1. 直接按 user_id 查（如果调用方已有）
+    # 2. 按 unionid 查
+    if unionid:
+        try:
+            cursor.execute("SELECT id, openid FROM app_users WHERE unionid = %s AND id > 0 LIMIT 1", (unionid,))
+            r = cursor.fetchone()
+            if r:
+                canonical_id = r['id']
+                _existing_openid = r['openid'] or ''
+                # 更新当前记录的 phone/openid/mp_openid（如果为空）
+                update_fields = []
+                update_vals = []
+                if phone:
+                    update_fields.append("phone = %s")
+                    update_vals.append(phone)
+                if openid and not _existing_openid:
+                    update_fields.append("openid = %s")
+                    update_vals.append(openid)
+                if mp_openid:
+                    update_fields.append("mp_openid = %s")
+                    update_vals.append(mp_openid)
+                if update_fields:
+                    update_vals.append(canonical_id)
+                    cursor.execute(f"UPDATE app_users SET {', '.join(update_fields)} WHERE id = %s", update_vals)
+                
+                # 查找并合并同 phone 的重复账户
+                if phone:
+                    cursor.execute("SELECT id FROM app_users WHERE phone = %s AND id != %s ORDER BY id", (phone, canonical_id))
+                    dupes = cursor.fetchall()
+                    for dupe in dupes:
+                        old_id = dupe['id']
+                        # 迁移订单
+                        cursor.execute("UPDATE orders SET user_id = %s WHERE user_id = %s", (canonical_id, old_id))
+                        # 迁移余额（保留较大的那个）
+                        cursor.execute("""
+                            UPDATE user_balances 
+                            SET user_id = %s 
+                            WHERE user_id = %s AND phone = %s
+                            AND NOT EXISTS (SELECT 1 FROM user_balances WHERE user_id = %s AND phone = %s)
+                        """, (canonical_id, old_id, phone, canonical_id, phone))
+                        # 如果 canonical 已有余额，删除重复的
+                        cursor.execute("DELETE FROM user_balances WHERE user_id = %s AND phone = %s", (old_id, phone))
+                        # 删除重复的 app_users 记录
+                        cursor.execute("DELETE FROM app_users WHERE id = %s", (old_id,))
+                        cursor.execute("UPDATE phone_openids SET user_id = %s WHERE user_id = %s", (canonical_id, old_id))
+                        import logging
+                        logging.getLogger(__name__).info(f'[合并] user_id={old_id} -> {canonical_id} (phone={phone})')
+                
+                cursor.connection.commit()
+                return canonical_id
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f'[unionid merge error] {e}')
+    # 3. 按 mp_openid 查
+    if mp_openid:
+        try:
+            cursor.execute("SELECT id FROM app_users WHERE mp_openid = %s AND id > 0 LIMIT 1", (mp_openid,))
+            r = cursor.fetchone()
+            if r: return r['id']
+        except: pass
+    # 4. 按 openid 查
+    if openid:
+        try:
+            cursor.execute("SELECT id FROM app_users WHERE openid = %s AND id > 0 LIMIT 1", (openid,))
+            r = cursor.fetchone()
+            if r: return r['id']
+        except: pass
+    # 5. 按 phone 查
+    if phone:
+        try:
+            cursor.execute("SELECT id FROM app_users WHERE phone = %s AND id > 0 LIMIT 1", (phone,))
+            r = cursor.fetchone()
+            if r: return r['id']
+        except: pass
+    # 6. 通过 phone_openids 间接查
+    if mp_openid or openid:
+        try:
+            _val = mp_openid or openid
+            cursor.execute("SELECT user_id FROM phone_openids WHERE (mp_openid = %s OR openid = %s) AND user_id > 0 LIMIT 1", (_val, _val))
+            r = cursor.fetchone()
+            if r and r['user_id']: return r['user_id']
+        except: pass
+    if phone:
+        try:
+            cursor.execute("SELECT user_id FROM phone_openids WHERE phone = %s AND user_id > 0 LIMIT 1", (phone,))
+            r = cursor.fetchone()
+            if r and r['user_id']: return r['user_id']
+        except: pass
+    # 7. 找不到，自动创建
+    try:
+        cursor.execute("""
+            INSERT INTO app_users (unionid, phone, openid, mp_openid)
+            VALUES (%s, %s, %s, %s) RETURNING id
+        """, (unionid or '', phone or '', openid or '', mp_openid or ''))
+        r = cursor.fetchone()
+        if r:
+            new_id = r['id']
+            # 同步到 phone_openids
+            if phone:
+                cursor.execute("UPDATE phone_openids SET user_id = %s WHERE phone = %s AND user_id = 0", (new_id, phone))
+            return new_id
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f'[_resolve_user] 创建失败: {e}')
+    return 0
+
+
+
+# [FIX-20260719] session_key缓存，解决wx.login()导致session_key失效问题
+# key=openid, value={'session_key': ..., 'ts': ...}
+_session_key_cache = {}
+
+def _cache_session_key(openid, session_key):
+    import time
+    _session_key_cache[openid] = {'session_key': session_key, 'ts': time.time()}
+    # 清理超过10分钟的旧缓存
+    now = time.time()
+    expired = [k for k, v in _session_key_cache.items() if now - v['ts'] > 600]
+    for k in expired:
+        _session_key_cache.pop(k, None)
+
+def _get_cached_session_key(openid):
+    import time
+    entry = _session_key_cache.get(openid)
+    if entry and time.time() - entry['ts'] < 600:
+        return entry['session_key']
+    return None
+
+
 def _resolve_mp_openid(cursor, mp_openid='', openid='', phone=''):
     """统一从 mp_openid/openid/phone 解析出 mp_openid，找不到返回 None"""
     # 1. 直接传入 mp_openid
@@ -644,7 +775,7 @@ def retrieve_confirm():
                     _openid = _r2['openid']
             except:
                 pass
-        if _openid:
+        if order.get("user_phone"):
             try:
                 from helpers import send_wx_subscribe_message
                 subscribe_data = {
@@ -653,7 +784,7 @@ def retrieve_confirm():
                     "thing7": {"value": "已退还至小程序用户钱包"},
                     "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}
                 }
-                send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"))
+                send_wx_subscribe_message('', "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"))
             except Exception as e:
                 logger.error(f"[retrieve_confirm发送订阅消息失败] {e}")
         if refund_success:
@@ -778,8 +909,9 @@ def create_deposit_order():
             _wnr4 = _wnc4.fetchone()
             if _wnr4 and _wnr4[0]:
                 _wn2 = _wnr4[0]
-        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, payment_channel_id, openid, unionid, mp_openid, wechat_name) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s) RETURNING id',
-                       (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, datetime.now(), payment_channel_id, openid, unionid, _wn2))
+        _cdo_uid = _resolve_user(cursor, openid=openid, mp_openid=mp_openid or openid, phone=user_phone, unionid=unionid)
+        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, payment_channel_id, openid, unionid, mp_openid, wechat_name, user_id) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
+                       (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, datetime.now(), payment_channel_id, openid, unionid, _wn2, _cdo_uid))
         row = cursor.fetchone()
         order_id = row["id"]
         conn.commit()
@@ -975,11 +1107,12 @@ def h5_store():
         deposit = cabinet['deposit_amount'] or 0
         openid = data.get('openid', '')
         unionid = data.get('unionid', '') or ''
+        wechat_name = data.get('wechat_name', '') or ''
         # 选择支付渠道（轮转）
         payment_channel = select_payment_channel()
         payment_channel_id = payment_channel['id'] if payment_channel else None
-        _wn3 = chr(39)+chr(39)
-        if openid:
+        _wn3 = wechat_name if wechat_name else chr(39)+chr(39)
+        if not _wn3 and openid:
             _wnc5 = conn.cursor()
             _wnc5.execute("SELECT wechat_name FROM user_profiles WHERE openid = %s AND wechat_name IS NOT NULL AND wechat_name != "+chr(39)+chr(39)+" LIMIT 1", (openid,))
             _wnr5 = _wnc5.fetchone()
@@ -991,8 +1124,10 @@ def h5_store():
             _wnr6 = _wnc6.fetchone()
             if _wnr6 and _wnr6[0]:
                 _wn3 = _wnr6[0]
-        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, group_id, cabinet_code, cabinet_name, slot_size, payment_channel_id, openid, wechat_name) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
-                       (order_no, phone, slot['id'], cabinet_id, slot['slot_number'], pwd, deposit, datetime.now(), cabinet['group_id'], cabinet['cabinet_code'], cabinet['name'], slot['slot_size'], payment_channel_id, openid, _wn3))
+        # 解析 user_id
+        _h5_uid = _resolve_user(cursor, openid=openid, phone=phone, unionid=unionid)
+        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, group_id, cabinet_code, cabinet_name, slot_size, payment_channel_id, openid, unionid, wechat_name, user_id) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
+                       (order_no, phone, slot['id'], cabinet_id, slot['slot_number'], pwd, deposit, datetime.now(), cabinet['group_id'], cabinet['cabinet_code'], cabinet['name'], slot['slot_size'], payment_channel_id, openid, unionid, _wn3, _h5_uid))
         row = cursor.fetchone()
         order_id = row["id"]
         conn.commit()
@@ -1305,7 +1440,7 @@ def deposit_end_storage():
                 from helpers import send_wx_subscribe_message
                 # 发送押金退还通知
                 subscribe_data = {"amount6": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))}, "time4": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}, "thing7": {"value": "已退还至小程序用户钱包"}, "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}}
-                send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
+                send_wx_subscribe_message('', "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
 
                 logger.info(f"[deposit_end_storage] 订阅消息已发送: order={order_id}")
             except Exception as e:
@@ -1885,7 +2020,8 @@ def wx_login():
         resp = requests.get(url, timeout=10)
         result = resp.json()
         if 'openid' in result:
-            openid_val = result['openid']  # 小程序的mp_openid
+            openid_val = result["openid"]  # 小程序的mp_openid
+            unionid_val = result.get("unionid", "")  # 微信返回的unionid
             openid_from_h5 = data.get('openid', '')  # H5传来的公众号openid
             
             try:
@@ -1962,8 +2098,61 @@ def wx_login():
                 except Exception as _mge:
                     logger.warning(f'[auto_merge] \u5931\u8d25: {_mge}')
             _resp = {'openid': result['openid'], 'session_key': result.get('session_key', '')}
+            # [FIX-20260719] 缓存session_key供手机号解密使用
+            _cache_session_key(result['openid'], result.get('session_key', ''))
             if _phone:
                 _resp['phone'] = _phone
+            # 保存unionid到数据库（如果微信返回了unionid）
+            if unionid_val:
+                try:
+                    _uc_save = get_db()
+                    _ucur_save = _uc_save.cursor()
+                    if _phone:
+                        # 更新user_balances和phone_openids中的unionid
+                        _ucur_save.execute("UPDATE user_balances SET unionid=%s WHERE phone=%s AND (unionid IS NULL OR unionid = '')", (unionid_val, _phone))
+                        _ucur_save.execute("UPDATE phone_openids SET unionid=%s WHERE phone=%s AND (unionid IS NULL OR unionid = '')", (unionid_val, _phone))
+                    else:
+                        # 没有手机号，通过openid更新
+                        _ucur_save.execute("UPDATE user_balances SET unionid=%s WHERE mp_openid=%s AND (unionid IS NULL OR unionid = '')", (unionid_val, openid_val))
+                        _ucur_save.execute("UPDATE phone_openids SET unionid=%s WHERE mp_openid=%s AND (unionid IS NULL OR unionid = '')", (unionid_val, openid_val))
+                    _uc_save.commit()
+                    _ucur_save.close()
+                    _uc_save.close()
+                    logger.info(f'[wx_login] 已保存unionid: {unionid_val}, phone={_phone}')
+                except Exception as _ue_save:
+                    logger.error(f'[wx_login] 保存unionid失败: {_ue_save}')
+
+            # 查询 unionid 返回给前端
+            _unionid = ''
+            try:
+                _uc = get_db()
+                _ucur = _uc.cursor()
+                if _phone:
+                    _ucur.execute("SELECT unionid FROM user_balances WHERE phone=%s AND unionid IS NOT NULL AND unionid != '' LIMIT 1", (_phone,))
+                else:
+                    _ucur.execute("SELECT unionid FROM user_balances WHERE mp_openid=%s AND unionid IS NOT NULL AND unionid != '' LIMIT 1", (result['openid'],))
+                _ur = _ucur.fetchone()
+                if _ur and _ur['unionid']:
+                    _unionid = _ur['unionid']
+                _uc.close()
+            except Exception as _ue:
+                logger.error(f'[wx_login] 查unionid失败: {_ue}')
+            if _unionid:
+                _resp['unionid'] = _unionid
+
+            # 通过 _resolve_user 自动合并重复账户（基于unionid）
+            if _unionid or _phone:
+                try:
+                    _auc = get_db()
+                    _aucur = _auc.cursor()
+                    _merged_uid = _resolve_user(_aucur, mp_openid=openid_val, phone=_phone, unionid=_unionid)
+                    _auc.commit()
+                    _aucur.close()
+                    _auc.close()
+                    logger.info(f"[wx_login] _resolve_user 完成: uid={_merged_uid}, unionid={_unionid[:8] if _unionid else 'none'}..., phone={_phone}")
+                except Exception as _aue:
+                    logger.error(f"[wx_login] _resolve_user 失败: {_aue}")
+
             return json_response(_resp)
         else:
             logger.error(f'[wx_login] 微信接口返回异常: {result}')
@@ -1974,26 +2163,43 @@ def wx_login():
 
 @bp.route('/wx/login-phone', methods=['POST'])
 def wx_login_phone():
-    """一步到位：code换session_key + 解密手机号"""
+    """一步到位：解密手机号。支持两种模式：
+    1. 传session_key（前端已有session_key时，避免wx.login导致session_key失效）
+    2. 传code（旧模式，code换session_key再解密）
+    """
     try:
         data = request.get_json()
-        code = data.get('code')
+        code = data.get('code', '')
         encrypted_data = data.get('encrypted_data')
         iv = data.get('iv')
-        if not code or not encrypted_data or not iv:
+        session_key_direct = data.get('session_key', '')  # [FIX-20260719] 直接用session_key
+        if not encrypted_data or not iv:
             return json_response(message='参数不完整', code=400)
-        import requests as _req
-        import config
-        appid = config.WX_MP_APP_ID
-        secret = config.WX_MP_APP_SECRET
-        url = f'https://api.weixin.qq.com/sns/jscode2session?appid={appid}&secret={secret}&js_code={code}&grant_type=authorization_code'
-        resp = _req.get(url, timeout=10)
-        result = resp.json()
-        if 'openid' not in result:
-            logger.error(f'[wx_login_phone] 微信接口异常: {result}')
-            return json_response(message='微信登录失败', code=400)
-        openid = result['openid']
-        session_key = result.get('session_key', '')
+        
+        session_key = ''
+        openid = ''
+        unionid = ''
+        
+        if session_key_direct:
+            # 模式1：前端直接传session_key（推荐，避免wx.login使旧session_key失效）
+            session_key = session_key_direct
+            logger.info('[wx_login_phone] 使用前端传入的session_key')
+        elif code:
+            # 模式2：code换session_key
+            import requests as _req
+            import config
+            appid = config.WX_MP_APP_ID
+            secret = config.WX_MP_APP_SECRET
+            url = f'https://api.weixin.qq.com/sns/jscode2session?appid={appid}&secret={secret}&js_code={code}&grant_type=authorization_code'
+            resp = _req.get(url, timeout=10)
+            result = resp.json()
+            if 'openid' not in result:
+                logger.error(f'[wx_login_phone] 微信接口异常: {result}')
+                return json_response(message='微信登录失败', code=400)
+            openid = result["openid"]
+            unionid = result.get("unionid", "")
+            session_key = result.get('session_key', '')
+        
         if not session_key:
             return json_response(message='session_key获取失败', code=400)
         import base64
@@ -2026,6 +2232,31 @@ def wx_login_phone():
                     logger.info(f'[wx_login_phone] mp_openid已写入: {phone_number[:3]}****{phone_number[-4:]} -> {openid[:8]}...')
                 except Exception as _e:
                     logger.warning(f'[wx_login_phone] 写入mp_openid失败: {_e}')
+                # 保存unionid到数据库
+                if unionid:
+                    try:
+                        _uconn = get_db()
+                        _ucur = _uconn.cursor()
+                        _ucur.execute("UPDATE user_balances SET unionid=%s WHERE phone=%s AND (unionid IS NULL OR unionid = '')", (unionid, phone_number))
+                        _ucur.execute("UPDATE phone_openids SET unionid=%s WHERE phone=%s AND (unionid IS NULL OR unionid = '')", (unionid, phone_number))
+                        _uconn.commit()
+                        _ucur.close()
+                        _uconn.close()
+                        logger.info(f'[wx_login_phone] 已保存unionid: {unionid[:8]}... for {phone_number[:3]}****')
+                    except Exception as _ue:
+                        logger.warning(f'[wx_login_phone] 保存unionid失败: {_ue}')
+                # 通过 _resolve_user 自动合并重复账户（基于unionid）
+                if unionid or phone_number:
+                    try:
+                        _auc2 = get_db()
+                        _aucur2 = _auc2.cursor()
+                        _merged_uid = _resolve_user(_aucur2, mp_openid=openid, phone=phone_number, unionid=unionid)
+                        _auc2.commit()
+                        _aucur2.close()
+                        _auc2.close()
+                        logger.info(f"[wx_login_phone] _resolve_user 完成: uid={_merged_uid}, unionid={unionid[:8] if unionid else 'none'}..., phone={phone_number[:3]}****")
+                    except Exception as _aue2:
+                        logger.error(f"[wx_login_phone] _resolve_user 失败: {_aue2}")
                 return json_response({'openid': openid, 'phone': phone_number, 'session_key': session_key})
             else:
                 logger.error(f'[wx_login_phone] 解密无手机号: {phone_info}')
@@ -2100,50 +2331,51 @@ def get_user_orders():
         phone = request.args.get('phone', '')
         openid = request.args.get('openid', '')
         
-        # 如果有openid，查出这个人的所有手机号
-        phones_list = []
-        if openid:
-            try:
-                poc = get_db()
-                pocu = poc.cursor()
-                pocu.execute("SELECT phone FROM phone_openids WHERE openid = %s OR mp_openid = %s", (openid, openid))
-                phones_list = [r[0] for r in pocu.fetchall()]
-                pocu.close()
-                poc.close()
-            except:
-                pass
-
-        if phones_list:
-            placeholders = ','.join(['%s'] * len(phones_list))
-            query_condition = f'o.user_phone IN ({placeholders}) AND o.status != 1'
-            query_param = tuple(phones_list)
-        elif phone:
-            query_condition = 'o.user_phone = %s AND o.status != 1'
-            query_param = (phone,)
-        else:
-            return json_response(message='请先登录', code=400)
-
         conn = get_db()
         cur = conn.cursor()
-        cur.execute(f'''
-            SELECT o.id, o.order_no, o.user_phone, o.cabinet_id, o.compartment_number, o.slot_size, o.access_code,
-                   o.deposit_amount, o.status, o.store_time, o.retrieve_time, o.created_at,
-                   c.name as cabinet_name,
-                   c.cabinet_code,
-                   l.name as location_name
-            FROM orders o
-            LEFT JOIN cabinets c ON o.cabinet_id = c.id
-            LEFT JOIN locations l ON c.location_id = l.id
-            WHERE {query_condition}
-            ORDER BY o.created_at DESC
-            LIMIT 50
-        ''', query_param)
+        
+        # 统一解析 user_id
+        user_id = _resolve_user(cur, mp_openid=openid, phone=phone)
+        
+        if user_id:
+            cur.execute("""
+                SELECT o.id, o.order_no, o.user_phone, o.cabinet_id, o.compartment_number, o.slot_size, o.access_code,
+                       o.deposit_amount, o.status, o.store_time, o.retrieve_time, o.created_at,
+                       c.name as cabinet_name, c.cabinet_code,
+                       l.name as location_name
+                FROM orders o
+                LEFT JOIN cabinets c ON o.cabinet_id = c.id
+                LEFT JOIN locations l ON c.location_id = l.id
+                WHERE o.user_id = %s AND o.status != 1
+                ORDER BY o.created_at DESC
+                LIMIT 50
+            """, (user_id,))
+        elif phone:
+            cur.execute("""
+                SELECT o.id, o.order_no, o.user_phone, o.cabinet_id, o.compartment_number, o.slot_size, o.access_code,
+                       o.deposit_amount, o.status, o.store_time, o.retrieve_time, o.created_at,
+                       c.name as cabinet_name, c.cabinet_code,
+                       l.name as location_name
+                FROM orders o
+                LEFT JOIN cabinets c ON o.cabinet_id = c.id
+                LEFT JOIN locations l ON c.location_id = l.id
+                WHERE o.user_phone = %s AND o.status != 1
+                ORDER BY o.created_at DESC
+                LIMIT 50
+            """, (phone,))
+        else:
+            conn.close()
+            return json_response(message='请先登录', code=400)
+        
         orders = [dict(row) for row in cur.fetchall()]
         conn.close()
         
         return json_response(data=orders)
     except Exception as e:
         logger.error(f'[user/orders] 错误: {e}')
+        return json_response(message=str(e), code=500)
+
+
         return json_response(message=str(e), code=500)
 
 
@@ -2187,45 +2419,38 @@ def get_user_balance():
     try:
         phone = request.args.get('phone')
         openid = request.args.get('openid', '') or ''
-        mp_openid = request.args.get('mp_openid', '')
         cabinet_id = request.args.get('cabinet_id') or ''
 
         conn = get_db()
         cur = conn.cursor()
-        # 统一用 mp_openid 查找用户余额
-        if not mp_openid:
-            mp_openid = _resolve_mp_openid(cur, mp_openid='', openid=openid, phone=phone)
-        if not mp_openid:
+        
+        # 统一解析 user_id
+        user_id = _resolve_user(cur, mp_openid=openid, phone=phone)
+        if not user_id:
             conn.close()
             return json_response(message='用户未登录', code=400)
-        cur.execute("SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at FROM user_balances WHERE mp_openid = %s", (mp_openid,))
+        
+        # 用 user_id 查余额
+        cur.execute("SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at FROM user_balances WHERE user_id = %s", (user_id,))
         row = cur.fetchone()
-        if not row:
-            cur.execute("SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at FROM user_balances WHERE openid = %s", (mp_openid,))
-            row = cur.fetchone()
-        has_pending_withdrawal = False
-        # 使用matched记录的phone
+        
         _check_phone = row["phone"] if row else phone
-        if openid:
-            cur.execute('SELECT COUNT(*) as cnt FROM withdrawal_records WHERE openid = %s AND status IN (0, 1)', (openid,))
-        else:
-            cur.execute('SELECT COUNT(*) as cnt FROM withdrawal_records WHERE user_phone = %s AND status IN (0, 1)', (_check_phone,))
+        
+        # 检查待处理提现
+        has_pending_withdrawal = False
+        cur.execute('SELECT COUNT(*) as cnt FROM withdrawal_records WHERE user_phone = %s AND status IN (0, 1)', (_check_phone,))
         wd_row = cur.fetchone()
         if wd_row and wd_row['cnt'] > 0:
             has_pending_withdrawal = True
         
-        # 检查是否有进行中的订单（status=2 表示存包中未取回）
+        # 检查进行中的订单
         has_active_orders = False
-        _check_phone2 = row["phone"] if row else phone
-        if openid:
-            cur.execute('SELECT COUNT(*) as cnt FROM orders WHERE openid = %s AND status = 2', (openid,))
-        else:
-            cur.execute('SELECT COUNT(*) as cnt FROM orders WHERE user_phone = %s AND status = 2', (_check_phone2,))
+        cur.execute('SELECT COUNT(*) as cnt FROM orders WHERE user_id = %s AND status = 2', (user_id,))
         ao_row = cur.fetchone()
         if ao_row and ao_row['cnt'] > 0:
             has_active_orders = True
         
-        # Check location balance hide config
+        # 检查余额隐藏配置
         balance_hidden = False
         if cabinet_id:
             try:
@@ -2236,16 +2461,10 @@ def get_user_balance():
             except:
                 pass
         
-        # 先查 merchant_id（需要在 conn.close() 之前）
+        # 查 merchant_id
         user_mch_id = None
         if row and row.get('merchant_id'):
             user_mch_id = row['merchant_id']
-        else:
-            try:
-                mrow = cur.execute('SELECT merchant_id FROM user_balances WHERE mp_openid=%s', (mp_openid,)).fetchone()
-                if mrow: user_mch_id = mrow[0]
-            except Exception:
-                pass
         conn.close()
         
         if row:
@@ -2337,6 +2556,7 @@ def user_withdraw():
         phone = str(data.get('phone') or data.get('user_phone') or '').strip()
         openid = data.get('openid', '') or ''
         unionid = data.get('unionid', '') or ''
+        wechat_name = data.get('wechat_name', '') or ''
         mp_openid = data.get('mp_openid', '')
         wechat_name = data.get('wechat_name', '')
         amount = data.get('amount', 0)
@@ -2656,6 +2876,64 @@ def link_openid():
         logger.error(f'[link_openid] {e}')
         return json_response(message=str(e), code=500)
 
+
+
+@bp.route('/user/link-mp-openid', methods=['POST'])
+def link_mp_openid_from_mini():
+    """小程序subscribe页面调用：用wx.login的code换取mp_openid，并绑定到手机号"""
+    try:
+        data = request.get_json()
+        code = data.get('code')
+        phone = data.get('phone', '')
+        if not code:
+            return json_response(message='code不能为空', code=400)
+        import requests as req
+        import config
+        appid = config.WX_MP_APP_ID
+        secret = config.WX_MP_APP_SECRET
+        url = f'https://api.weixin.qq.com/sns/jscode2session?appid={appid}&secret={secret}&js_code={code}&grant_type=authorization_code'
+        resp = req.get(url, timeout=10)
+        result = resp.json()
+        mp_openid = result.get('openid', '')
+        unionid = result.get('unionid', '')
+        gzh_openid = data.get('gzh_openid', '')
+        nickname = data.get('nickname', '')
+        if not mp_openid:
+            logger.error(f'[link_mp_openid] jscode2session失败: {result}')
+            return json_response(message='获取小程序openid失败', code=500)
+        
+        from helpers import get_db
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # 更新 phone_openids 的 mp_openid（按手机号匹配）
+        if phone:
+            cursor.execute('SELECT id FROM phone_openids WHERE phone = %s LIMIT 1', (phone,))
+            existing = cursor.fetchone()
+            if existing:
+                cursor.execute('UPDATE phone_openids SET mp_openid = %s, unionid = COALESCE(NULLIF(%s, \'\'), unionid), gzh_openid = COALESCE(NULLIF(%s, \'\'), gzh_openid), wechat_name = COALESCE(NULLIF(%s, \'\'), wechat_name) WHERE phone = %s', (mp_openid, unionid, gzh_openid, nickname, phone))
+            else:
+                cursor.execute('INSERT INTO phone_openids (phone, mp_openid, unionid, gzh_openid, wechat_name) VALUES (%s, %s, %s, %s, %s)', (phone, mp_openid, unionid, gzh_openid, nickname))
+        
+        # 更新 user_balances 的 mp_openid（按手机号匹配，排除已有正确mp_openid的记录）
+        if phone:
+            cursor.execute("UPDATE user_balances SET mp_openid = %s WHERE phone = %s AND (mp_openid IS NULL OR mp_openid = chr(39)||chr(39) OR mp_openid LIKE chr(39)oLhbm2%%chr(39))", (mp_openid, phone))
+        if phone and mp_openid:
+
+            cursor.execute("UPDATE app_users SET mp_openid = %s WHERE phone = %s AND (mp_openid IS NULL OR mp_openid = chr(39)||chr(39))", (mp_openid, phone))
+        # ?????????
+        if phone and nickname:
+            cursor.execute("UPDATE orders SET wechat_name = %s WHERE user_phone = %s AND (wechat_name IS NULL OR wechat_name = chr(39)||chr(39))", (nickname, phone))
+            cursor.execute("UPDATE app_users SET nickname = %s WHERE phone = %s AND (nickname IS NULL OR nickname = chr(39)||chr(39))", (nickname, phone))
+
+        
+        conn.commit()
+        conn.close()
+        logger.info(f'[link_mp_openid] 成功绑定 mp_openid={mp_openid[:8]}... phone={phone}')
+        return json_response(message='绑定成功', data={'mp_openid': mp_openid})
+    except Exception as e:
+        logger.error(f'[link_mp_openid] {e}')
+        return json_response(message=str(e), code=500)
 
 @bp.route('/user/sync-mp-openid', methods=['POST'])
 def sync_mp_openid():

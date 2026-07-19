@@ -1338,16 +1338,16 @@ def admin_withdrawal_approve():
             refund_id = 'BALANCE_' + datetime.now().strftime('%Y%m%d%H%M%S')
             refund_msg = '余额提现成功'
         if refund_success or (" 订单已全额退款" in str(refund_msg)):
-            c.execute('UPDATE withdrawal_records SET status=1, approver=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s',
+            c.execute('UPDATE withdrawal_records SET status=5, approver=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s',
                        (session.get('admin_username', 'admin'), withdrawal_id))
             if order_id:
                 c.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=%s WHERE id=%s', (refund_id, datetime.now(), order_id))
                 c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (order_id,))
         else:
-            c.execute('UPDATE withdrawal_records SET status=1, approver=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s',
+            c.execute('UPDATE withdrawal_records SET status=5, approver=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s',
                        (session.get('admin_username', 'admin'), withdrawal_id))
             if order_id:
-                c.execute("UPDATE orders SET status=3, refund_status='refunded', refund_mark=1 WHERE id=%s", (order_id,))
+                c.execute("UPDATE orders SET status=3, refund_status='none', refund_mark=0 WHERE id=%s", (order_id,))
         conn.commit()
         conn.close()
         if refund_success or (" 订单已全额退款" in str(refund_msg)):

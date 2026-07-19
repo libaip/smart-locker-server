@@ -2060,6 +2060,14 @@ def wx_login():
                         _cur.execute("UPDATE phone_openids SET mp_openid = %s WHERE openid = %s", (openid_val, openid_from_h5))
                         _conn.commit()
                 
+                # 5. unionid order lookup
+                _unionid = result.get('unionid', '')
+                if _unionid:
+                    _cur.execute("SELECT user_phone FROM orders WHERE user_phone IN (SELECT phone FROM phone_openids WHERE unionid = %s AND phone IS NOT NULL AND length(phone) > 0 UNION SELECT phone FROM user_balances WHERE unionid = %s AND phone IS NOT NULL AND length(phone) > 0 UNION SELECT phone FROM app_users WHERE unionid = %s AND phone IS NOT NULL AND length(phone) > 0) ORDER BY created_at DESC LIMIT 1", (_unionid, _unionid, _unionid))
+                    _o_row = _cur.fetchone()
+                    if _o_row and _o_row[0] and _o_row[0] != _phone:
+                        _phone = _o_row[0]
+                        logger.info(f'[wx_login] order phone: {_phone[:3]}****{_phone[-4:]}')
                 _conn.close()
             except Exception as _e:
                 logger.error(f'[wx_login] 查询phone失败: {_e}')

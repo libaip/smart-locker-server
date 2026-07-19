@@ -25,6 +25,39 @@ bp = Blueprint('user', __name__)
 
 def _resolve_user(cursor, openid='', mp_openid='', phone='', unionid=''):
     """统一解析出 user_id。找不到则自动创建。"""
+    # [USER_ID] 新表查询（users/user_phones/user_openids）
+    if unionid:
+        try:
+            cursor.execute("SELECT id, app_user_id FROM users WHERE unionid = %s AND id > 0 LIMIT 1", (unionid,))
+            r = cursor.fetchone()
+            if r and r["app_user_id"]:
+                return r["app_user_id"]
+        except:
+            pass
+    if mp_openid:
+        try:
+            cursor.execute("SELECT u.id, u.app_user_id FROM user_openids uo JOIN users u ON uo.user_id = u.id WHERE uo.source='mp' AND uo.openid = %s LIMIT 1", (mp_openid,))
+            r = cursor.fetchone()
+            if r and r["app_user_id"]:
+                return r["app_user_id"]
+        except:
+            pass
+    if openid:
+        try:
+            cursor.execute("SELECT u.id, u.app_user_id FROM user_openids uo JOIN users u ON uo.user_id = u.id WHERE uo.source IN ('mp','gzh') AND uo.openid = %s LIMIT 1", (openid,))
+            r = cursor.fetchone()
+            if r and r["app_user_id"]:
+                return r["app_user_id"]
+        except:
+            pass
+    if phone:
+        try:
+            cursor.execute("SELECT u.id, u.app_user_id FROM user_phones up JOIN users u ON up.user_id = u.id WHERE up.phone = %s LIMIT 1", (phone,))
+            r = cursor.fetchone()
+            if r and r["app_user_id"]:
+                return r["app_user_id"]
+        except:
+            pass
     # 1. 直接按 user_id 查（如果调用方已有）
     # 2. 按 unionid 查
     if unionid:
@@ -2345,6 +2378,7 @@ def get_user_orders():
         # 统一解析 user_id
         user_id = _resolve_user(cur, mp_openid=openid, phone=phone)
         
+        orders = []
         if user_id:
             cur.execute("""
                 SELECT o.id, o.order_no, o.user_phone, o.cabinet_id, o.compartment_number, o.slot_size, o.access_code,
@@ -2358,7 +2392,8 @@ def get_user_orders():
                 ORDER BY o.created_at DESC
                 LIMIT 50
             """, (user_id,))
-        elif phone:
+            orders = [dict(row) for row in cur.fetchall()]
+        if not orders and phone:
             cur.execute("""
                 SELECT o.id, o.order_no, o.user_phone, o.cabinet_id, o.compartment_number, o.slot_size, o.access_code,
                        o.deposit_amount, o.status, o.store_time, o.retrieve_time, o.created_at,
@@ -2371,11 +2406,10 @@ def get_user_orders():
                 ORDER BY o.created_at DESC
                 LIMIT 50
             """, (phone,))
-        else:
+            orders = [dict(row) for row in cur.fetchall()]
+        if not orders:
             conn.close()
             return json_response(message='请先登录', code=400)
-        
-        orders = [dict(row) for row in cur.fetchall()]
         conn.close()
         
         return json_response(data=orders)

@@ -23,139 +23,83 @@ from models import BRAND_DEFAULTS
 
 bp = Blueprint('user', __name__)
 
-def _resolve_user(cursor, openid='', mp_openid='', phone='', unionid=''):
-    """统一解析出 user_id。找不到则自动创建。"""
-    # 1. 直接按 user_id 查（如果调用方已有）
-    # 2. 按 unionid 查
+def _resolve_user(cursor, openid=''', mp_openid=''', phone=''', unionid='''):
+    """统一解析出 user_id。先找所有匹配记录再合并，找不到则自动创建。"""
+    ids = set()
+    
+    # 1. 收集所有能匹配到的 user_id
     if unionid:
         try:
-            cursor.execute("SELECT id, openid FROM app_users WHERE unionid = %s AND id > 0 LIMIT 1", (unionid,))
-            r = cursor.fetchone()
-            if r:
-                canonical_id = r['id']
-                _existing_openid = r['openid'] or ''
-                # 更新当前记录的 phone/openid/mp_openid（如果为空）
-                update_fields = []
-                update_vals = []
-                if phone:
-                    update_fields.append("phone = %s")
-                    update_vals.append(phone)
-                if openid and not _existing_openid:
-                    update_fields.append("openid = %s")
-                    update_vals.append(openid)
-                if mp_openid:
-                    update_fields.append("mp_openid = %s")
-                    update_vals.append(mp_openid)
-                if update_fields:
-                    update_vals.append(canonical_id)
-                    cursor.execute(f"UPDATE app_users SET {', '.join(update_fields)} WHERE id = %s", update_vals)
-                
-                # 查找并合并同 phone 的重复账户
-                if phone:
-                    cursor.execute("SELECT id FROM app_users WHERE phone = %s AND id != %s ORDER BY id", (phone, canonical_id))
-                    dupes = cursor.fetchall()
-                    for dupe in dupes:
-                        old_id = dupe['id']
-                        # 迁移订单
-                        cursor.execute("UPDATE orders SET user_id = %s WHERE user_id = %s", (canonical_id, old_id))
-                        # 迁移余额（保留较大的那个）
-                        cursor.execute("""
-                            UPDATE user_balances 
-                            SET user_id = %s 
-                            WHERE user_id = %s AND phone = %s
-                            AND NOT EXISTS (SELECT 1 FROM user_balances WHERE user_id = %s AND phone = %s)
-                        """, (canonical_id, old_id, phone, canonical_id, phone))
-                        # 如果 canonical 已有余额，删除重复的
-                        cursor.execute("DELETE FROM user_balances WHERE user_id = %s AND phone = %s", (old_id, phone))
-                        # 删除重复的 app_users 记录
-                        cursor.execute("DELETE FROM app_users WHERE id = %s", (old_id,))
-                        cursor.execute("UPDATE phone_openids SET user_id = %s WHERE user_id = %s", (canonical_id, old_id))
-                        import logging
-                        logging.getLogger(__name__).info(f'[合并] user_id={old_id} -> {canonical_id} (phone={phone})')
-                
-                cursor.connection.commit()
-                return canonical_id
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f'[unionid merge error] {e}')
-    # 3. 按 mp_openid 查
+            cursor.execute("SELECT id FROM app_users WHERE unionid = %s AND id > 0", (unionid,))
+            for r in cursor.fetchall(): ids.add(r['\''id'\''])
+        except: pass
     if mp_openid:
         try:
-            cursor.execute("SELECT id FROM app_users WHERE mp_openid = %s AND id > 0 LIMIT 1", (mp_openid,))
-            r = cursor.fetchone()
-            if r: return r['id']
+            cursor.execute("SELECT id FROM app_users WHERE mp_openid = %s AND id > 0", (mp_openid,))
+            for r in cursor.fetchall(): ids.add(r['\''id'\''])
         except: pass
-    # 4. 按 openid 查
     if openid:
         try:
-            cursor.execute("SELECT id FROM app_users WHERE openid = %s AND id > 0 LIMIT 1", (openid,))
-            r = cursor.fetchone()
-            if r: return r['id']
-        except: pass
-    # 5. 按 phone 查
-    if phone:
-        try:
-            cursor.execute("SELECT id FROM app_users WHERE phone = %s AND id > 0 LIMIT 1", (phone,))
-            r = cursor.fetchone()
-            if r: return r['id']
-        except: pass
-    # 6. 通过 phone_openids 间接查
-    if mp_openid or openid:
-        try:
-            _val = mp_openid or openid
-            cursor.execute("SELECT user_id FROM phone_openids WHERE (mp_openid = %s OR openid = %s) AND user_id > 0 LIMIT 1", (_val, _val))
-            r = cursor.fetchone()
-            if r and r['user_id']: return r['user_id']
+            cursor.execute("SELECT id FROM app_users WHERE openid = %s AND id > 0", (openid,))
+            for r in cursor.fetchall(): ids.add(r['\''id'\''])
         except: pass
     if phone:
         try:
-            cursor.execute("SELECT user_id FROM phone_openids WHERE phone = %s AND user_id > 0 LIMIT 1", (phone,))
-            r = cursor.fetchone()
-            if r and r['user_id']: return r['user_id']
+            cursor.execute("SELECT id FROM app_users WHERE phone = %s AND id > 0", (phone,))
+            for r in cursor.fetchall(): ids.add(r['\''id'\''])
         except: pass
-    # 7. 找不到，自动创建
+    if phone:
+        try:
+            cursor.execute("SELECT user_id FROM phone_openids WHERE phone = %s AND user_id > 0", (phone,))
+            for r in cursor.fetchall(): ids.add(r['\''user_id'\''])
+        except: pass
+    
+    # 2. 有匹配 → 合并
+    if ids:
+        primary = min(ids)
+        if len(ids) > 1:
+            for old_id in ids:
+                if old_id != primary:
+                    try:
+                        cursor.execute("UPDATE orders SET user_id = %s WHERE user_id = %s", (primary, old_id))
+                        cursor.execute("UPDATE user_balances SET user_id = %s WHERE user_id = %s", (primary, old_id))
+                        cursor.execute("UPDATE phone_openids SET user_id = %s WHERE user_id = %s", (primary, old_id))
+                        cursor.execute("DELETE FROM app_users WHERE id = %s", (old_id,))
+                        import logging
+                        logging.getLogger(__name__).info(f'[merge] user_id={old_id} -> {primary}')
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error(f'[merge] {old_id}->{primary} failed: {e}')
+        
+        # 更新主记录的最新标识
+        up = []; uv = []
+        if unionid: up.append("unionid = %s"); uv.append(unionid)
+        if mp_openid: up.append("mp_openid = %s"); uv.append(mp_openid)
+        if phone: up.append("phone = %s"); uv.append(phone)
+        if openid:
+            cursor.execute("SELECT openid FROM app_users WHERE id = %s", (primary,))
+            _eo = cursor.fetchone()
+            if _eo and not _eo['\''openid'\'']:
+                up.append("openid = %s"); uv.append(openid)
+        if up:
+            uv.append(primary)
+            cursor.execute(f"UPDATE app_users SET {', '.join(up)} WHERE id = %s", uv)
+        
+        return primary
+    
+    # 3. 没找到 → 自动创建
     try:
-        cursor.execute("""
-            INSERT INTO app_users (unionid, phone, openid, mp_openid)
-            VALUES (%s, %s, %s, %s) RETURNING id
-        """, (unionid or '', phone or '', openid or '', mp_openid or ''))
+        cursor.execute("""INSERT INTO app_users (unionid, phone, openid, mp_openid) VALUES (%s, %s, %s, %s) RETURNING id""", (unionid or '', phone or '', openid or '', mp_openid or ''))
         r = cursor.fetchone()
         if r:
-            new_id = r['id']
-            # 同步到 phone_openids
+            new_id = r['\''id'\'']
             if phone:
                 cursor.execute("UPDATE phone_openids SET user_id = %s WHERE phone = %s AND user_id = 0", (new_id, phone))
             return new_id
     except Exception as e:
         import logging
-        logging.getLogger(__name__).error(f'[_resolve_user] 创建失败: {e}')
-    return 0
-
-
-
-# [FIX-20260719] session_key缓存，解决wx.login()导致session_key失效问题
-# key=openid, value={'session_key': ..., 'ts': ...}
-_session_key_cache = {}
-
-def _cache_session_key(openid, session_key):
-    import time
-    _session_key_cache[openid] = {'session_key': session_key, 'ts': time.time()}
-    # 清理超过10分钟的旧缓存
-    now = time.time()
-    expired = [k for k, v in _session_key_cache.items() if now - v['ts'] > 600]
-    for k in expired:
-        _session_key_cache.pop(k, None)
-
-def _get_cached_session_key(openid):
-    import time
-    entry = _session_key_cache.get(openid)
-    if entry and time.time() - entry['ts'] < 600:
-        return entry['session_key']
-    return None
-
-
-def _resolve_mp_openid(cursor, mp_openid='', openid='', phone=''):
-    """统一从 mp_openid/openid/phone 解析出 mp_openid，找不到返回 None"""
+        logging.getLogger(__name__).error(f'[_resolve_user] create failed: {e}')
+    return 0    """统一从 mp_openid/openid/phone 解析出 mp_openid，找不到返回 None"""
     # 1. 直接传入 mp_openid
     if mp_openid:
         return mp_openid

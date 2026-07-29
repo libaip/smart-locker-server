@@ -667,7 +667,7 @@ def admin_orders():
         total = c.fetchone()[0]
         c.execute(f"""SELECT o.id, o.order_no, o.user_phone, o.access_code as password, o.compartment_number, o.deposit_amount, CASE WHEN o.status=4 THEN COALESCE(o.refund_amount,0) ELSE 0 END as refund_amount, o.status,
             o.store_time, o.retrieve_time, o.created_at, o.group_id, COALESCE(c.cabinet_code, o.cabinet_code), c.name as cabinet_name,
-            o.transaction_id, o.pay_time, o.refund_time, o.refund_mark, o.logic_mark,
+            o.transaction_id, o.pay_time, o.refund_time, o.refund_mark, o.refund_status, o.logic_mark,
             COALESCE(NULLIF(ub.wechat_name,''), NULLIF(po.wechat_name,''), up.wechat_name) as wechat_name,""" + f"""
             l.id as location_id, l.name as location_name, m.name as merchant_name, m.id as merchant_id, pc.mch_id as pay_mch_id
             FROM orders o LEFT JOIN cabinets c ON o.cabinet_id=c.id

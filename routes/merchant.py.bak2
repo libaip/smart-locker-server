@@ -209,15 +209,7 @@ def merchant_dashboard():
             cursor.execute(f'SELECT COUNT(*) as cnt FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND (c.charge_mode != %s OR c.per_use_price > 0)', (*mparams, 'deposit'))
         has_charge = cursor.fetchone()['cnt'] > 0
         is_agent = bool(session.get('is_agent'))
-        show_deposit_fields = False
-        permissions = session.get('permissions') or []
-        if session.get('is_agent') and 'show_deposit_fields' in permissions:
-            show_deposit_fields = True
-        elif merchant_id:
-            cursor.execute('SELECT show_deposit_fields FROM merchants WHERE id = %s', (merchant_id,))
-            _sdf = cursor.fetchone()
-            if _sdf and _sdf[0]:
-                show_deposit_fields = True
+        show_deposit_fields = True
         # ?????????
         cursor.execute(f'SELECT COALESCE(SUM(COALESCE(o.refund_amount,0)),0) as total FROM orders o JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND o.status=4 AND DATE(o.created_at)=%s', (*mparams, today))
         today_deposit_refunded = cursor.fetchone()["total"]
@@ -840,20 +832,6 @@ def merchant_business_stats():
             pass
 
         is_agent = bool(session.get('is_agent'))
-        # 充值统计（支付成功的使用费）
-        pay_where_all = " AND ".join(where_parts) + " AND p.type = 1 AND p.status = 1"
-        pay_params_all = list(params)
-        cursor.execute(f'SELECT COALESCE(SUM(p.amount), 0) as total FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {pay_where_all}', pay_params_all)
-        total_payments = cursor.fetchone()["total"]
-        
-        # 退款统计（已退款的订单 refund_amount）
-        refund_where = " AND ".join(where_parts) + " AND o.status = 4"
-        refund_params = list(params)
-        cursor.execute(f'SELECT COALESCE(SUM(COALESCE(o.refund_amount,0)), 0) as total FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {refund_where}', refund_params)
-        total_deposit_refunded = cursor.fetchone()["total"]
-        
-        show_deposit_fields = bool(session.get("is_agent") and "show_deposit_fields" in (session.get("permissions") or []))
-        
         result = {
             'total_orders': total_orders,
             'active_orders': order_stats['active_orders'] or 0,
@@ -865,9 +843,6 @@ def merchant_business_stats():
             'has_charge_location': has_charge,
             'chart': chart,
             'is_agent': is_agent,
-            'show_deposit_fields': show_deposit_fields,
-            'total_payments': float(total_payments or 0),
-            'total_deposit_refunded': float(total_deposit_refunded or 0),
             'total_recharge': 0,
             'total_withdraw': 0
         }
@@ -1138,82 +1113,9 @@ def merchant_my_merchants():
 
 
 
-
-
-
-
-@bp.route('/merchant/locations/<int:location_id>/settings', methods=['PUT'])
-@require_merchant_auth
-def merchant_update_location_settings(location_id):
-    try:
-        merchant_id, mfilter, mparams = _get_merchant_filter()
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute(f'SELECT id FROM locations WHERE id = %s AND {mfilter}', (location_id, *mparams))
-        if not cursor.fetchone():
-            conn.close()
-            return json_response(message='??????????', code=404)
-        data = request.get_json()
-        if 'show_deposit_fields' in data:
-            val = bool(data['show_deposit_fields'])
-            cursor.execute('UPDATE locations SET show_deposit_fields = %s WHERE id = %s', (val, location_id))
-        conn.commit()
-        conn.close()
-        return json_response(message='????')
-    except Exception as e:
-        logger.error(f'[merchant_update_location_settings] {e}')
-        return json_response(message=str(e), code=500)
-
-@bp.route('/merchant/my-merchants/<int:merchant_id>', methods=['GET'])
-@require_merchant_auth
-def merchant_get_merchant(merchant_id):
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        agent_id = session.get('agent_id')
-        if not agent_id:
-            conn.close()
-            return json_response(message='无权操作', code=403)
-        cursor.execute('SELECT id, ad_fee_per_order, hide_ratio FROM merchants WHERE id=%s AND agent_id=%s', (merchant_id, agent_id))
-        m = cursor.fetchone()
-        conn.close()
-        if not m:
-            return json_response(message='商家不存在', code=404)
-        return json_response(data=dict(m))
-    except Exception as e:
-        logger.error(f'[merchant_get_merchant] {e}')
-        return json_response(message=str(e), code=500)
-
 @bp.route('/merchant/my-merchants/<int:merchant_id>', methods=['PUT'])
 def merchant_update_merchant(merchant_id):
-    try:
-        from helpers import get_db, json_response
-        from flask import request
-        agent_id = session.get('agent_id')
-        if not agent_id:
-            return json_response(message='无权操作', code=403)
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('SELECT id FROM merchants WHERE id=%s AND agent_id=%s', (merchant_id, agent_id))
-        if not cursor.fetchone():
-            conn.close()
-            return json_response(message='无权修改该商家', code=404)
-        data = request.get_json()
-        updates = []
-        params = []
-        for key in ['ad_fee_per_order', 'hide_ratio']:
-            if key in data and data[key] is not None:
-                updates.append(key + ' = %s')
-                params.append(data[key])
-        if updates:
-            params.append(merchant_id)
-            cursor.execute('UPDATE merchants SET ' + ', '.join(updates) + ' WHERE id=%s', params)
-        conn.commit()
-        conn.close()
-        return json_response(message='保存成功')
-    except Exception as e:
-        logger.error(f'[merchant_update_merchant] {e}')
-        return json_response(message=str(e), code=500)
+    pass
 
 
 @bp.route('/merchant/dashboard-config', methods=['GET'])

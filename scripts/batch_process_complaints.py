@@ -43,6 +43,17 @@ with app.app_context():
             mch = cmch or '1747970416'
             cert_ser = WX_CERT_SERIAL_NO
             key_path = WX_KEY_PATH
+            try:
+                conn3 = _gdb()
+                cur3 = conn3.cursor()
+                cur3.execute("SELECT cert_serial_no, cert_name FROM payment_channels WHERE mch_id=%s AND is_active=1", (mch,))
+                pc_row3 = cur3.fetchone()
+                if pc_row3 and pc_row3[0]:
+                    cert_ser = pc_row3[0]
+                    key_path = '/home/ubuntu/smart-locker/cert/' + pc_row3[1] + '_key.pem'
+                conn3.close()
+            except:
+                pass
             _auto_reply_complaint(cid, order_no, txid, mch_id=mch, cert_serial=cert_ser, private_key_path=key_path)
             _auto_complete_complaint(cid, mch, cert_ser, key_path)
             time.sleep(1)

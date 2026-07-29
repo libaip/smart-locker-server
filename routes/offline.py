@@ -119,7 +119,7 @@ def get_pending_commands(device_id):
 
 
         now = datetime.now()
-        cursor.execute('SELECT o.id as order_id, o.order_no, o.user_phone, o.access_code, o.deposit_amount, o.compartment_number, o.slot_size, o.cabinet_id, o.store_time FROM orders o JOIN cabinets c ON o.cabinet_id = c.id WHERE c.mainboard_device_id = %s AND o.status = 2 ORDER BY o.id DESC', (device_id,))
+        cursor.execute('SELECT o.id as order_id, o.order_no, o.user_phone, o.access_code, o.deposit_amount, o.compartment_number, o.slot_size, o.cabinet_id, o.store_time, cs.board_no, cs.lock_no FROM orders o JOIN cabinets c ON o.cabinet_id = c.id LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE c.mainboard_device_id = %s AND o.status = 2 ORDER BY o.id DESC', (device_id,))
         orders = [dict(row) for row in cursor.fetchall()]
         conn.commit()
         conn.close()
@@ -142,6 +142,7 @@ def get_pending_commands(device_id):
         except Exception as _e:
             logger.warning(f'[pending_commands] 查询主板配置失败(不影响正常功能): {_e}')
 
+        logger.info(f'[pending_commands] mainboard_config for {device_id}: {json.dumps(mainboard_config)}')
         return json_response({"commands": valid_commands, "orders": orders, "server_time": now.strftime("%Y-%m-%d %H:%M:%S"), "mainboard_config": mainboard_config})
     except Exception as e:
         logger.error(f'[pending_commands] {e}')
@@ -325,4 +326,29 @@ def offline_retrieve_batch():
         return json_response({'total': len(records), 'success': success_count, 'results': results})
     except Exception as e:
         logger.error(f'[offline_batch] {e}')
+        return json_response(message=str(e), code=500)
+
+@bp.route('/offline-retrieve/mid-retrieve', methods=['POST'])
+def mid_retrieve():
+    try:
+        data = request.get_json()
+        order_id = data.get('order_id')
+        order_no = data.get('order_no')
+        logger.info(f'[mid_retrieve] order_id={order_id}, order_no={order_no}')
+        if not order_id and not order_no:
+            return json_response(message='no order info', code=400)
+        conn = get_db()
+        cursor = conn.cursor()
+        if order_id:
+            cursor.execute('SELECT id, status, user_phone FROM orders WHERE id = %s', (order_id,))
+        else:
+            cursor.execute('SELECT id, status, user_phone FROM orders WHERE order_no = %s', (order_no,))
+        order = cursor.fetchone()
+        if not order:
+            conn.close()
+            return json_response(message='order not found', code=404)
+        conn.close()
+        return json_response({'message': 'mid retrieve recorded', 'order_id': order['id']})
+    except Exception as e:
+        logger.error(f'[mid_retrieve] {e}')
         return json_response(message=str(e), code=500)

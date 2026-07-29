@@ -1,4 +1,4 @@
-"""
+﻿"""
 智能寄存柜系统 - 共享辅助函数与全局状态
 """
 import logging
@@ -191,10 +191,7 @@ def require_merchant_auth(f):
     """商家/代理商权限验证 - 同时支持session cookie和Bearer token"""
     @wraps(f)
     def decorated(*args, **kwargs):
-        # 1. Check Flask session first
-        if 'merchant_id' in session or 'agent_id' in session:
-            return f(*args, **kwargs)
-        # 2. Fall back to Bearer token
+        # 1. Check Bearer token first (overrides stale session cookies)
         auth_header = request.headers.get('Authorization', '')
         if auth_header.startswith('Bearer '):
             token = auth_header[7:].strip()
@@ -209,15 +206,17 @@ def require_merchant_auth(f):
                             utype = tok_row['user_type']
                             uid = tok_row['user_id']
                             if utype == 'agent':
-                                ag = cursor.execute('SELECT id, name FROM agents WHERE id=%s', (uid,)).fetchone()
+                                ag = cursor.execute('SELECT id, name, permissions FROM agents WHERE id=%s', (uid,)).fetchone()
                                 if ag:
                                     session['agent_id'] = ag['id']; session['agent_name'] = ag['name']; session['is_agent'] = True
+                                    session['permissions'] = json.loads(ag['permissions'] or '[]')
                                     db.close(); return f(*args, **kwargs)
                             elif utype == 'employee':
-                                emp = cursor.execute('SELECT e.id, e.merchant_id, e.name, m.name as merchant_name FROM employees e LEFT JOIN merchants m ON e.merchant_id=m.id WHERE e.id=%s', (uid,)).fetchone()
+                                emp = cursor.execute('SELECT e.id, e.merchant_id, e.name, e.permissions, m.name as merchant_name FROM employees e LEFT JOIN merchants m ON e.merchant_id=m.id WHERE e.id=%s', (uid,)).fetchone()
                                 if emp:
                                     session['merchant_id'] = emp['merchant_id']; session['merchant_name'] = emp['merchant_name'] or emp['name']
                                     session['employee_id'] = emp['id']; session['is_employee'] = True
+                                    session['permissions'] = json.loads(emp['permissions'] or '[]')
                                     db.close(); return f(*args, **kwargs)
                             else:
                                 mch = cursor.execute('SELECT id, name FROM merchants WHERE id=%s', (uid,)).fetchone()
@@ -235,21 +234,23 @@ def require_merchant_auth(f):
                         db.close()
                         return f(*args, **kwargs)
                     # Check agent table
-                    row = cursor.execute('SELECT id, name FROM agents WHERE auth_token=%s', (token,)).fetchone()
+                    row = cursor.execute('SELECT id, name, permissions FROM agents WHERE auth_token=%s', (token,)).fetchone()
                     if row:
                         session['agent_id'] = row['id']
                         session['agent_name'] = row['name']
                         session['is_agent'] = True
+                        session['permissions'] = json.loads(row['permissions'] or '[]')
                         db.close()
                         return f(*args, **kwargs)
                     # Check employee table (before db.close())
                     try:
-                        row = cursor.execute("SELECT e.id, e.merchant_id, e.name, m.name as merchant_name FROM employees e LEFT JOIN merchants m ON e.merchant_id = m.id WHERE e.auth_token=%s", (token,)).fetchone()
+                        row = cursor.execute("SELECT e.id, e.merchant_id, e.name, e.permissions, m.name as merchant_name FROM employees e LEFT JOIN merchants m ON e.merchant_id = m.id WHERE e.auth_token=%s", (token,)).fetchone()
                         if row:
                             session['merchant_id'] = row['merchant_id']
                             session['merchant_name'] = row['merchant_name'] or row['name']
                             session['employee_id'] = row['id']
                             session['is_employee'] = True
+                            session['permissions'] = json.loads(row['permissions'] or '[]')
                             db.close()
                             return f(*args, **kwargs)
                     except Exception as e:
@@ -257,6 +258,9 @@ def require_merchant_auth(f):
                     db.close()
                 except Exception as e:
                     logger.error(f'Auth failed: {e}')
+        # 2. Fall back to session cookie
+        if 'merchant_id' in session or 'agent_id' in session:
+            return f(*args, **kwargs)
         return json_response(message='未登录，请先登录', code=401)
     return decorated
 
@@ -387,14 +391,16 @@ def send_open_lock(device_id, board_no, lock_no, protocol=None, order_id='', slo
             pass
 
     
-    # 内存队列兜底（设备离线时用）
-    if device_id not in pending_lock_commands:
-        pending_lock_commands[device_id] = []
-    if command not in pending_lock_commands[device_id]:
-        pending_lock_commands[device_id].append(command)
+    # 内存队列兜底（仅在WS发送失败时使用）
+    if not _ws_sent:
+        if device_id not in pending_lock_commands:
+            pending_lock_commands[device_id] = []
+        if command not in pending_lock_commands[device_id]:
+            pending_lock_commands[device_id].append(command)
     
     # 数据库操作：始终delivered=0，让HTTP轮询作为可靠兜底（WS可能发送成功但设备未收到）
     _delivered = 1 if _ws_sent else 0
+    _sl_conn = None
     try:
         import psycopg2
         from config import DATABASE_URL as _SL_DB
@@ -409,6 +415,11 @@ def send_open_lock(device_id, board_no, lock_no, protocol=None, order_id='', slo
         signal_pending_command(device_id)
     except Exception as _e:
         logger.error(f"[DB] 存储pending_lock失败: {_e}")
+    finally:
+        if _sl_conn:
+            try: _sl_conn.close()
+            except: pass
+            _sl_conn = None
     try:
         import psycopg2
         from config import DATABASE_URL as _SL_DB2
@@ -421,6 +432,11 @@ def send_open_lock(device_id, board_no, lock_no, protocol=None, order_id='', slo
         _sl_conn2.close()
     except Exception as _e3:
         logger.error(f"[DB] 存储door_record失败: {_e3}")
+    finally:
+        if _sl_conn2:
+            try: _sl_conn2.close()
+            except: pass
+            _sl_conn2 = None
     return True
 
 
@@ -439,16 +455,31 @@ def send_open_all(device_id, protocol=None):
     if device_id not in pending_lock_commands:
         pending_lock_commands[device_id] = []
     pending_lock_commands[device_id].append(command)
+    try:
+        import urllib.request as _req
+        import json as _json
+        _body = _json.dumps({'device_id': device_id, 'command': command}).encode()
+        _req.urlopen('http://127.0.0.1:5004/send', data=_body, timeout=3)
+    except Exception as e:
+        logger.error(f'[send_open_all] {e}')
+
+    import threading as _th, urllib.request as _req, json as _json
+    try:
+        _body = _json.dumps({"device_id": device_id, "command": command}).encode()
+        _th.Thread(target=lambda: _req.urlopen("http://127.0.0.1:5004/send", data=_body, timeout=5), daemon=True).start()
+        logger.info("[WS-DAEMON] open_all sent via daemon: " + str(device_id))
+    except Exception as _e:
+        logger.warning("[WS-DAEMON] open_all send failed: " + str(_e))
 
     if device_id in connected_devices:
         ws = connected_devices[device_id]
         if hasattr(ws, 'send') and not getattr(ws, 'closed', True):
             try:
                 ws.send(json.dumps(command))
-                logger.info(f'[RawWS] open_all: device={device_id}')
+                logger.info("[RawWS] open_all: " + str(device_id))
                 return True
             except Exception as e:
-                logger.error(f'[RawWS] open_all failed: {e}')
+                logger.error("[RawWS] open_all failed: " + str(e))
         elif isinstance(ws, str):
             try:
                 from flask import current_app
@@ -458,14 +489,14 @@ def send_open_all(device_id, protocol=None):
                     return True
             except:
                 pass
-    logger.info(f'[Queue] open_all queued: device={device_id}')
+    logger.info("[Queue] open_all queued: " + str(device_id))
     return True
 
 
 # ============================================
 # 支付相关 - 延迟导入避免循环
 # ============================================
-def _get_payment_channel(channel_id=None):
+def _get_payment_channel(channel_id=None, exclude_channel_id=None):
     """获取支付渠道（支持严格轮转和加权随机）"""
     conn = get_db()
     cursor = conn.cursor()
@@ -479,6 +510,12 @@ def _get_payment_channel(channel_id=None):
     if not channels:
         conn.close()
         return None
+    # 如果有排除的渠道，过滤掉
+    if exclude_channel_id:
+        channels = [ch for ch in channels if ch['id'] != exclude_channel_id]
+        if not channels:
+            conn.close()
+            return None
     # 读取轮转模式
     rotation_mode = 'round_robin'
     try:
@@ -488,6 +525,21 @@ def _get_payment_channel(channel_id=None):
             rotation_mode = row[0]
     except Exception:
         pass
+
+    # ====== Sequential mode: one at a time, failover on block ======
+    if rotation_mode == 'sequential':
+        if exclude_channel_id:
+            cursor.execute('SELECT * FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0) AND id != %s ORDER BY rotation_index ASC LIMIT 1', (exclude_channel_id,))
+        else:
+            cursor.execute('SELECT * FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0) ORDER BY rotation_index ASC LIMIT 1')
+        ch = cursor.fetchone()
+        conn.close()
+        if ch:
+            selected = dict(ch)
+            logger.info('[channel-sequential] current: %s (id=%d)' % (selected.get('name',''), selected['id']))
+            return selected
+        logger.error('[channel-sequential] no channel!')
+        return None
     if rotation_mode == 'round_robin':
         # 真轮询：选last_used_at最早的，保证每个商户依次使用
         from datetime import datetime as _dt; selected = min(channels, key=lambda ch: ch['last_used_at'] or _dt(1970,1,1))
@@ -505,9 +557,11 @@ def _get_payment_channel(channel_id=None):
     return dict(selected)
 
 
-def select_payment_channel():
-    """选择支付渠道（加权随机轮换）"""
-    return _get_payment_channel()
+def select_payment_channel(exclude_channel_id=None):
+    """选择支付渠道（加权随机轮换）
+    exclude_channel_id: 排除的渠道ID，用于故障切换时跳过当前失败的渠道
+    """
+    return _get_payment_channel(exclude_channel_id=exclude_channel_id)
 
 
 def update_channel_stats(channel_id, amount):
@@ -529,6 +583,22 @@ def get_channel_wxpay(channel, use_mp_appid=False):
     channel_type = channel.get('channel_type', 'wechat')
     if channel_type == 'wechat':
         app_id = channel.get('app_id') or (WX_MP_APP_ID if use_mp_appid else WX_APP_ID)
+        is_sub = channel.get('is_sub_merchant', 0) or False
+        if is_sub and channel.get('service_provider_mch_id'):
+            sp_mch_id = channel['service_provider_mch_id']
+            sub_mch_id = channel.get('mch_id', '')
+            sub_appid = channel.get('app_id', '')
+            sp_app_id = channel.get('service_provider_app_id', '') or app_id
+            cert_name = channel.get('cert_name', '')
+            if cert_name:
+                cert_path2 = f'/home/ubuntu/smart-locker/cert/{cert_name}_cert.pem'
+                key_path2 = f'/home/ubuntu/smart-locker/cert/{cert_name}_key.pem'
+            else:
+                cert_path2 = WX_CERT_PATH
+                key_path2 = WX_KEY_PATH
+            return WxPay(mch_id=sp_mch_id, api_key=channel['api_key'],
+                          app_id=sp_app_id, cert_path=cert_path2, key_path=key_path2,
+                          sub_mch_id=sub_mch_id, sub_appid=sub_appid), 'wechat'
         cert_name = channel.get('cert_name', '')
         if cert_name:
             cert_path = f'/home/ubuntu/smart-locker/cert/{cert_name}_cert.pem'
@@ -569,6 +639,15 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
     if openid or user_phone:
         try:
             assign_merchant(phone=user_phone, openid=openid)
+            try:
+                _ru = get_db()
+                _ru_c = _ru.cursor()
+                from routes.user import _resolve_user
+                _resolve_user(_ru_c, openid=openid or "", phone=user_phone or "")
+                _ru.commit()
+                _ru.close()
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -590,8 +669,10 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
     if payment_channel_id:
         ch = _get_payment_channel(payment_channel_id)
         current_channel = ch or payment_channel
-    else:
+    elif payment_channel:
         current_channel = payment_channel
+    else:
+        current_channel = _get_payment_channel()  # 自动选活跃渠道，避免fallback到硬编码默认商户
 
     if current_channel:
         wxpay, ch_type = get_channel_wxpay(current_channel, use_mp_appid=False)
@@ -601,15 +682,14 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
                                          total_fee=int(deposit_amount * 100), out_trade_no=order_no)
             if result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS':
                 # 更新渠道统计（用于轮转）
-                if current_channel:
-                    update_channel_stats(current_channel['id'], deposit_amount)
+
                 return {'mode': 'third_party', 'channel_type': third_party_type, 'order_id': order_id,
                         'order_no': order_no, 'pay_url': result.get('url', ''), 'url_qrcode': result.get('url_qrcode', '')}
             return {'mode': 'error', 'error_msg': result.get('return_msg', '第三方下单失败')}
         if wxpay is None:
             return {'mode': 'error', 'error_msg': '支付渠道配置异常'}
     else:
-        wxpay = get_wxpay(use_mp_appid=False)
+        return {'mode': 'error', 'error_msg': '无可用活跃商户，请联系管理员'}
 
     total_fee = int(deposit_amount * 100)
     time_expire = (datetime.now() + timedelta(minutes=15)).strftime('%Y%m%d%H%M%S')
@@ -620,6 +700,15 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
                                  scene_info=scene_info, time_expire=time_expire)
 
     if result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS':
+        # 更新订单的实际支付渠道（防止轮转导致不一致）
+        try:
+            from database import get_db as _gdb3
+            _db3 = _gdb3()
+            _db3.execute("UPDATE orders SET payment_channel_id=%s WHERE id=%s", (current_channel["id"], order_id))
+            _db3.commit()
+            _db3.close()
+        except Exception as _e:
+            logger.error(f"[支付渠道更新] 失败: {_e}")
         # 更新渠道统计
         if current_channel:
             update_channel_stats(current_channel['id'], deposit_amount)
@@ -634,41 +723,38 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
             return {'mode': 'h5', 'order_id': order_id, 'order_no': order_no,
                     'mweb_url': result.get('mweb_url')}
     
-    # 商户被封/异常自动检测：禁用渠道并切换到下一个
-    _dead_errors = {'NOAUTH', 'NO_AUTH', 'MCH_NOT_EXIST', 'APPID_MCHID_NOT_MATCH', 'ACCOUNT_ERROR', 'BANK_ERROR'}
-    if current_channel and result.get('err_code') in _dead_errors and _retry_count < 3:
-        try:
-            from database import get_db as _gdb2
-            _db2 = _gdb2()
-            _db2.execute('UPDATE payment_channels SET is_active=0 WHERE id=%s', (current_channel['id'],))
-            _db2.commit()
-            _db2.close()
-            logger.warning(f'[渠道] 商户异常已自动禁用: id={current_channel["id"]}, name={current_channel.get("name","")}, err={result.get("err_code")}')
-        except Exception as _e:
-            logger.error(f'[渠道] 自动禁用失败: {_e}')
-        next_ch = select_payment_channel()
+    # 商户被封/异常自动检测
+    _dead_errors = {'MCH_NOT_EXIST', 'APPID_MCHID_NOT_MATCH', 'ACCOUNT_ERROR', 'BANK_ERROR'}
+    _skip_errors = {'NOAUTH', 'NO_AUTH'}  # 收款受限，切换重试但不永久禁用
+    _err_code = result.get('err_code', '')
+    if current_channel and _retry_count < 3 and (_err_code in _dead_errors or _err_code in _skip_errors):
+        # 只对严重错误禁用商户；NOAUTH等收款受限只切换不禁用
+        if _err_code in _dead_errors:
+            try:
+                from database import get_db as _gdb2
+                _db2 = _gdb2()
+                _db2.execute('UPDATE payment_channels SET is_active=0 WHERE id=%s', (current_channel['id'],))
+                _db2.commit()
+                _db2.close()
+                logger.warning(f'[渠道] 商户异常已自动禁用: id={current_channel["id"]}, name={current_channel.get("name","")}, err={result.get("err_code")}')
+            except Exception as _e:
+                logger.error(f'[渠道] 自动禁用失败: {_e}')
+        else:
+            logger.warning(f'[渠道] 商户收款受限(不禁用)，切换重试: id={current_channel["id"]}, err={result.get("err_code")}')
+        next_ch = select_payment_channel(exclude_channel_id=current_channel['id'])
         if next_ch and next_ch.get('id') and next_ch['id'] != current_channel['id']:
             logger.info(f'[渠道] 切换到下一个渠道重试: {next_ch["name"]}')
-            # ????????????????????????
-            try:
-                from database import get_db as _gdb3
-                _db3 = _gdb3()
-                _db3.execute('UPDATE orders SET payment_channel_id=%s WHERE id=%s', (next_ch['id'], order_id))
-                _db3.commit()
-                _db3.close()
-                logger.info(f'[渠道] 已更新订单#{order_id}支付渠道为{next_ch["name"]}')
-            except Exception as _e:
-                logger.error(f'[渠道] 更新订单渠道失败: {_e}')
+            # [已修复] 不再修改订单的payment_channel_id，让用户重新扫码
+            # 原因：用户扫码时是商户A，如果系统偷偷换成商户B，支付回调时会找不到订单
+            logger.warning(f'[渠道] 商户异常，需要用户重新扫码。不修改订单#{order_id}的payment_channel_id')
             return get_payment_params(order_id, order_no, deposit_amount, user_phone, openid, payment_channel=next_ch, payment_channel_id=next_ch['id'], _retry_count=_retry_count+1)
     
     if current_channel:
         try:
             from database import get_db
             _db = get_db()
-            _db.execute('UPDATE payment_channels SET total_count = total_count + 1 WHERE id = %s', (current_channel['id'],))
-            _db.commit()
             _db.close()
-            logger.info(f'[WX-PAY] channel {current_channel["id"]} failed, count incremented')
+            logger.info(f'[WX-PAY] channel {current_channel["id"]} failed, not counting')
         except Exception as _e:
             logger.error(f'[WX-PAY] update channel stats failed: {_e}')
 
@@ -687,7 +773,7 @@ def process_auto_refund(order, cursor, conn):
     success, refund_id, refund_msg = do_real_refund(order_id=order_id, order_no=order_no, amount=amount, payment_channel_id=payment_channel_id)
     
     if success:
-        cursor.execute("UPDATE orders SET status = 4, refund_id = %s, refund_time = %s WHERE id = %s", (refund_id, datetime.now(), order_id))
+        cursor.execute("UPDATE orders SET status = 4, refund_status = 'refunded', refund_id = %s, refund_time = %s WHERE id = %s", (refund_id, datetime.now(), order_id))
         if order['slot_id']:
             cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (order['slot_id'],))
         cursor.execute("INSERT INTO payments (order_id, type, amount, refund_transaction_id, status) VALUES (%s, 2, %s, %s, 1)", (order_id, amount, refund_id))
@@ -712,7 +798,7 @@ def process_auto_approve(order, cursor, conn):
     success, refund_id, refund_msg = do_real_refund(order_id=order_id, order_no=order_no, amount=amount, payment_channel_id=payment_channel_id)
     
     if success:
-        cursor.execute('UPDATE orders SET status = 4, refund_id = %s, refund_time = %s WHERE id = %s',
+        cursor.execute("UPDATE orders SET status = 4, refund_status = 'refunded', refund_id = %s, refund_time = %s WHERE id = %s",
                        (refund_id, datetime.now(), order_id))
         if order['slot_id']:
             cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (order['slot_id'],))
@@ -737,7 +823,7 @@ def generate_sms_code():
     """生成6位短信验证码"""
     return ''.join(random.choices(string.digits, k=6))
 
-def return_to_balance(phone, amount, withdrawal_id=None, openid=''):
+def return_to_balance(phone, amount, withdrawal_id=None, openid='', order_id=None):
     try:
         from database import get_db
         conn = get_db()
@@ -749,28 +835,40 @@ def return_to_balance(phone, amount, withdrawal_id=None, openid=''):
         conn.execute("UPDATE user_balances SET balance = balance + %s, total_withdrawn = total_withdrawn - %s WHERE openid = %s", (amount, amount, real_openid))
         if withdrawal_id:
             conn.execute("UPDATE withdrawal_records SET status = 3 WHERE id = %s", (withdrawal_id,))
+        # 拒绝退款时：恢复余额明细状态为available
+        if order_id:
+            conn.execute("UPDATE user_balance_details SET status = 'available' WHERE order_id = %s AND status = 'pending'", (order_id,))
         conn.commit()
         conn.close()
-        logger.info("[return_to_balance] phone=" + str(phone) + " amount=" + str(amount))
+        logger.info("[return_to_balance] phone=" + str(phone) + " amount=" + str(amount) + " order_id=" + str(order_id))
         return True
     except Exception as e:
         logger.error("[return_to_balance] Failed: " + str(e))
         return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
-def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=None, **kwargs):
+def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=None, skip_balance=False, **kwargs):
     """Actually call WeChat refund API. Returns (success, refund_id, message)"""
     try:
         from database import get_db
         conn = get_db()
         cursor = conn.cursor()
         if order_id:
-            cursor.execute('SELECT order_no, transaction_id, payment_channel_id FROM orders WHERE id=%s', (order_id,))
+            cursor.execute('SELECT order_no, transaction_id, payment_channel_id, status, refund_id FROM orders WHERE id=%s', (order_id,))
             row = cursor.fetchone()
             if row:
                 order_no = order_no or row['order_no']
                 payment_channel_id = payment_channel_id or row['payment_channel_id']
-        conn.close()
+                # 防重：同一订单只退一次微信，已退的直接返回成功
+                if row['status'] == 4 or (row.get('refund_id') and row['refund_id'] != ''):
+                    conn.close()
+                    return True, row.get('refund_id', 'REFUNDED'), '订单已退款'
         if not order_no:
+            conn.close()
             return False, '', 'Order number is empty'
         payer = None
         if payment_channel_id:
@@ -788,7 +886,27 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
             except:
                 pass
         if not payer:
-            payer = get_wxpay()
+            # 尝试从订单的payment_channel_id获取活跃商户
+            try:
+                if order_id:
+                    _rc = conn.cursor()
+                    _rc.execute("SELECT payment_channel_id FROM orders WHERE id=%s", (order_id,))
+                    _rr = _rc.fetchone()
+                    _rc.close()
+                    if _rr and _rr.get('payment_channel_id'):
+                        _rc2 = conn.cursor()
+                        _rc2.execute("SELECT * FROM payment_channels WHERE id=%s", (_rr['payment_channel_id'],))
+                        _rch = _rc2.fetchone()
+                        if _rch:
+                            payer, _ = get_channel_wxpay(dict(_rch))
+                        _rc2.close()
+            except Exception as _e:
+                logger.error('[do_real_refund] 渠道查询异常: %s' % _e)
+        if not payer:
+            logger.error('[do_real_refund] 无可用活跃商户，退款跳过微信API')
+            conn.close()
+            return False, '', '无可用活跃商户'
+        conn.close()  # 关闭主连接，后续使用独立连接
         # 查询订单原始支付金额
         if order_id:
             conn3 = get_db()
@@ -812,13 +930,16 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
                 try:
                     conn_bal = get_db()
                     c_bal = conn_bal.cursor()
-                    c_bal.execute("SELECT user_phone FROM orders WHERE id=%s", (order_id,))
+                    c_bal.execute("SELECT user_phone, openid FROM orders WHERE id=%s", (order_id,))
                     phone_row = c_bal.fetchone()
-                    if phone_row and phone_row['user_phone']:
-                        bal_phone = phone_row['user_phone']
-                        c_bal.execute("UPDATE user_balances SET balance = GREATEST(balance - %s, 0) WHERE phone=%s", (amount, bal_phone))
+                    if phone_row and phone_row['user_phone'] and not skip_balance:
+                        bal_openid = phone_row.get('openid') or ''
+                        if bal_openid:
+                            c_bal.execute("UPDATE user_balances SET balance = GREATEST(balance - %s, 0) WHERE openid=%s", (amount, bal_openid))
+                        else:
+                            c_bal.execute("UPDATE user_balances SET balance = GREATEST(balance - %s, 0) WHERE phone=%s", (amount, phone_row['user_phone']))
                         if c_bal.rowcount > 0:
-                            logger.info('[do_real_refund] Balance deducted: phone=%s, amount=%s' % (bal_phone, amount))
+                            logger.info('[do_real_refund] Balance deducted: openid=%s, amount=%s' % (bal_openid, amount))
                     conn_bal.commit()
                     conn_bal.close()
                 except Exception as be:
@@ -883,7 +1004,36 @@ def do_balance_transfer(phone, amount, openid=None):
                 else:
                     logger.error('[do_balance_transfer] No openid for %s' % phone)
                     return False, '', 'User openid is empty'
-        payer = get_wxpay()
+        # 使用订单关联的活跃商户进行转账，不用硬编码默认商户
+        _ch = None
+        try:
+            _cur = conn.cursor()
+            _cur.execute("SELECT payment_channel_id FROM orders WHERE user_phone=%s AND payment_channel_id IS NOT NULL ORDER BY id DESC LIMIT 1", (phone,))
+            _row = _cur.fetchone()
+            if _row and _row.get('payment_channel_id'):
+                _cur.execute("SELECT * FROM payment_channels WHERE id=%s AND is_active=1", (_row['payment_channel_id'],))
+                _ch_row = _cur.fetchone()
+                if _ch_row:
+                    payer, _ = get_channel_wxpay(dict(_ch_row))
+                    _cur.close()
+            else:
+                _cur.close()
+        except Exception as _e:
+            logger.error('[do_balance_transfer] 渠道查询异常: %s' % _e)
+        if not payer:
+            # 没有活跃渠道时选一个活跃的
+            try:
+                _cur2 = conn.cursor()
+                _cur2.execute("SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id ASC LIMIT 1")
+                _ch2 = _cur2.fetchone()
+                if _ch2:
+                    payer, _ = get_channel_wxpay(dict(_ch2))
+                _cur2.close()
+            except:
+                pass
+        if not payer:
+            logger.error('[do_balance_transfer] 无可用活跃商户，无法转账')
+            return False, '', '无可用活跃商户'
         partner_trade_no = 'WD' + datetime.now().strftime('%Y%m%d%H%M%S') + ''.join(random.choices(string.digits, k=6))
         result = payer.transfer(
             partner_trade_no=partner_trade_no,
@@ -905,24 +1055,47 @@ def do_balance_transfer(phone, amount, openid=None):
 
 
 
-# ============================================
-# 微信订阅消息
-# ============================================
-
-def send_wx_subscribe_message(openid, template_id, data, page=''):
-    """发送微信订阅消息"""
+def get_access_token(force_refresh=False):
+    from datetime import datetime, timedelta
     try:
-        import requests
-        import config
-
-        # 获取access_token
-        token_url = f'https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid={config.WX_MP_APP_ID}&secret={config.WX_MP_APP_SECRET}'
-        token_resp = requests.get(token_url, timeout=5)
-        token_data = token_resp.json()
-
-        if 'access_token' not in token_data:
-            logger.error(f'[subscribe_msg] 获取access_token失败: {token_data}')
-            return False
+        conn = get_db()
+        cur = conn.cursor()
+        if not force_refresh:
+            cur.execute("SELECT setting_value FROM system_settings WHERE setting_key = 'wx_mp_access_token'")
+            row = cur.fetchone()
+            if row and row['setting_value']:
+                try:
+                    import json as _j
+                    data = _j.loads(row['setting_value'])
+                    expires_at = datetime.fromisoformat(data['expires_at'])
+                    if datetime.now() < expires_at - timedelta(seconds=600):
+                        conn.close()
+                        return data['token']
+                except:
+                    pass
+        import requests as _r
+        url = 'https://api.weixin.qq.com/cgi-bin/stable_token'
+        payload = dict(grant_type='client_credential', appid=WX_MP_APP_ID, secret=WX_MP_APP_SECRET, force_refresh=force_refresh)
+        resp = _r.post(url, json=payload, timeout=5)
+        result = resp.json()
+        if 'access_token' in result:
+            token = result['access_token']
+            ei = result.get('expires_in', 7200)
+            ea = (datetime.now() + timedelta(seconds=ei)).isoformat()
+            import json as _j2
+            cd = _j2.dumps(dict(token=token, expires_at=ea))
+            cur.execute("INSERT OR REPLACE INTO system_settings (setting_key, setting_value) VALUES (%s, %s)", ('wx_mp_access_token', cd))
+            conn.commit()
+            conn.close()
+            return token
+        logger.error(f'[get_access_token] fail: {result}')
+        conn.close()
+        return None
+    except Exception as e:
+        logger.error(f'[get_access_token] err: {e}')
+        try: conn.close()
+        except: pass
+        return None
 
         access_token = token_data['access_token']
 
@@ -950,12 +1123,35 @@ def send_wx_subscribe_message(openid, template_id, data, page=''):
         return False
 
 
+def send_gzh_customer_message(openid, content):
+    """通过公众号客服消息接口回复用户（自我投诉自动回复用）"""
+    try:
+        import requests
+        access_token = get_access_token()
+        if not access_token:
+            logger.error('[gzh_msg] 获取access_token失败')
+            return False
+        url = "https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token=" + access_token
+        payload = {"touser": openid, "msgtype": "text", "text": {"content": content}}
+        resp = requests.post(url, json=payload, timeout=5)
+        result = resp.json()
+        if result.get("errcode") == 0:
+            logger.info("[gzh_msg] 回复成功 openid=" + openid)
+            return True
+        else:
+            logger.error("[gzh_msg] 回复失败 openid=" + openid + " err=" + str(result))
+            return False
+    except Exception as e:
+        logger.error("[gzh_msg] 异常: " + str(e))
+        return False
+
+
 # ============================================
 # PushPlus 推送 & 商户号健康检查
 # ============================================
 
 # 商户号异常的错误码
-_MERCHANT_ERROR_CODES = {'SIGN_ERROR', 'MCH_NOT_EXIST', 'MCH_ID_INVALID', 'NO_AUTH', 'SYSTEMERROR', 'FREQUENCY_LIMITED'}
+_MERCHANT_ERROR_CODES = {'MCH_NOT_EXIST', 'MCH_ID_INVALID', 'APPID_MCHID_NOT_MATCH', 'ACCOUNT_ERROR', 'BANK_ERROR'}  # only fatal errors
 _merchant_health_state = {'last_alert_time': 0, 'consecutive_errors': 0}
 _failover_standby_id = 8
 _failover_consecutive_fails = 0
@@ -1037,7 +1233,7 @@ def check_merchant_health():
                     if is_merchant_account_error(ec):
                         logger.error('[MerchantHealth] 渠道 %s(%s) 异常! err=%s %s' % (ch_name, mch_id, ec, err_desc))
                         # 自动禁用该渠道
-                        cursor.execute('UPDATE payment_channels SET is_active=0 WHERE id=%s', (channel['id'],))
+                        cursor.execute('UPDATE payment_channels SET is_active=0, auto_disabled=1 WHERE id=%s', (channel['id'],))
                         conn.commit()
                         logger.warning('[MerchantHealth] 已自动禁用渠道: %s(%s)' % (ch_name, mch_id))
                         _on_merchant_error(ec, err_desc, result, channel=channel)
@@ -1049,73 +1245,51 @@ def check_merchant_health():
         conn.close()
         return all_ok
     except Exception as e:
+        logger.error('[MerchantHealth] ????: %s' % e)
+        return False
+
+
+    except Exception as e:
         logger.error('[MerchantHealth] 探测异常: %s' % e)
         return False
 
 def merchant_health_scheduler():
-    """定时探测所有商户号健康状态 + 自动灾备切换（每30分钟）"""
+    """periodic health check + failover (10s, with lock)"""
     import time
     from database import get_db
-    global _failover_consecutive_fails
+    global _failover_consecutive_fails, _health_lock
     time.sleep(60)
     while True:
+        if not _health_lock.acquire(blocking=False):
+            time.sleep(5)
+            continue
+        conn_f = None
         try:
-            logger.info('[MerchantHealth] 开始探测...')
+            logger.info('[MerchantHealth] check...')
             check_merchant_health()
-            # Auto-failover
             conn_f = get_db()
             c_f = conn_f.cursor()
-            c_f.execute('SELECT id FROM payment_channels WHERE is_active=1 AND id != 8')
-            active_ids = [r[0] for r in c_f.fetchall()]
-            if active_ids:
-                any_ok = any(f'success_mch_{aid}' in _merchant_health_state for aid in active_ids)
-                if any_ok:
-                    _failover_consecutive_fails = 0
-                    c_f.execute('UPDATE payment_channels SET is_active=0 WHERE id=8 AND is_active=1')
-                    if c_f.rowcount > 0: logger.info('[failover] Deactivated standby - primary recovered')
-                else:
-                    _failover_consecutive_fails += 1
-                    if _failover_consecutive_fails >= 2:
-                        c_f.execute('UPDATE payment_channels SET is_active=1 WHERE id=8 AND is_active=0')
-                        if c_f.rowcount > 0:
-                            logger.info('[failover] Activated standby 1112742905 - all primary down')
-                            _failover_consecutive_fails = 0
-            conn_f.commit()
+            c_f.execute('SELECT count(*) FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0)')
+            _ac = c_f.fetchone()[0]
+            if _ac == 0:
+                try:
+                    _activate_next_channel()
+                except Exception:
+                    pass
             conn_f.close()
+            conn_f = None
         except Exception as e:
-            logger.error('[MerchantHealth/failover] %s' % e)
-            try: conn_f.close()
-            except: pass
-        time.sleep(300)
+            logger.error('[MerchantHealth/failover] ' + str(e))
+        finally:
+            if conn_f:
+                conn_f.close()
+            try:
+                _health_lock.release()
+            except:
+                pass
+        time.sleep(10)
 
 
-def _on_merchant_error(err_code, err_desc, raw_result, channel=None):
-    """商户号异常告警，防止短时间内重复推送，包含具体商户号信息"""
-    import time
-    now = time.time()
-    # 按商户号独立记录告警时间，避免一个商户告警后其他商户的告警被跳过
-    mch_key = 'last_alert_%s' % (channel['mch_id'] if channel else 'default')
-    last = _merchant_health_state.get(mch_key, 0)
-    if now - last < 600:  # 10分钟内同商户不重复告警
-        return
-    _merchant_health_state[mch_key] = now
-    _merchant_health_state['last_alert_time'] = now
-    # 构造包含商户号信息的告警内容
-    mch_id = channel.get('mch_id', '未知') if channel else '未知(默认渠道)'
-    mch_name = channel.get('name', '未知') if channel else '未知(默认渠道)'
-    ch_id = channel.get('id', '?') if channel else '?'
-    title = '【%s】商户号被封' % mch_name
-    content = ("微信支付商户号出现异常，可能被限制或封禁。\n"
-               "商户名称: %s\n"
-               "商户号(mch_id): %s\n"
-               "渠道ID: %s\n"
-               "错误码: %s\n"
-               "错误描述: %s\n"
-               "请立刻登录 pay.weixin.qq.com 查看。") % (mch_name, mch_id, ch_id, err_code, err_desc)
-    send_pushplus(title, content)
-
-
-# ====== [优化] 商户号分配与自动审批 ======
 def assign_merchant(phone=None, openid=None):
     """为新用户分配商户号"""
     try:
@@ -1128,9 +1302,12 @@ def assign_merchant(phone=None, openid=None):
         else:
             row = None
         if row and row[0]:
-            c.close()
-            return row[0]
-        row = c.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 ORDER BY total_users ASC LIMIT 1").fetchone()
+            _alive = c.execute("SELECT id FROM payment_channels WHERE mch_id=%s AND is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0)", (row[0],)).fetchone()
+            if _alive:
+                c.close()
+                return row[0]
+            # merchant disabled, fall through to pick a new one
+        row = c.execute("SELECT mch_id FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0) ORDER BY rotation_index ASC LIMIT 1").fetchone()
         if not row:
             c.close()
             return None
@@ -1153,7 +1330,7 @@ def get_withhold_hours(mch_id):
     try:
         from database import get_db
         c = get_db()
-        row = c.execute("""SELECT COUNT(*) as total, COALESCE((SELECT COUNT(*) FROM complaints co JOIN orders oo ON co.order_no=oo.order_no WHERE oo.mch_id=%s),0) as comp FROM orders WHERE mch_id=%s""", (mch_id, mch_id)).fetchone()
+        row = c.execute("""SELECT COUNT(*) as total, COALESCE((SELECT COUNT(*) FROM complaints co WHERE co.mch_id=%s),0) as comp FROM orders o JOIN payment_channels pc ON o.payment_channel_id=pc.id WHERE pc.mch_id=%s""", (mch_id, mch_id)).fetchone()
         c.close()
         total, comp = row[0], row[1]
         rate = comp / max(total, 1)
@@ -1211,3 +1388,195 @@ def mark_user_withdraw(openid=None, phone=None):
 
 # 防重缓存：记录每个order_id最后一次开门时间
 _last_open_lock_time = {}
+# ====== æç°ç½ååå·¥å· ======
+def check_whitelist(openid, unionid=""):
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        row = None
+        if unionid:
+            cur.execute("SELECT openid, source, remain_count FROM withdrawal_whitelist WHERE unionid = %s", (unionid,))
+            row = cur.fetchone()
+        if not row and openid:
+            cur.execute("SELECT openid, source, remain_count FROM withdrawal_whitelist WHERE openid = %s", (openid,))
+            row = cur.fetchone()
+        conn.close()
+        return row
+    except Exception as e:
+        logger.error("[check_whitelist] " + str(e))
+        return None
+def add_whitelist(openid, source, remain_count=-1, unionid=""):
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        sql = "INSERT INTO withdrawal_whitelist (openid, unionid, source, remain_count, created_at) VALUES (%s, %s, %s, %s, NOW()) ON CONFLICT (openid) DO UPDATE SET source = EXCLUDED.source, remain_count = CASE WHEN withdrawal_whitelist.remain_count = -1 THEN -1 ELSE EXCLUDED.remain_count END, unionid = EXCLUDED.unionid, created_at = NOW()"
+        cur.execute(sql, (openid, unionid, source, remain_count))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error("[add_whitelist] " + str(e))
+        return False
+def consume_whitelist(openid):
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT remain_count FROM withdrawal_whitelist WHERE openid = %s", (openid,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            return False
+        if row["remain_count"] == -1:
+            conn.close()
+            return True
+        if row["remain_count"] <= 1:
+            cur.execute("DELETE FROM withdrawal_whitelist WHERE openid = %s", (openid,))
+        else:
+            cur.execute("UPDATE withdrawal_whitelist SET remain_count = remain_count - 1 WHERE openid = %s", (openid,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error("[consume_whitelist] " + str(e))
+        return False
+def remove_whitelist(openid):
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM withdrawal_whitelist WHERE openid = %s", (openid,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error("[remove_whitelist] " + str(e))
+        return False
+def get_openid_by_phone(phone):
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT openid FROM user_balances WHERE phone = %s AND openid IS NOT NULL AND openid != '' ORDER BY id DESC LIMIT 1", (phone,))
+        row = cur.fetchone()
+        conn.close()
+        return row["openid"] if row else None
+    except Exception as e:
+        logger.error("[get_openid_by_phone] " + str(e))
+        return None
+def add_whitelist_by_phone(phone, source, remain_count=-1):
+    openid = get_openid_by_phone(phone)
+    if not openid:
+        logger.warning("[add_whitelist_by_phone] phone=" + str(phone) + " no openid")
+        return False
+    return add_whitelist(openid, source, remain_count)
+
+
+def get_online_device_ids():
+    """从ws_proxy获取当前在线设备ID列表"""
+    try:
+        import urllib.request, json
+        resp = urllib.request.urlopen("http://127.0.0.1:5004/api/devices/online", timeout=2)
+        data = json.loads(resp.read())
+        return set(data.get("devices", []))
+    except Exception as e:
+        logger.error("[get_online_device_ids] %s", str(e))
+        return set()
+
+
+# ============================================
+# PushPlus 推送 & 商户号健康检查
+# ============================================
+
+# 商户号异常的错误码
+_MERCHANT_ERROR_CODES = {'MCH_NOT_EXIST', 'MCH_ID_INVALID', 'APPID_MCHID_NOT_MATCH', 'ACCOUNT_ERROR', 'BANK_ERROR'}  # only fatal errors
+_merchant_health_state = {'last_alert_time': 0, 'consecutive_errors': 0}
+_failover_standby_id = 8
+_failover_consecutive_fails = 0
+
+
+def send_wx_subscribe_message(openid, template_id, data, page='', phone=None):
+    """发送微信订阅消息（仅支持小程序mp_openid）"""
+    try:
+        import requests
+        import config
+        from database import get_db
+
+        # 如果提供了手机号，查openid（先user_balances.openid，再phone_openids.mp_openid）
+        if not openid and phone:
+            try:
+                _conn = get_db()
+                _cur = _conn.cursor()
+                # [FIX-20260716] 必须查 mp_openid（小程序openid），禁止查 openid（可能是公众号openid会导致40003）
+                # 同时排除 oLhbm2 前缀（公众号openid），只接受 oWrA8 前缀的小程序openid
+                _cur.execute("SELECT mp_openid FROM user_balances WHERE phone=%s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid NOT LIKE 'oLhbm2%%' ORDER BY id DESC LIMIT 1", (phone,))
+                _row = _cur.fetchone()
+                if _row and _row[0]:
+                    openid = _row[0]
+                else:
+                    # 第二级：phone_openids.mp_openid
+                    _cur.execute("SELECT mp_openid FROM phone_openids WHERE phone=%s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid NOT LIKE 'oLhbm2%%'", (phone,))
+                    _row2 = _cur.fetchone()
+                    if _row2 and _row2[0]:
+                        openid = _row2[0]
+                if not openid:
+                    _cur.execute("SELECT openid FROM app_users WHERE phone=%s AND openid IS NOT NULL AND openid != " + chr(39)*2 + " ORDER BY id DESC LIMIT 1", (phone,))
+                    _row3 = _cur.fetchone()
+                    if _row3 and _row3[0]:
+                        openid = _row3[0]
+                if not openid:
+                    _cur.execute("SELECT mp_openid FROM app_users WHERE phone=%s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid NOT LIKE 'oLhbm2%%' ORDER BY id DESC LIMIT 1", (phone,))
+                    _row4 = _cur.fetchone()
+                    if _row4 and _row4[0]:
+                        openid = _row4[0]
+                _conn.close()
+            except Exception as _e:
+                logger.warning(f'[subscribe_msg] 查询phone_openids失败: {_e}')
+
+        if not openid:
+            logger.warning(f'[subscribe_msg] mp_openid为空，跳过发送（phone={phone}）')
+            return False
+
+        # 获取access_token（使用getStableAccessToken + DB缓存）
+        access_token = get_access_token()
+        if not access_token:
+            logger.error('[subscribe_msg] 获取access_token失败')
+            return False
+
+        # 发送订阅消息
+        send_url = f'https://api.weixin.qq.com/cgi-bin/message/subscribe/send?access_token={access_token}'
+        payload = {
+            'touser': openid,
+            'template_id': template_id,
+            'data': data
+        }
+        if page:
+            payload['page'] = page
+
+        resp = requests.post(send_url, json=payload, timeout=5)
+        result = resp.json()
+
+        if result.get('errcode') == 0:
+            logger.info(f'[subscribe_msg] 发送成功: openid={openid[:8]}..., template={template_id}')
+            return True
+        else:
+            logger.error(f'[subscribe_msg] 发送失败: {result}')
+            return False
+    except Exception as e:
+        logger.error(f'[subscribe_msg] 异常: {e}')
+        return False
+
+
+# ============================================
+# PushPlus 推送 & 商户号健康检查
+# ============================================
+
+# 商户号异常的错误码
+_MERCHANT_ERROR_CODES = {'MCH_NOT_EXIST', 'MCH_ID_INVALID', 'APPID_MCHID_NOT_MATCH', 'ACCOUNT_ERROR', 'BANK_ERROR'}  # only fatal errors
+_merchant_health_state = {'last_alert_time': 0, 'consecutive_errors': 0}
+_failover_standby_id = 8
+_failover_consecutive_fails = 0
+
+

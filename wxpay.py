@@ -37,7 +37,7 @@ class WxPay:
     SANDBOX_REFUND_URL = 'https://api.mch.weixin.qq.com/sandboxnew/pay/refund'
     SANDBOX_SIGN_KEY_URL = 'https://api.mch.weixin.qq.com/sandboxnew/pay/getsignkey'
     
-    def __init__(self, mch_id: str, api_key: str, app_id: str, cert_path: str = None, key_path: str = None):
+    def __init__(self, mch_id: str, api_key: str, app_id: str, cert_path: str = None, key_path: str = None, sub_mch_id: str = None, sub_appid: str = None):
         """
         初始化微信支付
         
@@ -53,6 +53,8 @@ class WxPay:
         self.app_id = app_id
         self.cert_path = cert_path
         self.key_path = key_path
+        self.sub_mch_id = sub_mch_id
+        self.sub_appid = sub_appid
         self.sandbox_sign_key = None
         
         if self.SANDBOX_MODE:
@@ -243,6 +245,10 @@ class WxPay:
         
         if openid:
             params['openid'] = openid
+        if self.sub_mch_id:
+            params['sub_mch_id'] = self.sub_mch_id
+            if self.sub_appid:
+                params['sub_appid'] = self.sub_appid
         
         if scene_info:
             params['scene_info'] = scene_info
@@ -318,6 +324,8 @@ class WxPay:
             'mch_id': self.mch_id,
             'nonce_str': self.generate_nonce_str(),
         }
+        if self.sub_mch_id:
+            params['sub_mch_id'] = self.sub_mch_id
         
         if out_trade_no:
             params['out_trade_no'] = out_trade_no
@@ -389,6 +397,8 @@ class WxPay:
             'refund_fee': refund_fee,
             'out_refund_no': out_refund_no,
         }
+        if self.sub_mch_id:
+            params['sub_mch_id'] = self.sub_mch_id
         
         if refund_desc:
             params['refund_desc'] = refund_desc
@@ -439,6 +449,8 @@ class WxPay:
             'mch_id': self.mch_id,
             'nonce_str': self.generate_nonce_str(),
         }
+        if self.sub_mch_id:
+            params['sub_mch_id'] = self.sub_mch_id
         
         if out_trade_no:
             params['out_trade_no'] = out_trade_no

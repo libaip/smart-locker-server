@@ -1,4 +1,4 @@
-import psycopg2
+﻿import psycopg2
 from psycopg2.extras import RealDictCursor
 import json
 import os
@@ -13,8 +13,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from database import get_db
 import threading, uuid
 from helpers import json_response, manage_user_tokens, require_auth, logger, connected_devices, should_hide_order
-import requests
-from config import WX_API_V3_KEY, WX_MCH_ID, WX_CERT_SERIAL_NO, WX_KEY_PATH, WX_CERT_PATH, WX_APP_ID, WX_APP_SECRET, WX_MP_APP_ID, WX_MP_APP_SECRET
+from config import WX_API_V3_KEY, WX_MCH_ID, WX_KEY_PATH, WX_CERT_PATH, WX_APP_ID, WX_APP_SECRET, WX_MP_APP_ID, WX_MP_APP_SECRET
 def _fmt_time(t):
     """格式化时间: YYYY-MM-DD HH:MM:SS"""
     if not t:
@@ -459,11 +458,8 @@ def admin_slots_open_all():
         conn.close()
         if not row or not row['mainboard_device_id']:
             return json_response(message='未找到设备', code=400)
-        from helpers import send_open_lock
-        c.execute('SELECT slot_number, board_no, lock_no FROM cabinet_slots WHERE cabinet_id=%s AND status IN (1,2) ORDER BY board_no, lock_no', (cabinet_id,))
-        slots2 = c.fetchall()
-        for s in slots2:
-            send_open_lock(str(row['mainboard_device_id']), s['board_no'], s['lock_no'], None, '', slot_number=s['slot_number'])
+        from helpers import send_open_all
+        send_open_all(str(row['mainboard_device_id']))
         return json_response(message='已发送全开指令')
     except Exception as e:
         logger.error(f'[open_all] {e}')
@@ -549,13 +545,13 @@ def admin_location_save():
             try:
                 c2 = conn.cursor()
                 # 找到该网点下所有status=0(待审核)的余额提现记录
-                c2.execute('''SELECT w.id, w.user_phone, w.amount, w.openid FROM withdrawal_records w
+                c.execute('''SELECT w.id, w.user_phone, w.amount, w.openid FROM withdrawal_records w
                     JOIN orders o ON w.order_id = o.id
                     JOIN cabinets cb ON o.cabinet_id = cb.id
                     WHERE cb.location_id = %s AND w.status = 0 AND w.order_id IS NOT NULL''', (data['id'],))
                 pending_records = c2.fetchall()
                 # 也找余额提现(order_id IS NULL)属于该网点的
-                c2.execute('''SELECT w.id, w.user_phone, w.amount, w.openid FROM withdrawal_records w
+                c.execute('''SELECT w.id, w.user_phone, w.amount, w.openid FROM withdrawal_records w
                     WHERE w.order_id IS NULL AND w.status = 0 AND w.user_phone IN (
                         SELECT DISTINCT o.user_phone FROM orders o
                         JOIN cabinets cb ON o.cabinet_id = cb.id
@@ -568,19 +564,19 @@ def admin_location_save():
                         if wr['order_id']:
                             # 有关联订单，走原路退款
                             from helpers import do_real_refund
-                            refund_success, refund_id, refund_msg, _ = do_real_refund(order_id=wr['order_id'], amount=wr['amount'], openid=wr.get('openid',''))
+                            refund_success, refund_id, refund_msg = do_real_refund(order_id=wr['order_id'], amount=wr['amount'], openid=wr.get('openid',''))
                         else:
                             # 余额提现，找最近订单原路退
-                            c2.execute('SELECT id FROM orders WHERE user_phone=%s AND status IN (2,4,5,6) AND deposit_amount > 0 ORDER BY id DESC LIMIT 1', (wr['user_phone'],))
-                            recent = c2.fetchone()
+                            c.execute('SELECT id FROM orders WHERE user_phone=%s AND status IN (2,4,5,6) AND deposit_amount > 0 ORDER BY id DESC LIMIT 1', (wr['user_phone'],))
+                            recent = c.fetchone()
                             if recent:
                                 from helpers import do_real_refund
-                                refund_success, refund_id, refund_msg, _ = do_real_refund(order_id=recent['id'], amount=wr['amount'], openid=wr.get('openid',''))
+                                refund_success, refund_id, refund_msg = do_real_refund(order_id=recent['id'], amount=wr['amount'], openid=wr.get('openid',''))
                         if refund_success or (" 订单已全额退款" in str(refund_msg)):
-                            c2.execute('UPDATE withdrawal_records SET status=2 WHERE id=%s', (wr['id'],))
+                            c.execute('UPDATE withdrawal_records SET status=2 WHERE id=%s', (wr['id'],))
                             logger.info(f'[auto_approve_switch] 提现{wr["id"]}原路退款成功')
                         else:
-                            c2.execute('UPDATE withdrawal_records SET status=1 WHERE id=%s', (wr['id'],))
+                            c.execute('UPDATE withdrawal_records SET status=1 WHERE id=%s', (wr['id'],))
                             logger.info(f'[auto_approve_switch] 提现{wr["id"]}退款处理中')
                     except Exception as re:
                         logger.error(f'[auto_approve_switch] 提现{wr["id"]}自动退款失败: {re}')
@@ -689,9 +685,8 @@ def admin_orders():
             # 计算订单是否被 hide_ratio 隐藏
             if d.get('logic_mark') != 'N' and d.get('merchant_id') and d.get('location_id'):
                 # 查询网点 hide_ratio
-                c2 = conn.cursor()
-                c2.execute('SELECT hide_ratio, whitelist_phones FROM locations WHERE id = %s', (d['location_id'],))
-                loc = c2.fetchone()
+                c.execute('SELECT hide_ratio, whitelist_phones FROM locations WHERE id = %s', (d['location_id'],))
+                loc = c.fetchone()
                 if loc and loc['hide_ratio'] and loc['hide_ratio'] > 0:
                     whitelist = set((loc['whitelist_phones'] or '').split(',')) if loc['whitelist_phones'] else set()
                     if should_hide_order(d['merchant_id'], d['id'], d.get('user_phone', ''), loc['hide_ratio'], whitelist, d.get('logic_mark')):
@@ -860,16 +855,18 @@ def admin_order_refund():
                   (amount, order_id))
         # 联动更新待审核的提现记录
         c.execute("UPDATE withdrawal_records SET status=2, approver='管理员', approve_time=CURRENT_TIMESTAMP WHERE order_id=%s AND status=0", (order_id,))
-        # 创建提现记录
-        c.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, approver, created_at) VALUES (%s, %s, %s, 2, '管理员-自动退款', NOW())", (order_id, order_dict.get("user_phone", ""), amount))
         # 记录payments退款流水
         c.execute('INSERT INTO payments (order_id, type, amount, transaction_id, refund_transaction_id, status, created_at) VALUES (%s, 2, %s, %s, %s, 1, %s)',
                   (order_id, amount, transaction_id, refund_no, datetime.now()))
         # 如果订单是已结算(3)，保证金已从余额退过，需要扣回余额
         if order_dict.get('status') == 3 and order_dict.get('user_phone'):
-            logger.info('[余额操作] 订单退款扣余额 phone=%s amount=%s', order_dict.get('user_phone'), amount)
             c.execute('UPDATE user_balances SET balance = GREATEST(COALESCE(balance,0) - %s, 0), total_withdrawn = COALESCE(total_withdrawn,0) + %s WHERE phone = %s',
                       (amount, amount, order_dict['user_phone']))
+        # 确保退款用户有余额记录（即使balance=0），防止查不到
+        if order_dict.get('user_phone'):
+            c.execute('SELECT id FROM user_balances WHERE phone = %s', (order_dict['user_phone'],))
+            if not c.fetchone():
+                c.execute('INSERT INTO user_balances (phone, balance, total_deposited, total_withdrawn) VALUES (%s, 0, 0, 0)', (order_dict['user_phone'],))
         # 如果订单还在使用中(2)，释放柜格
         # [Agent-modified 2026-07-04] 退款时释放格口：无论订单是使用中(2)还是已结算(3)，都要释放格口为空闲(0)
         if order_dict.get('status') in (2, 3) and order_dict.get('slot_id'):
@@ -937,13 +934,13 @@ def admin_order_close():
         if not ntf_openid and order_dict.get('user_phone'):
             try:
                 c2 = conn.cursor(cursor_factory=RealDictCursor)
-                c2.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (order_dict['user_phone'],))
-                _r = c2.fetchone()
+                c.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (order_dict['user_phone'],))
+                _r = c.fetchone()
                 if _r and _r['mp_openid']:
                     ntf_openid = _r['mp_openid']
                 if not ntf_openid:
-                    c2.execute("SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s AND (mp_openid IS NOT NULL AND mp_openid != '' OR openid IS NOT NULL AND openid != '') ORDER BY updated_at DESC LIMIT 1", (order_dict['user_phone'],))
-                    _r = c2.fetchone()
+                    c.execute("SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s AND (mp_openid IS NOT NULL AND mp_openid != '' OR openid IS NOT NULL AND openid != '') ORDER BY updated_at DESC LIMIT 1", (order_dict['user_phone'],))
+                    _r = c.fetchone()
                     if _r and _r['openid']:
                         ntf_openid = _r['openid']
             except Exception as _e:
@@ -960,7 +957,7 @@ def admin_order_close():
                 send_wx_subscribe_message(ntf_openid, '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data, phone=order_dict.get('user_phone'))
                 # 退款通知在用户提现时发送，不在结束寄存时发送
             except Exception as e:
-                logger.error(f"[order_close发送订阅消息失败] {e}") 
+                pass
         conn.close()
         # 通知APK刷新柜格状态
         try:
@@ -968,10 +965,10 @@ def admin_order_close():
             if device_id:
                 # 尝试从cabinet获取mainboard_device_id
                 conn2 = get_db()
-                c2 = get_db().cursor()
+                c2 = conn2.cursor()
                 if order_dict.get('cabinet_id'):
-                    c2.execute('SELECT mainboard_device_id FROM cabinets WHERE id=%s', (order_dict['cabinet_id'],))
-                    cab = c2.fetchone()
+                    c.execute('SELECT mainboard_device_id FROM cabinets WHERE id=%s', (order_dict['cabinet_id'],))
+                    cab = c.fetchone()
                     if cab:
                         device_id = cab['mainboard_device_id']
                 conn2.close()
@@ -1006,7 +1003,6 @@ def admin_member_refund():
             conn.close()
             return json_response(message='用户余额不足', code=400)
         refund_amount = min(amount, user['balance'] or 0)
-        logger.info('[余额操作] 余额提现扣余额 order_dict.get(" user_phone)%s amount=%s', phone, refund_amount)
         c.execute('UPDATE user_balances SET balance = GREATEST(COALESCE(balance,0) - %s, 0), total_withdrawn = COALESCE(total_withdrawn,0) + %s WHERE phone = %s', (refund_amount, refund_amount, phone))
         c.execute("SELECT id, order_no, transaction_id, deposit_amount, payment_channel_id FROM orders WHERE user_phone=%s AND status != 4 AND refund_status!='refunded' ORDER BY id DESC LIMIT 1", (phone,))
         order = c.fetchone()
@@ -1087,7 +1083,6 @@ def admin_member_batch_refund():
             if not user or (user['balance'] or 0) <= 0:
                 continue
             refund_amount = user['balance'] or 0
-            logger.info('[余额操作] 清空余额 phone=%s', phone)
             c.execute('UPDATE user_balances SET balance=0, total_withdrawn=total_withdrawn+balance WHERE phone=%s', (phone,))
             c.execute("SELECT id, order_no, transaction_id, deposit_amount, payment_channel_id FROM orders WHERE user_phone=%s AND status != 4 AND refund_status!='refunded' ORDER BY id DESC LIMIT 1", (phone,))
             order = c.fetchone()
@@ -1101,7 +1096,6 @@ def admin_member_batch_refund():
             total_refund += refund_amount
         conn.commit()
         conn.close()
-        logger.info(f'[batch_refund] 批量退款: {success_count}人, 金额={total_refund:.2f}, admin={session.get("admin_username","")}')
         return json_response(message=f'批量退款完成: {success_count}人, 共¥{total_refund:.2f}')
     except Exception as e:
         logger.error(f'[batch_refund] {e}')
@@ -1233,6 +1227,7 @@ def admin_withdrawals():
         status = (data or {}).get('status', '') or request.args.get('status', '')
         search = (data or {}).get('search', '') or request.args.get('search', '')
         order_no = (data or {}).get('order_no', '') or request.args.get('order_no', '')
+        location_id = (data or {}).get('location_id', '') or request.args.get('location_id', '')
         wechat_name = (data or {}).get('wechat_name', '') or request.args.get('wechat_name', '')
         date_start = (data or {}).get('date_start', '') or request.args.get('date_start', '')
         date_end = (data or {}).get('date_end', '') or request.args.get('date_end', '')
@@ -1313,9 +1308,9 @@ def admin_withdrawal_approve():
                 if od:
                     refund_this = float(od['deposit_amount']) - float(od['refund_amount'])
                     if refund_this > 0.001:
-                        ok, rid, rmsg, _ = do_real_refund(order_id=oid, amount=refund_this, payment_channel_id=wd.get('payment_channel_id'))
+                        ok, rid, rmsg = do_real_refund(order_id=oid, amount=refund_this, payment_channel_id=wd.get('payment_channel_id'))
                         if ok:
-                            c.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_amount=COALESCE(refund_amount,0)+%s WHERE id=%s', (rid, refund_this, oid))
+                            c.execute("UPDATE orders SET status=4, refund_status='refunded"', refund_id=%s, refund_time=NOW(), refund_amount=COALESCE(refund_amount,0)+%s WHERE id=%s', (rid, refund_this, oid))
                             c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (oid,))
                         else:
                             all_ok = False
@@ -1323,11 +1318,9 @@ def admin_withdrawal_approve():
                        (2 if all_ok else 1, session.get('admin_username', 'admin'), withdrawal_id))
             conn.commit()
             conn.close()
-            logger.info(f'[withdrawal_approve] 批量审批: id={withdrawal_id}, phone={phone}, amount={amount}, all_ok={all_ok}, admin={session.get("admin_username","")}')
             return json_response(message='审批通过，退款已处理' if all_ok else '审批通过，部分退款失败')
         # 兼容旧逻辑：单个order_id
         # 余额已在用户提现时扣除，无需再次扣除
-        logger.info('[余额操作] 后台审批扣余额 order_dict.get(" user_phone)%s amount=%s', phone, amount)
         c.execute("UPDATE user_balances SET balance = GREATEST(COALESCE(balance,0) - %s, 0), total_withdrawn = COALESCE(total_withdrawn,0) + %s WHERE phone = %s", (amount, amount, phone))
         # 真正退款/转账
         refund_success = False
@@ -1343,7 +1336,7 @@ def admin_withdrawal_approve():
             else:
                 # 订单押金退款
                 from helpers import do_real_refund
-                refund_success, refund_id, refund_msg, _ = do_real_refund(order_id=order_id, amount=amount, payment_channel_id=wd.get('payment_channel_id'))
+                refund_success, refund_id, refund_msg = do_real_refund(order_id=order_id, amount=amount, payment_channel_id=wd.get('payment_channel_id'))
         else:
             # 余额提现：无需微信退款，余额已在上面扣除
             refund_success = True
@@ -1353,7 +1346,7 @@ def admin_withdrawal_approve():
             c.execute('UPDATE withdrawal_records SET status=2, approver=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s',
                        (session.get('admin_username', 'admin'), withdrawal_id))
             if order_id:
-                c.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=%s WHERE id=%s', (refund_id, datetime.now(), order_id))
+                c.execute("UPDATE orders SET status=4, refund_status='refunded"', refund_id=%s, refund_time=%s WHERE id=%s', (refund_id, datetime.now(), order_id))
                 c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (order_id,))
         else:
             c.execute('UPDATE withdrawal_records SET status=1, approver=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s',
@@ -1363,10 +1356,8 @@ def admin_withdrawal_approve():
         conn.commit()
         conn.close()
         if refund_success or (" 订单已全额退款" in str(refund_msg)):
-            logger.info(f'[withdrawal_approve] 审批通过: id={withdrawal_id}, phone={phone}, amount={amount}, refund_id={refund_id}, admin={session.get("admin_username","")}')
             return json_response(message='审批通过，退款已完成')
         else:
-            logger.info(f'[withdrawal_approve] 审批失败: id={withdrawal_id}, phone={phone}, amount={amount}, msg={refund_msg}, admin={session.get("admin_username","")}')
             return json_response(message='审批通过，但退款失败，请手动确认退款')
     except Exception as e:
         logger.error('[withdrawal_approve] ' + str(e))
@@ -1391,7 +1382,6 @@ def admin_withdrawal_reject():
             return json_response(message='提现记录不存在', code=400)
         # 已扣余额的记录需要退还
         if wd['status'] in (0, 1) and wd['user_phone']:
-            logger.info('[余额操作] 退款失败退余额 order_dict.get(" user_phone)%s amount=%s', wd['user_phone'], wd['amount'])
             c.execute('UPDATE user_balances SET balance=balance+%s,total_withdrawn=total_withdrawn-%s WHERE phone=%s',
                       (wd['amount'], wd['amount'], wd['user_phone']))
         # 解析打包的订单ID
@@ -1414,7 +1404,6 @@ def admin_withdrawal_reject():
                   (session.get('admin_username', 'admin') + (':' + reason if reason else ''), withdrawal_id))
         conn.commit()
         conn.close()
-        logger.info(f'[withdrawal_reject] 拒绝: id={withdrawal_id}, phone={wd["user_phone"]}, amount={wd["amount"]}, reason={reason}, admin={session.get("admin_username","")}')
         return json_response(message='已拒绝')
     except Exception as e:
         logger.error(f'[withdrawal_reject] {e}')
@@ -1443,11 +1432,10 @@ def admin_withdrawal_confirm_refund():
         c.execute('SELECT order_id FROM withdrawal_records WHERE id=%s', (withdrawal_id,))
         wd2 = c.fetchone()
         if wd2 and wd2['order_id']:
-            c.execute('UPDATE orders SET status=4, refund_time=%s WHERE id=%s AND status!=4', (datetime.now(), wd2['order_id']))
+            c.execute("UPDATE orders SET status=4, refund_status='refunded"', refund_time=%s WHERE id=%s AND status!=4', (datetime.now(), wd2['order_id']))
         c.execute("UPDATE withdrawal_records SET status=2, approve_time=CURRENT_TIMESTAMP WHERE id=%s", (withdrawal_id,))
         conn.commit()
         conn.close()
-        logger.info(f'[withdrawal_confirm_refund] 确认退款: id={withdrawal_id}, admin={session.get("admin_username","")}')
         return json_response(message='已确认退款完成')
     except Exception as e:
         logger.error(f'[withdrawal_confirm_refund] {e}')
@@ -1465,6 +1453,7 @@ def admin_complaints():
         status = (data or {}).get('status', '') or request.args.get('status', '')
         phone = (data or {}).get('phone', '') or request.args.get('phone', '')
         order_no = (data or {}).get('order_no', '') or request.args.get('order_no', '')
+        location_id = (data or {}).get('location_id', '') or request.args.get('location_id', '')
         start_date = (data or {}).get('start_date', '') or request.args.get('start_date', '')
         end_date = (data or {}).get('end_date', '') or request.args.get('end_date', '')
         page = int(request.args.get("page", (data or {}).get("page", 1)))
@@ -1489,11 +1478,15 @@ def admin_complaints():
                 except:
                     pass
         if phone:
-            where += ' AND c.user_phone LIKE %s'
+            where += ' AND (c.user_phone LIKE %s OR o.user_phone LIKE %s)'
+            params.append(f'%{phone}%')
             params.append(f'%{phone}%')
         if order_no:
             where += ' AND o.order_no LIKE %s'
             params.append(f'%{order_no}%')
+        if location_id:
+            where += ' AND EXISTS (SELECT 1 FROM cabinets cb WHERE cb.id = o.cabinet_id AND cb.location_id = %s)'
+            params.append(location_id)
         if start_date:
             where += ' AND c.created_at >= %s'
             params.append(start_date)
@@ -1501,10 +1494,10 @@ def admin_complaints():
             where += ' AND c.created_at < %s::date + INTERVAL \'1 day\''
             params.append(end_date)
         where += " AND (c.complaint_type != 'self' OR EXISTS (SELECT 1 FROM orders o3 WHERE o3.user_phone = c.user_phone AND o3.status IN (2,3)))"
-        c.execute(f'SELECT COUNT(*) FROM complaints c LEFT JOIN orders o ON c.order_id=o.id WHERE {where}', params)
+        c.execute(f'SELECT COUNT(*) FROM complaints c LEFT JOIN orders o ON o.order_no=c.order_no OR c.order_id=o.id WHERE {where}', params)
         total = c.fetchone()[0]
-        c.execute(f'''SELECT c.*, CASE WHEN o.status IN (2,3) THEN o.order_no ELSE c.order_no END as order_no, CASE WHEN c.type = 'self' THEN c.user_phone ELSE COALESCE(o.user_phone, c.user_phone) END as user_phone, pc.mch_id, ca.cabinet_code, l.name as location_name
-            FROM complaints c LEFT JOIN orders o ON c.order_id=o.id OR (c.order_no IS NOT NULL AND c.order_no = o.order_no) LEFT JOIN payment_channels pc ON o.payment_channel_id=pc.id LEFT JOIN cabinets ca ON o.cabinet_id=ca.id LEFT JOIN locations l ON ca.location_id=l.id
+        c.execute(f'''SELECT c.*, COALESCE(CASE WHEN o.status IN (2,3) THEN o.order_no ELSE NULL END, c.order_no) as order_no, CASE WHEN c.type = 'self' THEN c.user_phone ELSE o.user_phone END as user_phone, COALESCE(pc.mch_id, c.mch_id) as mch_id, COALESCE(po.wechat_name, (SELECT COALESCE(nickname, wechat_name) FROM app_users WHERE phone = CASE WHEN c.type = 'self' THEN c.user_phone ELSE o.user_phone END LIMIT 1), '') as nickname
+            FROM complaints c LEFT JOIN orders o ON o.order_no=c.order_no OR c.order_id=o.id LEFT JOIN payment_channels pc ON o.payment_channel_id=pc.id LEFT JOIN phone_openids po ON po.phone = CASE WHEN c.type = 'self' THEN c.user_phone ELSE o.user_phone END
             WHERE {where} ORDER BY c.created_at DESC LIMIT %s OFFSET %s''',
                   params + [page_size, (page-1)*page_size])
         complaints = [dict(r) for r in c.fetchall()]
@@ -1534,7 +1527,7 @@ def admin_complaint_reply():
         reply = data.get('reply', '')
         conn = get_db()
         c = conn.cursor()
-        c.execute('UPDATE complaints SET reply=%s,status=1,reply_time=CURRENT_TIMESTAMP WHERE id=%s',
+        c.execute('UPDATE complaints SET reply=%s,reply_time=CURRENT_TIMESTAMP WHERE id=%s',
                   (reply, complaint_id))
         conn.commit()
         conn.close()
@@ -1554,7 +1547,7 @@ def self_complaint_user_orders():
             return json_response(message='手机号为空', code=400)
         conn = get_db()
         c = conn.cursor()
-        c.execute('SELECT o.id, o.order_no, o.deposit_amount, o.store_time, o.status, pc.mch_id FROM orders o LEFT JOIN payment_channels pc ON o.payment_channel_id=pc.id WHERE o.user_phone = %s AND o.status IN (2,3) ORDER BY o.id DESC LIMIT 50', (phone,))
+        c.execute("SELECT o.id, o.order_no, o.deposit_amount, o.store_time, o.status, pc.mch_id FROM orders o LEFT JOIN payment_channels pc ON o.payment_channel_id=pc.id WHERE o.user_phone = %s AND o.status IN (2,3) AND (o.refund_status IS NULL OR o.refund_status NOT IN ('success','refunded')) ORDER BY o.id DESC LIMIT 50", (phone,))
         orders = [dict(r) for r in c.fetchall()]
         conn.close()
         return json_response(data={'list': orders, 'total': len(orders)})
@@ -1569,12 +1562,11 @@ def admin_complaint_retry_refund():
     try:
         data = request.get_json()
         complaint_id = data.get('id')
-        logger.info('[retry_refund] 管理员手动退款 complaint_id=%s admin=%s', complaint_id, session.get('admin_username', ''))
         if not complaint_id:
             return json_response(message='id为空', code=400)
         conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT c.*, o.id as order_id, o.order_no, o.deposit_amount, o.payment_channel_id FROM complaints c LEFT JOIN orders o ON c.order_id=o.id WHERE c.id=%s", (complaint_id,))
+        c.execute("SELECT c.*, o.id as order_id, o.order_no, o.deposit_amount, o.payment_channel_id FROM complaints c LEFT JOIN orders o ON o.order_no=c.order_no OR c.order_id=o.id WHERE c.id=%s", (complaint_id,))
         row = c.fetchone()
         if not row:
             conn.close()
@@ -1609,23 +1601,35 @@ def admin_complaint_retry_refund():
         if not deposit_amount: deposit_amount = data.get("deposit_amount") or 0
         if not payment_channel_id: payment_channel_id = data.get("payment_channel_id")
 
-        logger.info('[retry_refund] 准备退款 order_id=%s order_no=%s amount=%s ch=%s', oid, ono, deposit_amount, payment_channel_id)
-        ok, rid, msg, _ = do_real_refund(order_id=oid, order_no=ono, amount=deposit_amount, payment_channel_id=payment_channel_id)
+        from helpers import do_real_refund
+        ok, rid, msg = do_real_refund(order_id=oid, order_no=ono, amount=deposit_amount, payment_channel_id=payment_channel_id)
         if ok:
-            logger.info('[retry_refund] 退款成功 order_id=%s refund_id=%s', oid, rid)
-            c.execute("UPDATE orders SET status=4, refund_id=%s WHERE id=%s", (rid, oid))
-            _r_phone = row.get('user_phone', '') or ''
-            c.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, approver, order_ids, approve_time) VALUES (%s, %s, %s, 2, '管理员-投诉退款', %s, NOW())", (oid, _r_phone, deposit_amount, '[' + str(oid) + ']' if oid else '[]'))
-            # self投诉用status=1(已处理)，wechat投诉用status=2
+            c.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=%s WHERE id=%s", (rid, oid))
+
+            try:
+                from helpers import send_wx_subscribe_message
+                _amt_r = float(deposit_amount or 0)
+                _wd_r = {'amount8': {'value': '¥{:.2f}'.format(_amt_r)}, 'time6': {'value': __import__('datetime').datetime.now().strftime('%%Y-%%m-%%d %%H:%%M:%%S')}, 'thing3': {'value': '原路退回支付账户'}, 'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}}
+                send_wx_subscribe_message('', 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', _wd_r, phone=row.get('user_phone',''), page='pages/mine/mine')
+            except Exception as _re:
+                logger.error(f'[admin_refund_notify] {_re}')
+
+            # self投诉: status=1(已处理)+自动回复, wechat投诉: status=2
             if row.get('complaint_type') == 'self' or str(row.get('type', '')).lower() == 'self':
                 c.execute("UPDATE complaints SET status='1' WHERE id=%s", (complaint_id,))
+                # 通过公众号客服消息自动回复用户
+                _reply_text = "您好，您的押金已成功退款。如有疑问请联系人工客服4006981080。"
+                c.execute("UPDATE complaints SET reply=%s WHERE id=%s", (_reply_text, complaint_id))
+                _gzh_openid = row.get('openid', '')
+                if _gzh_openid:
+                    from helpers import send_gzh_customer_message
+                    send_gzh_customer_message(_gzh_openid, _reply_text)
             else:
-                c.execute("UPDATE complaints SET status=2 WHERE id=%s", (complaint_id,))
+                c.execute("UPDATE complaints SET status='2' WHERE id=%s", (complaint_id,))
             conn.commit()
             conn.close()
             return json_response(message='退款成功')
         else:
-            logger.warning('[retry_refund] 退款失败 order_id=%s msg=%s', oid, msg)
             conn.close()
             return json_response(message='退款失败: ' + str(msg), code=400)
     except Exception as e:
@@ -2124,11 +2128,11 @@ def admin_apk_push_update():
                 logger.error(f"[APK推送] 推送失败 {did}: {e}")
         if pushed == 0:
             conn2 = get_db()
-            c2 = get_db().cursor()
-            c2.execute("SELECT mainboard_device_id FROM cabinets WHERE mainboard_device_id IS NOT NULL AND mainboard_device_id != ''""")
+            c2 = conn2.cursor()
+            c.execute("SELECT mainboard_device_id FROM cabinets WHERE mainboard_device_id IS NOT NULL AND mainboard_device_id != ''""")
             for row in c2.fetchall():
                 did = row["mainboard_device_id"]
-                c2.execute("INSERT INTO pending_lock_cmds (device_id, command, status) VALUES (%s, %s, \"pending\")", (did, json.dumps(cmd)))
+                c.execute("INSERT INTO pending_lock_cmds (device_id, command, status) VALUES (%s, %s, \"pending\")", (did, json.dumps(cmd)))
             conn2.commit()
             conn2.close()
         return json_response(data={"pushed": pushed}, message=f"已向{pushed}台在线设备推送更新")
@@ -2912,7 +2916,6 @@ def withdrawals_approve():
             c.execute("SELECT user_phone, amount FROM withdrawal_records WHERE id=%s", (wid,))
             r = c.fetchone()
             if r and r['user_phone']:
-                logger.info('[余额操作] 后台拒绝退余额 order_dict.get(" user_phone)%s amount=%s', r['user_phone'], r['amount'])
                 c.execute("UPDATE user_balances SET balance=balance+%s,total_withdrawn=total_withdrawn-%s WHERE phone=%s",
                           (r['amount'], r['amount'], r['user_phone']))
             c.execute("UPDATE withdrawal_records SET status=3, approve_time=NOW(), approver=%s WHERE id=%s",
@@ -3207,7 +3210,7 @@ def location_alarms_list():
                     hb = row['last_heartbeat']
                     if isinstance(hb, str):
                         hb = dt_mod.datetime.strptime(hb, '%Y-%m-%d %H:%M:%S')
-                    diff = (dt_mod.datetime.now() - hb).total_seconds()
+                    diff = (dt_mod.datetime.utcnow() - hb).total_seconds()
                     row['offline'] = diff > 300
                     row['heartbeat_age_min'] = int(diff / 60)
                 except:
@@ -3889,7 +3892,7 @@ def withdrawal_batch_auto():
         
         # 1. ?????auto_approve_time ?????
         rows = c.execute("""
-            SELECT w.id, w.user_phone, w.amount, w.order_id, w.order_ids,
+            SELECT w.id, w.user_phone, w.amount, w.order_id,
                        l.refund_approve_rate
             FROM withdrawal_records w
             JOIN orders o ON w.order_id = o.id
@@ -3897,55 +3900,32 @@ def withdrawal_batch_auto():
             JOIN locations l ON cb.location_id = l.id
             WHERE w.status = 0 AND l.withdraw_mode = 'queue_approve'
         """).fetchall()
-        conn.close()
         for r in rows:
-            try:
-                local_conn = get_db()
-                lc = local_conn.cursor()
-                lc2 = local_conn.cursor()
-                rate = (r['refund_approve_rate'] or 80) / 100.0
-                if _rnd.random() < rate:
-                    # ????????????
-                    from helpers import do_real_refund
-                    order_id = r['order_id']
-                    amt = r['amount']
-                    # ??????
-                    c2 = local_conn.cursor()
-                    lc2.execute('SELECT o.order_no, o.payment_channel_id FROM orders o WHERE id=%s', (order_id,))
-                    ord = c2.fetchone()
-                    if ord:
-                        success, refund_id, msg, _ = do_real_refund(order_id=order_id, order_no=ord['order_no'], amount=amt, payment_channel_id=ord['payment_channel_id'])
-                        if success:
-                            lc2.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), approver='自动' WHERE id=%s", (r['id'],))
-                            lc2.execute("UPDATE orders SET status=4, refund_id=%s, refund_time=NOW() WHERE id=%s", (refund_id, order_id))
-                            approved += 1
-                        else:
-                            lc2.execute("UPDATE withdrawal_records SET status=1, approve_time=NOW(), approver='自动' WHERE id=%s", (r['id'],))
-                else:
-                    # ?????????????
-                    logger.info('[余额操作] 队列拒绝退余额 order_dict.get(" user_phone)%s amount=%s', r['user_phone'], r['amount'])
-                    lc.execute("UPDATE user_balances SET balance = balance + %s, total_withdrawn = total_withdrawn - %s WHERE phone = %s",
-                              (r['amount'], r['amount'], r['user_phone']))
-                    if lc.rowcount == 0:
-                        lc.execute("INSERT INTO user_balances (phone, balance, total_withdrawn, first_use_time) VALUES (%s, %s, 0, NOW())",
-                                  (r['user_phone'], r['amount']))
-                    # 恢复余额明细状态
-                    try:
-                        _oids_str = r.get('order_ids') or '[]'
-                        if _oids_str and _oids_str != '[]':
-                            _oids = json.loads(_oids_str)
-                            if _oids:
-                                lc.execute("UPDATE user_balance_details SET status='available' WHERE order_id::text = ANY(%s) AND status='pending'", (list(map(str, _oids)),))
-                    except:
-                        pass
-                    logger.info('[队列审批拒绝] id=%s order_dict.get(" user_phone)%s amount=%s order_ids=%s', r['id'], r['user_phone'], r['amount'], r.get('order_ids', '[]'))
-                    logger.info('[队列审批拒绝] id=%s order_dict.get(" user_phone)%s amount=%s order_ids=%s', r['id'], r['user_phone'], r['amount'], r.get('order_ids', '[]'))
-                    lc.execute("UPDATE withdrawal_records SET status=3, approve_time=NOW(), approver='队列' WHERE id=%s", (r['id'],))
-                    rejected += 1
-                local_conn.commit()
-                local_conn.close()
-            except Exception as _e:
-                logger.error('[batch_auto] \u5904\u7406\u63d0\u73b0\u5931\u8d25 id=%s: %s', r['id'], _e)
+            rate = (r['refund_approve_rate'] or 80) / 100.0
+            if _rnd.random() < rate:
+                # ????????????
+                from helpers import do_real_refund
+                order_id = r['order_id']
+                amt = r['amount']
+                # ??????
+                c.execute('SELECT o.order_no, o.payment_channel_id FROM orders o WHERE id=%s', (order_id,))
+                ord = c.fetchone()
+                if ord:
+                    success, refund_id, msg = do_real_refund(order_id=order_id, order_no=ord['order_no'], amount=amt, payment_channel_id=ord['payment_channel_id'])
+                    if success:
+                        c.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), approver='自动' WHERE id=%s", (r['id'],))
+                        c.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=%s, refund_time=NOW() WHERE id=%s", (refund_id, order_id))
+                        approved += 1
+                    else:
+                        c.execute("UPDATE withdrawal_records SET status=1, approve_time=NOW(), approver='自动' WHERE id=%s", (r['id'],))
+            else:
+                # ?????????????
+                from helpers import return_to_balance
+                c.execute("UPDATE withdrawal_records SET status=3, approve_time=NOW(), approver='??' WHERE id=%s", (r['id'],))
+                return_to_balance(phone=r['user_phone'], amount=r['amount'], withdrawal_id=r['id'])
+                rejected += 1
+        conn.commit()
+
         conn.close()
         return jsonify({'code': 200, 'message': f'队列审批完成: 通过{approved}笔, 拒绝{rejected}笔', 'data': {'approved': approved, 'rejected': rejected}})
     except Exception as e:
@@ -3965,7 +3945,7 @@ def withdrawal_batch_manual():
         rejected = 0
 
         rows = c.execute("""
-            SELECT w.id, w.amount, w.user_phone, w.order_id, w.order_ids, w.openid, l.auto_approve_rate
+            SELECT w.id, w.amount, w.user_phone, w.order_id, w.openid, l.auto_approve_rate
             FROM withdrawal_records w
             JOIN orders o ON w.order_id = o.id
             JOIN cabinets cb ON o.cabinet_id = cb.id
@@ -3976,60 +3956,36 @@ def withdrawal_batch_manual():
               AND (l.auto_approve_time IS NULL OR l.auto_approve_time = ''
                 OR CURRENT_TIME >= l.auto_approve_time::time)
         """).fetchall()
-        conn.close()
 
         for r in rows:
-            try:
-                local_conn = get_db()
-                lc = local_conn.cursor()
-                lc2 = local_conn.cursor()
-                rate = (r['auto_approve_rate'] or 0) / 100.0
-                if _rnd.random() < rate:
-                    from helpers import do_real_refund
-                    order_id = r['order_id']
-                    amt = r['amount']
-                    c2 = local_conn.cursor()
-                    lc2.execute('SELECT order_no, payment_channel_id FROM orders WHERE id=%s', (order_id,))
-                    ord = c2.fetchone()
-                    if ord:
-                        success, refund_id, msg, _ = do_real_refund(order_id=order_id, order_no=ord['order_no'], amount=amt, payment_channel_id=ord['payment_channel_id'])
-                        if success:
-                            lc2.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), approver='自动' WHERE id=%s", (r['id'],))
-                            lc2.execute("UPDATE orders SET status=4, refund_id=%s, refund_time=NOW() WHERE id=%s", (refund_id, order_id))
-                        else:
-                            lc2.execute("UPDATE withdrawal_records SET status=1, approve_time=NOW(), approver='自动' WHERE id=%s", (r['id'],))
+            rate = (r['auto_approve_rate'] or 0) / 100.0
+            if _rnd.random() < rate:
+                from helpers import do_real_refund
+                order_id = r['order_id']
+                amt = r['amount']
+                c.execute('SELECT order_no, payment_channel_id FROM orders WHERE id=%s', (order_id,))
+                ord = c.fetchone()
+                if ord:
+                    success, refund_id, msg = do_real_refund(order_id=order_id, order_no=ord['order_no'], amount=amt, payment_channel_id=ord['payment_channel_id'])
+                    if success:
+                        c.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), approver='自动' WHERE id=%s", (r['id'],))
+                        c.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=%s, refund_time=NOW() WHERE id=%s", (refund_id, order_id))
                     else:
-                        lc2.execute("UPDATE withdrawal_records SET status=1, approve_time=NOW(), approver='自动' WHERE id=%s", (r['id'],))
-                    approved += 1
+                        c.execute("UPDATE withdrawal_records SET status=1, approve_time=NOW(), approver='自动' WHERE id=%s", (r['id'],))
                 else:
-                    _oid = r.get('openid', '') or ''
-                    if _oid:
-                        logger.info('[余额操作] 人工拒绝退余额 order_dict.get(" user_phone)%s amount=%s', r['user_phone'], r['amount'])
-                        lc.execute("UPDATE user_balances SET balance=balance+%s, total_withdrawn=total_withdrawn-%s WHERE openid=%s", (r['amount'], r['amount'], _oid))
-                    if _oid == '' or lc.rowcount == 0:
-                        logger.info('[余额操作] 人工拒绝退余额2 order_dict.get(" user_phone)%s amount=%s', r['user_phone'], r['amount'])
-                        lc.execute("UPDATE user_balances SET balance=balance+%s, total_withdrawn=total_withdrawn-%s WHERE phone=%s", (r['amount'], r['amount'], r['user_phone']))
-                        if lc.rowcount == 0:
-                            lc.execute("INSERT INTO user_balances (phone, balance, total_withdrawn, first_use_time) VALUES (%s, %s, 0, NOW())",
-                                      (r['user_phone'], r['amount']))
-                    # 恢复余额明细状态
-                    try:
-                        _oids_str = r.get('order_ids') or '[]'
-                        if _oids_str and _oids_str != '[]':
-                            _oids = json.loads(_oids_str)
-                            if _oids:
-                                lc.execute("UPDATE user_balance_details SET status='available' WHERE order_id::text = ANY(%s) AND status='pending'", (list(map(str, _oids)),))
-                    except:
-                        pass
-                    logger.info('[人工审批拒绝] id=%s order_dict.get(" user_phone)%s amount=%s order_ids=%s', r['id'], r['user_phone'], r['amount'], r.get('order_ids', '[]'))
-                    logger.info('[人工审批拒绝] id=%s order_dict.get(" user_phone)%s amount=%s order_ids=%s', r['id'], r['user_phone'], r['amount'], r.get('order_ids', '[]'))
-                    lc.execute("UPDATE withdrawal_records SET status=3, error_msg='自动拒绝(通过率未达标)' WHERE id=%s", (r['id'],))
-                    rejected += 1
+                    c.execute("UPDATE withdrawal_records SET status=1, approve_time=NOW(), approver='自动' WHERE id=%s", (r['id'],))
+                approved += 1
+            else:
+                _oid = r.get('openid', '') or ''
+                if _oid:
+                    c.execute("UPDATE user_balances SET balance=balance+%s, total_withdrawn=total_withdrawn-%s WHERE openid=%s", (r['amount'], r['amount'], _oid))
+                if _oid == '' or c.rowcount == 0:
+                    c.execute("UPDATE user_balances SET balance=balance+%s, total_withdrawn=total_withdrawn-%s WHERE phone=%s", (r['amount'], r['amount'], r['user_phone']))
+                c.execute("UPDATE withdrawal_records SET status=3, error_msg='自动拒绝(通过率未达标)' WHERE id=%s", (r['id'],))
+                rejected += 1
 
-                local_conn.commit()
-                local_conn.close()
-            except Exception as _e:
-                logger.error('[batch_manual] \u5904\u7406\u63d0\u73b0\u5931\u8d25 id=%s: %s', r['id'], _e)
+        conn.commit()
+        conn.close()
         return jsonify({'code': 200, 'message': f'人工审批完成: 通过{approved}笔, 拒绝{rejected}笔', 'data': {'approved': approved, 'rejected': rejected}})
     except Exception as e:
         return jsonify({'code': 500, 'message': str(e)})
@@ -4286,6 +4242,14 @@ def door_records_list():
                 else:
                     where += " AND order_id=%s"
                     params.append(o_str)
+        start_date = request.args.get('start_date', '')
+        end_date = request.args.get('end_date', '')
+        if start_date:
+            where += " AND create_time >= %s"
+            params.append(start_date)
+        if end_date:
+            where += " AND create_time < %s::date + INTERVAL '1 day'"
+            params.append(end_date)
         total = c.execute(f"SELECT COUNT(*) FROM door_records {where}", params).fetchone()[0]
         rows = c.execute(f"SELECT * FROM door_records {where} ORDER BY id DESC LIMIT %s OFFSET %s", params + [limit, (page-1)*limit]).fetchall()
         conn.close()
@@ -4935,7 +4899,7 @@ def admin_device_clear_all():
                     # 退款通知在用户提现时发送，不在清柜时发送
                     notified += 1
                 except Exception as e:
-                    logger.error(f'[clear_all] 发送订阅消息失败 order={o_dict["id"]}: {e}')
+                    pass
             ended += 1
         # Open all slots
         c.execute('SELECT * FROM cabinet_slots WHERE cabinet_id=%s', (cabinet_id,))
@@ -4983,7 +4947,7 @@ def admin_device_unbind():
                     ws.send(cmd_json)
                     logger.info(f"[解绑] 已发送解绑指令(WS): device={device_id}")
                 except Exception as e:
-                    logger.error(f"[解绑] 发送解绑指令失败(WS): {e}")
+                    pass
             # 写入pending_lock_cmds,设备通过HTTP轮询也能收到
             import json as _json
             c.execute("INSERT INTO pending_lock_cmds (device_id, board_no, lock_no, protocol, order_id, command, delivered) VALUES (%s,%s,%s,%s,%s,%s,0)",
@@ -5427,11 +5391,8 @@ def wechat_complaint_notify():
             transaction_id = complaint_order_info[0].get('transaction_id', '')
         
         # 自动处理投诉：退款 + 回复 + 结案
-        if order_no or transaction_id or payer_phone:
-            _search_no = order_no or transaction_id or ''
-            _refund_ok, _refund_msg = _auto_refund_complaint_order(_search_no, transaction_id, complaint_id, payer_phone)
-            if not _refund_ok:
-                logger.warning('[wechat_complaint_notify] 退款失败: %s', _refund_msg)
+        if order_no:
+            _auto_refund_complaint_order(order_no, transaction_id, complaint_id)
             # 查找正确的商户凭证
             _mch_id = complained_mchid
             if not _mch_id:
@@ -5463,34 +5424,9 @@ def wechat_complaint_notify():
                     conn5.close()
                 except:
                     pass
-            if _refund_ok:
-                _auto_reply_complaint(complaint_id, _search_no, transaction_id, mch_id=_mch_id, cert_serial=_cert_serial, private_key_path=_key_path)
-                _auto_complete_complaint(complaint_id, _mch_id, _cert_serial, _key_path)
+            _auto_reply_complaint(complaint_id, order_no, transaction_id, mch_id=_mch_id, cert_serial=_cert_serial, private_key_path=_key_path)
+            _auto_complete_complaint(complaint_id, _mch_id, _cert_serial, _key_path)
         
-        # 拉正拉取投诉详情调用详细并
-        if complaint_id:
-            _fmch = complained_mchid
-            if not _fmch:
-                try:
-                    _fc = get_db().cursor()
-                    _fc.execute('SELECT mch_id FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1')
-                    _fr = _fc.fetchone()
-                    if _fr: _fmch = _fr[0]
-                    _fc.close()
-                except: pass
-            if _fmch:
-                _fcert = WX_CERT_SERIAL_NO; _fkey = WX_KEY_PATH
-                try:
-                    _fcc = get_db().cursor()
-                    _fcc.execute('SELECT cert_serial_no,cert_name FROM payment_channels WHERE mch_id=%s', (_fmch,))
-                    _fcr = _fcc.fetchone()
-                    if _fcr:
-                        _fcert = _fcr[0]
-                        _fkey = f'/home/ubuntu/smart-locker/cert/{_fcr[1]}_key.pem'
-                    _fcc.close()
-                except: pass
-                _fetch_and_update_complaint(complaint_id, _fmch, _fcert, _fkey)
-
         return jsonify({'code': 'SUCCESS', 'message': 'ok'})
     except Exception as e:
         logger.error('[wechat_complaint_notify] 错误: %s', e, exc_info=True)
@@ -5498,7 +5434,7 @@ def wechat_complaint_notify():
 
 
 
-def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id="", payer_phone=""):
+def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id=""):
     """投诉自动原路退款：找到对应订单，调用微信退款API退回押金"""
     try:
         from helpers import do_real_refund
@@ -5511,11 +5447,6 @@ def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id="", p
         if not order and transaction_id:
             c.execute('SELECT id, order_no, transaction_id, deposit_amount, refund_amount, refund_mark, refund_status, status, slot_id, payment_channel_id, user_phone FROM orders WHERE transaction_id=%s LIMIT 1', (transaction_id,))
             order = c.fetchone()
-        if not order and payer_phone:
-            like_phone = payer_phone.replace('*', '_')
-            if len(like_phone) >= 7:
-                c.execute('SELECT id, order_no, transaction_id, deposit_amount, refund_amount, refund_mark, refund_status, status, slot_id, payment_channel_id, user_phone FROM orders WHERE user_phone LIKE %s ORDER BY id DESC LIMIT 1', (like_phone,))
-                order = c.fetchone()
         if not order:
             conn.close()
             logger.warning('[auto_refund_complaint] 未找到对应订单 order_no=%s transaction_id=%s', order_no, transaction_id)
@@ -5530,7 +5461,6 @@ def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id="", p
         
         # 已通过微信原路退款的不重复处理（refund_status为success/refunded表示已微信退款）
         refund_status = order.get('refund_status') or ''
-        logger.info('[auto_refund_complaint] 处理投诉 id=%s 订单=%s 状态=%s 金额=%.2f refund_status=%s', complaint_id, order.get('order_no', ''), status, deposit, refund_status)
         if refund_status in ('success', 'refunded') and deposit > 0:
             conn.close()
             logger.info('[auto_refund_complaint] 订单已微信退款 order_id=%s refund_status=%s', order_id, refund_status)
@@ -5548,8 +5478,7 @@ def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id="", p
             return True, '无可退金额'
         
         # 调用微信退款
-        logger.info('[auto_refund_complaint] 即将退款 order_id=%s amount=%.2f payment_channel_id=%s', order_id, refund_amount, order.get('payment_channel_id'))
-        success, refund_id, msg, _ = do_real_refund(
+        success, refund_id, msg = do_real_refund(
             order_id=order_id,
             order_no=order.get('order_no', ''),
             amount=refund_amount,
@@ -5558,35 +5487,51 @@ def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id="", p
         
         if success:
             from datetime import datetime as dt_mod
-            now = dt_mod.now().strftime('%Y-%m-%d %H:%M:%S')
+            now = dt_mod.now().strftime("%Y-%m-%d %H:%M:%S")
             # 更新订单状态为已退款
             c.execute("UPDATE orders SET refund_mark=1, refund_status='refunded', status=4, refund_amount=%s, refund_time=CURRENT_TIMESTAMP WHERE id=%s",
                       (deposit, order_id))
-            # 释放柜格（如果还在使用中）
+            # 释放柜格
             if status == 2 and order.get('slot_id'):
                 c.execute('UPDATE cabinet_slots SET status=1 WHERE id=%s', (order['slot_id'],))
-            # 记录退款流水
-            c.execute('INSERT INTO payments (order_id, type, amount, transaction_id, refund_transaction_id, status, created_at) VALUES (%s, 2, %s, %s, %s, 1, CURRENT_TIMESTAMP)',
-                      (order_id, refund_amount, order.get('transaction_id', ''), refund_id or ''))
+            # 提交订单更新（独立事务，不受后续操作影响）
+            conn.commit()
+            logger.info("[auto_refund_complaint] 订单已更新为已退款 order_id=%s", order_id)
+            # 记录退款流水（独立事务，失败不影响订单状态）
+            try:
+                c.execute('INSERT INTO payments (order_id, type, amount, transaction_id, refund_transaction_id, status, created_at) VALUES (%s, 2, %s, %s, %s, 1, CURRENT_TIMESTAMP)',
+                          (order_id, refund_amount, order.get("transaction_id", "") or "", refund_id or ""))
+                conn.commit()
+            except Exception as _pe:
+                logger.error("[auto_refund_complaint] 插入payments失败: %s", _pe)
+            # 记录到提现记录
+            try:
+                c.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, approver, auto_approve_time) VALUES (%s, %s, %s, 2, \'投诉自动\', NOW())",
+                          (order_id, order.get("user_phone", "") or "", refund_amount))
+                conn.commit()
+            except Exception as _we:
+                logger.error("[auto_refund_complaint] 插入withdrawal_records失败: %s", _we)
             # 更新投诉记录关联
             if complaint_id:
-                c.execute('UPDATE complaints SET status=2, reply=%s, reply_time=CURRENT_TIMESTAMP WHERE wx_complaint_id=%s OR id=%s',
-                          ('已自动原路退款', complaint_id, complaint_id))
-            conn.commit()
+                try:
+                    c.execute('UPDATE complaints SET status=2, reply=%s, reply_time=CURRENT_TIMESTAMP WHERE wx_complaint_id=%s',
+                              ('已自动原路退款', complaint_id))
+                    conn.commit()
+                except Exception as _ce:
+                    logger.error("[auto_refund_complaint] 更新投诉状态失败: %s", _ce)
             conn.close()
-            logger.info('[auto_refund_complaint] 退款成功 order_id=%s amount=%.2f refund_id=%s', order_id, refund_amount, refund_id)
+            logger.info("[auto_refund_complaint] 退款成功 order_id=%s amount=%.2f refund_id=%s", order_id, refund_amount, refund_id)
             return True, refund_id
         else:
             conn.close()
             logger.error('[auto_refund_complaint] 退款失败 order_id=%s msg=%s', order_id, msg)
             # 永久性错误：订单在微信不存在，不再重试
             if '记录不存在' in msg or 'ORDERNOTEXIST' in msg:
-                logger.info('[auto_refund_complaint] ORDERNOTEXIST, 标记投诉=%s为已处理', complaint_id)
                 try:
                     c2 = get_db()
                     cur2 = c2.cursor()
-                    cur2.execute('UPDATE complaints SET status=2, reply=%s, reply_time=CURRENT_TIMESTAMP WHERE wx_complaint_id=%s OR id=%s',
-                              ('订单在微信不存在，自动退款失败', complaint_id, complaint_id))
+                    cur2.execute('UPDATE complaints SET status=2, reply=%s, reply_time=CURRENT_TIMESTAMP WHERE wx_complaint_id=%s',
+                              ('订单在微信不存在，自动退款失败', complaint_id))
                     c2.commit()
                     c2.close()
                 except Exception as _e3:
@@ -5596,6 +5541,92 @@ def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id="", p
     except Exception as e:
         logger.error('[auto_refund_complaint] 异常: %s', e, exc_info=True)
         return False, str(e)
+
+
+def _auto_refund_self_complaint(phone, openid, complaint_id):
+    """自动处理自我投诉：退用户最近一天的所有未退款订单"""
+    try:
+        from helpers import do_real_refund, send_wx_subscribe_message, send_gzh_customer_message
+        from datetime import datetime
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT DATE(created_at) as dt
+            FROM orders
+            WHERE user_phone=%s AND status=3
+            AND (refund_status IS NULL OR refund_status NOT IN ('success','refunded'))
+            ORDER BY dt DESC LIMIT 1
+        """, (phone,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            # check for in-progress orders (status=2, can't refund yet)
+            try:
+                cur = get_db().cursor()
+                cur.execute("SELECT DISTINCT DATE(created_at) as dt FROM orders WHERE user_phone=%s AND status=2 AND (refund_status IS NULL OR refund_status NOT IN ('success','refunded')) ORDER BY dt DESC LIMIT 1", (phone,))
+                r2 = cur.fetchone()
+                cur.connection.close()
+                if r2:
+                    return 0, 0, 'in_progress'
+            except:
+                pass
+            return 0, 0, '没有找到可退款的订单'
+        target_date = row[0]
+        cur.execute("""
+            SELECT id, order_no, deposit_amount, payment_channel_id
+            FROM orders
+            WHERE user_phone=%s AND DATE(created_at)=%s AND status=3
+            AND (refund_status IS NULL OR refund_status NOT IN (%s,%s))
+            ORDER BY id
+        """, (phone, target_date, 'success', 'refunded'))
+        orders = cur.fetchall()
+        conn.close()
+        if not orders:
+            return 0, 0, f'{target_date}该日期没有可退款的订单'
+        success_count = 0
+        total_amount = 0.0
+        for o in orders:
+            order_id = o[0]
+            order_no = o[1]
+            amount = float(o[2] or 0)
+            ch_id = o[3]
+            ok, rid, msg = do_real_refund(order_id=order_id, order_no=order_no, amount=amount, payment_channel_id=ch_id)
+            if ok:
+                conn2 = get_db()
+                c2 = conn2.cursor()
+                c2.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=%s WHERE id=%s", (rid, order_id))
+                conn2.commit()
+                try:
+                    c2.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, approver, auto_approve_time) VALUES (%s, %s, %s, 2, \'投诉自动\', NOW())",
+                              (order_id, phone, amount))
+                    conn2.commit()
+                except Exception as _we2:
+                    logger.error("[auto_refund_self] 插入withdrawal_records失败: %s", _we2)
+                conn2.close()
+                success_count += 1
+                total_amount += amount
+                logger.info(f'[auto_refund_self] complaint_id={complaint_id} order={order_no} refund ok rid={rid}')
+                sub_data = {
+                    "amount6": {"value": f"¥{amount:.2f}"},
+                    "time4": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
+                    "thing7": {"value": "已返还至小程序用户钱包"},
+                    "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}
+                }
+                try:
+                    send_wx_subscribe_message('', "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", sub_data, phone=phone)
+                    _wd_auto = {'amount8': {'value': '¥{:.2f}'.format(amount)}, 'time6': {'value': datetime.now().strftime('%%Y-%%m-%%d %%H:%%M:%%S')}, 'thing3': {'value': '原路退回支付账户'}, 'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}}
+                    send_wx_subscribe_message('', 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', _wd_auto, phone=phone, page='pages/mine/mine')
+                except Exception as sub_e:
+                    logger.warning(f'[auto_refund_self] 订阅通知失败 complaint_id={complaint_id} {sub_e}')
+            else:
+                logger.warning(f'[auto_refund_self] complaint_id={complaint_id} order={order_no} refund fail: {msg}')
+        if success_count > 0:
+            return success_count, total_amount, f'成功退款{success_count}笔，共¥{total_amount:.2f}'
+        else:
+            return 0, 0, '所有退款均失败'
+    except Exception as e:
+        logger.error(f'[auto_refund_self] complaint_id={complaint_id} error: {e}', exc_info=True)
+        return 0, 0, str(e)
 
 
 def _auto_reply_complaint(complaint_id, order_no="", transaction_id="", mch_id="", cert_serial="", private_key_path=""):
@@ -5956,90 +5987,31 @@ def admin_device_update_result():
         return json_response(code=500, message=str(e))
 
 # ============ 投诉自动处理调度器（替代Timer） ============
-def _fetch_and_update_complaint(complaint_id, mch_id, cert_serial_no, cert_key_path):
-    """调用微信询询技技夹计详情并更新本郑记"""
-    try:
-        from cryptography.hazmat.primitives import hashes, serialization
-        from cryptography.hazmat.primitives.asymmetric import padding
-        import base64, subprocess
-
-        with open(cert_key_path) as f:
-            pk = serialization.load_pem_private_key(f.read().encode(), password=None)
-
-        _cert_path = cert_key_path.replace('_key.pem', '_cert.pem')
-        r = subprocess.run(['openssl', 'x509', '-in', _cert_path, '-serial', '-noout'], capture_output=True, text=True)
-        if r.returncode != 0 or not r.stdout:
-            logger.warning(f'[fetch_complaint] 证书应序列号获取失败 {complaint_id}')
-            return
-        serial_no = r.stdout.strip().split('=')[1]
-
-        ts = str(int(time.time()))
-        nonce = 'fetch_c'
-        url_path = f'/v3/merchant-service/complaints-v2/{complaint_id}'
-        msg = f'GET\n{url_path}\n{ts}\n{nonce}\n\n'
-        sig = base64.b64encode(pk.sign(msg.encode(), padding.PKCS1v15(), hashes.SHA256())).decode()
-        auth = f'WECHATPAY2-SHA256-RSA2048 mchid="{mch_id}",nonce_str="{nonce}",timestamp="{ts}",serial_no="{serial_no}",signature="{sig}"'
-
-        resp = requests.get(f'https://api.mch.weixin.qq.com{url_path}', headers={"Authorization": auth, "Content-Type": 'application/json'}, timeout=15)
-
-        if resp.status_code != 200:
-            logger.warning(f'[fetch_complaint] API失败 {complaint_id}: {resp.status_code}')
-            return
-
-        data = resp.json()
-        conn = get_db()
-        c = conn.cursor()
-        updates = []; params = []
-
-        phone_val = data.get('payer_phone', '') or ''
-        if phone_val:
-            updates.append('user_phone=%s')
-            params.append(phone_val)
-
-        order_val = data.get('out_trade_no', '') or ''
-        if order_val:
-            updates.append('order_no=%s')
-            params.append(order_val)
-            _oc = get_db().cursor()
-            _oc.execute('SELECT id FROM orders WHERE order_no=%s LIMIT 1', (order_val,))
-            _or = _oc.fetchone()
-            if _or:
-                updates.append('order_id=%s')
-                params.append(_or[0])
-            _oc.close()
-
-        mch_val = data.get('complainted_mchid', '') or ''
-        if mch_val:
-            updates.append('mch_id=%s')
-            params.append(mch_val)
-        txn_list = data.get('complaint_order_info', [])
-        if txn_list and txn_list[0].get('transaction_id'):
-            updates.append('transaction_id=%s')
-            params.append(txn_list[0]['transaction_id'])
-
-        detail_val = data.get('complaint_detail', '') or ''
-        if detail_val:
-            updates.append('content=%s')
-            params.append(detail_val)
-
-        if updates:
-            params.append(complaint_id)
-            c.execute(f'UPDATE complaints SET ' + ', '.join(updates) + ' WHERE wx_complaint_id=%s', params)
-            conn.commit()
-            logger.info(f'[fetch_complaint] 更新投诉 {complaint_id}: phone={phone_val} order={order_val}')
-
-        conn.close()
-    except Exception as e:
-        logger.error(f'[fetch_complaint] 异常 {complaint_id}: {e}')
-
 def _complaint_scheduler():
     """后台线程：每30秒扫描未处理的微信投诉（status=0），进行退款+回复"""
     import time
+    import os
+    lock_dir = "/tmp/complaint_scheduler.lockdir"
     while True:
+        # 文件锁：同一时间只让一个 worker 运行调度器
+        if os.path.exists(lock_dir):
+            if time.time() - os.path.getmtime(lock_dir) < 25:
+                time.sleep(30)
+                continue
+            try:
+                os.rmdir(lock_dir)
+            except OSError:
+                time.sleep(30)
+                continue
+        try:
+            os.mkdir(lock_dir)
+        except FileExistsError:
+            time.sleep(30)
+            continue
         try:
             conn = get_db()
             c = conn.cursor()
-            c.execute("SELECT * FROM complaints WHERE status IN ('0','1') AND type IN ('wechat','self') AND created_at < NOW() - INTERVAL '2 minutes' AND created_at > NOW() - INTERVAL '7 days' ORDER By created_at LIMIT 10")
+            c.execute("SELECT * FROM complaints WHERE status IN ('0','1') AND type='wechat' AND created_at < NOW() - INTERVAL '2 minutes' ORDER By created_at LIMIT 10")
             rows = c.fetchall()
             conn.close()
             conn = None
@@ -6051,35 +6023,13 @@ def _complaint_scheduler():
                 cstatus = comp.get("status", "0")
                 logger.info("[complaint_scheduler] 处理投诉 id=%s wx_id=%s status=%s", cid, wxid, cstatus)
                 if cstatus == "0":
-                    _txn = ''; _up = comp.get('user_phone', '') or ''
-                    if ono:
-                        try:
-                            _tc = get_db().cursor()
-                            _tc.execute("SELECT transaction_id FROM orders WHERE order_no=%s LIMIT 1", (ono,))
-                            _tr = _tc.fetchone()
-                            if _tr and _tr[0]: _txn = _tr[0]
-                            _tc.close()
-                        except:
-                            pass
-                    refund_ok, refund_msg = _auto_refund_complaint_order(ono, transaction_id=_txn, complaint_id=cid, payer_phone=_up)
-                    if refund_ok:
-                        cmch = comp.get('mch_id', '') or ''
-                        ccert = WX_CERT_SERIAL_NO
-                        ckey = WX_KEY_PATH
-                        if cmch:
-                            try:
-                                c3 = get_db().cursor()
-                                c3.execute('SELECT cert_serial_no, cert_name FROM payment_channels WHERE mch_id=%s ', (cmch,))
-                                pc = c3.fetchone()
-                                if pc:
-                                    ccert = pc[0]
-                                    ckey = f'/home/ubuntu/smart-locker/cert/{pc[1]}_key.pem'
-                                c3.close()
-                            except:
-                                pass
-                        _auto_reply_complaint(wxid, order_no=ono, transaction_id=_txn, mch_id=cmch, cert_serial=ccert, private_key_path=ckey)
-                    else:
+                    refund_ok, refund_msg = _auto_refund_complaint_order(ono, transaction_id="", complaint_id=wxid)
+                    if not refund_ok:
                         logger.warning("[complaint_scheduler] 退款失败 id=%s msg=%s", cid, refund_msg)
+                    cmch = comp.get('mch_id', '') or ''
+                    ccert = WX_CERT_SERIAL_NO
+                    ckey = WX_KEY_PATH
+                    _auto_reply_complaint(wxid, order_no=ono, transaction_id="", mch_id=cmch, cert_serial=ccert, private_key_path=ckey)
                 elif cstatus == "1":
                     # Use complaint's mch_id to get correct merchant cert
                     cmch = comp.get('mch_id', '') or ''
@@ -6087,7 +6037,7 @@ def _complaint_scheduler():
                     ckey = WX_KEY_PATH
                     if cmch:
                         try:
-                            c3 = get_db().cursor()
+                            c3 = conn2.cursor()
                             c3.execute('SELECT cert_serial_no, cert_name FROM payment_channels WHERE mch_id=%s ', (cmch,))
                             pc = c3.fetchone()
                             if pc:
@@ -6112,8 +6062,8 @@ def _complaint_scheduler():
                     else:
                         logger.error('[投诉自动处理] 无可用商户号')
                     conn2 = get_db()
-                    c2 = get_db().cursor()
-                    c2.execute("UPDATE complaints SET status=2 WHERE id=%s AND status='1'", (cid,))
+                    c2 = conn2.cursor()
+                    c.execute("UPDATE complaints SET status=2 WHERE id=%s AND status='1'", (cid,))
                     conn2.commit()
                     conn2.close()
 
@@ -6127,30 +6077,29 @@ def _complaint_scheduler():
                 for row2 in rows2:
                     comp2 = dict(row2)
                     cid2 = comp2.get("id", 0)
-                    ono2 = comp2.get("order_no", "")
                     phone2 = comp2.get("user_phone", "")
-                    logger.info("[complaint_scheduler] non-wechat complaint id=%s phone=%s order=%s", cid2, phone2, ono2)
-                    if ono2:
-                        refund_ok2, refund_msg2 = _auto_refund_complaint_order(ono2, transaction_id="", complaint_id="", payer_phone=phone2)
-                        if refund_ok2:
-                            logger.info("[complaint_scheduler] non-wechat refund ok id=%s order=%s", cid2, ono2)
-                        else:
-                            logger.warning("[complaint_scheduler] non-wechat refund fail id=%s order=%s phone=%s msg=%s", cid2, ono2, phone2, refund_msg2)
-                            continue  # refund fail, keep status=0 for retry
-                    else:
-                        # Try to find order by phone
-                        refund_ok2, refund_msg2 = _auto_refund_complaint_order("", transaction_id="", complaint_id="", payer_phone=phone2)
-                        if refund_ok2:
-                            logger.info("[complaint_scheduler] non-wechat phone refund ok id=%s phone=%s", cid2, phone2)
-                        else:
-                            logger.warning("[complaint_scheduler] non-wechat phone refund fail id=%s phone=%s msg=%s", cid2, phone2)
-                    reply_text = '您好，您的投诉已收到，我们会尽快处理。如有紧急情况请联系客服，感谢您的理解与支持！'
+                    openid2 = comp2.get("openid", "")
+                    logger.info("[complaint_scheduler] non-wechat complaint id=%s phone=%s", cid2, phone2)
+                    success_count, total_amount, result_msg = _auto_refund_self_complaint(phone2, openid2, cid2)
                     conn4 = get_db()
                     c4 = conn4.cursor()
-                    c4.execute("UPDATE complaints SET reply=%s, status=2, reply_time=CURRENT_TIMESTAMP WHERE id=%s", (reply_text, cid2))
+                    if success_count > 0:
+                        reply_text = f"您好，您最近的{success_count}笔订单（共¥{total_amount:.2f}）已全部退款。如有疑问请联系人工客服4006981080。"
+                        if openid2:
+                            from helpers import send_gzh_customer_message
+                            send_gzh_customer_message(openid2, reply_text)
+                        c4.execute("UPDATE complaints SET reply=%s, status='1', reply_time=CURRENT_TIMESTAMP WHERE id=%s", (reply_text, cid2))
+                    elif 'in_progress' in result_msg:
+                        reply_text = "您有未结束的订单，如需帮助请回复需要，这边帮您处理。"
+                        if openid2:
+                            from helpers import send_gzh_customer_message
+                            send_gzh_customer_message(openid2, reply_text)
+                        c4.execute("UPDATE complaints SET reply=%s, status='2' WHERE id=%s", (reply_text, cid2))
+                    else:
+                        c4.execute("UPDATE complaints SET status='2' WHERE id=%s", (cid2,))
                     conn4.commit()
                     conn4.close()
-                    logger.info("[complaint_scheduler] non-wechat complaint done id=%s", cid2)
+                    logger.info("[complaint_scheduler] non-wechat complaint done id=%s result=%s", cid2, result_msg)
             except Exception as e2:
                 logger.error("[complaint_scheduler] non-wechat error: %s", e2, exc_info=True)
                 try:
@@ -6162,6 +6111,42 @@ def _complaint_scheduler():
                 except:
                     pass
 
+            # ==== ???????? ====
+            try:
+                _sc_h = get_db()
+                _scu_h = _sc_h.cursor()
+                _scu_h.execute("SELECT * FROM complaints WHERE status='0' AND type='self' AND created_at < NOW() - INTERVAL '2 minutes' ORDER BY created_at LIMIT 10")
+                _self_rows_h = _scu_h.fetchall()
+                _sc_h.close()
+                for _sr_h in _self_rows_h:
+                    _scomp_h = dict(_sr_h)
+                    _scid_h = _scomp_h.get("id", 0)
+                    _sphone_h = _scomp_h.get("user_phone", "") or ""
+                    _sopenid_h = _scomp_h.get("openid", "") or ""
+                    _scount_h, _samt_h, _smsg_h = _auto_refund_self_complaint(_sphone_h, _sopenid_h, _scid_h)
+                    if _scount_h > 0:
+                        _reply_h = "您好，您最近的" + str(_scount_h) + "笔订单（共¥" + "{:.2f}".format(_samt_h) + "）已全部退款。如有疑问请联系人工客服4006981080。"
+                        try:
+                            _cc_h = get_db()
+                            _cu_h = _cc_h.cursor()
+                            _cu_h.execute("UPDATE complaints SET reply=%s, status='1', reply_time=CURRENT_TIMESTAMP WHERE id=%s", (_reply_h, _scid_h))
+                            _cc_h.commit()
+                            _cc_h.close()
+                        except:
+                            pass
+                    elif "in_progress" in str(_smsg_h):
+                        _reply2_h = "您有未结束的订单，如需帮助请回复需要，这边帮您处理。"
+                        try:
+                            _cc2_h = get_db()
+                            _cu2_h = _cc2_h.cursor()
+                            _cu2_h.execute("UPDATE complaints SET reply=%s, status='2' WHERE id=%s", (_reply2_h, _scid_h))
+                            _cc2_h.commit()
+                            _cc2_h.close()
+                        except:
+                            pass
+            except Exception as _e_h:
+                logger.error("[complaint_scheduler] self complaint error: %s", _e_h, exc_info=True)
+
         except Exception as e:
             logger.error("[complaint_scheduler] 异常: %s", e, exc_info=True)
         finally:
@@ -6170,6 +6155,8 @@ def _complaint_scheduler():
                     conn.close()
                 except:
                     pass
+            try: os.rmdir(lock_dir)
+            except: pass
         time.sleep(30)
 
 # 启动调度器
@@ -6360,3 +6347,6 @@ def historical_setting():
     except Exception as e:
         logger.error(f'[historical setting] {e}')
         return json_response(message=str(e), code=500)
+
+
+

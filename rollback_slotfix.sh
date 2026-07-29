@@ -1,0 +1,1 @@
+cp /home/ubuntu/smart-locker/routes/admin.py.bak.slotfix. /home/ubuntu/smart-locker/routes/admin.py && cp /home/ubuntu/smart-locker/routes/user.py.bak.slotfix. /home/ubuntu/smart-locker/routes/user.py && sudo systemctl restart smart-locker && echo rollback ok

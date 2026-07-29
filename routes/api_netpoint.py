@@ -15,12 +15,12 @@ def find_device_info():
             return jsonify({'code': -1, 'msg': 'device_id不能为空'})
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM devices WHERE device_id=%s', (device_id,))
+        cursor.execute('SELECT * FROM devices WHERE device_id=?', (device_id,))
         device = cursor.fetchone()
         if not device:
             conn.close()
             return jsonify({'code': -1, 'msg': '设备不存在'})
-        cursor.execute('SELECT * FROM cabinets WHERE device_id=%s ORDER BY board_no, lock_no', (device_id,))
+        cursor.execute('SELECT * FROM cabinets WHERE device_id=? ORDER BY board_no, lock_no', (device_id,))
         cabinets = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return jsonify({'code': 0, 'msg': 'success', 'data': {'device': dict(device), 'cabinets': cabinets, 'cabinet_count': len(cabinets)}})

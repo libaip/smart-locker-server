@@ -186,17 +186,54 @@ def wechat_message():
             _msg_id_row = _cur_msg.fetchone()
             _msg_id_val = _msg_id_row[0] if _msg_id_row else None
             if _phone and _msg_id_val:
-                _cur_msg.execute("SELECT id FROM complaints WHERE user_phone = %s AND status = '0' ORDER BY id DESC LIMIT 1", (_phone,))
+                _cur_msg.execute("SELECT id FROM complaints WHERE openid = %s ORDER BY id DESC", (from_user,))
                 _exist_cr = _cur_msg.fetchone()
                 if _exist_cr:
                     _cid = _exist_cr[0]
                     _cur_msg.execute("UPDATE complaints SET content = content || chr(10) || %s, reply_time = NOW() WHERE id = %s", (content_raw[:500], _cid))
                 else:
-                    _cur_msg.execute("INSERT INTO complaints (user_phone, content, openid, type, status) VALUES (%s, %s, %s, 'self', '0') RETURNING id", (_phone, content_raw[:500], from_user))
+                    _cur_msg.execute("INSERT INTO complaints (user_phone, content, openid, type, complaint_type, status, source) VALUES (%s, %s, %s, 'self', 'self', '0', 'wechat_mp') RETURNING id", (_phone, content_raw[:500], from_user))
                     _cid_row = _cur_msg.fetchone()
                     _cid = _cid_row[0] if _cid_row else 0
                 if _cid:
                     _cur_msg.execute("UPDATE wx_oa_messages SET complaint_id = %s WHERE id = %s", (_cid, _msg_id_val))
+
+                if _phone and _cid:
+                    _cur_msg.execute("SELECT id FROM orders WHERE user_phone = %s AND status IN (2, 3) ORDER BY id DESC LIMIT 1", (_phone,))
+                    _ord_row = _cur_msg.fetchone()
+                    if _ord_row:
+                        _cur_msg.execute("UPDATE complaints SET order_id = %s WHERE id = %s AND order_id IS NULL", (_ord_row[0], _cid))
+            # ====== 自动处理：检测关键词 + 自动退款 ======
+            _auto_reply = ""
+            _keywords = ['退', '钱', '押金', '退款', '退钱', '退押金', '费用', '返还', '返回']
+            if _phone and _cid:
+                _cur_msg.execute("SELECT status FROM complaints WHERE id = %s", (_cid,))
+                _cst_check = _cur_msg.fetchone()
+                if _cst_check and _cst_check[0] == '0' and isinstance(content_raw, str) and any(kw in content_raw for kw in _keywords):
+                    _cur_msg.execute("SELECT id, order_no, deposit_amount, payment_channel_id FROM orders WHERE user_phone = %s AND status IN (2, 3) ORDER BY id DESC", (_phone,))
+                    _orders = _cur_msg.fetchall()
+                    if _orders:
+                        from helpers import do_real_refund as _do_refund
+                        _ok_cnt = 0
+                        _fail_cnt = 0
+                        for _ord in _orders:
+                            _oid, _ono, _amt, _pch = _ord[0], _ord[1], float(_ord[2] or 0), _ord[3]
+                            if _amt > 0:
+                                try:
+                                    _ok, _rid, _rmsg = _do_refund(order_id=_oid, order_no=_ono, amount=_amt, payment_channel_id=_pch)
+                                    if _ok: _ok_cnt += 1
+                                    else: _fail_cnt += 1
+                                except: _fail_cnt += 1
+                            else: _ok_cnt += 1
+                        if _fail_cnt > 0:
+                            _cur_msg.execute("UPDATE complaints SET status = '2' WHERE id = %s", (_cid,))
+                            _auto_reply = "已处理"+str(_ok_cnt)+"笔，"+str(_fail_cnt)+"笔需人工处理"
+                        else:
+                            _cur_msg.execute("UPDATE complaints SET status = '1' WHERE id = %s", (_cid,))
+                            _auto_reply = "已成功退款全正"+str(_ok_cnt)+"笔"
+                    else:
+                        _cur_msg.execute("UPDATE complaints SET status = '1' WHERE id = %s", (_cid,))
+                        _auto_reply = "未找到退款的订单"
             _conn_msg.commit()
             _conn_msg.close()
         except:
@@ -212,6 +249,8 @@ def wechat_message():
                 return '', 200
 
         if msg_type == 'text':
+            if _auto_reply:
+                return _reply(_auto_reply)
             return _reply('''\u60a8\u597d\uff0c\u5df2\u8bb0\u5f55\u60a8\u7684\u7559\u8a00\uff0c\u5ba2\u670d\u4eba\u5458\u5c06\u5c3d\u5feb\u5904\u7406\u3002\u5ba2\u670d\u7535\u8bdd\uff1a4006981080''')
 
         return '', 200

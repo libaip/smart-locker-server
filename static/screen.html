@@ -504,7 +504,7 @@
         document.addEventListener('DOMContentLoaded', function() {
             var params = new URLSearchParams(window.location.search);
             groupCode = params.get('group_code') || params.get('cabinet_code') || 'G001';
-            cabinetCode = groupCode;
+            cabinetCode = params.get('cabinet_code') || groupCode;
 
             document.getElementById('groupCodeDisplay').textContent = '柜组：' + groupCode;
 
@@ -604,7 +604,7 @@
         }
 
         function generateQR() {
-            var depositUrl = 'https://locker.cqdyxl.com/static/deposit.html?group_code=' + encodeURIComponent(groupCode);
+            var depositUrl = 'https://locker.cqdyxl.com/static/deposit.html?group_code=' + encodeURIComponent(groupCode) + '&cabinet_code=' + encodeURIComponent(cabinetCode);
             var canvas = document.getElementById('qrCanvas');
             if (!canvas) return;
             var ctx = canvas.getContext('2d');

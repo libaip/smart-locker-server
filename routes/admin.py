@@ -12,6 +12,7 @@ from login_guard import check_rate, fail, ok, left
 包含：管理员认证、商户、网点、柜组、柜体、主板、柜格、订单、统计、设置等
 """
 import logging
+logger = logging.getLogger(__name__)
 import random
 import string
 import json
@@ -657,7 +658,9 @@ def get_cabinet_public_info(cabinet_id):
                 hb = result['last_heartbeat']
                 if isinstance(hb, str):
                     hb = datetime.strptime(hb[:19], "%Y-%m-%d %H:%M:%S")
-                result['is_online'] = (datetime.now() - hb).total_seconds() < 300
+                elif hasattr(hb, 'tzinfo') and hb.tzinfo is not None:
+                    hb = hb.replace(tzinfo=None)
+                result['is_online'] = (datetime.utcnow() - hb).total_seconds() < 300
             except:
                 result['is_online'] = False
         else:
@@ -683,15 +686,22 @@ def get_cabinet_by_mainboard(mainboard_id):
     if mainboard_id in _CABINET_CACHE:
         cached = _CABINET_CACHE[mainboard_id]
         if now - cached['time'] < _CABINET_CACHE_TTL:
-            # 缓存命中，只更新心跳（轻量操作）
-            try:
-                conn = get_db()
-                conn.cursor().execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (mainboard_id,))
-                conn.commit()
-                conn.close()
-            except:
-                pass
+            
             return cached['data']
+    # 1秒限速
+    if mainboard_id in _CABINET_CACHE:
+        if now - _CABINET_CACHE[mainboard_id]['time'] < 1.0:
+            return _CABINET_CACHE[mainboard_id]['data']
+    # 跨worker全局限速（/dev/shm共享内存）
+    try:
+        lock_file = f'/dev/shm/cabinet_rate_{mainboard_id}'
+        if os.path.exists(lock_file):
+            with open(lock_file) as f:
+                last_global = float(f.read().strip())
+            if mainboard_id in _CABINET_CACHE and now - last_global < 1.0:
+                return _CABINET_CACHE[mainboard_id]['data']
+    except:
+        pass
     try:
         conn = get_db()
         cursor = conn.cursor()
@@ -701,26 +711,14 @@ def get_cabinet_by_mainboard(mainboard_id):
         if not cabinet:
             conn.close()
             return json_response(message='未找到该主板对应的柜体', code=404)
-        # 检查营业状态 + 刷新心跳
+        # 检查营业状态
         biz_status = cabinet['business_status'] if cabinet['business_status'] else 'inactive'
         result = dict(cabinet)
-        try:
-            c_up = conn.cursor()
-            if biz_status == 'inactive':
-                c_up.execute("UPDATE cabinets SET business_status='active', last_heartbeat=NOW() WHERE id=%s", (cabinet['id'],))
-                biz_status = 'active'
-                logger.info(f"[自动激活] 设备 {mainboard_id} 已自动恢复激活")
-            else:
-                c_up.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE id=%s", (cabinet['id'],))
-            conn.commit()
-            result['last_heartbeat'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        except Exception as e:
-            logger.error(f"[心跳刷新] 失败: {e}")
         result['biz_status'] = biz_status
         # 寄存规则只用设备自己的，不用网点的
         # if not result.get('usage_rules'):
         #     result['usage_rules'] = result.get('location_usage_rules', '')
-        cursor.execute("SELECT cs.*, m.board_index, m.slot_count FROM cabinet_slots cs LEFT JOIN mainboards m ON cs.mainboard_id = m.id WHERE cs.cabinet_id = %s ORDER BY cs.slot_number", (cabinet['id'],))
+        cursor.execute("SELECT cs.id, cs.cabinet_id, cs.slot_number, cs.slot_size, cs.status, cs.slot_label, m.board_index, m.slot_count FROM cabinet_slots cs LEFT JOIN mainboards m ON cs.mainboard_id = m.id WHERE cs.cabinet_id = %s ORDER BY cs.slot_number", (cabinet['id'],))
         slots = [dict(s) for s in cursor.fetchall()]
         result['slots'] = slots
         result['available_slots'] = sum(1 for s in slots if s.get('status') == 1)
@@ -972,6 +970,8 @@ def update_slot_status(cabinet_id, slot_id):
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute('UPDATE cabinet_slots SET status = %s WHERE id = %s', (status, slot_id))
+        if status == 1:
+            cursor.execute('UPDATE orders SET status=5, retrieve_time=NOW() WHERE slot_id=%s AND status=2', (slot_id,))
         conn.commit()
         conn.close()
         return json_response(message='柜格状态更新成功')
@@ -1010,15 +1010,16 @@ def open_all_normal_slots(cabinet_id):
     try:
         conn = get_db()
         c = conn.cursor()
-        c.execute('SELECT cs.slot_number, cs.board_no, cs.lock_no, c.mainboard_device_id FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id WHERE cs.cabinet_id = %s AND cs.status IN (1, 2)', (cabinet_id,))
+        c.execute('SELECT cs.slot_number, cs.board_no, cs.lock_no, c.mainboard_device_id FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id WHERE cs.cabinet_id = %s AND cs.status IN (1, 2) ORDER BY cs.board_no, cs.lock_no', (cabinet_id,))
         slots = c.fetchall()
         conn.close()
         if not slots:
             return json_response(message='没有可开的正常柜门', code=400)
         did = str(slots[0]['mainboard_device_id'])
         opened = [s['slot_number'] for s in slots]
-        send_open_all(did)
-        return json_response(message=f'已发送{len(opened)}个柜门开锁指令（批量）', data={'opened': opened})
+        for s in slots:
+            send_open_lock(did, s['board_no'], s['lock_no'], None, '', slot_number=s['slot_number'])
+        return json_response(message=f'已发送{len(opened)}个柜门开锁指令', data={'opened': opened})
     except Exception as e:
         logger.error(f'[open_all] {e}')
         return json_response(message=str(e), code=500)
@@ -1224,6 +1225,7 @@ def refund_order(order_id):
         cursor.execute('UPDATE orders SET status = 4, refund_id = %s, refund_time = %s WHERE id = %s', (refund_no, datetime.now(), order_id))
         # 同步更新余额明细状态
         cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status='available'", (order_id,))
+        cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, openid, order_ids, approve_time) VALUES (%s, %s, %s, 2, 1, %s, %s, %s, NOW())", (order_id, order.get("user_phone", ""), order["deposit_amount"], "管理员", order.get("openid", ""), "[]"))
         conn.commit()
         # 手动退款成功后加入提现白名单（仅一次有效）
         try:
@@ -1302,11 +1304,49 @@ def update_order(order_id):
 # ============================================
 
 @bp.route('/withdrawal/apply', methods=['POST'])
+def _delay_notify(phone, amount):
+    """3秒后发送提现通知"""
+    import threading, time
+    def _send():
+        
+        try:
+            from helpers import send_wx_subscribe_message
+            from datetime import datetime
+            data = {
+                'amount8': {'value': '\u00a5' + f'{amount:.2f}'},
+                'time6': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
+                'thing3': {'value': '\u539f\u8def\u9000\u56de\u652f\u4ed8\u8d26\u6237'},
+                'thing2': {'value': '\u9884\u8ba11-3\u4e2a\u5de5\u4f5c\u65e5\u5230\u8d26\uff0c\u8bf7\u8010\u5fc3\u7b49\u5f85'}
+            }
+            send_wx_subscribe_message('', 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', data, phone=phone)
+        except:
+            pass
+    _send()
+
 def withdrawal_apply():
     """用户申请提现"""
     try:
         data = request.get_json()
         order_id = data.get('order_id')
+        order_ids_raw = data.get("order_ids", [order_id] if order_id else [])
+        import json as _bj
+        if isinstance(order_ids_raw, list) and len(order_ids_raw) > 1:
+            order_ids = [int(x) for x in order_ids_raw]
+            order_ids_json = _bj.dumps(order_ids)
+            total_amount = 0
+            for oid in order_ids:
+                _c2 = conn.cursor()
+                _c2.execute("SELECT deposit_amount FROM orders WHERE id = %s AND user_phone = %s", (oid, user_phone))
+                _r2 = _c2.fetchone()
+                if not _r2:
+                    conn.close()
+                    return json_response(message='order not found', code=400)
+                total_amount += float(_r2[0] or 0)
+            click_count = len(order_ids)
+            amount = total_amount
+        else:
+            order_ids = [int(order_id)] if order_id else []
+            order_ids_json = "[]"
         user_phone = data.get('phone') or data.get('user_phone', '')
         user_openid = data.get('openid', '') or ''
         if not user_phone:
@@ -1368,13 +1408,14 @@ def withdrawal_apply():
                 if withdraw_mode == 'auto_approve':
                     # 自动审批：立即执行原路退款
                     from helpers import do_real_refund
-                    success, refund_id, msg = do_real_refund(order_id=order_id, order_no=eligible['order_no'], amount=amount, payment_channel_id=eligible['payment_channel_id'])
+                    success, refund_id, msg, _ = do_real_refund(order_id=order_id, order_no=eligible['order_no'], amount=amount, payment_channel_id=eligible['payment_channel_id'])
                     # 无论成功失败，先扣余额并创建记录
+                    logger.info('[余额操作] auto_approve 扣余额 phone=%s amount=%s mp_openid=%s 退款结果=%s', user_phone, amount, _real_openid, '成功' if 'success' in dir() else '失败')
                     cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE mp_openid = %s', (amount, amount, _real_openid))
                     if success:
                         # 退款成功
-                        cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, auto_approve_time, openid) VALUES (%s, %s, %s, 2, %s, 'system', NOW(), %s, %s)",
-                                       (order_id, user_phone, amount, click_count, user_openid))
+                        cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, order_ids, approver, auto_approve_time, openid) VALUES (%s, %s,  %s, 2, %s, %s::jsonb, 'system', NOW(), %s)",
+                                       (order_id, user_phone, amount, click_count, order_ids_json, user_openid))
                         withdrawal_id = cursor.lastrowid
                         cursor.execute("UPDATE orders SET status=4, refund_id=%s, refund_time=NOW() WHERE id=%s", (refund_id, order_id))
                         # 同步更新余额明细状态
@@ -1382,41 +1423,17 @@ def withdrawal_apply():
                         conn.commit()
                         conn.close()
                         # 发送退款成功订阅消息（用户点击提现时立即发送）
-                        try:
-                            from helpers import send_wx_subscribe_message
-                            from datetime import datetime as dt_notify
-                            now_str = dt_notify.now().strftime('%Y-%m-%d %H:%M:%S')
-                            refund_notify_data = {
-                                'amount8': {'value': '¥' + f'{amount:.2f}'},
-                                'time6': {'value': now_str},
-                                'thing3': {'value': '原路退回支付账户'},
-                                'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
-                            }
-                            send_wx_subscribe_message('', 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', refund_notify_data, phone=user_phone)
-                        except Exception as e:
-                            logger.error(f'[withdrawal_apply] 发送退款通知失败: {e}')
+                        _delay_notify(user_phone, amount)
                         return json_response({'withdrawal_id': withdrawal_id, 'order_id': order_id, 'status': 'auto_approve', 'amount': amount, 'message': '提现成功，退款将原路返回'})
                     else:
                         # 退款失败（如商户余额不足），记录为待重试 status=4
-                        cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, auto_approve_time, error_msg, openid) VALUES (%s, %s, %s, 4, %s, 'system', NOW(), %s, %s)",
-                                       (order_id, user_phone, amount, click_count, msg, user_openid))
+                        cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, order_ids, approver, auto_approve_time, error_msg, openid) VALUES (%s, %s,  %s, 4, %s, %s::jsonb, 'system', NOW(), %s, %s)",
+                                       (order_id, user_phone, amount, click_count, order_ids_json, msg, user_openid))
                         withdrawal_id = cursor.lastrowid
                         conn.commit()
                         conn.close()
                         # 发送退款成功订阅消息（用户点击提现时立即发送）
-                        try:
-                            from helpers import send_wx_subscribe_message
-                            from datetime import datetime as dt_notify
-                            now_str = dt_notify.now().strftime('%Y-%m-%d %H:%M:%S')
-                            refund_notify_data = {
-                                'amount8': {'value': '¥' + f'{amount:.2f}'},
-                                'time6': {'value': now_str},
-                                'thing3': {'value': '原路退回支付账户'},
-                                'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
-                            }
-                            send_wx_subscribe_message('', 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', refund_notify_data, phone=user_phone)
-                        except Exception as e:
-                            logger.error(f'[withdrawal_apply] 发送退款通知失败: {e}')
+                        _delay_notify(user_phone, amount)
                         # 前端仍然显示成功
                         return json_response({'withdrawal_id': withdrawal_id, 'order_id': order_id, 'status': 'auto_approve', 'amount': amount, 'message': '提现成功，退款将原路返回'})
                 # ?????????????
@@ -1427,25 +1444,13 @@ def withdrawal_apply():
                     rnd_min = _rnd.randint(start_min, end_min)
                     from datetime import timedelta
                     sched = (datetime.now() + timedelta(minutes=rnd_min)).strftime('%Y-%m-%d %H:%M:%S')
-                    cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, auto_approve_time, openid) VALUES (%s, %s, %s, 0, %s, %s, %s)",
-                                   (order_id, user_phone, amount, click_count, sched, user_openid))
+                    cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, order_ids, auto_approve_time, openid) VALUES (%s, %s,  %s, 0, %s, %s::jsonb, %s, %s)",
+                                   (order_id, user_phone, amount, click_count, order_ids_json, sched, user_openid))
                     withdrawal_id = cursor.lastrowid
                     conn.commit()
                     conn.close()
                     # 发送退款成功订阅消息（用户点击提现时立即发送）
-                    try:
-                        from helpers import send_wx_subscribe_message
-                        from datetime import datetime as dt_notify
-                        now_str = dt_notify.now().strftime('%Y-%m-%d %H:%M:%S')
-                        refund_notify_data = {
-                            'amount8': {'value': '¥' + f'{amount:.2f}'},
-                            'time6': {'value': now_str},
-                            'thing3': {'value': '原路退回支付账户'},
-                            'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
-                        }
-                        send_wx_subscribe_message('', 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', refund_notify_data, phone=user_phone)
-                    except Exception as e:
-                        logger.error(f'[withdrawal_apply] 发送退款通知失败: {e}')
+                    _delay_notify(user_phone, amount)
                     return json_response({'withdrawal_id': withdrawal_id, 'order_id': order_id, 'order_no': eligible['order_no'],
                                           'amount': amount, 'status': 'queue_pending', 'message': f'??????????{rnd_min}?????????'})
 
@@ -1455,59 +1460,49 @@ def withdrawal_apply():
                 wl_record = check_whitelist(openid_for_wl) if openid_for_wl else None
                 if wl_record:
                     # 白名单免审，直接退款
-                    success, refund_id, msg = do_real_refund(order_id=order_id, order_no=eligible['order_no'], amount=amount, payment_channel_id=eligible['payment_channel_id'])
+                    success, refund_id, msg, _ = do_real_refund(order_id=order_id, order_no=eligible['order_no'], amount=amount, payment_channel_id=eligible['payment_channel_id'])
                     if success:
                         cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW() WHERE id=%s', (refund_id, order_id))
-                        cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, openid) VALUES (%s, %s, %s, 2, 1, %s, %s)", (order_id, user_phone, amount, 'whitelist_auto', user_openid))
+                        cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, order_ids, approver, openid) VALUES (%s, %s,  %s, 2, 1, %s::jsonb, %s, %s)", (order_id, user_phone, amount, order_ids_json, 'whitelist_auto', user_openid))
                         conn.commit()
                         conn.close()
                         if wl_record['source'] == 'manual_help':
                             consume_whitelist(openid_for_wl)
                         return json_response({'withdrawal_id': 0, 'order_id': order_id, 'amount': amount, 'status': 'auto_approved', 'message': '白名单免审，已自动退款'})
                     else:
-                        cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, error_msg, openid) VALUES (%s, %s, %s, 0, 1, %s, %s)', (order_id, user_phone, amount, msg, user_openid))
+                        cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, order_ids, error_msg, openid) VALUES (%s, %s,  %s, 0, 1, %s::jsonb, %s, %s)', (order_id, user_phone, amount, order_ids_json, msg, user_openid))
                         withdrawal_id = cursor.lastrowid
                         conn.commit()
                         conn.close()
-                        return json_response({'withdrawal_id': withdrawal_id, 'order_id': order_id, 'amount': amount, 'status': 'pending', 'message': '退款接口异常，转人工审核'})
+                    _delay_notify(user_phone, amount)
+                    return json_response({'withdrawal_id': withdrawal_id, 'order_id': order_id, 'amount': amount, 'status': 'pending', 'message': '退款接口异常，转人工审核'})
                 # 检查是否被拒绝后重提
                 cursor.execute('SELECT COUNT(*) as cnt FROM withdrawal_records wr WHERE user_phone = %s AND status = 3', (user_phone,))  # noqa
                 reject_cnt = cursor.fetchone()['cnt']
                 if reject_cnt > 0 and openid_for_wl:
                     add_whitelist(openid_for_wl, 'reject_retry', -1)
-                    success, refund_id, msg = do_real_refund(order_id=order_id, order_no=eligible['order_no'], amount=amount, payment_channel_id=eligible['payment_channel_id'])
+                    success, refund_id, msg, _ = do_real_refund(order_id=order_id, order_no=eligible['order_no'], amount=amount, payment_channel_id=eligible['payment_channel_id'])
                     if success:
                         cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW() WHERE id=%s', (refund_id, order_id))
-                        cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, openid) VALUES (%s, %s, %s, 2, 1, %s, %s)", (order_id, user_phone, amount, 'whitelist_auto', user_openid))
+                        cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, order_ids, approver, openid) VALUES (%s, %s,  %s, 2, 1, %s::jsonb, %s, %s)", (order_id, user_phone, amount, order_ids_json, 'whitelist_auto', user_openid))
                         conn.commit()
                         conn.close()
+                        _delay_notify(user_phone, amount)
                         return json_response({'withdrawal_id': 0, 'order_id': order_id, 'amount': amount, 'status': 'auto_approved', 'message': '已加入白名单，自动退款'})
                     else:
-                        cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, error_msg, openid) VALUES (%s, %s, %s, 0, 1, %s, %s)', (order_id, user_phone, amount, msg, user_openid))
+                        cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, order_ids, error_msg, openid) VALUES (%s, %s,  %s, 0, 1, %s::jsonb, %s, %s)', (order_id, user_phone, amount, order_ids_json, msg, user_openid))
                         withdrawal_id = cursor.lastrowid
                         conn.commit()
                         conn.close()
                         return json_response({'withdrawal_id': withdrawal_id, 'order_id': order_id, 'amount': amount, 'status': 'pending', 'message': '退款接口异常，转人工审核'})
                 # 人工审批：创建待审核记录
-                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid) VALUES (%s, %s, %s, 0, %s, %s)',
-                               (order_id, user_phone, amount, click_count, user_openid))
+                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, order_ids, openid) VALUES (%s, %s,  %s, 0, %s, %s::jsonb, %s)',
+                               (order_id, user_phone, amount, click_count, order_ids_json, user_openid))
                 withdrawal_id = cursor.lastrowid
                 conn.commit()
                 conn.close()
                 # 发送退款成功订阅消息（用户点击提现时立即发送）
-                try:
-                    from helpers import send_wx_subscribe_message
-                    from datetime import datetime as dt_notify
-                    now_str = dt_notify.now().strftime('%Y-%m-%d %H:%M:%S')
-                    refund_notify_data = {
-                        'amount8': {'value': '¥' + f'{amount:.2f}'},
-                        'time6': {'value': now_str},
-                        'thing3': {'value': '原路退回支付账户'},
-                        'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
-                    }
-                    send_wx_subscribe_message('', 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', refund_notify_data, phone=user_phone)
-                except Exception as e:
-                    logger.error(f'[withdrawal_apply] 发送退款通知失败: {e}')
+                _delay_notify(user_phone, amount)
                 return json_response({'withdrawal_id': withdrawal_id, 'order_id': order_id, 'order_no': eligible['order_no'],
                                       'amount': amount, 'status': 'pending', 'message': '提现申请已提交，等待审核'})
             conn.close()
@@ -1539,10 +1534,10 @@ def withdrawal_apply():
         if wl_record:
             # 在白名单中，跳过审批直接退款
             from helpers import do_real_refund
-            success, refund_id, msg = do_real_refund(order_id=order['id'], order_no=order['order_no'], amount=amount, payment_channel_id=order.get('payment_channel_id'))
+            success, refund_id, msg, _ = do_real_refund(order_id=order['id'], order_no=order['order_no'], amount=amount, payment_channel_id=order.get('payment_channel_id'))
             if success:
                 cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW() WHERE id=%s', (refund_id, order['id']))
-                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, openid) VALUES (%s, %s, %s, 2, 1, %s, %s)', (order['id'], user_phone, amount, 'whitelist_auto', user_openid))
+                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, order_ids, approver, openid) VALUES (%s, %s,  %s, 2, 1, %s::jsonb, %s, %s)', (order['id'], user_phone, amount, order_ids_json, 'whitelist_auto', user_openid))
                 conn.commit()
                 conn.close()
                 # 如果是 manual_help 类型，消费次数
@@ -1551,7 +1546,7 @@ def withdrawal_apply():
                 return json_response({'withdrawal_id': 0, 'status': 'auto_approved', 'amount': amount, 'message': '白名单免审，已自动退款'})
             else:
                 # 微信退款失败，转为待审核
-                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, error_msg) VALUES (%s, %s, %s, 0, 1, %s, %s)', (order['id'], user_phone, amount, user_openid, msg))
+                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, order_ids, openid, error_msg) VALUES (%s, %s,  %s, 0, 1, %s::jsonb, %s, %s)', (order['id'], user_phone, amount, order_ids_json, user_openid, msg))
                 withdrawal_id = cursor.lastrowid
                 conn.commit()
                 conn.close()
@@ -1563,21 +1558,21 @@ def withdrawal_apply():
             # 之前被拒绝过，自动加入白名单并放行
             add_whitelist(openid_for_wl, 'reject_retry', -1)
             from helpers import do_real_refund
-            success, refund_id, msg = do_real_refund(order_id=order['id'], order_no=order['order_no'], amount=amount, payment_channel_id=order.get('payment_channel_id'))
+            success, refund_id, msg, _ = do_real_refund(order_id=order['id'], order_no=order['order_no'], amount=amount, payment_channel_id=order.get('payment_channel_id'))
             if success:
                 cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW() WHERE id=%s', (refund_id, order['id']))
-                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, openid) VALUES (%s, %s, %s, 2, 1, %s, %s)', (order['id'], user_phone, amount, 'whitelist_auto', user_openid))
+                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, order_ids, approver, openid) VALUES (%s, %s,  %s, 2, 1, %s::jsonb, %s, %s)', (order['id'], user_phone, amount, order_ids_json, 'whitelist_auto', user_openid))
                 conn.commit()
                 conn.close()
                 return json_response({'withdrawal_id': 0, 'status': 'auto_approved', 'amount': amount, 'message': '已加入白名单，自动退款'})
             else:
-                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, error_msg) VALUES (%s, %s, %s, 0, 1, %s, %s)', (order['id'], user_phone, amount, user_openid, msg))
+                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, order_ids, openid, error_msg) VALUES (%s, %s,  %s, 0, 1, %s::jsonb, %s, %s)', (order['id'], user_phone, amount, order_ids_json, user_openid, msg))
                 withdrawal_id = cursor.lastrowid
                 conn.commit()
                 conn.close()
                 return json_response({'withdrawal_id': withdrawal_id, 'status': 'pending', 'message': '退款接口异常，转人工审核', 'show_refunding_status': dict(order).get('show_refunding_status', 1)})
         # 未在白名单中，创建待审核记录
-        cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid) VALUES (%s, %s, %s, 0, 1, %s)', (order['id'], user_phone, amount, user_openid))
+        cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, order_ids, openid) VALUES (%s, %s,  %s, 0, 1, %s::jsonb, %s)', (order['id'], user_phone, amount, order_ids_json, user_openid))
         withdrawal_id = cursor.lastrowid
         conn.commit()
         conn.close()
@@ -1638,11 +1633,12 @@ def approve_withdrawal(withdrawal_id):
         bal = cursor.fetchone()
         _wd_real_openid = bal['rec_openid'] if bal else _wd_openid
         if bal and bal['balance'] >= amount:
+            logger.info('[余额操作] admin审批扣余额 phone=%s amount=%s', phone, amount)
             cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE mp_openid = %s', (amount, amount, _wd_real_openid))
         # 真正退款
         if order_id:
             from helpers import do_real_refund
-            refund_success, refund_id, refund_msg = do_real_refund(order_id=order_id, amount=amount)
+            refund_success, refund_id, refund_msg, _ = do_real_refund(order_id=order_id, amount=amount)
         else:
             from helpers import do_balance_transfer
             wd_openid = record['openid'] if 'openid' in record.keys() and record['openid'] else None
@@ -1696,8 +1692,10 @@ def reject_withdrawal(withdrawal_id):
         balance = cursor.fetchone()
         _rj_real_openid = balance['rec_openid'] if balance else _rj_openid
         if balance:
+            logger.info('[余额操作] admin拒绝退余额 phone=%s amount=%s', record.get('user_phone',''), record['amount'])
             cursor.execute('UPDATE user_balances SET balance = balance + %s WHERE mp_openid = %s', (record['amount'], _rj_real_openid))
         else:
+            logger.info('[余额操作] admin拒绝新建余额 phone=%s amount=%s', record['user_phone'], record['amount'])
             cursor.execute('INSERT INTO user_balances (phone, openid, mp_openid, balance, total_deposited) VALUES (%s, %s, %s, %s, 0)', (record['user_phone'], _rj_openid, _rj_openid, record['amount']))
         conn.commit()
         conn.close()
@@ -1725,12 +1723,24 @@ def get_complaints():
         if status is not None:
             where_clause += ' AND c.status = %s'
             params.append(status)
-        cursor.execute(f'SELECT c.*, o.order_no, o.cabinet_code, l.name as location_name FROM complaints c LEFT JOIN orders o ON c.order_no = o.order_no LEFT JOIN cabinets ca ON o.cabinet_id = ca.id LEFT JOIN locations l ON ca.location_id = l.id WHERE {where_clause} ORDER BY c.created_at DESC LIMIT %s OFFSET %s', params + [limit, offset])
+        cursor.execute(f'SELECT c.*, o.order_no, o.cabinet_code, l.name as location_name FROM complaints c LEFT JOIN orders o ON c.order_id = o.id OR (c.order_no IS NOT NULL AND c.order_no = o.order_no) LEFT JOIN cabinets ca ON o.cabinet_id = ca.id LEFT JOIN locations l ON ca.location_id = l.id WHERE {where_clause} ORDER BY c.created_at DESC LIMIT %s OFFSET %s', params + [limit, offset])
         complaints = cursor.fetchall()
+        result_list = []
+        if complaints:
+            _lk = conn.cursor()
+            for c in complaints:
+                d = dict(c)
+                if d.get('openid'):
+                    _lk.execute("SELECT wechat_name, phone FROM phone_openids WHERE openid=%s AND wechat_name IS NOT NULL AND wechat_name != '' LIMIT 1", (d['openid'],))
+                    _r = _lk.fetchone()
+                    if _r:
+                        if _r['wechat_name']: d['wechat_name'] = _r['wechat_name']
+                        if not d.get('user_phone') and _r['phone']: d['user_phone'] = _r['phone']
+                result_list.append(d)
         cursor.execute(f'SELECT COUNT(*) as total FROM complaints c WHERE {where_clause}', params)
         total = cursor.fetchone()['total']
         conn.close()
-        return json_response({'list': [dict(c) for c in complaints], 'total': total, 'page': page, 'limit': limit})
+        return json_response({'list': result_list, 'total': total, 'page': page, 'limit': limit})
     except Exception as e:
         logger.error(f'[get_complaints] {e}')
         return json_response(message=str(e), code=500)
@@ -2543,11 +2553,19 @@ def admin_v2_members():
     page = int(data.get('page', 1))
     size = int(data.get('size', 20))
     phone = data.get('phone')
+    start_date = data.get('start_date', '')
+    end_date = data.get('end_date', '')
     where = []
     params = []
     if phone:
         where.append('phone LIKE %s')
         params.append(f'%{phone}%')
+    if start_date:
+        where.append('created_at >= %s')
+        params.append(start_date)
+    if end_date:
+        where.append("created_at < %s::date + INTERVAL '1 day'")
+        params.append(end_date)
     where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
     c.execute(f'SELECT COUNT(*) as cnt FROM user_balances {where_sql}', params)
     total = c.fetchone()['cnt']
@@ -2625,11 +2643,19 @@ def admin_v2_recharge_records():
     page = int(data.get('page', 1))
     size = int(data.get('size', 20))
     phone = data.get('phone')
+    start_date = data.get('start_date', '')
+    end_date = data.get('end_date', '')
     where = []
     params = []
     if phone:
         where.append('phone LIKE %s')
         params.append(f'%{phone}%')
+    if start_date:
+        where.append('created_at >= %s')
+        params.append(start_date)
+    if end_date:
+        where.append("created_at < %s::date + INTERVAL '1 day'")
+        params.append(end_date)
     where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
     c.execute(f'SELECT COUNT(*) as cnt FROM payments {where_sql}', params)
     total = c.fetchone()['cnt']
@@ -2853,7 +2879,7 @@ def admin_v2_stats():
     conn.close()
     return json_response(rows)
 
-@bp.route('/admin/daily-trend-legacy', methods=['GET'])
+@bp.route('/admin/daily-trend', methods=['GET'])
 def admin_v2_daily_trend():
     from helpers import json_response
     conn = get_db()

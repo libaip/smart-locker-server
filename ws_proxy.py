@@ -1,7 +1,9 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 独立 WebSocket 代理服务（端口 5004）
 """
+import gevent.monkey
+gevent.monkey.patch_all()
 import json
 import gevent
 import logging
@@ -10,6 +12,7 @@ import os
 import sys
 import urllib.parse
 from datetime import datetime
+import socket
 
 DB_CONF = {'host':'127.0.0.1','port':6432,'dbname':'smart_locker','user':'locker_admin','password':'locker_pass_2024'}
 
@@ -21,6 +24,7 @@ logging.basicConfig(
 logger = logging.getLogger("ws_proxy")
 
 device_connections = {}
+device_heartbeats = {}
 
 def _db_st(did,st):
     try:
@@ -34,6 +38,19 @@ def _db_st(did,st):
         co.close()
     except Exception as e:
         logger.error(f"[DB] {e}")
+def _record_alert(did, atype, msg):
+    try:
+        import psycopg2
+        co = psycopg2.connect(**DB_CONF)
+        cu = co.cursor()
+        cu.execute("INSERT INTO device_alerts (device_id, alert_type, detail) VALUES (%s, %s, %s)",
+                   (did, atype, msg))
+        co.commit()
+        cu.close()
+        co.close()
+        logger.info("[ALERT] device %s %s: %s", did, atype, msg)
+    except Exception as e:
+        logger.error("[ALERT] %s", e)
 
 lock_results_buffer = []
 
@@ -92,7 +109,25 @@ def _update_version(device_id, version, version_code=0):
 def handle_ws(ws, device_id):
     """处理单个 WebSocket 连接"""
     device_connections[device_id] = ws
+    device_heartbeats[device_id] = time.time()
     _db_st(device_id, 'online')
+    _record_alert(device_id, 'online', 'device online')
+    # keepalive: send ping every 5s to prevent CDN idle timeout
+    def _ping():
+        while not ws.closed:
+            try: ws.send(json.dumps({"type":"ping"}))
+            except: break
+            gevent.sleep(5)
+    _ping_g = gevent.spawn(_ping)
+    try:
+        sock = ws.environ.get("socket") or ws.stream.socket
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+        except: pass
+    except: pass
     logger.info(f"[WS] 设备连接: {device_id}, 当前在线: {len(device_connections)}")
     
     try:
@@ -104,6 +139,7 @@ def handle_ws(ws, device_id):
                 msg = json.loads(message)
                 t = msg.get("type", "")
                 if t == "heartbeat":
+                    device_heartbeats[device_id] = time.time()
                     try:
                         ws.send(json.dumps({"type": "heartbeat_ack", "timestamp": int(time.time() * 1000)}))
                     except:
@@ -118,6 +154,7 @@ def handle_ws(ws, device_id):
                         reg_code = msg.get("version_code", 0) or 0
                         if reg_ver:
                             _update_version(device_id, reg_ver, reg_code)
+                        device_heartbeats[device_id] = time.time()
                     except:
                         pass
             except:
@@ -125,11 +162,28 @@ def handle_ws(ws, device_id):
     except:
         pass
     finally:
+        try: _ping_g.kill()
+        except: pass
         if device_id in device_connections and device_connections.get(device_id) is ws:
             del device_connections[device_id]
             _db_st(device_id, 'offline')
+            _record_alert(device_id, 'offline', 'device offline')
+        device_heartbeats.pop(device_id, None)
         logger.info(f"[WS] 设备断开: {device_id}, 当前在线: {len(device_connections)}")
 
+
+
+def heartbeat_monitor():
+    """periodic check every 30s, close stale connections"""
+    while True:
+        time.sleep(30)
+        now = time.time()
+        for did, ws in list(device_connections.items()):
+            last_hb = device_heartbeats.get(did, 0)
+            if last_hb > 0 and (now - last_hb) > 60:
+                logger.warning("[HB_TIMEOUT] device %s timeout %ds", did, int(now - last_hb))
+                try: ws.close()
+                except: pass
 
 def flush_lock_results():
     """定时将开锁结果转发给主服务"""
@@ -189,7 +243,27 @@ def app(environ, start_response):
             if not ws or ws.closed:
                 start_response("200 OK", [("Content-Type", "application/json")])
                 return [json.dumps({"success": False, "error": "offline"}).encode()]
-            gevent.spawn(ws.send, json.dumps(command))
+            try:
+                ws.send(json.dumps(command))
+                _fb = False
+            except Exception as _se:
+                logger.error("[WS] 同步发送失败, 走轮询兑底: %s", _se)
+                _fb = True
+                try:
+                    import psycopg2
+                    _cd = command if isinstance(command, dict) else json.loads(command) if isinstance(command, str) else {}
+                    _co = psycopg2.connect(**DB_CONF)
+                    _cu = _co.cursor()
+                    _cu.execute("INSERT INTO pending_lock_cmds (device_id, board_no, lock_no, command, delivered) VALUES (%s,%s,%s,%s,0)",
+                               (device_id, _cd.get("board_no","1"), str(_cd.get("lock_no","")), json.dumps(command)))
+                    _co.commit()
+                    _cu.close()
+                    _co.close()
+                    logger.info("[WS] 兑底写入pending_lock_cmds: device=%%s", device_id)
+                except Exception as _se2:
+                    logger.error("[WS] 兑底写库也失败: %%s", _se2)
+                    start_response("200 OK", [("Content-Type", "application/json")])
+                    return [json.dumps({"success": False, "error": "send+db_fallback_failed"}).encode()]
             start_response("200 OK", [("Content-Type", "application/json")])
             return [json.dumps({"success": True}).encode()]
         except Exception as e:
@@ -230,6 +304,7 @@ def app(environ, start_response):
 if __name__ == "__main__":
     import threading
     threading.Thread(target=flush_lock_results, daemon=True).start()
+    threading.Thread(target=heartbeat_monitor, daemon=True).start()
     
     from gevent import pywsgi
     from geventwebsocket.handler import WebSocketHandler

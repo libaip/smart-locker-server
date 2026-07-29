@@ -1575,42 +1575,46 @@
     initDepositPrices();
 
     // 实时检查设备在线状态
-    function checkDeviceOnline(callback) {
-        if (!currentCabinetId) { callback(true); return; }
-        fetch(API_BASE + '/api/cabinets/info/' + currentCabinetId)
-            .then(function(r) { return r.json(); })
-            .then(function(r) {
-                if (r.code === 200 && r.data) {
-                    // 同时更新押金（防止SSR数据过期）
-                    if (r.data.deposit_amount && r.data.deposit_amount > 0 && r.data.deposit_amount !== _baseDeposit) {
-                        _baseDeposit = r.data.deposit_amount;
-                        depositPrices['S'] = Math.round(_baseDeposit * 0.5);
-                        depositPrices['M'] = _baseDeposit;
-                        depositPrices['L'] = Math.round(_baseDeposit * 1.5);
-                        depositPrices['small'] = depositPrices['S'];
-                        depositPrices['medium'] = depositPrices['M'];
-                        depositPrices['large'] = depositPrices['L'];
-                        initDepositPrices();
-                    }
-                    // 用最后心跳判断在线（300秒内算在线）
-                    var hb = r.data.last_heartbeat || '';
-                    if (hb) {
-                        var hbTime = new Date(hb).getTime();
-                        var now = Date.now();
-                        s.is_online = (now - hbTime) < 300000;
+        function checkDeviceOnline(callback) {
+        var up = new URLSearchParams(window.location.search);
+        var grpCode = up.get('group_code') || "";
+        if (grpCode) {
+            var _url = API_BASE + "/api/group/online?group_code=" + encodeURIComponent(grpCode);
+if (cabCode) { _url += "&cabinet_code=" + encodeURIComponent(cabCode); }
+fetch(_url)
+                .then(function(r) { return r.json(); })
+                .then(function(r) {
+                    var isOnline = r.code === 200 && r.data && r.data.online === true;
+                    gIsOnline = isOnline;
+                    callback(isOnline);
+                })
+                .catch(function() { callback(true); });
+        } else if (currentCabinetId) {
+            fetch(API_BASE + "/api/cabinets/info/" + currentCabinetId)
+                .then(function(r) { return r.json(); })
+                .then(function(r) {
+                    if (r.code === 200 && r.data) {
+                        if (r.data.deposit_amount && r.data.deposit_amount > 0 && r.data.deposit_amount !== _baseDeposit) {
+                            _baseDeposit = r.data.deposit_amount;
+                            depositPrices['S'] = Math.round(_baseDeposit * 0.5);
+                            depositPrices['M'] = _baseDeposit;
+                            depositPrices['L'] = Math.round(_baseDeposit * 1.5);
+                            initDepositPrices();
+                        }
+                        var isOnline = r.data.is_online === true;
+                        gIsOnline = isOnline;
+                        callback(isOnline);
                     } else {
-                        s.is_online = false;
+                        callback(true);
                     }
-                    gIsOnline = s.is_online !== false;
-                    callback(s.is_online !== false);
-                } else {
-                    callback(true);
-                }
-            })
-            .catch(function(e) {
-                callback(true);
-            });
+                })
+                .catch(function() { callback(true); });
+        } else {
+            callback(true);
+        }
     }
+
+
 
 
     function loadSettings() {

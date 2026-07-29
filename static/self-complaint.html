@@ -1,0 +1,237 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>自有投诉管理</title>
+<script src="/static/vue.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f0f2f5;color:#333}
+#app{max-width:1400px;margin:0 auto;padding:20px}
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.header h2{font-size:20px;font-weight:500}
+.header a{color:#1890ff;text-decoration:none;font-size:13px}
+.search-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px;background:#fff;padding:12px 16px;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.search-bar label{font-size:13px;color:#666;margin-right:4px}
+.search-bar select,.search-bar input{padding:4px 8px;border:1px solid #dcdfe6;border-radius:4px;font-size:13px;height:30px}
+table{width:100%;border-collapse:collapse;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+th,td{padding:8px 12px;border:1px solid #ebeef5;text-align:left;font-size:13px}
+th{background:#f5f7fa;font-weight:500;white-space:nowrap}
+.status-tag{display:inline-block;padding:2px 8px;border-radius:3px;font-size:12px}
+.status-tag.orange{background:#fdf6ec;color:#e6a23c}
+.status-tag.green{background:#f0f9eb;color:#67c23a}
+.status-tag.blue{background:#ecf5ff;color:#409eff}
+.btn-text{background:none;border:none;cursor:pointer;font-size:13px;padding:2px 6px}
+.btn-text.blue{color:#409eff}
+.btn-text.orange{color:#e6a23c}
+.btn-text.green{color:#67c23a}
+.btn-text:hover{opacity:.8}
+.pagination{display:flex;justify-content:space-between;align-items:center;margin-top:16px;font-size:13px;color:#666}
+.pagination button{padding:4px 12px;border:1px solid #dcdfe6;background:#fff;border-radius:4px;cursor:pointer;font-size:13px}
+.pagination button:disabled{color:#ccc;cursor:default}
+.empty-row{text-align:center;padding:40px 0;color:#999;font-size:14px}
+.loading-row{text-align:center;padding:20px;color:#999}
+.modal-mask{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:1000;display:flex;align-items:center;justify-content:center}
+.modal-box{background:#fff;border-radius:8px;width:90%;max-width:700px;max-height:80vh;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.15)}
+.modal-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #ebeef5}
+.modal-header h3{font-size:16px;font-weight:500}
+.modal-header .close{cursor:pointer;font-size:20px;color:#999}
+.modal-body{padding:16px 20px}
+.modal-footer{padding:12px 20px;border-top:1px solid #ebeef5;text-align:right}
+.modal-footer button{padding:6px 16px;border-radius:4px;border:1px solid #dcdfe6;background:#fff;cursor:pointer;font-size:13px;margin-left:8px}
+.modal-footer .btn-primary{background:#409eff;color:#fff;border-color:#409eff}
+.order-table{width:100%;border-collapse:collapse}
+.order-table th,.order-table td{padding:6px 10px;border:1px solid #ebeef5;text-align:left;font-size:13px}
+.order-table th{background:#f5f7fa;font-weight:500}
+.login-page{display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f0f2f5}
+.login-box{background:#fff;padding:40px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.1);width:360px}
+.login-box h2{text-align:center;margin-bottom:24px;font-weight:500}
+.login-box .form-group{margin-bottom:16px}
+.login-box label{display:block;font-size:13px;color:#666;margin-bottom:4px}
+.login-box input{width:100%;padding:8px 12px;border:1px solid #dcdfe6;border-radius:4px;font-size:14px;box-sizing:border-box}
+.login-box button{width:100%;padding:10px;background:#409eff;color:#fff;border:none;border-radius:4px;font-size:14px;cursor:pointer}
+.login-box .error{color:#f56c6c;font-size:13px;text-align:center;margin-top:8px}
+.detail-row{display:flex;padding:6px 0;font-size:13px}
+.detail-row label{min-width:80px;color:#666;font-weight:500}
+</style>
+</head>
+<body>
+<div id="app">
+<div class="login-page" v-if="!loggedIn">
+<div class="login-box">
+<h2>自有投诉管理</h2>
+<div class="form-group"><label>用户名</label><input v-model="loginForm.username" @keyup.enter="doLogin"></div>
+<div class="form-group"><label>密码</label><input type="password" v-model="loginForm.password" @keyup.enter="doLogin"></div>
+<button @click="doLogin">登录</button>
+<div class="error" v-if="loginError">{{loginError}}</div>
+</div></div>
+
+<div v-else>
+<div class="header"><h2>自有投诉管理</h2><a href="/admin-v2" target="_blank">返回后台管理</a></div>
+<div class="search-bar">
+<div><label>状态</label><select v-model="filter.status" @change="load(1)"><option value="">全部</option><option value="0">待处理</option><option value="1">已处理</option><option value="2">处理中</option></select></div>
+<div><label>开始</label><input type="date" v-model="filter.start"></div>
+<div><label>结束</label><input type="date" v-model="filter.end"></div>
+<button class="btn-text blue" @click="load(1)">查询</button>
+</div>
+
+<table>
+<tr><th>投诉ID</th><th>用户(手机号)</th><th>联系方式</th><th>反馈时间</th><th>反馈内容</th><th>回复日期</th><th>状态</th><th>操作</th></tr>
+<tr v-for="c in list">
+<td>{{c.id}}</td><td>{{c.user_phone||"-"}}</td><td>{{c.user_phone||"-"}}</td>
+<td>{{fmt(c.created_at)}}</td><td>{{c.content||"-"}}</td><td>{{fmt(c.reply_time)||"-"}}</td>
+<td><span :class="'status-tag '+(c.status===0?'orange':c.status===1?'green':'blue')">{{c.status===0?"待处理":c.status===1?"已处理":"处理中"}}</span></td>
+<td>
+<button class="btn-text blue" @click="showDetail(c)">详情</button>
+<button class="btn-text orange" @click="showReply(c)">回复</button>
+<button class="btn-text green" @click="showOrders(c)">提现</button>
+</td>
+</tr>
+<tr v-if="!list.length"><td colspan="8" class="empty-row">暂无数据</td></tr>
+</table>
+
+<div class="pagination">
+<span>共 {{total}} 条</span>
+<div>
+<button :disabled="page<=1" @click="load(page-1)">上一页</button>
+<span style="margin:0 8px">{{page}} / {{pageCount || 1}}</span>
+<button :disabled="page>=pageCount" @click="load(page+1)">下一页</button>
+</div></div>
+</div>
+
+<div class="modal-mask" v-if="dm" @click.self="dm=false">
+<div class="modal-box">
+<div class="modal-header"><h3>投诉详情</h3><span class="close" @click="dm=false">x</span></div>
+<div class="modal-body">
+<div class="detail-row"><label>投诉ID</label><span>{{dc.id}}</span></div>
+<div class="detail-row"><label>用户</label><span>{{dc.user_phone||"-"}}</span></div>
+<div class="detail-row"><label>内容</label><span>{{dc.content||"-"}}</span></div>
+<div class="detail-row"><label>时间</label><span>{{fmt(dc.created_at)}}</span></div>
+<div class="detail-row"><label>回复</label><span>{{dc.reply||"-"}}</span></div>
+<div class="detail-row"><label>回复时间</label><span>{{fmt(dc.reply_time)}}</span></div>
+<div class="detail-row"><label>状态</label><span :class="'status-tag '+(dc.status===0?'orange':dc.status===1?'green':'blue')">{{dc.status===0?"待处理":dc.status===1?"已处理":"处理中"}}</span></div>
+</div>
+<div class="modal-footer"><button @click="dm=false">关闭</button></div>
+</div></div>
+
+<div class="modal-mask" v-if="rm" @click.self="rm=false">
+<div class="modal-box">
+<div class="modal-header"><h3>回复投诉</h3><span class="close" @click="rm=false">x</span></div>
+<div class="modal-body">
+<div style="margin-bottom:8px;font-size:13px;color:#666">回复投诉 #{{rt.id}} ({{rt.user_phone}})</div>
+<textarea v-model="replyText" rows="4" style="width:100%;padding:8px;border:1px solid #dcdfe6;border-radius:4px;resize:vertical;font-size:13px;box-sizing:border-box" placeholder="请输入回复内容"></textarea>
+</div>
+<div class="modal-footer">
+<button @click="rm=false">取消</button>
+<button class="btn-primary" @click="doReply">提交</button>
+</div>
+</div></div>
+
+<div class="modal-mask" v-if="wm" @click.self="wm=false">
+<div class="modal-box">
+<div class="modal-header"><h3>未退款订单</h3><span class="close" @click="wm=false">x</span></div>
+<div class="modal-body">
+<div v-if="ol" class="loading-row">加载中...</div>
+<table class="order-table" v-else-if="os.length">
+<tr><th>订单号</th><th>使用时间</th><th>金额</th><th>操作</th></tr>
+<tr v-for="o in os">
+<td>{{o.order_no||"-"}}</td><td>{{fmt(o.store_time)}}</td>
+<td>¥{{o.deposit_amount||0}}</td>
+<td><button class="btn-text green" @click="refund(o)">退款</button></td>
+</tr>
+</table>
+<div v-else class="empty-row">暂无未退款订单</div>
+</div>
+<div class="modal-footer"><button @click="wm=false">关闭</button></div>
+</div></div>
+</div>
+
+<script>
+new Vue({
+el:"#app",
+data:{
+loggedIn:false,lf:{username:"",password:""},le:"",
+list:[],total:0,page:1,ps:15,
+filter:{status:"",start:"",end:""},
+dm:false,dc:{},rm:false,rt:{},replyText:"",
+wm:false,os:[],ol:false,wt:null
+},
+computed:{
+pageCount:function(){return Math.max(1,Math.ceil(this.total/this.ps))}
+},
+created:function(){
+var d=new Date(),s=new Date(d);s.setDate(d.getDate()-30);
+this.filter.start=s.toISOString().slice(0,10);
+this.filter.end=d.toISOString().slice(0,10);
+this.check();
+},
+methods:{
+api:function(u,d,m){
+var o={method:m||"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"}};
+if(d)o.body=JSON.stringify(d);
+return fetch(u,o).then(function(r){return r.json()});
+},
+check:function(){
+var self=this;
+fetch("/api/check-login",{credentials:"same-origin"}).then(function(r){return r.json()}).then(function(d){
+if(d.logged_in){self.loggedIn=true;self.load(1);}
+}).catch(function(){});
+},
+login:function(){
+var self=this;self.le="";
+self.api("/api/admin/login",{username:this.lf.username,password:this.lf.password}).then(function(d){
+if(d.code===0){self.loggedIn=true;self.load(1);}else{self.le=d.message||"登录失败";}
+}).catch(function(){self.le="登录失败";});
+},
+load:function(p){
+if(p)this.page=p;
+var self=this,q={type:"self",page:this.page,limit:this.ps,status:this.filter.status};
+if(this.filter.start)q.start_date=this.filter.start;
+if(this.filter.end)q.end_date=this.filter.end;
+var qs=Object.keys(q).map(function(k){return k+"="+encodeURIComponent(q[k])}).join("&");
+self.api("/api/admin/complaints?"+qs,null,"GET").then(function(d){
+self.list=(d.data&&d.data.list)||[];self.total=(d.data&&d.data.total)||0;
+}).catch(function(){self.list=[];self.total=0;});
+},
+fmt:function(t){
+if(!t)return "-";
+try{var d=new Date(t);if(isNaN(d.getTime()))return t;
+return d.getFullYear()+"-"+(d.getMonth()+1).toString().padStart(2,"0")+"-"+d.getDate().toString().padStart(2,"0")+" "+d.getHours().toString().padStart(2,"0")+":"+d.getMinutes().toString().padStart(2,"0");
+}catch(e){return t}
+},
+showDetail:function(c){this.dc=c;this.dm=true;},
+showReply:function(c){this.rt=c;this.replyText="";this.rm=true;},
+doReply:function(){
+var self=this;if(!this.replyText.trim())return;
+self.api("/api/admin/complaint/reply",{id:this.rt.id,reply:this.replyText}).then(function(d){
+if(d.code===0){self.toast("回复成功");self.rm=false;self.load(self.page);}
+else{alert(d.message||"回复失败");}
+}).catch(function(){alert("回复失败");});
+},
+showOrders:function(c){
+this.wt=c;this.os=[];this.ol=true;this.wm=true;
+var self=this;
+self.api("/api/admin/self-complaint/user-orders",{phone:c.user_phone}).then(function(d){
+self.os=(d.data&&d.data.list)||[];self.ol=false;
+}).catch(function(){self.os=[];self.ol=false;});
+},
+refund:function(o){
+var self=this;
+if(!confirm("确定退款订单 "+(o.order_no||"")+"?"))return;
+self.api("/api/admin/complaint/retry-refund",{id:this.wt.id,order_no:o.order_no,deposit_amount:o.deposit_amount,payment_channel_id:o.payment_channel_id,complaint_order_id:o.id}).then(function(d){
+self.toast(d.message||"退款成功");self.showOrders(self.wt);self.load(self.page);
+}).catch(function(e){alert(e.message||"退款失败");});
+},
+toast:function(m){
+var t=document.createElement("div");
+t.style.cssText="position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:10px 24px;border-radius:6px;font-size:14px;z-index:2000;min-width:200px;text-align:center";
+t.textContent=m;
+document.body.appendChild(t);
+setTimeout(function(){t.remove();},2000);
+}
+}
+});
+</script>
+</body>
+</html>

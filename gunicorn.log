@@ -35,3 +35,195 @@ nohup: failed to run command 'gunicorn': No such file or directory
 [2026-07-15 23:15:28 +0800] [1015048] [INFO] Booting worker with pid: 1015048
 [2026-07-15 23:15:28 +0800] [1015049] [INFO] Booting worker with pid: 1015049
 [2026-07-15 23:15:28 +0800] [1015040] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+[2026-07-29 16:27:12 +0800] [2100526] [INFO] Starting gunicorn 26.0.0
+[2026-07-29 16:27:12 +0800] [2100526] [INFO] Listening at: http://127.0.0.1:5001 (2100526)
+[2026-07-29 16:27:12 +0800] [2100526] [INFO] Using worker: geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+[2026-07-29 16:27:12 +0800] [2100527] [INFO] Booting worker with pid: 2100527
+[2026-07-29 16:27:12 +0800] [2100528] [INFO] Booting worker with pid: 2100528
+[2026-07-29 16:27:12 +0800] [2100529] [INFO] Booting worker with pid: 2100529
+[2026-07-29 16:27:12 +0800] [2100530] [INFO] Booting worker with pid: 2100530
+[2026-07-29 16:27:12 +0800] [2100531] [INFO] Booting worker with pid: 2100531
+[2026-07-29 16:27:12 +0800] [2100532] [INFO] Booting worker with pid: 2100532
+[2026-07-29 16:27:12 +0800] [2100535] [INFO] Booting worker with pid: 2100535
+[2026-07-29 16:27:12 +0800] [2100536] [INFO] Booting worker with pid: 2100536
+[2026-07-29 16:27:12 +0800] [2100526] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+[2026-07-29 16:31:19 +0800] [2102594] [INFO] Starting gunicorn 26.0.0
+[2026-07-29 16:31:19 +0800] [2102594] [ERROR] Connection in use: ('127.0.0.1', 5001)
+[2026-07-29 16:31:19 +0800] [2102594] [ERROR] connection to ('127.0.0.1', 5001) failed: [Errno 98] Address already in use
+[2026-07-29 16:31:20 +0800] [2102594] [ERROR] Connection in use: ('127.0.0.1', 5001)
+[2026-07-29 16:31:20 +0800] [2102594] [ERROR] connection to ('127.0.0.1', 5001) failed: [Errno 98] Address already in use
+[2026-07-29 16:31:21 +0800] [2102594] [ERROR] Connection in use: ('127.0.0.1', 5001)
+[2026-07-29 16:31:21 +0800] [2102594] [ERROR] connection to ('127.0.0.1', 5001) failed: [Errno 98] Address already in use
+[2026-07-29 16:31:22 +0800] [2102594] [ERROR] Connection in use: ('127.0.0.1', 5001)
+[2026-07-29 16:31:22 +0800] [2102594] [ERROR] connection to ('127.0.0.1', 5001) failed: [Errno 98] Address already in use
+[2026-07-29 16:31:23 +0800] [2102594] [ERROR] Connection in use: ('127.0.0.1', 5001)
+[2026-07-29 16:31:23 +0800] [2102594] [ERROR] connection to ('127.0.0.1', 5001) failed: [Errno 98] Address already in use
+[2026-07-29 16:31:24 +0800] [2102594] [ERROR] Can't connect to ('127.0.0.1', 5001)
+[2026-07-29 16:31:54 +0800] [2103029] [INFO] Starting gunicorn 26.0.0
+[2026-07-29 16:31:54 +0800] [2103029] [INFO] Listening at: http://127.0.0.1:5001 (2103029)
+[2026-07-29 16:31:54 +0800] [2103029] [INFO] Using worker: geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+[2026-07-29 16:31:54 +0800] [2103031] [INFO] Booting worker with pid: 2103031
+[2026-07-29 16:31:54 +0800] [2103032] [INFO] Booting worker with pid: 2103032
+[2026-07-29 16:31:54 +0800] [2103033] [INFO] Booting worker with pid: 2103033
+[2026-07-29 16:31:54 +0800] [2103034] [INFO] Booting worker with pid: 2103034
+[2026-07-29 16:31:54 +0800] [2103035] [INFO] Booting worker with pid: 2103035
+[2026-07-29 16:31:55 +0800] [2103036] [INFO] Booting worker with pid: 2103036
+[2026-07-29 16:31:55 +0800] [2103037] [INFO] Booting worker with pid: 2103037
+[2026-07-29 16:31:55 +0800] [2103038] [INFO] Booting worker with pid: 2103038
+[2026-07-29 16:31:55 +0800] [2103029] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+[2026-07-29 16:33:15 +0800] [2103844] [INFO] Starting gunicorn 26.0.0
+[2026-07-29 16:33:15 +0800] [2103844] [INFO] Listening at: http://127.0.0.1:5001 (2103844)
+[2026-07-29 16:33:15 +0800] [2103844] [INFO] Using worker: geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+[2026-07-29 16:33:15 +0800] [2103846] [INFO] Booting worker with pid: 2103846
+[2026-07-29 16:33:15 +0800] [2103847] [INFO] Booting worker with pid: 2103847
+[2026-07-29 16:33:15 +0800] [2103848] [INFO] Booting worker with pid: 2103848
+[2026-07-29 16:33:15 +0800] [2103849] [INFO] Booting worker with pid: 2103849
+[2026-07-29 16:33:15 +0800] [2103850] [INFO] Booting worker with pid: 2103850
+[2026-07-29 16:33:15 +0800] [2103851] [INFO] Booting worker with pid: 2103851
+[2026-07-29 16:33:15 +0800] [2103852] [INFO] Booting worker with pid: 2103852
+[2026-07-29 16:33:15 +0800] [2103853] [INFO] Booting worker with pid: 2103853
+[2026-07-29 16:33:16 +0800] [2103844] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+[2026-07-29 16:34:14 +0800] [2104440] [INFO] Starting gunicorn 26.0.0
+[2026-07-29 16:34:14 +0800] [2104440] [INFO] Listening at: http://127.0.0.1:5001 (2104440)
+[2026-07-29 16:34:14 +0800] [2104440] [INFO] Using worker: geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+[2026-07-29 16:34:14 +0800] [2104442] [INFO] Booting worker with pid: 2104442
+[2026-07-29 16:34:14 +0800] [2104443] [INFO] Booting worker with pid: 2104443
+[2026-07-29 16:34:14 +0800] [2104444] [INFO] Booting worker with pid: 2104444
+[2026-07-29 16:34:14 +0800] [2104445] [INFO] Booting worker with pid: 2104445
+[2026-07-29 16:34:14 +0800] [2104446] [INFO] Booting worker with pid: 2104446
+[2026-07-29 16:34:15 +0800] [2104447] [INFO] Booting worker with pid: 2104447
+[2026-07-29 16:34:15 +0800] [2104448] [INFO] Booting worker with pid: 2104448
+[2026-07-29 16:34:15 +0800] [2104449] [INFO] Booting worker with pid: 2104449
+[2026-07-29 16:34:15 +0800] [2104440] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+[2026-07-29 16:36:52 +0800] [2105420] [INFO] Starting gunicorn 26.0.0
+[2026-07-29 16:36:52 +0800] [2105420] [INFO] Listening at: http://127.0.0.1:5001 (2105420)
+[2026-07-29 16:36:52 +0800] [2105420] [INFO] Using worker: geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+[2026-07-29 16:36:52 +0800] [2105422] [INFO] Booting worker with pid: 2105422
+[2026-07-29 16:36:52 +0800] [2105423] [INFO] Booting worker with pid: 2105423
+[2026-07-29 16:36:52 +0800] [2105424] [INFO] Booting worker with pid: 2105424
+[2026-07-29 16:36:52 +0800] [2105425] [INFO] Booting worker with pid: 2105425
+[2026-07-29 16:36:52 +0800] [2105426] [INFO] Booting worker with pid: 2105426
+[2026-07-29 16:36:52 +0800] [2105427] [INFO] Booting worker with pid: 2105427
+[2026-07-29 16:36:53 +0800] [2105428] [INFO] Booting worker with pid: 2105428
+[2026-07-29 16:36:53 +0800] [2105429] [INFO] Booting worker with pid: 2105429
+[2026-07-29 16:36:53 +0800] [2105420] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+[2026-07-29 16:38:19 +0800] [2106041] [INFO] Starting gunicorn 26.0.0
+[2026-07-29 16:38:19 +0800] [2106041] [INFO] Listening at: http://127.0.0.1:5001 (2106041)
+[2026-07-29 16:38:19 +0800] [2106041] [INFO] Using worker: geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+[2026-07-29 16:38:19 +0800] [2106043] [INFO] Booting worker with pid: 2106043
+[2026-07-29 16:38:19 +0800] [2106044] [INFO] Booting worker with pid: 2106044
+[2026-07-29 16:38:19 +0800] [2106045] [INFO] Booting worker with pid: 2106045
+[2026-07-29 16:38:19 +0800] [2106046] [INFO] Booting worker with pid: 2106046
+[2026-07-29 16:38:19 +0800] [2106047] [INFO] Booting worker with pid: 2106047
+[2026-07-29 16:38:19 +0800] [2106052] [INFO] Booting worker with pid: 2106052
+[2026-07-29 16:38:19 +0800] [2106053] [INFO] Booting worker with pid: 2106053
+[2026-07-29 16:38:19 +0800] [2106054] [INFO] Booting worker with pid: 2106054
+[2026-07-29 16:38:19 +0800] [2106041] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+[2026-07-29 16:41:36 +0800] [2107366] [INFO] Starting gunicorn 26.0.0
+[2026-07-29 16:41:36 +0800] [2107366] [INFO] Listening at: http://127.0.0.1:5001 (2107366)
+[2026-07-29 16:41:36 +0800] [2107366] [INFO] Using worker: geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+[2026-07-29 16:41:36 +0800] [2107368] [INFO] Booting worker with pid: 2107368
+[2026-07-29 16:41:36 +0800] [2107369] [INFO] Booting worker with pid: 2107369
+[2026-07-29 16:41:36 +0800] [2107370] [INFO] Booting worker with pid: 2107370
+[2026-07-29 16:41:36 +0800] [2107371] [INFO] Booting worker with pid: 2107371
+[2026-07-29 16:41:36 +0800] [2107372] [INFO] Booting worker with pid: 2107372
+[2026-07-29 16:41:36 +0800] [2107373] [INFO] Booting worker with pid: 2107373
+[2026-07-29 16:41:36 +0800] [2107374] [INFO] Booting worker with pid: 2107374
+[2026-07-29 16:41:36 +0800] [2107375] [INFO] Booting worker with pid: 2107375
+[2026-07-29 16:41:36 +0800] [2107366] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+[2026-07-29 16:42:59 +0800] [2108126] [INFO] Starting gunicorn 26.0.0
+[2026-07-29 16:42:59 +0800] [2108126] [INFO] Listening at: http://127.0.0.1:5001 (2108126)
+[2026-07-29 16:42:59 +0800] [2108126] [INFO] Using worker: geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+[2026-07-29 16:42:59 +0800] [2108128] [INFO] Booting worker with pid: 2108128
+[2026-07-29 16:42:59 +0800] [2108129] [INFO] Booting worker with pid: 2108129
+[2026-07-29 16:42:59 +0800] [2108130] [INFO] Booting worker with pid: 2108130
+[2026-07-29 16:42:59 +0800] [2108131] [INFO] Booting worker with pid: 2108131
+[2026-07-29 16:42:59 +0800] [2108132] [INFO] Booting worker with pid: 2108132
+[2026-07-29 16:42:59 +0800] [2108133] [INFO] Booting worker with pid: 2108133
+[2026-07-29 16:42:59 +0800] [2108134] [INFO] Booting worker with pid: 2108134
+[2026-07-29 16:43:00 +0800] [2108135] [INFO] Booting worker with pid: 2108135
+[2026-07-29 16:43:00 +0800] [2108126] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+[2026-07-29 16:46:29 +0800] [2109537] [INFO] Starting gunicorn 26.0.0
+[2026-07-29 16:46:29 +0800] [2109537] [INFO] Listening at: http://127.0.0.1:5001 (2109537)
+[2026-07-29 16:46:29 +0800] [2109537] [INFO] Using worker: geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+[2026-07-29 16:46:29 +0800] [2109539] [INFO] Booting worker with pid: 2109539
+[2026-07-29 16:46:29 +0800] [2109540] [INFO] Booting worker with pid: 2109540
+[2026-07-29 16:46:29 +0800] [2109541] [INFO] Booting worker with pid: 2109541
+[2026-07-29 16:46:29 +0800] [2109542] [INFO] Booting worker with pid: 2109542
+[2026-07-29 16:46:29 +0800] [2109543] [INFO] Booting worker with pid: 2109543
+[2026-07-29 16:46:30 +0800] [2109545] [INFO] Booting worker with pid: 2109545
+[2026-07-29 16:46:30 +0800] [2109546] [INFO] Booting worker with pid: 2109546
+[2026-07-29 16:46:30 +0800] [2109547] [INFO] Booting worker with pid: 2109547
+[2026-07-29 16:46:30 +0800] [2109537] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+[2026-07-29 16:47:35 +0800] [2110028] [INFO] Starting gunicorn 26.0.0
+[2026-07-29 16:47:35 +0800] [2110028] [INFO] Listening at: http://127.0.0.1:5001 (2110028)
+[2026-07-29 16:47:35 +0800] [2110028] [INFO] Using worker: geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+[2026-07-29 16:47:35 +0800] [2110030] [INFO] Booting worker with pid: 2110030
+[2026-07-29 16:47:36 +0800] [2110031] [INFO] Booting worker with pid: 2110031
+[2026-07-29 16:47:36 +0800] [2110032] [INFO] Booting worker with pid: 2110032
+[2026-07-29 16:47:36 +0800] [2110033] [INFO] Booting worker with pid: 2110033
+[2026-07-29 16:47:36 +0800] [2110034] [INFO] Booting worker with pid: 2110034
+[2026-07-29 16:47:36 +0800] [2110035] [INFO] Booting worker with pid: 2110035
+[2026-07-29 16:47:36 +0800] [2110036] [INFO] Booting worker with pid: 2110036
+[2026-07-29 16:47:36 +0800] [2110037] [INFO] Booting worker with pid: 2110037
+[2026-07-29 16:47:36 +0800] [2110028] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+[2026-07-29 16:49:19 +0800] [2110831] [INFO] Starting gunicorn 26.0.0
+[2026-07-29 16:49:19 +0800] [2110831] [INFO] Listening at: http://127.0.0.1:5001 (2110831)
+[2026-07-29 16:49:19 +0800] [2110831] [INFO] Using worker: geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+[2026-07-29 16:49:19 +0800] [2110833] [INFO] Booting worker with pid: 2110833
+[2026-07-29 16:49:19 +0800] [2110838] [INFO] Booting worker with pid: 2110838
+[2026-07-29 16:49:19 +0800] [2110839] [INFO] Booting worker with pid: 2110839
+[2026-07-29 16:49:19 +0800] [2110840] [INFO] Booting worker with pid: 2110840
+[2026-07-29 16:49:19 +0800] [2110841] [INFO] Booting worker with pid: 2110841
+[2026-07-29 16:49:19 +0800] [2110842] [INFO] Booting worker with pid: 2110842
+[2026-07-29 16:49:19 +0800] [2110843] [INFO] Booting worker with pid: 2110843
+[2026-07-29 16:49:19 +0800] [2110844] [INFO] Booting worker with pid: 2110844
+[2026-07-29 16:49:19 +0800] [2110831] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+[2026-07-29 16:51:56 +0800] [2111973] [INFO] Starting gunicorn 26.0.0
+[2026-07-29 16:51:56 +0800] [2111973] [INFO] Listening at: http://127.0.0.1:5001 (2111973)
+[2026-07-29 16:51:56 +0800] [2111973] [INFO] Using worker: geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+[2026-07-29 16:51:56 +0800] [2111975] [INFO] Booting worker with pid: 2111975
+[2026-07-29 16:51:57 +0800] [2111976] [INFO] Booting worker with pid: 2111976
+[2026-07-29 16:51:57 +0800] [2111977] [INFO] Booting worker with pid: 2111977
+[2026-07-29 16:51:57 +0800] [2111978] [INFO] Booting worker with pid: 2111978
+[2026-07-29 16:51:57 +0800] [2111979] [INFO] Booting worker with pid: 2111979
+[2026-07-29 16:51:57 +0800] [2111981] [INFO] Booting worker with pid: 2111981
+[2026-07-29 16:51:57 +0800] [2111980] [INFO] Booting worker with pid: 2111980
+[2026-07-29 16:51:57 +0800] [2111982] [INFO] Booting worker with pid: 2111982
+[2026-07-29 16:51:57 +0800] [2111973] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+[2026-07-29 16:52:29 +0800] [2112276] [INFO] Starting gunicorn 26.0.0
+[2026-07-29 16:52:29 +0800] [2112276] [INFO] Listening at: http://127.0.0.1:5001 (2112276)
+[2026-07-29 16:52:29 +0800] [2112276] [INFO] Using worker: geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+[2026-07-29 16:52:29 +0800] [2112278] [INFO] Booting worker with pid: 2112278
+[2026-07-29 16:52:29 +0800] [2112279] [INFO] Booting worker with pid: 2112279
+[2026-07-29 16:52:29 +0800] [2112280] [INFO] Booting worker with pid: 2112280
+[2026-07-29 16:52:29 +0800] [2112281] [INFO] Booting worker with pid: 2112281
+[2026-07-29 16:52:29 +0800] [2112282] [INFO] Booting worker with pid: 2112282
+[2026-07-29 16:52:29 +0800] [2112283] [INFO] Booting worker with pid: 2112283
+[2026-07-29 16:52:29 +0800] [2112284] [INFO] Booting worker with pid: 2112284
+[2026-07-29 16:52:29 +0800] [2112285] [INFO] Booting worker with pid: 2112285
+[2026-07-29 16:52:29 +0800] [2112276] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+[2026-07-29 17:18:11 +0800] [2123035] [INFO] Starting gunicorn 26.0.0
+[2026-07-29 17:18:11 +0800] [2123035] [INFO] Listening at: http://127.0.0.1:5001 (2123035)
+[2026-07-29 17:18:11 +0800] [2123035] [INFO] Using worker: geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+[2026-07-29 17:18:11 +0800] [2123044] [INFO] Booting worker with pid: 2123044
+[2026-07-29 17:18:11 +0800] [2123045] [INFO] Booting worker with pid: 2123045
+[2026-07-29 17:18:11 +0800] [2123046] [INFO] Booting worker with pid: 2123046
+[2026-07-29 17:18:11 +0800] [2123047] [INFO] Booting worker with pid: 2123047
+[2026-07-29 17:18:11 +0800] [2123048] [INFO] Booting worker with pid: 2123048
+[2026-07-29 17:18:11 +0800] [2123049] [INFO] Booting worker with pid: 2123049
+[2026-07-29 17:18:11 +0800] [2123050] [INFO] Booting worker with pid: 2123050
+[2026-07-29 17:18:11 +0800] [2123051] [INFO] Booting worker with pid: 2123051
+[2026-07-29 17:18:11 +0800] [2123035] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+[2026-07-29 17:25:46 +0800] [2126993] [INFO] Starting gunicorn 26.0.0
+[2026-07-29 17:25:46 +0800] [2126993] [INFO] Listening at: http://127.0.0.1:5001 (2126993)
+[2026-07-29 17:25:46 +0800] [2126993] [INFO] Using worker: geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+[2026-07-29 17:25:46 +0800] [2126995] [INFO] Booting worker with pid: 2126995
+[2026-07-29 17:25:46 +0800] [2126996] [INFO] Booting worker with pid: 2126996
+[2026-07-29 17:25:46 +0800] [2126997] [INFO] Booting worker with pid: 2126997
+[2026-07-29 17:25:46 +0800] [2126998] [INFO] Booting worker with pid: 2126998
+[2026-07-29 17:25:46 +0800] [2126999] [INFO] Booting worker with pid: 2126999
+[2026-07-29 17:25:46 +0800] [2127000] [INFO] Booting worker with pid: 2127000
+[2026-07-29 17:25:46 +0800] [2127004] [INFO] Booting worker with pid: 2127004
+[2026-07-29 17:25:47 +0800] [2127005] [INFO] Booting worker with pid: 2127005
+[2026-07-29 17:25:47 +0800] [2126993] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl

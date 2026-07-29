@@ -1,4 +1,4 @@
-import psycopg2
+﻿import psycopg2
 from psycopg2.extras import RealDictCursor
 """
 用户端API - Blueprint
@@ -23,119 +23,104 @@ from models import BRAND_DEFAULTS
 
 bp = Blueprint('user', __name__)
 
-def _resolve_user(cursor, openid='', mp_openid='', phone='', unionid=''):
-    """统一解析出 user_id。找不到则自动创建。"""
-    # 1. 直接按 user_id 查（如果调用方已有）
-    # 2. 按 unionid 查
-    if unionid:
-        try:
-            cursor.execute("SELECT id FROM app_users WHERE unionid = %s AND id > 0 LIMIT 1", (unionid,))
+def _resolve_user(cursor, openid="", mp_openid="", phone="", unionid=""):
+    """查找/创建用户，返回 app_users.id
+    查找优先级：unionid > mp_openid > openid
+    phone 不参与查找匹配，只用来补充数据
+    合并只认 unionid（同一个 unionid 的多条记录才合并）
+    """
+    user_id = 0
+
+    # ======== 第一步：按微信给的唯一标识查找 ========
+    if not user_id and unionid:
+        cursor.execute("SELECT id FROM app_users WHERE unionid = %s AND id > 0", (unionid,))
+        rows = cursor.fetchall()
+        if len(rows) == 1:
+            user_id = rows[0]["id"]
+        elif len(rows) > 1:
+            ids = [r["id"] for r in rows]
+            user_id = min(ids)
+            for old_id in ids:
+                if old_id != user_id:
+                    cursor.execute("UPDATE orders SET user_id = %s WHERE user_id = %s", (user_id, old_id))
+            if mp_openid:
+                    cursor.execute("UPDATE user_balances SET user_id = %s WHERE user_id = %s", (user_id, old_id))
+                    cursor.execute("UPDATE phone_openids SET user_id = %s WHERE user_id = %s", (user_id, old_id))
+                    cursor.execute("DELETE FROM app_users WHERE id = %s", (old_id,))
+    if not user_id and mp_openid:
+        cursor.execute("SELECT id FROM app_users WHERE mp_openid = %s AND id > 0", (mp_openid,))
+        row = cursor.fetchone()
+        if row:
+            user_id = row["id"]
+
+    if not user_id and openid:
+        cursor.execute("SELECT id FROM app_users WHERE openid = %s AND id > 0", (openid,))
+        row = cursor.fetchone()
+        if row:
+            user_id = row["id"]
+
+    # ======== 第二步：找到用户 → 更新数据 + 修复订单 ========
+    if user_id:
+        updates = []
+        vals = []
+        if unionid:
+            cursor.execute("SELECT unionid FROM app_users WHERE id = %s", (user_id,))
             r = cursor.fetchone()
-            if r:
-                canonical_id = r['id']
-                # 更新当前记录的 phone/openid/mp_openid（如果为空）
-                update_fields = []
-                update_vals = []
-                if phone:
-                    update_fields.append("phone = %s")
-                    update_vals.append(phone)
-                if openid:
-                    update_fields.append("openid = %s")
-                    update_vals.append(openid)
-                if mp_openid:
-                    update_fields.append("mp_openid = %s")
-                    update_vals.append(mp_openid)
-                if update_fields:
-                    update_vals.append(canonical_id)
-                    cursor.execute(f"UPDATE app_users SET {', '.join(update_fields)} WHERE id = %s", update_vals)
-                
-                # 查找并合并同 phone 的重复账户
-                if phone:
-                    cursor.execute("SELECT id FROM app_users WHERE phone = %s AND id != %s ORDER BY id", (phone, canonical_id))
-                    dupes = cursor.fetchall()
-                    for dupe in dupes:
-                        old_id = dupe['id']
-                        # 迁移订单
-                        cursor.execute("UPDATE orders SET user_id = %s WHERE user_id = %s", (canonical_id, old_id))
-                        # 迁移余额（保留较大的那个）
-                        cursor.execute("""
-                            UPDATE user_balances 
-                            SET user_id = %s 
-                            WHERE user_id = %s AND phone = %s
-                            AND NOT EXISTS (SELECT 1 FROM user_balances WHERE user_id = %s AND phone = %s)
-                        """, (canonical_id, old_id, phone, canonical_id, phone))
-                        # 如果 canonical 已有余额，删除重复的
-                        cursor.execute("DELETE FROM user_balances WHERE user_id = %s AND phone = %s", (old_id, phone))
-                        # 删除重复的 app_users 记录
-                        cursor.execute("DELETE FROM app_users WHERE id = %s", (old_id,))
-                        cursor.execute("UPDATE phone_openids SET user_id = %s WHERE user_id = %s", (canonical_id, old_id))
-                        import logging
-                        logging.getLogger(__name__).info(f'[合并] user_id={old_id} -> {canonical_id} (phone={phone})')
-                
-                cursor.connection.commit()
-                return canonical_id
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f'[unionid merge error] {e}')
-    # 3. 按 mp_openid 查
-    if mp_openid:
-        try:
-            cursor.execute("SELECT id FROM app_users WHERE mp_openid = %s AND id > 0 LIMIT 1", (mp_openid,))
+            if r and (r["unionid"] is None or r["unionid"] == ""):
+                updates.append("unionid = %s"); vals.append(unionid)
+        if mp_openid:
+            cursor.execute("SELECT mp_openid FROM app_users WHERE id = %s", (user_id,))
             r = cursor.fetchone()
-            if r: return r['id']
-        except: pass
-    # 4. 按 openid 查
-    if openid:
-        try:
-            cursor.execute("SELECT id FROM app_users WHERE openid = %s AND id > 0 LIMIT 1", (openid,))
+            if r and (r["mp_openid"] is None or r["mp_openid"] == ""):
+                updates.append("mp_openid = %s"); vals.append(mp_openid)
+        if openid:
+            cursor.execute("SELECT openid FROM app_users WHERE id = %s", (user_id,))
             r = cursor.fetchone()
-            if r: return r['id']
-        except: pass
-    # 5. 按 phone 查
-    if phone:
-        try:
-            cursor.execute("SELECT id FROM app_users WHERE phone = %s AND id > 0 LIMIT 1", (phone,))
+            if r and (r["openid"] is None or r["openid"] == ""):
+                updates.append("openid = %s"); vals.append(openid)
+        if phone:
+            cursor.execute("SELECT phone FROM app_users WHERE id = %s", (user_id,))
             r = cursor.fetchone()
-            if r: return r['id']
-        except: pass
-    # 6. 通过 phone_openids 间接查
-    if mp_openid or openid:
-        try:
-            _val = mp_openid or openid
-            cursor.execute("SELECT user_id FROM phone_openids WHERE (mp_openid = %s OR openid = %s) AND user_id > 0 LIMIT 1", (_val, _val))
-            r = cursor.fetchone()
-            if r and r['user_id']: return r['user_id']
-        except: pass
-    if phone:
-        try:
-            cursor.execute("SELECT user_id FROM phone_openids WHERE phone = %s AND user_id > 0 LIMIT 1", (phone,))
-            r = cursor.fetchone()
-            if r and r['user_id']: return r['user_id']
-        except: pass
-    # 7. 找不到，自动创建
+            if r and (r["phone"] is None or r["phone"] == ""):
+                updates.append("phone = %s"); vals.append(phone)
+        if updates:
+            vals.append(user_id)
+            cursor.execute(f"UPDATE app_users SET {', '.join(updates)} WHERE id = %s", vals)
+
+        if phone:
+            cursor.execute("UPDATE phone_openids SET user_id = %s WHERE phone = %s AND (user_id IS NULL OR user_id = 0)", (user_id, phone))
+
+        # 修复 user_id=0 的订单
+        # 同步 user_balances.user_id
+        if mp_openid:
+            cursor.execute("UPDATE user_balances SET user_id = %s WHERE mp_openid = %s AND (user_id IS NULL OR user_id = 0)", (user_id, mp_openid))
+        if phone:
+            cursor.execute("UPDATE user_balances SET user_id = %s WHERE phone = %s AND (user_id IS NULL OR user_id = 0)", (user_id, phone))
+        if phone:
+            cursor.execute("UPDATE orders SET user_id = %s WHERE user_phone = %s AND (user_id IS NULL OR user_id = 0)", (user_id, phone))
+
+        return user_id
+
+    # ======== 第三步：没找到 → 新建 ========
     try:
-        cursor.execute("""
-            INSERT INTO app_users (unionid, phone, openid, mp_openid)
-            VALUES (%s, %s, %s, %s) RETURNING id
-        """, (unionid or '', phone or '', openid or '', mp_openid or ''))
+        cursor.execute(
+            "INSERT INTO app_users (unionid, phone, openid, mp_openid) VALUES (%s, %s, %s, %s) RETURNING id",
+            (unionid or "", phone or "", openid or "", mp_openid or "")
+        )
         r = cursor.fetchone()
         if r:
-            new_id = r['id']
-            # 同步到 phone_openids
+            new_id = r["id"]
             if phone:
-                cursor.execute("UPDATE phone_openids SET user_id = %s WHERE phone = %s AND user_id = 0", (new_id, phone))
+                cursor.execute("UPDATE phone_openids SET user_id = %s WHERE phone = %s AND (user_id IS NULL OR user_id = 0)", (new_id, phone))
+                cursor.execute("UPDATE orders SET user_id = %s WHERE user_phone = %s AND (user_id IS NULL OR user_id = 0)", (new_id, phone))
             return new_id
     except Exception as e:
         import logging
-        logging.getLogger(__name__).error(f'[_resolve_user] 创建失败: {e}')
+        logging.getLogger(__name__).error(f"[_resolve_user] create failed: {e}")
+
     return 0
 
-
-
-# [FIX-20260719] session_key缓存，解决wx.login()导致session_key失效问题
-# key=openid, value={'session_key': ..., 'ts': ...}
 _session_key_cache = {}
-
 def _cache_session_key(openid, session_key):
     import time
     _session_key_cache[openid] = {'session_key': session_key, 'ts': time.time()}
@@ -305,6 +290,16 @@ def store_init():
         access_code = data.get('access_code')
         openid = data.get('openid', '')
         unionid = data.get('unionid', '')
+        if not unionid and user_phone:
+            try:
+                _cur_un = conn.cursor()
+                _cur_un.execute("SELECT unionid FROM phone_openids WHERE phone = %s AND unionid IS NOT NULL AND unionid != '' LIMIT 1", (user_phone,))
+                _r_un = _cur_un.fetchone()
+                if _r_un and _r_un[0]:
+                    unionid = _r_un[0]
+                _cur_un.close()
+            except:
+                pass
         # [FIX-20260716] 禁止改成 "or openid" 回退！openid可能是公众号openid，会导致订阅消息40003
         mp_openid = data.get('mp_openid', '')
         if not mp_openid and user_phone:
@@ -393,6 +388,13 @@ def store_init():
         if not slot:
             conn.close()
             return json_response(message='暂无可用柜格', code=400)
+
+
+        # 原子锁定：抢到这格才用，防止并发分到同一格
+        cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s AND status = 1', (slot['id'],))
+        if cursor.rowcount == 0:
+            conn.close()
+            return json_response(message='暂无可用柜格，请重试', code=400)
 
         if not access_code:
             access_code = generate_access_code()
@@ -505,7 +507,10 @@ def store_legacy():
         if not slot:
             conn.close()
             return json_response(message='暂无可用柜格', code=400)
-        cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (slot['id'],))
+        cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s AND status = 1', (slot['id'],))
+        if cursor.rowcount == 0:
+            conn.close()
+            return json_response(message='暂无可用柜格', code=400)
         cursor.execute('INSERT INTO storage_records (cabinet_id, compartment_number, user_phone, access_code, status, store_time) VALUES (%s, %s, %s, %s, 2, %s)',
                        (cabinet_id, slot['slot_number'], user_phone, access_code, datetime.now()))
         conn.commit()
@@ -598,7 +603,7 @@ def retrieve():
                                     _wechat_name = _wn_row2['wechat_name']
                             cursor.execute("UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE mp_openid = %s", (_deposit_amount, _deposit_amount, _r_mp_openid))
                             if cursor.rowcount == 0:
-                                cursor.execute("INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                                cursor.execute("INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (phone) DO UPDATE SET openid = COALESCE(EXCLUDED.openid, user_balances.openid), unionid = COALESCE(EXCLUDED.unionid, user_balances.unionid), mp_openid = COALESCE(EXCLUDED.mp_openid, user_balances.mp_openid), wechat_name = COALESCE(EXCLUDED.wechat_name, user_balances.wechat_name), balance = user_balances.balance + EXCLUDED.balance, total_deposited = user_balances.total_deposited + EXCLUDED.total_deposited ON CONFLICT (phone) DO UPDATE SET openid = COALESCE(EXCLUDED.openid, user_balances.openid), unionid = COALESCE(EXCLUDED.unionid, user_balances.unionid), mp_openid = COALESCE(EXCLUDED.mp_openid, user_balances.mp_openid), wechat_name = COALESCE(EXCLUDED.wechat_name, user_balances.wechat_name), balance = user_balances.balance + EXCLUDED.balance, total_deposited = user_balances.total_deposited + EXCLUDED.total_deposited",
                                                (order['user_phone'], _r_openid, _r_unionid, _r_mp_openid, _wechat_name, _deposit_amount, _deposit_amount, datetime.now()))
                     else:
                         # 没有 mp_openid，使用 phone 查找（兼容旧数据）
@@ -608,7 +613,7 @@ def retrieve():
                             cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE phone = %s',
                                            (_deposit_amount, _deposit_amount, order['user_phone']))
                         else:
-                            cursor.execute("INSERT INTO user_balances (phone, openid, unionid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                            cursor.execute("INSERT INTO user_balances (phone, openid, unionid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (phone) DO UPDATE SET openid = COALESCE(EXCLUDED.openid, user_balances.openid), unionid = COALESCE(EXCLUDED.unionid, user_balances.unionid), wechat_name = COALESCE(EXCLUDED.wechat_name, user_balances.wechat_name), balance = user_balances.balance + EXCLUDED.balance, total_deposited = user_balances.total_deposited + EXCLUDED.total_deposited ON CONFLICT (phone) DO UPDATE SET openid = COALESCE(EXCLUDED.openid, user_balances.openid), unionid = COALESCE(EXCLUDED.unionid, user_balances.unionid), wechat_name = COALESCE(EXCLUDED.wechat_name, user_balances.wechat_name), balance = user_balances.balance + EXCLUDED.balance, total_deposited = user_balances.total_deposited + EXCLUDED.total_deposited",
                                            (order['user_phone'], _r_openid, _r_unionid, '', _deposit_amount, _deposit_amount, datetime.now()))
                     cursor.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s, %s, %s, 'available') ON CONFLICT (order_id) DO NOTHING",
                                (order['user_phone'], order['id'], _deposit_amount))
@@ -673,13 +678,16 @@ def retrieve_verify():
         access_code = data.get('access_code')
         openid = data.get('openid', '')
         unionid = data.get('unionid', '')
-        if not all([cabinet_id, phone, access_code]):
+        if cabinet_id is None or not phone or not access_code:
             return json_response(message='参数不完整', code=400)
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute('SELECT o.*, COALESCE(cs.slot_size, o.slot_size) as slot_size, cs.board_no, cs.lock_no FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE o.cabinet_id = %s AND o.user_phone = %s AND o.access_code = %s AND o.status IN (2, 3) ORDER BY o.id DESC LIMIT 1',
                        (cabinet_id, phone, access_code))
         order = cursor.fetchone()
+        if not order:
+            cursor.execute('SELECT o.*, COALESCE(cs.slot_size, o.slot_size) as slot_size, cs.board_no, cs.lock_no FROM orders o LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE o.user_phone = %s AND o.access_code = %s AND o.status IN (2, 3) ORDER BY o.id DESC LIMIT 1', (phone, access_code))
+            order = cursor.fetchone()
         if not order:
             conn.close()
             return json_response(message='验证失败，请检查手机号和取件码', code=400)
@@ -748,12 +756,12 @@ def retrieve_confirm():
                 if _mp_openid:
                     cursor.execute("UPDATE user_balances SET balance = balance + %s WHERE mp_openid = %s", (deposit_amount, _mp_openid))
                     if cursor.rowcount == 0:
-                        cursor.execute("INSERT INTO user_balances (phone, openid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        cursor.execute("INSERT INTO user_balances (phone, openid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (phone) DO UPDATE SET openid = COALESCE(EXCLUDED.openid, user_balances.openid), mp_openid = COALESCE(EXCLUDED.mp_openid, user_balances.mp_openid), wechat_name = COALESCE(EXCLUDED.wechat_name, user_balances.wechat_name), balance = user_balances.balance + EXCLUDED.balance, total_deposited = user_balances.total_deposited + EXCLUDED.total_deposited",
                                        (order['user_phone'], _openid, _mp_openid, _wechat_name, deposit_amount, deposit_amount, datetime.now()))
                 else:
                     cursor.execute("UPDATE user_balances SET balance = balance + %s WHERE phone = %s", (deposit_amount, order['user_phone']))
                     if cursor.rowcount == 0:
-                        cursor.execute("INSERT INTO user_balances (phone, openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s)",
+                        cursor.execute("INSERT INTO user_balances (phone, openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (phone) DO UPDATE SET openid = COALESCE(EXCLUDED.openid, user_balances.openid), wechat_name = COALESCE(EXCLUDED.wechat_name, user_balances.wechat_name), balance = user_balances.balance + EXCLUDED.balance, total_deposited = user_balances.total_deposited + EXCLUDED.total_deposited",
                                        (order['user_phone'], _openid, _wechat_name, deposit_amount, deposit_amount, datetime.now()))
             # 插入余额明细，供提现使用
             cursor.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status, source_time) VALUES (%s, %s, %s, 'available', NOW()) ON CONFLICT (order_id) DO NOTHING",
@@ -774,7 +782,7 @@ def retrieve_confirm():
                     _openid = _r2['openid']
             except:
                 pass
-        if _openid:
+        if order.get("user_phone"):
             try:
                 from helpers import send_wx_subscribe_message
                 subscribe_data = {
@@ -783,7 +791,7 @@ def retrieve_confirm():
                     "thing7": {"value": "已退还至小程序用户钱包"},
                     "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}
                 }
-                send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"))
+                send_wx_subscribe_message('', "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"))
             except Exception as e:
                 logger.error(f"[retrieve_confirm发送订阅消息失败] {e}")
         if refund_success:
@@ -908,7 +916,7 @@ def create_deposit_order():
             _wnr4 = _wnc4.fetchone()
             if _wnr4 and _wnr4[0]:
                 _wn2 = _wnr4[0]
-        _cdo_uid = _resolve_user(cursor, openid=openid, mp_openid=mp_openid, phone=user_phone, unionid=unionid)
+        _cdo_uid = _resolve_user(cursor, openid=openid, mp_openid=mp_openid or openid, phone=user_phone, unionid=unionid)
         cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, payment_channel_id, openid, unionid, mp_openid, wechat_name, user_id) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
                        (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, datetime.now(), payment_channel_id, openid, unionid, _wn2, _cdo_uid))
         row = cursor.fetchone()
@@ -1333,6 +1341,16 @@ def deposit_end_storage():
                        (new_status, refund_amount, order_id))
         _openid = order.get('openid', '') or ''
         _unionid = order.get('unionid', '') or ''
+        if not _unionid and order.get('user_phone'):
+            try:
+                _cur_un2 = conn.cursor()
+                _cur_un2.execute("SELECT unionid FROM phone_openids WHERE phone = %s AND unionid IS NOT NULL AND unionid != '' LIMIT 1", (order['user_phone'],))
+                _r_un2 = _cur_un2.fetchone()
+                if _r_un2 and _r_un2[0]:
+                    _unionid = _r_un2[0]
+                _cur_un2.close()
+            except:
+                pass
         _mp_openid = order.get('mp_openid', '') or _openid
         # 统一用 mp_openid 查找用户余额
         if not _mp_openid:
@@ -1370,13 +1388,13 @@ def deposit_end_storage():
                     if _exist:
                         _exist_id, _exist_mp = _exist
                         # 如果已有记录的mp_openid跟自己不同且不为空，说明是另一个微信，不共享余额
-                        if _exist_mp and _exist_mp != _mp_openid and _exist_mp != order.get("openid", ""):
-                            cursor.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+                        if _exist_mp and _exist_mp != _mp_openid and _exist_mp != order.get("openid", "") and not str(_exist_mp).startswith("oLhbm2"):
+                            cursor.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (phone) DO UPDATE SET openid = COALESCE(EXCLUDED.openid, user_balances.openid), unionid = COALESCE(EXCLUDED.unionid, user_balances.unionid), mp_openid = COALESCE(EXCLUDED.mp_openid, user_balances.mp_openid), wechat_name = COALESCE(EXCLUDED.wechat_name, user_balances.wechat_name), balance = user_balances.balance + EXCLUDED.balance, total_deposited = user_balances.total_deposited + EXCLUDED.total_deposited',
                                            (order['user_phone'], _openid, _unionid, _mp_openid, _wechat_name2, refund_amount, refund_amount, datetime.now()))
                         else:
                             cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, mp_openid = %s WHERE id = %s', (refund_amount, refund_amount, _mp_openid, _exist_id))
                     else:
-                        cursor.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+                        cursor.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (phone) DO UPDATE SET openid = COALESCE(EXCLUDED.openid, user_balances.openid), unionid = COALESCE(EXCLUDED.unionid, user_balances.unionid), mp_openid = COALESCE(EXCLUDED.mp_openid, user_balances.mp_openid), wechat_name = COALESCE(EXCLUDED.wechat_name, user_balances.wechat_name), balance = user_balances.balance + EXCLUDED.balance, total_deposited = user_balances.total_deposited + EXCLUDED.total_deposited',
                                        (order['user_phone'], _openid, _unionid, _mp_openid, _wechat_name2, refund_amount, refund_amount, datetime.now()))
             else:
                 # 没有mp_openid，按phone找已有记录（可能来自H5扫码存包）
@@ -1386,12 +1404,12 @@ def deposit_end_storage():
                     _exist_id, _exist_mp = _exist
                     # 如果记录属于其他微信且有openid，不共享
                     if _exist_mp and _exist_mp != order.get("openid", ""):
-                        cursor.execute('INSERT INTO user_balances (phone, openid, unionid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s)',
+                        cursor.execute('INSERT INTO user_balances (phone, openid, unionid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (phone) DO UPDATE SET openid = COALESCE(EXCLUDED.openid, user_balances.openid), unionid = COALESCE(EXCLUDED.unionid, user_balances.unionid), wechat_name = COALESCE(EXCLUDED.wechat_name, user_balances.wechat_name), balance = user_balances.balance + EXCLUDED.balance, total_deposited = user_balances.total_deposited + EXCLUDED.total_deposited',
                                        (order['user_phone'], _openid, _unionid, _wechat_name2, refund_amount, refund_amount, datetime.now()))
                     else:
                         cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE id = %s', (refund_amount, refund_amount, _exist_id))
                 else:
-                    cursor.execute('INSERT INTO user_balances (phone, openid, unionid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s)',
+                    cursor.execute('INSERT INTO user_balances (phone, openid, unionid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (phone) DO UPDATE SET openid = COALESCE(EXCLUDED.openid, user_balances.openid), unionid = COALESCE(EXCLUDED.unionid, user_balances.unionid), wechat_name = COALESCE(EXCLUDED.wechat_name, user_balances.wechat_name), balance = user_balances.balance + EXCLUDED.balance, total_deposited = user_balances.total_deposited + EXCLUDED.total_deposited',
                                    (order['user_phone'], _openid, _unionid, _wechat_name2, refund_amount, refund_amount, datetime.now()))
         # 写入余额明细（灰度：新提现逻辑）
         cursor.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s, %s, %s, 'available') ON CONFLICT (order_id) DO NOTHING", (order['user_phone'], order_id, refund_amount))
@@ -1439,7 +1457,7 @@ def deposit_end_storage():
                 from helpers import send_wx_subscribe_message
                 # 发送押金退还通知
                 subscribe_data = {"amount6": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))}, "time4": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}, "thing7": {"value": "已退还至小程序用户钱包"}, "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}}
-                send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
+                send_wx_subscribe_message('', "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
 
                 logger.info(f"[deposit_end_storage] 订阅消息已发送: order={order_id}")
             except Exception as e:
@@ -1938,6 +1956,9 @@ def create_complaint():
         elif user_phone:
             from helpers import add_whitelist_by_phone
             add_whitelist_by_phone(user_phone, 'complaint', -1)
+        # auto process self complaint
+        if complaint_type == 'self':
+            _auto_process_self_complaint(complaint_id, user_phone, openid)
         conn.close()
         return json_response({'complaint_id': complaint_id, 'message': '投诉已提交，我们会尽快处理'})
     except Exception as e:
@@ -2059,6 +2080,14 @@ def wx_login():
                         _cur.execute("UPDATE phone_openids SET mp_openid = %s WHERE openid = %s", (openid_val, openid_from_h5))
                         _conn.commit()
                 
+                # 5. unionid order lookup
+                _unionid = result.get('unionid', '')
+                if _unionid:
+                    _cur.execute("SELECT user_phone FROM orders WHERE user_phone IN (SELECT phone FROM phone_openids WHERE unionid = %s AND phone IS NOT NULL AND length(phone) > 0 UNION SELECT phone FROM user_balances WHERE unionid = %s AND phone IS NOT NULL AND length(phone) > 0 UNION SELECT phone FROM app_users WHERE unionid = %s AND phone IS NOT NULL AND length(phone) > 0) ORDER BY created_at DESC LIMIT 1", (_unionid, _unionid, _unionid))
+                    _o_row = _cur.fetchone()
+                    if _o_row and _o_row[0] and _o_row[0] != _phone:
+                        _phone = _o_row[0]
+                        logger.info(f'[wx_login] order phone: {_phone[:3]}****{_phone[-4:]}')
                 _conn.close()
             except Exception as _e:
                 logger.error(f'[wx_login] 查询phone失败: {_e}')
@@ -2144,7 +2173,7 @@ def wx_login():
                 try:
                     _auc = get_db()
                     _aucur = _auc.cursor()
-                    _merged_uid = _resolve_user(_aucur, openid=result['openid'], mp_openid=openid_val, phone=_phone, unionid=_unionid)
+                    _merged_uid = _resolve_user(_aucur, mp_openid=openid_val, phone=_phone, unionid=_unionid)
                     _auc.commit()
                     _aucur.close()
                     _auc.close()
@@ -2201,21 +2230,6 @@ def wx_login_phone():
         
         if not session_key:
             return json_response(message='session_key获取失败', code=400)
-        import requests as _req
-        import config
-        appid = config.WX_MP_APP_ID
-        secret = config.WX_MP_APP_SECRET
-        url = f'https://api.weixin.qq.com/sns/jscode2session?appid={appid}&secret={secret}&js_code={code}&grant_type=authorization_code'
-        resp = _req.get(url, timeout=10)
-        result = resp.json()
-        if 'openid' not in result:
-            logger.error(f'[wx_login_phone] 微信接口异常: {result}')
-            return json_response(message='微信登录失败', code=400)
-        openid = result["openid"]
-        unionid = result.get("unionid", "")
-        session_key = result.get('session_key', '')
-        if not session_key:
-            return json_response(message='session_key获取失败', code=400)
         import base64
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
         from cryptography.hazmat.backends import default_backend
@@ -2264,7 +2278,7 @@ def wx_login_phone():
                     try:
                         _auc2 = get_db()
                         _aucur2 = _auc2.cursor()
-                        _merged_uid = _resolve_user(_aucur2, openid=openid, mp_openid=openid, phone=phone_number, unionid=unionid)
+                        _merged_uid = _resolve_user(_aucur2, mp_openid=openid, phone=phone_number, unionid=unionid)
                         _auc2.commit()
                         _aucur2.close()
                         _auc2.close()
@@ -2349,8 +2363,9 @@ def get_user_orders():
         cur = conn.cursor()
         
         # 统一解析 user_id
-        user_id = _resolve_user(cur, openid=openid, phone=phone)
+        user_id = _resolve_user(cur, mp_openid=openid, phone=phone)
         
+        orders = []
         if user_id:
             cur.execute("""
                 SELECT o.id, o.order_no, o.user_phone, o.cabinet_id, o.compartment_number, o.slot_size, o.access_code,
@@ -2364,7 +2379,8 @@ def get_user_orders():
                 ORDER BY o.created_at DESC
                 LIMIT 50
             """, (user_id,))
-        elif phone:
+            orders = [dict(row) for row in cur.fetchall()]
+        if not orders and phone:
             cur.execute("""
                 SELECT o.id, o.order_no, o.user_phone, o.cabinet_id, o.compartment_number, o.slot_size, o.access_code,
                        o.deposit_amount, o.status, o.store_time, o.retrieve_time, o.created_at,
@@ -2377,11 +2393,10 @@ def get_user_orders():
                 ORDER BY o.created_at DESC
                 LIMIT 50
             """, (phone,))
-        else:
+            orders = [dict(row) for row in cur.fetchall()]
+        if not orders:
             conn.close()
             return json_response(message='请先登录', code=400)
-        
-        orders = [dict(row) for row in cur.fetchall()]
         conn.close()
         
         return json_response(data=orders)
@@ -2439,7 +2454,7 @@ def get_user_balance():
         cur = conn.cursor()
         
         # 统一解析 user_id
-        user_id = _resolve_user(cur, openid=openid, phone=phone)
+        user_id = _resolve_user(cur, mp_openid=openid, phone=phone)
         if not user_id:
             conn.close()
             return json_response(message='用户未登录', code=400)
@@ -2588,6 +2603,9 @@ def user_withdraw():
             return json_response(message='用户未登录', code=400)
         cursor.execute('SELECT phone, balance, total_deposited, total_withdrawn FROM user_balances WHERE mp_openid = %s LIMIT 1', (mp_openid,))
         row = cursor.fetchone()
+        if not row and phone:
+            cursor.execute('SELECT phone, balance, total_deposited, total_withdrawn FROM user_balances WHERE phone = %s LIMIT 1', (phone,))
+            row = cursor.fetchone()
         if row:
             phone = row['phone']
         if not row:
@@ -2611,11 +2629,17 @@ def user_withdraw():
             amount = float(balance)
         else:
             amount = float(amount)
-        if amount > balance:
+        cursor.execute("UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s AND balance >= %s", (amount, amount, phone, amount))
+        if cursor.rowcount == 0:
             conn.rollback()
             conn.close()
-            return json_response(message='提现金额超过余额', code=400)
+            return json_response(message='余额不足，无法提现', code=400)
         
+        # 防重：30秒内有正在处理的提现则拒绝
+        cursor.execute("SELECT id FROM withdrawal_records WHERE user_phone = %s AND created_at > NOW() - INTERVAL '120 seconds' LIMIT 1", (phone,))
+        if cursor.fetchone():
+            conn.close()
+            return json_response(message='您有提现正在处理中，请完成后再试', code=400)
         
         # 检查用户最近使用的网点是否允许提现
         cursor.execute("""
@@ -2649,9 +2673,9 @@ def user_withdraw():
             FROM user_balance_details bd
             JOIN orders o ON bd.order_id = o.id
             JOIN user_balances ub ON bd.user_phone = ub.phone
-            WHERE ub.mp_openid=%s AND bd.status='available' AND o.transaction_id IS NOT NULL AND o.transaction_id != ''
+            WHERE ub.phone=%s AND bd.status='available' AND o.transaction_id IS NOT NULL AND o.transaction_id != ''
             ORDER BY bd.id DESC"""
-            cursor.execute(sql, (mp_openid,))
+            cursor.execute(sql, (phone,))
             balance_records = cursor.fetchall()
             if not balance_records:
                 conn.close()
@@ -2674,6 +2698,7 @@ def user_withdraw():
             remaining = actual_amount
             first_wid = None
             all_ok = True
+            all_order_ids = []
             for oid, refundable, br in order_refund_plan:
                 if remaining <= 0.001:
                     break
@@ -2682,16 +2707,20 @@ def user_withdraw():
                 ok, rid, rmsg = do_real_refund(order_id=oid, amount=refund_this, openid=order_openid, skip_balance=True)
                 if not ok:
                     all_ok = False
-                st = 2 if ok else 4
-                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, error_msg, openid) VALUES (%s, %s, %s, %s, 1, %s, %s) RETURNING id',
-                               (oid, phone, refund_this, st, None if ok else rmsg, order_openid))
-                row = cursor.fetchone()
-                if first_wid is None:
-                    first_wid = row['id']
+                    cursor.execute('UPDATE user_balances SET balance = balance + %s, total_withdrawn = total_withdrawn - %s WHERE phone = %s', (refund_this, refund_this, phone))
+                all_order_ids.append(str(oid))
                 if ok:
                     cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_amount = COALESCE(refund_amount, 0) + %s WHERE id = %s', (rid, refund_this, oid))
                     cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (oid,))
                 remaining -= refund_this
+            total_refunded = actual_amount - remaining
+            # ???????????(order_ids?????ID)
+            import json as _json_w
+            all_st = 2 if all_ok else 4
+            cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, error_msg, openid, order_ids) VALUES (%s, %s, %s, %s, 1, %s, %s, %s) RETURNING id',
+                           (all_order_ids[0] if all_order_ids else None, phone, actual_amount, all_st, None if all_ok else rmsg, order_openid, _json_w.dumps(all_order_ids)))
+            row = cursor.fetchone()
+            first_wid = row['id']
             conn.commit()
             conn.close()
             if all_ok:
@@ -2704,7 +2733,7 @@ def user_withdraw():
                             'thing3': {'value': '原路退回支付账户'},
                             'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
                         }
-                        send_wx_subscribe_message(mp_openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone, page='pages/mine/mine')
+                        send_wx_subscribe_message(openid or mp_openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone, page='pages/mine/mine')
                     except Exception as e:
                         logger.error(f'[提现通知失败] {e}')
                 return json_response(data={
@@ -2718,7 +2747,7 @@ def user_withdraw():
             if not amount or float(amount) <= 0:
                 amount = float(balance)
             # 从余额明细表查找可提现的记录（status='available'）
-            cursor.execute("SELECT bd.id, bd.order_id, bd.amount, o.transaction_id, o.openid as order_openid FROM user_balance_details bd JOIN orders o ON bd.order_id = o.id JOIN user_balances ub ON bd.user_phone = ub.phone WHERE ub.mp_openid=%s AND bd.status='available' AND o.transaction_id IS NOT NULL AND o.transaction_id != '' ORDER BY bd.id DESC", (mp_openid,))
+            cursor.execute("SELECT bd.id, bd.order_id, bd.amount, o.transaction_id, o.openid as order_openid FROM user_balance_details bd JOIN orders o ON bd.order_id = o.id JOIN user_balances ub ON bd.user_phone = ub.phone WHERE ub.phone=%s AND bd.status='available' AND o.transaction_id IS NOT NULL AND o.transaction_id != '' ORDER BY bd.id DESC", (phone,))
             balance_records = cursor.fetchall()
             if not balance_records:
                 conn.close()
@@ -2762,7 +2791,7 @@ def user_withdraw():
                         cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (oid,))
                     remaining -= refund_this
                 _st = 2 if _first_err is None else 4
-                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, error_msg, openid, order_ids) VALUES (%s, %s, %s, %s, 1, %s, %s, %s, %s) RETURNING id', (_all_order_ids[0] if _all_order_ids else None, phone, _total_refunded, _st, 'whitelist_auto', _first_err, _first_oid_openid or openid, _json_cons3.dumps(_all_order_ids)))
+                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, error_msg, openid, order_ids) VALUES (%s, %s, %s, %s, 1, %s, %s, %s, %s) RETURNING id', (_all_order_ids[0] if _all_order_ids else None, phone, _total_refunded, _st, 'whitelist_auto', _first_err, _first_oid_openid or openid, json.dumps(_all_order_ids)))
                 first_wid = cursor.fetchone()['id']
                 if wl_record['source'] == 'manual_help':
                     consume_whitelist(openid)
@@ -2772,8 +2801,12 @@ def user_withdraw():
             # 检查是否被拒绝后重提
             cursor.execute('SELECT COUNT(*) as cnt FROM withdrawal_records wr WHERE user_phone = %s AND status = 3', (phone,))
             reject_cnt = cursor.fetchone()['cnt']
-            if reject_cnt > 0 and openid:
-                add_whitelist(openid, 'reject_retry', -1)
+            cursor.execute("SELECT COALESCE(l.click_free_count, 1) FROM locations l JOIN cabinets cb ON l.id = cb.location_id JOIN orders o ON cb.id = o.cabinet_id WHERE o.user_phone = %s ORDER BY o.created_at DESC LIMIT 1", (phone,))
+            click_free = cursor.fetchone()
+            click_free = click_free[0] if click_free else 1
+
+            if reject_cnt >= click_free and openid:
+                add_whitelist(openid, 'reject_retry', -1, unionid)
                 cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE phone = %s AND balance > 0', (actual_amount, actual_amount, phone))
                 import json as _json_cons3; remaining = actual_amount; _total_refunded = 0.0; _all_order_ids = []; _first_err = None; _first_oid_openid = None
                 for oid, refundable, br in order_plan:
@@ -2792,7 +2825,7 @@ def user_withdraw():
                         cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (oid,))
                     remaining -= refund_this
                 _st = 2 if _first_err is None else 4
-                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, error_msg, openid, order_ids) VALUES (%s, %s, %s, %s, 1, %s, %s, %s, %s) RETURNING id', (_all_order_ids[0] if _all_order_ids else None, phone, _total_refunded, _st, 'whitelist_auto', _first_err, _first_oid_openid or openid, _json_cons3.dumps(_all_order_ids)))
+                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, error_msg, openid, order_ids) VALUES (%s, %s, %s, %s, 1, %s, %s, %s, %s) RETURNING id', (_all_order_ids[0] if _all_order_ids else None, phone, _total_refunded, _st, 'whitelist_auto', _first_err, _first_oid_openid or openid, json.dumps(_all_order_ids)))
                 first_wid = cursor.fetchone()['id']
                 conn.commit()
                 conn.close()
@@ -2828,7 +2861,7 @@ def user_withdraw():
                         'thing3': {'value': '原路退回支付账户'},
                         'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
                     }
-                    send_wx_subscribe_message(mp_openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone, page='pages/mine/mine')
+                    send_wx_subscribe_message(openid or mp_openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone, page='pages/mine/mine')
                 except Exception as e:
                     logger.error(f'[提现通知失败] {e}')
             return json_response(data={
@@ -2909,6 +2942,9 @@ def link_mp_openid_from_mini():
         resp = req.get(url, timeout=10)
         result = resp.json()
         mp_openid = result.get('openid', '')
+        unionid = result.get('unionid', '')
+        gzh_openid = data.get('gzh_openid', '')
+        nickname = data.get('nickname', '')
         if not mp_openid:
             logger.error(f'[link_mp_openid] jscode2session失败: {result}')
             return json_response(message='获取小程序openid失败', code=500)
@@ -2922,13 +2958,21 @@ def link_mp_openid_from_mini():
             cursor.execute('SELECT id FROM phone_openids WHERE phone = %s LIMIT 1', (phone,))
             existing = cursor.fetchone()
             if existing:
-                cursor.execute('UPDATE phone_openids SET mp_openid = %s WHERE phone = %s', (mp_openid, phone))
+                cursor.execute('UPDATE phone_openids SET mp_openid = %s, unionid = COALESCE(NULLIF(%s, \'\'), unionid), gzh_openid = COALESCE(NULLIF(%s, \'\'), gzh_openid), wechat_name = COALESCE(NULLIF(%s, \'\'), wechat_name) WHERE phone = %s', (mp_openid, unionid, gzh_openid, nickname, phone))
             else:
-                cursor.execute('INSERT INTO phone_openids (phone, mp_openid) VALUES (%s, %s)', (phone, mp_openid))
+                cursor.execute('INSERT INTO phone_openids (phone, mp_openid, unionid, gzh_openid, wechat_name) VALUES (%s, %s, %s, %s, %s)', (phone, mp_openid, unionid, gzh_openid, nickname))
         
         # 更新 user_balances 的 mp_openid（按手机号匹配，排除已有正确mp_openid的记录）
         if phone:
-            cursor.execute("UPDATE user_balances SET mp_openid = %s WHERE phone = %s AND (mp_openid IS NULL OR mp_openid = '' OR mp_openid LIKE 'oLhbm2%%')", (mp_openid, phone))
+            cursor.execute("UPDATE user_balances SET mp_openid = %s WHERE phone = %s AND (mp_openid IS NULL OR mp_openid = chr(39)||chr(39) OR mp_openid LIKE chr(39)oLhbm2%%chr(39))", (mp_openid, phone))
+        if phone and mp_openid:
+
+            cursor.execute("UPDATE app_users SET mp_openid = %s WHERE phone = %s AND (mp_openid IS NULL OR mp_openid = chr(39)||chr(39))", (mp_openid, phone))
+        # ?????????
+        if phone and nickname:
+            cursor.execute("UPDATE orders SET wechat_name = %s WHERE user_phone = %s AND (wechat_name IS NULL OR wechat_name = chr(39)||chr(39))", (nickname, phone))
+            cursor.execute("UPDATE app_users SET nickname = %s WHERE phone = %s AND (nickname IS NULL OR nickname = chr(39)||chr(39))", (nickname, phone))
+
         
         conn.commit()
         conn.close()
@@ -3093,3 +3137,46 @@ def get_user_withdrawals():
     except Exception as e:
         logger.error(f'[user/withdrawals] 错误: {e}')
         return json_response(message=str(e), code=500)
+
+def _auto_process_self_complaint(complaint_id, phone, openid_val):
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        uid = None
+        if openid_val:
+            cur.execute('SELECT unionid FROM phone_openids WHERE openid=%s AND unionid IS NOT NULL AND unionid != '' LIMIT 1', (openid_val,))
+            row = cur.fetchone()
+            if row and row[0]:
+                uid = row[0]
+            if not uid:
+                cur.execute('SELECT unionid FROM phone_openids WHERE mp_openid=%s AND unionid IS NOT NULL AND unionid != '' LIMIT 1', (openid_val,))
+                row = cur.fetchone()
+                if row and row[0]:
+                    uid = row[0]
+        if not phone and not uid:
+            conn.close()
+            return
+        if uid:
+            cur.execute("SELECT id, order_no, deposit_amount, payment_channel_id FROM orders WHERE unionid=%s AND status IN (2,3) AND COALESCE(refund_status,'') NOT IN ('success','refunded') ORDER BY created_at DESC LIMIT 1", (uid,))
+        else:
+            cur.execute("SELECT id, order_no, deposit_amount, payment_channel_id FROM orders WHERE user_phone=%s AND status IN (2,3) AND COALESCE(refund_status,'') NOT IN ('success','refunded') ORDER BY created_at DESC LIMIT 1", (phone,))
+        order = cur.fetchone()
+        if not order:
+            conn.close()
+            return
+        from helpers import do_real_refund
+        success, refund_id, msg = do_real_refund(order_id=order[0], order_no=order[1], amount=order[2], payment_channel_id=order[3])
+        if success:
+            cur.execute("UPDATE orders SET refund_status='refunded', status=4, refund_amount=%s, refund_time=CURRENT_TIMESTAMP WHERE id=%s", (order[2], order[0]))
+            ok_msg = chr(0x5df2) + chr(0x81ea) + chr(0x52a8) + chr(0x9000) + chr(0x6b3e) + chr(0x5904) + chr(0x7406)
+            cur.execute('UPDATE complaints SET status=2, reply=%s, reply_time=CURRENT_TIMESTAMP WHERE id=%s', (ok_msg, complaint_id))
+        else:
+            fail_msg = chr(0x81ea) + chr(0x52a8) + chr(0x9000) + chr(0x6b3e) + chr(0x5931) + chr(0x8d25) + ': ' + str(msg)
+            cur.execute('UPDATE complaints SET status=2, reply=%s, reply_time=CURRENT_TIMESTAMP WHERE id=%s', (fail_msg, complaint_id))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"[" + q + "_auto_process_self_complaint" + q + "] {e}")
+
+
+

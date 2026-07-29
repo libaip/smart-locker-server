@@ -1,4 +1,4 @@
-"""
+﻿"""
 支付相关API - Blueprint
 包含：支付渠道管理、支付/退款回调
 """
@@ -260,7 +260,7 @@ def pay_notify():
                     if ub and ub.get('mp_openid'):
                         _o_mp_openid = ub['mp_openid']
                 if ub:
-                    cursor.execute('UPDATE user_balances SET total_deposited = total_deposited + %s, phone = %s, mp_openid = COALESCE(NULLIF(mp_openid, ''), %s), unionid = COALESCE(NULLIF(%s, ''), unionid), wechat_name = COALESCE(NULLIF(%s, ''), wechat_name) WHERE mp_openid = %s',
+                    cursor.execute('UPDATE user_balances SET total_deposited = total_deposited + %s, phone = %s, mp_openid = COALESCE(NULLIF(mp_openid, ''), %s), unionid = COALESCE(NULLIF(%s, %s), unionid), wechat_name = COALESCE(NULLIF(%s, %s), wechat_name) WHERE mp_openid = %s',
                                    (order['deposit_amount'], order['user_phone'], _o_mp_openid, _o_unionid, _o_wechat_name, _o_mp_openid))
                 else:
                     # 没找到，先用 phone 查，避免重复
@@ -282,8 +282,8 @@ def pay_notify():
                                     _o_openid = _po_r['openid']
                         except:
                             pass
-                        cursor.execute('UPDATE user_balances SET openid = %s, mp_openid = %s, total_deposited = total_deposited + %s, unionid = COALESCE(NULLIF(%s, ''), unionid), wechat_name = COALESCE(NULLIF(%s, ''), wechat_name) WHERE id = %s',
-                                       (_o_openid, _o_mp_openid, order['deposit_amount'], _o_unionid, _o_wechat_name, _dup['id']))
+                        cursor.execute('UPDATE user_balances SET openid = %s, mp_openid = %s, total_deposited = total_deposited + %s, unionid = COALESCE(NULLIF(%s, %s), unionid), wechat_name = COALESCE(NULLIF(%s, %s), wechat_name) WHERE id = %s',
+                                       (_o_openid, _o_mp_openid, order['deposit_amount'], _o_unionid, '', _o_wechat_name, '', _dup['id']))
                     else:
                         # 真的没找到，插入新记录
                         _wn_name = ''
@@ -321,6 +321,13 @@ def pay_notify():
                 logger.error(f'[支付回调读取开锁信息失败] {e}')
             _channel_id = order['payment_channel_id']
             _deposit_amount = order['deposit_amount']
+            # 更新渠道统计（支付成功）
+            try:
+                if _channel_id:
+                    update_channel_stats(_channel_id, _deposit_amount)
+            except Exception as _es:
+                logger.error(f'[pay_notify] update_channel_stats: {_es}')
+            conn.commit()
         else:
             cursor.execute('UPDATE orders SET status = 5 WHERE id = %s', (order['id'],))
             if order['slot_id']:
@@ -429,6 +436,17 @@ def refund_notify():
         result, success = wxpay.parse_refund_notify(xml_data)
         if not success:
             return wxpay.build_pay_notify_response('FAIL', '解析失败'), 400
+        # 更新订单退款状态
+        try:
+            _out_trade_no = result.get('out_trade_no', '')
+            if _out_trade_no:
+                _conn3 = get_db()
+                _c3 = _conn3.cursor()
+                _c3.execute("UPDATE orders SET status=4, refund_status='refunded', refund_time=NOW() WHERE order_no=%s AND status!=4", (_out_trade_no,))
+                _conn3.commit()
+                _conn3.close()
+        except Exception as _ne:
+            logger.error(f'[refund_notify] 更新订单状态失败: {_ne}')
         return wxpay.build_pay_notify_response('SUCCESS', 'OK'), 200
     except Exception as e:
         logger.error(f'[refund_notify] {e}')

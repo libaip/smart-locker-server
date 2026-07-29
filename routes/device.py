@@ -339,7 +339,7 @@ def pending_commands(device_id):
         commands = []
         # 从PostgreSQL读取pending命令
         _cur2 = db.cursor()
-        _cur2.execute('SELECT * FROM pending_lock_cmds WHERE device_id=%s AND delivered=0 ORDER BY id', (device_id,))
+        _cur2.execute("SELECT * FROM pending_lock_cmds WHERE device_id=%s AND (delivered=0 OR (delivered=1 AND (status IS NULL OR status='' OR status='pending'))) ORDER BY id", (device_id,))
         pending_rows = _cur2.fetchall()
         for row in pending_rows:
             cmd_json = row['command'] if row['command'] else ''
@@ -400,7 +400,7 @@ def pending_update(device_id):
             db.close()
             return jsonify({"code": 200, "data": {"commands": [], "orders": []}})
 
-        cursor.execute("SELECT * FROM pending_lock_cmds WHERE device_id=%s AND delivered=0 ORDER BY id", (device_id,))
+        cursor.execute("SELECT * FROM pending_lock_cmds WHERE device_id=%s AND (delivered=0 OR (delivered=1 AND (status IS NULL OR status='' OR status='pending'))) ORDER BY id", (device_id,))
         rows = cursor.fetchall()
         commands = []
         for row in rows:

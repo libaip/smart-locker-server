@@ -47,7 +47,7 @@ def start_ws_server():
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("0.0.0.0", port))
+        sock.bind(("127.0.0.1", port))
         sock.close()
     except OSError:
         logger.info("[WS] 端口 %d 已被占用，跳过启动" % port)
@@ -55,12 +55,12 @@ def start_ws_server():
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("0.0.0.0", port))
+        sock.bind(("127.0.0.1", port))
         sock.close()
     except OSError:
         logger.info("[WS] 设备 %d 已连接已连接已连接" % port)
         return
-    svr = WSGIServer(("0.0.0.0", port), ws_app, handler_class=WebSocketHandler)
+    svr = WSGIServer(("127.0.0.1", port), ws_app, handler_class=WebSocketHandler)
     logger.info("[WS] 已连接?? " + str(port))
     svr.serve_forever()
 

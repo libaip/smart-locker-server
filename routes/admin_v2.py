@@ -5531,10 +5531,6 @@ def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id="", p
         # 已通过微信原路退款的不重复处理（refund_status为success/refunded表示已微信退款）
         refund_status = order.get('refund_status') or ''
         logger.info('[auto_refund_complaint] 处理投诉 id=%s 订单=%s 状态=%s 金额=%.2f refund_status=%s', complaint_id, order.get('order_no', ''), status, deposit, refund_status)
-        if refund_status in ('success', 'refunded') and deposit > 0:
-            conn.close()
-            logger.info('[auto_refund_complaint] 订单已微信退款 order_id=%s refund_status=%s', order_id, refund_status)
-            return True, '已退款'
         
         if deposit <= 0:
             conn.close()
@@ -6172,10 +6168,10 @@ def _complaint_scheduler():
                     pass
         time.sleep(30)
 
-# 启动调度器
-_scheduler_thread = threading.Thread(target=_complaint_scheduler, daemon=True)
-_scheduler_thread.start()
-logger.info("[启动] 投诉自动处理调度器已启动")
+# DISABLED: # 启动调度器
+# DISABLED: _scheduler_thread = threading.Thread(target=_complaint_scheduler, daemon=True)
+# DISABLED: _scheduler_thread.start()
+# DISABLED: logger.info("[启动] 投诉自动处理调度器已启动")
 
 @bp.route("/admin/dashboard", methods=["GET"])
 def admin_v2_dashboard():

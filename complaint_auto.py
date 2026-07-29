@@ -61,9 +61,6 @@ def do_refund(order_no, total_fee, mch_id):
     if not order:
         conn.close()
         return False, "订单不存在"
-    if order["refund_status"] == "refunded":
-        conn.close()
-        return True, "已退款"
     ch_id = order["payment_channel_id"]
     ch_cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     ch_cur.execute("SELECT * FROM payment_channels WHERE id=%s", (ch_id,))

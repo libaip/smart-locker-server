@@ -142,6 +142,7 @@ def handle_ws(ws, device_id):
                     device_heartbeats[device_id] = time.time()
                     try:
                         ws.send(json.dumps({"type": "heartbeat_ack", "timestamp": int(time.time() * 1000)}))
+                        _db_st(device_id, "online")
                     except:
                         pass
                 elif t == "lock_result":

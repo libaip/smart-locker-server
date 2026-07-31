@@ -57,7 +57,7 @@ def register_device():
         cabinet = cursor.fetchone()
 
         if cabinet:
-            cursor.execute("UPDATE cabinets SET last_heartbeat = NOW(), business_status='active' WHERE mainboard_device_id = %s",
+            cursor.execute("UPDATE cabinets SET last_heartbeat = NOW(), business_status=CASE WHEN business_status IN ('inactive','closed') THEN business_status ELSE 'active' END WHERE mainboard_device_id = %s",
                           (device_id,))
             db.commit()
 
@@ -262,11 +262,11 @@ def device_status():
             'apk_url': ''
         }
 
-        #         if latest_apk and cabinet['app_version_code'] < latest_apk['version_code']:
-        #             data['has_update'] = True
-        #             data['latest_version'] = latest_apk['version_name']
-        #             data['latest_version_code'] = latest_apk['version_code']
-        #             data['apk_url'] = latest_apk['download_url'] or '/static/smart-locker.apk'
+        if latest_apk and cabinet['app_version_code'] < latest_apk['version_code']:
+            data['has_update'] = True
+            data['latest_version'] = latest_apk['version_name']
+            data['latest_version_code'] = latest_apk['version_code']
+            data['apk_url'] = latest_apk['download_url'] or '/static/smart-locker.apk'
 
         db.close()
         return jsonify({'code': 200, 'message': 'success', 'data': data})
@@ -300,7 +300,7 @@ def device_heartbeat():
         cabinet = cursor.fetchone()
         if cabinet:
             cursor.execute(
-                "UPDATE cabinets SET last_heartbeat=NOW(), business_status='active', app_version=%s, app_version_code=%s WHERE mainboard_device_id=%s",
+                "UPDATE cabinets SET last_heartbeat=NOW(), business_status=CASE WHEN business_status IN ('inactive','closed') THEN business_status ELSE 'active' END, app_version=%s, app_version_code=%s WHERE mainboard_device_id=%s",
                 (app_version, app_version_code, device_id))
             db.commit()
             db.close()
@@ -339,7 +339,7 @@ def pending_commands(device_id):
         commands = []
         # 从PostgreSQL读取pending命令
         _cur2 = db.cursor()
-        _cur2.execute("SELECT * FROM pending_lock_cmds WHERE device_id=%s AND (delivered=0 OR (delivered=1 AND (status IS NULL OR status='' OR status='pending'))) ORDER BY id", (device_id,))
+        _cur2.execute("SELECT * FROM pending_lock_cmds WHERE device_id=%s AND (delivered=0 OR status='pending') ORDER BY id", (device_id,))
         pending_rows = _cur2.fetchall()
         for row in pending_rows:
             cmd_json = row['command'] if row['command'] else ''
@@ -352,7 +352,7 @@ def pending_commands(device_id):
                 except:
                     pass
                 # 标记已投递
-                _cur2.execute('UPDATE pending_lock_cmds SET delivered=1 WHERE id=%s', (row['id'],))
+                _cur2.execute("UPDATE pending_lock_cmds SET delivered=1, status='completed' WHERE id=%s", (row['id'],))
             else:
                 commands.append({
                     'order_id': str(row['order_id']) if row['order_id'] else '',
@@ -362,7 +362,7 @@ def pending_commands(device_id):
                     'protocol': row['protocol']
                 })
                 # 标记开锁指令已投递，防止重复开门
-                _cur2.execute('UPDATE pending_lock_cmds SET delivered=1 WHERE id=%s', (row['id'],))
+                _cur2.execute("UPDATE pending_lock_cmds SET delivered=1, status='completed' WHERE id=%s", (row['id'],))
         db.commit()
 
         # 查询该柜体下所有主板配置，随轮询返回给APK（设备自动同步）
@@ -400,7 +400,7 @@ def pending_update(device_id):
             db.close()
             return jsonify({"code": 200, "data": {"commands": [], "orders": []}})
 
-        cursor.execute("SELECT * FROM pending_lock_cmds WHERE device_id=%s AND (delivered=0 OR (delivered=1 AND (status IS NULL OR status='' OR status='pending'))) ORDER BY id", (device_id,))
+        cursor.execute("SELECT * FROM pending_lock_cmds WHERE device_id=%s AND (delivered=0 OR status='pending') ORDER BY id", (device_id,))
         rows = cursor.fetchall()
         commands = []
         for row in rows:
@@ -412,7 +412,7 @@ def pending_update(device_id):
                     commands.append(cmd_obj)
                 except:
                     pass
-                cursor.execute("UPDATE pending_lock_cmds SET delivered=1 WHERE id=%s", (row["id"],))
+                cursor.execute("UPDATE pending_lock_cmds SET delivered=1, status='completed' WHERE id=%s", (row['id'],))
         db.commit()
         db.close()
         return jsonify({"code": 200, "data": {"commands": commands, "orders": []}})
@@ -520,7 +520,7 @@ def device_lock_result():
                     db.execute("UPDATE orders SET logical_mark='N' WHERE id=%s", (_o2["id"],))
                     logger.info(f"[lock_result] action=mid: slot={slot_id} mid-retrieve (no end)")
                 elif _o2 and _o2["logical_mark"] == "end":
-                    db.execute("UPDATE orders SET status=3,retrieve_time=NOW(),logical_mark='N',refund_mark=1,refund_amount=deposit_amount WHERE id=%s AND status=2", (_o2["id"],))
+                    db.execute("UPDATE orders SET status=3,retrieve_time=NOW(),logical_mark='N',refund_mark=1,refund_amount=_o2['deposit_amount'] WHERE id=%s AND status=2", (_o2["id"],))
                     db.execute("UPDATE cabinet_slots SET status=1 WHERE id=%s", (slot_id,))
                     logger.info(f"[lock_result] action=end: slot={slot_id} ended (free slot)")
                 else:

@@ -5,9 +5,9 @@
 import logging
 import json
 from datetime import datetime
-from flask import Blueprint, request
+from flask import Blueprint, request, session
 from database import get_db
-from helpers import json_response, logger, pending_lock_commands, connected_devices
+from helpers import json_response, logger, pending_lock_commands, connected_devices, require_auth
 
 def _return_balance_to_user(cursor, order_dict):
     """离线取包/APK取件时退还保证金到用户余额 - 统一用 mp_openid"""
@@ -119,7 +119,7 @@ def get_pending_commands(device_id):
 
 
         now = datetime.now()
-        cursor.execute('SELECT o.id as order_id, o.order_no, o.user_phone, o.access_code, o.deposit_amount, o.compartment_number, o.slot_size, o.cabinet_id, o.store_time, cs.board_no, cs.lock_no FROM orders o JOIN cabinets c ON o.cabinet_id = c.id LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE c.mainboard_device_id = %s AND o.status = 2 ORDER BY o.id DESC', (device_id,))
+        cursor.execute("SELECT o.id as order_id, o.order_no, o.user_phone, o.access_code, o.deposit_amount, o.compartment_number, o.slot_size, o.cabinet_id, o.store_time, cs.board_no, cs.lock_no FROM orders o JOIN cabinets c ON o.cabinet_id = c.id LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE c.mainboard_device_id = %s AND o.status = 2 ORDER BY o.id DESC", (device_id,))
         orders = [dict(row) for row in cursor.fetchall()]
         conn.commit()
         conn.close()
@@ -157,7 +157,7 @@ def get_active_orders_by_device(device_id):
         # 更新设备心跳
         cursor.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (device_id,))
         conn.commit()
-        cursor.execute('SELECT o.id as order_id, o.order_no, o.user_phone, o.access_code, o.deposit_amount, o.compartment_number, o.slot_size, o.cabinet_id, o.store_time FROM orders o JOIN cabinets c ON o.cabinet_id = c.id WHERE c.mainboard_device_id = %s AND o.status = 2 ORDER BY o.id DESC', (device_id,))
+        cursor.execute("SELECT o.id as order_id, o.order_no, o.user_phone, o.access_code, o.deposit_amount, o.compartment_number, o.slot_size, o.cabinet_id, o.store_time, cs.board_no, cs.lock_no FROM orders o JOIN cabinets c ON o.cabinet_id = c.id LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE c.mainboard_device_id = %s AND o.status = 2 ORDER BY o.id DESC", (device_id,))
         orders = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return json_response({'orders': orders, 'count': len(orders), 'device_id': device_id,
@@ -194,6 +194,10 @@ def offline_retrieve():
         if user_phone and order['user_phone'] != user_phone:
             conn.close()
             return json_response(message='手机号不匹配', code=403)
+        # 5分钟保护
+        if order.get('created_at') and (datetime.now() - order['created_at']).total_seconds() < 300:
+            conn.close()
+            return json_response(message='订单刚创建，请稍后再试', code=400)
         actual_time = retrieve_time or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         cursor.execute('UPDATE orders SET status = 3, retrieve_time = %s WHERE id = %s AND status = 2', (actual_time, order['id']))
         if order['slot_id']:
@@ -243,6 +247,7 @@ def offline_retrieve():
 
 
 @bp.route('/offline-retrieve/batch', methods=['POST'])
+@require_auth
 def offline_retrieve_batch():
     """离线取包批量同步"""
     try:
@@ -269,6 +274,10 @@ def offline_retrieve_batch():
                     continue
                 if order['status'] != 2:
                     results.append({'order_id': order['id'], 'order_no': order['order_no'], 'status': 'already_processed'})
+                    continue
+                # 5分钟保护
+                if order.get('created_at') and (datetime.now() - order['created_at']).total_seconds() < 300:
+                    results.append({'order_id': order['id'], 'order_no': order['order_no'], 'status': 'too_recent'})
                     continue
                 actual_time = rec.get('retrieve_time') or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 cursor.execute('UPDATE orders SET status = 3, retrieve_time = %s WHERE id = %s AND status = 2', (actual_time, order['id']))

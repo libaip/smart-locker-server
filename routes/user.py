@@ -314,6 +314,15 @@ def store_init():
 
         if not all([cabinet_id, user_phone]):
             return json_response(message='参数不完整', code=400)
+        # 检查设备营业状态
+        _cb = get_db()
+        _c = _cb.cursor()
+        _c.execute("SELECT business_status FROM cabinets WHERE id=%s", (cabinet_id,))
+        _r = _c.fetchone()
+        _cb.close()
+        if _r and _r["business_status"] not in ("open", "active"):
+            return json_response(message="设备维护中，请移步到隔壁设备", code=400)
+
 
         # 检查设备是否在线（查 last_heartbeat，5分钟内算在线）
         # 备份位置：user.py.bak.onlinecheck
@@ -404,9 +413,10 @@ def store_init():
             return json_response(message='取件码必须为4位数字', code=400)
 
         order_no = generate_order_no()
-        cursor.execute('SELECT deposit_amount, group_id FROM cabinets WHERE id = %s', (cabinet_id,))
+        cursor.execute('SELECT deposit_amount, charge_mode, per_use_price, group_id FROM cabinets WHERE id = %s', (cabinet_id,))
         cab_row = cursor.fetchone()
-        deposit_amount = cab_row['deposit_amount'] if cab_row and cab_row['deposit_amount'] else float(get_setting('deposit_amount', '20'))
+        deposit_amount = cab_row['deposit_amount'] if cab_row and cab_row['deposit_amount'] is not None else float(get_setting('deposit_amount', '20'))
+        per_use_price = (cab_row.get('per_use_price') or 0) if cab_row else 0
         group_id = cab_row.get('group_id') if cab_row else None
         compartment_display = slot['slot_label'] if 'slot_label' in slot.keys() and slot['slot_label'] else (slot['display_number'] if slot['display_number'] else slot['slot_number'])
 
@@ -414,8 +424,8 @@ def store_init():
         payment_channel = select_payment_channel()
         payment_channel_id = payment_channel['id'] if payment_channel else None
 
-        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, group_id, payment_channel_id, openid, unionid, mp_openid) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s) RETURNING id',
-                       (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, datetime.now(), group_id, payment_channel_id, openid, unionid, mp_openid))
+        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, per_use_price, status, store_time, group_id, payment_channel_id, openid, unionid, mp_openid) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s) RETURNING id',
+                       (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, per_use_price, datetime.now(), group_id, payment_channel_id, openid, unionid, mp_openid))
         row = cursor.fetchone()
         if not row:
             conn.close()
@@ -498,6 +508,15 @@ def store_legacy():
         access_code = data.get('access_code', generate_access_code())
         if not all([cabinet_id, user_phone]):
             return json_response(message='参数不完整', code=400)
+        # 检查设备营业状态
+        _cb = get_db()
+        _c = _cb.cursor()
+        _c.execute("SELECT business_status FROM cabinets WHERE id=%s", (cabinet_id,))
+        _r = _c.fetchone()
+        _cb.close()
+        if _r and _r["business_status"] not in ("open", "active"):
+            return json_response(message="设备维护中，请移步到隔壁设备", code=400)
+
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute('SELECT cs.* FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id WHERE c.id = %s AND cs.status = 1 AND cs.slot_size = %s LIMIT 1',
@@ -573,6 +592,10 @@ def retrieve():
                                 send_open_lock(did, bn, ln, order_id=str(order["id"]))
                 except Exception as open_err:
                     logger.error(f"[retrieve] 开锁失败(order={order.get('id')}): {open_err}")
+                # 5分钟保护：订单创建不足5分钟不允许结束
+                if order.get('created_at') and (datetime.now() - order['created_at']).total_seconds() < 300:
+                    logger.info(f'[retrieve] 5分钟保护: order={order["id"]}, age={(datetime.now() - order["created_at"]).total_seconds():.0f}s')
+                    continue
                 cursor.execute('UPDATE orders SET status = 3, retrieve_time = %s WHERE id = %s',
                 (datetime.now(), order['id']))
             if order['slot_id']:
@@ -680,6 +703,11 @@ def retrieve_verify():
         access_code = data.get('access_code')
         openid = data.get('openid', '')
         unionid = data.get('unionid', '')
+        try:
+            with open('/tmp/verify_debug.log', 'a') as _vlog:
+                _vlog.write(f'[retrieve_verify] REQ cabinet_id={cabinet_id!r} phone={phone!r} access_code={access_code!r} openid={openid!r} unionid={unionid!r}\n')
+        except Exception:
+            pass
         if cabinet_id is None or not phone or not access_code:
             return json_response(message='参数不完整', code=400)
         conn = get_db()
@@ -688,11 +716,8 @@ def retrieve_verify():
                        (cabinet_id, phone, access_code))
         order = cursor.fetchone()
         if not order:
-            cursor.execute('SELECT o.*, COALESCE(cs.slot_size, o.slot_size) as slot_size, cs.board_no, cs.lock_no FROM orders o LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE o.user_phone = %s AND o.access_code = %s AND o.status = 2 ORDER BY o.id DESC LIMIT 1', (phone, access_code))
-            order = cursor.fetchone()
-        if not order:
             conn.close()
-            return json_response(message='验证失败，请检查手机号和取件码', code=400)
+            return json_response(message='订单不在此柜，请到原存包柜取件', code=400)
         # 如果订单已结束（连点两次），跳过处理
         if order['status'] == 3:
             _deposit = order.get('deposit_amount', 0)
@@ -740,12 +765,33 @@ def retrieve_confirm():
                 conn.close()
                 return json_response(message='设备离线，请稍后再试', code=400)
 
+        orig_status = order['status']
+        # 状态校验：只允许status=2(使用中)的订单被结束
+        if orig_status != 2:
+            conn.close()
+            _st_map = {1: '待支付', 3: '已结算', 4: '已退款', 5: '已取消', 6: '退款异常'}
+            return json_response(message='订单状态异常(%s)，无法结束' % _st_map.get(orig_status, '未知'), code=400)
+
+        # 5分钟保护：订单创建不足5分钟不允许结束（防止APK自动调用导致订单被意外结束）
+        if order['created_at'] and (datetime.now() - order['created_at']).total_seconds() < 300:
+            conn.close()
+            return json_response(message='订单刚创建，请稍后再试', code=400)
+
+        # 15秒防重：同一柜格刚操作过就不再重复开门
+        _dup = conn.cursor()
+        _dup.execute("SELECT 1 FROM storage_records WHERE cabinet_id=%s AND COALESCE(compartment_number,'')=COALESCE(%s,'') AND retrieve_time > NOW() - INTERVAL '15 seconds' LIMIT 1",
+                     (order['cabinet_id'], order['compartment_number'] or ''))
+        if not _dup.fetchone():
+            _dup.execute("SELECT 1 FROM door_records WHERE order_id=%s AND create_time > NOW() - INTERVAL '15 seconds' LIMIT 1", (str(order_id),))
+        if _dup.fetchone():
+            conn.close()
+            return json_response(message='操作太频繁，请稍后再试', code=400)
+
         deposit_amount = order['deposit_amount']
         transaction_id = order['transaction_id']
-        orig_status = order['status']
         # 结束订单，更新状态和退款信息
-        cursor.execute('UPDATE orders SET status = 3, retrieve_time = NOW(), refund_amount = %s, refund_mark = 1 WHERE id = %s', 
-                       (deposit_amount, order_id))
+        cursor.execute('UPDATE orders SET status = 3, retrieve_time = NOW(), refund_mark = 1 WHERE id = %s', 
+                       (order_id,))
         cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (order['slot_id'],))
         # 结束订单，保证金退到用户余额（不直接退微信）
         # 防重复：如果订单原状态不是status=2(使用中)，说明已被其他路径处理过，跳过余额更新
@@ -904,9 +950,10 @@ def create_deposit_order():
             conn.close()
             return json_response(message='取件码必须为4位数字', code=400)
         order_no = generate_order_no()
-        cursor.execute('SELECT deposit_amount, group_id FROM cabinets WHERE id = %s', (cabinet_id,))
+        cursor.execute('SELECT deposit_amount, charge_mode, per_use_price, group_id FROM cabinets WHERE id = %s', (cabinet_id,))
         cab_row = cursor.fetchone()
-        deposit_amount = cab_row['deposit_amount'] if cab_row and cab_row['deposit_amount'] else float(get_setting('deposit_amount', '20'))
+        deposit_amount = cab_row['deposit_amount'] if cab_row and cab_row['deposit_amount'] is not None else float(get_setting('deposit_amount', '20'))
+        per_use_price = (cab_row.get('per_use_price') or 0) if cab_row else 0
         group_id = cab_row.get('group_id') if cab_row else None
         # 选择支付渠道
         from helpers import select_payment_channel
@@ -929,13 +976,13 @@ def create_deposit_order():
             if _wnr4 and _wnr4[0]:
                 _wn2 = _wnr4[0]
         _cdo_uid = _resolve_user(cursor, openid=openid, mp_openid=mp_openid or openid, phone=user_phone, unionid=unionid)
-        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, group_id, payment_channel_id, openid, unionid, mp_openid, wechat_name, user_id) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
-                       (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, datetime.now(), group_id, payment_channel_id, openid, unionid, mp_openid, _wn2, _cdo_uid))
+        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, per_use_price, status, store_time, group_id, payment_channel_id, openid, unionid, mp_openid, wechat_name, user_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
+                       (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, per_use_price, datetime.now(), group_id, payment_channel_id, openid, unionid, mp_openid, _wn2, _cdo_uid))
         row = cursor.fetchone()
         order_id = row["id"]
         conn.commit()
         conn.close()
-        pay_params = get_payment_params(order_id, order_no, deposit_amount, user_phone, openid, payment_channel=payment_channel, payment_channel_id=payment_channel_id)
+        pay_params = get_payment_params(order_id, order_no, deposit_amount + per_use_price, user_phone, openid, payment_channel=payment_channel, payment_channel_id=payment_channel_id)
         return json_response({'order_id': order_id, 'order_no': order_no, 'access_code': access_code,
                               'slot_id': slot['id'], 'cabinet_id': cabinet_id, 'compartment_number': compartment_display, 'compartment_label': slot['slot_label'] if 'slot_label' in slot.keys() and slot['slot_label'] else '',
                               'slot_size': slot['slot_size'], 'deposit_amount': deposit_amount, 'pay_params': pay_params})
@@ -969,8 +1016,10 @@ def store_pay():
         mock_mode = is_mock_mode()
         if mock_mode:
             transaction_id = 'MOCK' + datetime.now().strftime('%Y%m%d%H%M%S') + ''.join(random.choices(string.digits, k=6))
-            cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
-                           (order_id, order['deposit_amount'], transaction_id))
+            cursor.execute("SELECT id FROM payments WHERE order_id=%s AND type=1 AND transaction_id=%s LIMIT 1", (order_id, transaction_id))
+            if not cursor.fetchone():
+                cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
+                               (order_id, order['deposit_amount'], transaction_id))
             cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s',
                            (transaction_id, datetime.now(), order_id))
             if order['slot_id']:
@@ -1016,8 +1065,10 @@ def store_pay():
             result = wxpay.order_query(out_trade_no=order['order_no'])
             if result.get('trade_state') == 'SUCCESS' or result.get('result_code') == 'SUCCESS':
                 transaction_id = result.get('transaction_id')
-                cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
-                               (order_id, order['deposit_amount'], transaction_id))
+                cursor.execute("SELECT id FROM payments WHERE order_id=%s AND type=1 AND transaction_id=%s LIMIT 1", (order_id, transaction_id))
+                if not cursor.fetchone():
+                    cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
+                                   (order_id, order['deposit_amount'], transaction_id))
                 # 原子更新：只有status=1时才更新，防止与支付回调重复处理
                 cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s AND status = 1',
                                (transaction_id, datetime.now(), order_id))
@@ -1123,7 +1174,8 @@ def h5_store():
             return json_response(message='暂无可用柜格', code=303)
         cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s AND status = 1', (slot['id'],))
         order_no = 'ORD' + datetime.now().strftime('%Y%m%d%H%M%S') + ''.join(random.choices(string.digits, k=4))
-        deposit = cabinet['deposit_amount'] or 0
+        deposit = cabinet['deposit_amount'] if cabinet.get('deposit_amount') is not None else 0
+        per_use_price = cabinet.get('per_use_price') or 0
         openid = data.get('openid', '')
         unionid = data.get('unionid', '') or ''
         wechat_name = data.get('wechat_name', '') or ''
@@ -1145,14 +1197,14 @@ def h5_store():
                 _wn3 = _wnr6[0]
         # 解析 user_id
         _h5_uid = _resolve_user(cursor, openid=openid, phone=phone, unionid=unionid)
-        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, status, store_time, group_id, cabinet_code, cabinet_name, slot_size, payment_channel_id, openid, unionid, wechat_name, user_id) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
-                       (order_no, phone, slot['id'], cabinet_id, slot['slot_number'], pwd, deposit, datetime.now(), cabinet['group_id'], cabinet['cabinet_code'], cabinet['name'], slot['slot_size'], payment_channel_id, openid, unionid, _wn3, _h5_uid))
+        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, per_use_price, status, store_time, group_id, cabinet_code, cabinet_name, slot_size, payment_channel_id, openid, unionid, wechat_name, user_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
+                       (order_no, phone, slot['id'], cabinet_id, slot['slot_number'], pwd, deposit, per_use_price, datetime.now(), cabinet['group_id'], cabinet['cabinet_code'], cabinet['name'], slot['slot_size'], payment_channel_id, openid, unionid, _wn3, _h5_uid))
         row = cursor.fetchone()
         order_id = row["id"]
         conn.commit()
         result = {'order_id': order_id, 'order_no': order_no, 'need_redirect': need_redirect, 'slot_number': str(slot['slot_number']), 'pwd': pwd, 'deposit': str(deposit), 'cabinet_id': cabinet_id, 'cabinet_device_id': cabinet['mainboard_device_id'], 'board_no': 1}
         try:
-            pay_params = get_payment_params(order_id, order_no, deposit, phone, openid, payment_channel=payment_channel, payment_channel_id=payment_channel_id)
+            pay_params = get_payment_params(order_id, order_no, deposit + per_use_price, phone, openid, payment_channel=payment_channel, payment_channel_id=payment_channel_id)
             result['pay_params'] = pay_params
             if pay_params.get('mode') == 'error':
                 cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (slot['id'],))
@@ -1231,8 +1283,13 @@ def deposit_retrieve():
                     # 取物即结束订单
                     conn2 = get_db()
                     c2 = conn2.cursor()
-                    c2.execute("UPDATE orders SET status=3, retrieve_time=NOW(), refund_amount=%s, refund_mark=1 WHERE id=%s AND status=2",
-                              (order_dict['deposit_amount'], order_dict['id']))
+                    # 5分钟保护
+                    if order_dict.get('created_at') and (datetime.now() - order_dict['created_at']).total_seconds() < 300:
+                        logger.info(f'[deposit/retrieve] 5分钟保护: order={order_dict["id"]}')
+                        conn2.close()
+                        continue
+                    c2.execute("UPDATE orders SET status=3, retrieve_time=NOW(), refund_mark=1 WHERE id=%s AND status=2",
+                              (order_dict['id'],))
                     if order_dict.get('slot_id'):
                         c2.execute("UPDATE cabinet_slots SET status=1 WHERE id=%s", (order_dict['slot_id'],))
                     c2.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s,%s,%s,'available') ON CONFLICT (order_id) DO NOTHING",
@@ -1326,6 +1383,22 @@ def deposit_end_storage():
         if not order or order['status'] != 2:
             conn.close()
             return json_response(message='订单不存在或状态异常', code=404 if not order else 400)
+        if data.get('device_id') and str(data.get('device_id')) != str(order['mainboard_device_id']):
+            conn.close()
+            return json_response(message='订单不属于当前设备', code=400)
+        # 防误触：订单创建不足5分钟不允许结束
+        if order['store_time'] and (datetime.now() - order['store_time']).total_seconds() < 300:
+            conn.close()
+            return json_response(message='订单刚创建，请稍后再试', code=400)
+        # 15秒防重：同一柜格刚操作过就不再重复开门
+        _dup = conn.cursor()
+        _dup.execute("SELECT 1 FROM storage_records WHERE cabinet_id=%s AND COALESCE(compartment_number,'')=COALESCE(%s,'') AND retrieve_time > NOW() - INTERVAL '15 seconds' LIMIT 1",
+                     (order['cabinet_id'], order['compartment_number'] or ''))
+        if not _dup.fetchone():
+            _dup.execute("SELECT 1 FROM door_records WHERE order_id=%s AND create_time > NOW() - INTERVAL '15 seconds' LIMIT 1", (str(order_id),))
+        if _dup.fetchone():
+            conn.close()
+            return json_response(message='操作太频繁，请稍后再试', code=400)
         refund_amount = order['deposit_amount']
         compartment_number = order['slot_number'] or order['compartment_number']
         cursor.execute('INSERT INTO storage_records (cabinet_id, compartment_number, user_phone, access_code, status, store_time, retrieve_time) VALUES (%s, %s, %s, %s, 1, %s, %s)',
@@ -1349,8 +1422,8 @@ def deposit_end_storage():
             cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (order['slot_id'],))
         # 结束订单，保证金退到用户余额
         new_status = 3
-        cursor.execute('UPDATE orders SET status = %s, retrieve_time = NOW(), refund_amount = %s, refund_mark = 1 WHERE id = %s', 
-                       (new_status, refund_amount, order_id))
+        cursor.execute('UPDATE orders SET status = %s, retrieve_time = NOW(), refund_mark = 1 WHERE id = %s', 
+                       (new_status, order_id))
         _openid = order.get('openid', '') or ''
         _unionid = order.get('unionid', '') or ''
         if not _unionid and order.get('user_phone'):
@@ -1435,13 +1508,14 @@ def deposit_end_storage():
             if not _hb or (datetime.utcnow() - _hb).total_seconds() > 300:
                 return json_response(message='设备离线，请稍后再试', code=400)
         # Send open_lock via send_open_lock (includes door_records)
-        try:
-            from helpers import send_open_lock
-            device_id = order['mainboard_device_id']
-            send_open_lock(device_id, order['board_no'] or 1, order['lock_no'] or 1, order_id=str(order_id), protocol=order.get('mainboard_source') or 'YBM', slot_number=order.get('compartment_number'))
-            logger.info(f'[end_storage] send_open_lock called: device={device_id}, board={order["board_no"]}, lock={order["lock_no"]}')
-        except Exception as we:
-            logger.error(f'[end_storage] send_open_lock失败: {we}')
+        if not data.get('local_opened'):
+            try:
+                from helpers import send_open_lock
+                device_id = order['mainboard_device_id']
+                send_open_lock(device_id, order['board_no'] or 1, order['lock_no'] or 1, order_id=str(order_id), protocol=order.get('mainboard_source') or 'YBM', slot_number=order.get('compartment_number'))
+                logger.info(f'[end_storage] send_open_lock called: device={device_id}, board={order["board_no"]}, lock={order["lock_no"]}')
+            except Exception as we:
+                logger.error(f'[end_storage] send_open_lock失败: {we}')
         # 发送寄存结束订阅消息
         _openid = order.get("openid")
         if not _openid:
@@ -1538,6 +1612,18 @@ def deposit_mid_retrieve():
         if order['status'] != 2:
             conn.close()
             return json_response(message='订单状态不允许中途取物', code=400)
+        if data.get('device_id') and str(data.get('device_id')) != str(order['mainboard_device_id']):
+            conn.close()
+            return json_response(message='订单不属于当前设备', code=400)
+        # 15秒防重：同一柜格刚操作过就不再重复开门
+        _dup = conn.cursor()
+        _dup.execute("SELECT 1 FROM storage_records WHERE cabinet_id=%s AND COALESCE(compartment_number,'')=COALESCE(%s,'') AND retrieve_time > NOW() - INTERVAL '15 seconds' LIMIT 1",
+                     (order['cabinet_id'], order['compartment_number'] or ''))
+        if not _dup.fetchone():
+            _dup.execute("SELECT 1 FROM door_records WHERE order_id=%s AND create_time > NOW() - INTERVAL '15 seconds' LIMIT 1", (str(order_id),))
+        if _dup.fetchone():
+            conn.close()
+            return json_response(message='操作太频繁，请稍后再试', code=400)
         # Record mid-retrieve
         cursor.execute('INSERT INTO storage_records (cabinet_id, compartment_number, user_phone, access_code, status, store_time, retrieve_time) VALUES (%s, %s, %s, %s, 2, %s, %s)',
                        (order['cabinet_id'], order['compartment_number'], order['user_phone'], order['access_code'], order['store_time'], datetime.now()))
@@ -1552,13 +1638,14 @@ def deposit_mid_retrieve():
                 return json_response(message='设备离线，请稍后再试', code=400)
 
         # Send open_lock via send_open_lock (includes door_records)
-        try:
-            from helpers import send_open_lock
-            device_id = order['mainboard_device_id']
-            send_open_lock(device_id, order['board_no'] or 1, order['lock_no'] or 1, order_id=str(order_id), protocol=order.get('mainboard_source') or 'YBM', slot_number=order.get('compartment_number'))
-            logger.info(f'[中途取物] send_open_lock called: device={device_id}, board={order["board_no"]}, lock={order["lock_no"]}')
-        except Exception as we:
-            logger.error(f'[中途取物] send_open_lock失败: {we}')
+        if not data.get('local_opened'):
+            try:
+                from helpers import send_open_lock
+                device_id = order['mainboard_device_id']
+                send_open_lock(device_id, order['board_no'] or 1, order['lock_no'] or 1, order_id=str(order_id), protocol=order.get('mainboard_source') or 'YBM', slot_number=order.get('compartment_number'))
+                logger.info(f'[中途取物] send_open_lock called: device={device_id}, board={order["board_no"]}, lock={order["lock_no"]}')
+            except Exception as we:
+                logger.error(f'[中途取物] send_open_lock失败: {we}')
         logger.info(f'[中途取物] order_id={order_id}, compartment={order["slot_number"]}')
         return json_response({'message': '柜门已打开', 'order_id': order_id, 'compartment_number': order['slot_number'], 'cabinet_code': order['cabinet_code']})
     except Exception as e:
@@ -1824,8 +1911,10 @@ def get_pay_status(order_id):
                             try:
                                 pass  # 支付确认不再增加余额
                             except: pass
-                            cur3.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
-                                         (order['id'], order['deposit_amount'], txn_id))
+                            cur3.execute("SELECT id FROM payments WHERE order_id=%s AND type=1 AND transaction_id=%s LIMIT 1", (order['id'], txn_id))
+                            if not cur3.fetchone():
+                                cur3.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
+                                             (order['id'], order['deposit_amount'], txn_id))
                             conn3.commit()
                             conn3.close()
                             # 开锁（H5支付成功时直接开门）
@@ -2514,11 +2603,15 @@ def get_user_balance():
             conn.close()
             return json_response(message='用户未登录', code=400)
         
-        # 用 user_id 查余额
-        cur.execute("SELECT phone, balance, total_deposited, total_withdrawn, first_use_time, created_at FROM user_balances WHERE user_id = %s", (user_id,))
+        # 用 user_id 查辅助字段（余额实时计算）
+        cur.execute("SELECT phone, total_deposited, total_withdrawn, first_use_time, created_at FROM user_balances WHERE user_id = %s", (user_id,))
         row = cur.fetchone()
         
         _check_phone = row["phone"] if row else phone
+        
+        # 实时计算可用余额：订单保证金 - 已退款 - 已提现 - 待提现
+        from helpers import calc_balance
+        calc_bal = calc_balance(user_id=user_id, phone=_check_phone)
         
         # 检查待处理提现
         has_pending_withdrawal = False
@@ -2553,7 +2646,8 @@ def get_user_balance():
         
         if row:
             result = dict(row)
-            balance_val = float(result.get('balance', 0) or 0)
+            balance_val = calc_bal
+            result['balance'] = balance_val
             result['available_balance'] = balance_val
             result['has_pending_withdrawal'] = has_pending_withdrawal
             result['has_active_orders'] = has_active_orders
@@ -2580,8 +2674,8 @@ def get_user_balance():
             # 用户余额记录不存在，返回默认值
             return json_response(data={
                 'phone': phone,
-                'balance': 0,
-                'available_balance': 0,
+                'balance': calc_bal,
+                'available_balance': calc_bal,
                 'total_deposited': 0,
                 'total_withdrawn': 0,
                 'has_pending_withdrawal': has_pending_withdrawal,
@@ -2667,14 +2761,9 @@ def user_withdraw():
             conn.rollback()
             return json_response(message='用户不存在', code=404)
         
-        balance = row['balance']
-        try:
-            cursor.execute("SELECT COALESCE(SUM(balance),0) FROM user_balances WHERE phone = %s", (phone,))
-            _tb = float(cursor.fetchone()[0])
-            if _tb > balance:
-                balance = _tb
-        except:
-            pass
+        # 余额以实时计算为准（user_balances 历史表不再作为提现依据）
+        from helpers import calc_balance
+        balance = calc_balance(phone=phone)
         if balance <= 0:
             conn.rollback()
             conn.close()
@@ -2684,11 +2773,7 @@ def user_withdraw():
             amount = float(balance)
         else:
             amount = float(amount)
-        cursor.execute("UPDATE user_balances SET balance = balance - %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s AND balance >= %s", (amount, amount, phone, amount))
-        if cursor.rowcount == 0:
-            conn.rollback()
-            conn.close()
-            return json_response(message='余额不足，无法提现', code=400)
+        cursor.execute("UPDATE user_balances SET balance = GREATEST(COALESCE(balance,0) - %s, 0), total_withdrawn = COALESCE(total_withdrawn,0) + %s WHERE phone = %s", (amount, amount, phone))
         
         # 防重：30秒内有正在处理的提现则拒绝
         cursor.execute("SELECT id FROM withdrawal_records WHERE user_phone = %s AND created_at > NOW() - INTERVAL '120 seconds' LIMIT 1", (phone,))
@@ -2728,7 +2813,7 @@ def user_withdraw():
             FROM user_balance_details bd
             JOIN orders o ON bd.order_id = o.id
             JOIN user_balances ub ON bd.user_phone = ub.phone
-            WHERE ub.phone=%s AND bd.status='available' AND o.transaction_id IS NOT NULL AND o.transaction_id != ''
+            WHERE ub.phone=%s AND bd.status='available' AND o.status IN (3,4) AND o.transaction_id IS NOT NULL AND o.transaction_id != ''
             ORDER BY bd.id DESC"""
             cursor.execute(sql, (phone,))
             balance_records = cursor.fetchall()
@@ -2764,7 +2849,7 @@ def user_withdraw():
                     all_ok = False
                     cursor.execute('UPDATE user_balances SET balance = balance + %s, total_withdrawn = total_withdrawn - %s WHERE phone = %s', (refund_this, refund_this, phone))
                 all_order_ids.append(str(oid))
-                if ok:
+                if ok and '已退款' not in rmsg and '全额退款' not in rmsg:
                     cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_amount = COALESCE(refund_amount, 0) + %s WHERE id = %s', (rid, refund_this, oid))
                     cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (oid,))
                 remaining -= refund_this
@@ -2841,7 +2926,7 @@ def user_withdraw():
                     _all_order_ids.append(str(oid))
                     if _first_oid_openid is None:
                         _first_oid_openid = order_openid
-                    if ok:
+                    if ok and '已退款' not in rmsg and '全额退款' not in rmsg:
                         cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_amount = COALESCE(refund_amount, 0) + %s WHERE id = %s', (rid, refund_this, oid))
                         cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (oid,))
                     remaining -= refund_this
@@ -2875,7 +2960,7 @@ def user_withdraw():
                     _all_order_ids.append(str(oid))
                     if _first_oid_openid is None:
                         _first_oid_openid = order_openid
-                    if ok:
+                    if ok and '已退款' not in rmsg and '全额退款' not in rmsg:
                         cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_amount = COALESCE(refund_amount, 0) + %s WHERE id = %s', (rid, refund_this, oid))
                         cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (oid,))
                     remaining -= refund_this
@@ -3238,6 +3323,3 @@ def _auto_process_self_complaint(complaint_id, phone, openid_val):
         conn.close()
     except Exception as e:
         logger.error(f"[_auto_process_self_complaint] {e}")
-
-
-

@@ -236,7 +236,7 @@ def pay_notify():
             if order['slot_id']:
                 cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
             cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
-                           (order['id'], order['deposit_amount'], transaction_id))
+                           (order['id'], float(order['deposit_amount']) + float(order.get('per_use_price') or 0), transaction_id))
             # 更新用户余额 - 统一用 mp_openid 查找
             try:
                 _o_openid = order.get('openid', '') or ''
@@ -320,7 +320,7 @@ def pay_notify():
             except Exception as e:
                 logger.error(f'[支付回调读取开锁信息失败] {e}')
             _channel_id = order['payment_channel_id']
-            _deposit_amount = order['deposit_amount']
+            _deposit_amount = float(order['deposit_amount']) + float(order.get('per_use_price') or 0)
             # 更新渠道统计（支付成功）
             try:
                 if _channel_id:
@@ -443,6 +443,7 @@ def refund_notify():
                 _conn3 = get_db()
                 _c3 = _conn3.cursor()
                 _c3.execute("UPDATE orders SET status=4, refund_status='refunded', refund_time=NOW() WHERE order_no=%s AND status!=4", (_out_trade_no,))
+                _c3.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=(SELECT id FROM orders WHERE order_no=%s) AND status IN ('available','pending')", (_out_trade_no,))
                 _conn3.commit()
                 _conn3.close()
         except Exception as _ne:
@@ -492,9 +493,9 @@ def third_party_pay_notify():
             if order['slot_id']:
                 cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
             cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
-                           (order['id'], order['deposit_amount'], transaction_id))
+                           (order['id'], float(order['deposit_amount']) + float(order.get('per_use_price') or 0), transaction_id))
             if order['payment_channel_id']:
-                update_channel_stats(order['payment_channel_id'], order['deposit_amount'])
+                update_channel_stats(order['payment_channel_id'], float(order['deposit_amount']) + float(order.get('per_use_price') or 0))
             conn.commit()
             conn.close()
             return 'success'

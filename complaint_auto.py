@@ -83,7 +83,8 @@ def do_refund(order_no, total_fee, mch_id):
         return False, f"退款异常: {e}"
     if result and result.get("return_code") == "SUCCESS" and result.get("result_code") == "SUCCESS":
         refund_id = result.get("refund_id", "")
-        c.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=%s WHERE id=%s", (refund_id, order["id"]))
+        c.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=%s, refund_time=CURRENT_TIMESTAMP, refund_amount=%s WHERE id=%s", (refund_id, order.get("deposit_amount", 0), order["id"]))
+        c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order["id"],))
         c.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, approver, order_ids, approve_time) VALUES (%s, %s, %s, 2, '微信投诉自动退款', %s, NOW())", (order["id"], order.get("user_phone", "") or "", order.get("deposit_amount", 0), "[" + str(order["id"]) + "]"))
         conn.commit()
         conn.close()

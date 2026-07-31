@@ -705,7 +705,7 @@ def get_cabinet_by_mainboard(mainboard_id):
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("SELECT c.*, g.name as group_name, l.name as location_name, l.address as location_address, l.usage_rules, l.show_slot_count, '' as business_hours, '' as customer_phone, c.business_status, c.usage_rules, l.usage_rules as location_usage_rules FROM cabinets c LEFT JOIN cabinet_groups g ON c.group_id = g.id LEFT JOIN locations l ON c.location_id = l.id WHERE c.mainboard_device_id = %s", (mainboard_id,))
+        cursor.execute("SELECT c.*, g.name as group_name, l.name as location_name, l.address as location_address, l.usage_rules, l.show_slot_count, l.allow_mid_retrieve, '' as business_hours, '' as customer_phone, c.business_status, c.usage_rules, l.usage_rules as location_usage_rules FROM cabinets c LEFT JOIN cabinet_groups g ON c.group_id = g.id LEFT JOIN locations l ON c.location_id = l.id WHERE c.mainboard_device_id = %s", (mainboard_id,))
         cabinet = cursor.fetchone()
         # 如果柜体没有自己的寄存规则，则用网点的
         if not cabinet:
@@ -741,12 +741,26 @@ def get_cabinet_by_mainboard(mainboard_id):
             result['serial_port'] = _sp
             result['baud_rate'] = _br
             result['serial_type'] = 'BaseSerial'
-        # 替换寄存规则中的占位符
+        # 根据收费模式自动生成寄存规则，并替换占位符
+        charge_mode = result.get('charge_mode', 'deposit')
         rules = result.get('usage_rules', '')
         if rules:
-            da = result.get('deposit_amount', 0)
-            rules = rules.replace('{deposit_amount}', str(int(da) if da and da == int(da) else da))
-            # 将字面量\n替换为真换行符，确保前端正确分行
+            da = result.get('deposit_amount', 0) or 0
+            price = result.get('per_use_price', 0) or 0
+            da_str = str(int(da) if da == int(da) else da)
+            price_str = str(int(price) if price == int(price) else price)
+            if charge_mode == 'free':
+                charge_line = '免费寄存，不收取任何费用'
+            elif charge_mode == 'per_use':
+                total = da + price
+                total_str = str(int(total) if total == int(total) else total)
+                charge_line = '按次收费：保证金' + da_str + '元+按次费' + price_str + '元，本次收取' + total_str + '元；寄存结束退保证金' + da_str + '元'
+            else:
+                charge_line = '保证金' + da_str + '元，寄存结束后押金退回余额'
+            if '{deposit_amount}' in rules:
+                rules = charge_line + '\n存包后请保管好取件码\n柜内禁止存放易燃易爆及违禁物品'
+            else:
+                rules = rules.replace('{deposit_amount}', da_str)
             rules = rules.replace('\\n', '\n')
             result['usage_rules'] = rules
         # 补充location级别的配置
@@ -775,12 +789,12 @@ def get_cabinet_by_mainboard(mainboard_id):
         # 根据收费模式生成屏幕大字显示文本
         charge_mode = result.get('charge_mode', 'deposit')
         if charge_mode == 'free':
-                        result['display_text'] = '\xe5\x85\x8d\xe8\xb4\xb9\xe5\xaf\x84\xe5\xad\x98'
+            result['display_text'] = '免费寄存'
         elif charge_mode == 'per_use':
-            price = result.get('per_use_price', 0)
-            result['display_text'] = f'?{int(price)}??' if price and price == int(price) else f'?{price}??'
+            price = result.get('per_use_price', 0) or 0
+            result['display_text'] = '按次' + (str(int(price)) if price == int(price) else str(price)) + '元'
         else:  # deposit
-            result['display_text'] = '????'
+            result['display_text'] = '保证金寄存'
         result['cabinet_name'] = result.get('name', '')
         conn.close()
         # 存入缓存
@@ -1778,9 +1792,22 @@ def get_members():
         offset = (page - 1) * limit
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT ub.*, COUNT(o.id) as total_orders, SUM(CASE WHEN o.status = 2 THEN 1 ELSE 0 END) as active_orders FROM user_balances ub LEFT JOIN orders o ON ub.phone = o.user_phone GROUP BY ub.phone ORDER BY ub.created_at DESC LIMIT %s OFFSET %s', (limit, offset))
+        cursor.execute("""SELECT
+    o.user_phone as phone,
+    COALESCE(SUM(CASE WHEN o.status IN (2,3) THEN o.deposit_amount ELSE 0 END),0)
+        - COALESCE(SUM(CASE WHEN o.refund_status='refunded' THEN o.deposit_amount ELSE 0 END),0)
+        - COALESCE((SELECT COALESCE(SUM(wr.amount),0) FROM withdrawal_records wr WHERE wr.status=2 AND wr.order_id = o.id),0)
+        - COALESCE((SELECT COALESCE(SUM(wr.amount),0) FROM withdrawal_records wr WHERE wr.status=0 AND wr.order_id = o.id),0) as balance,
+    COALESCE(SUM(CASE WHEN o.status IN (2,3) THEN o.deposit_amount ELSE 0 END),0) as total_deposited,
+    MIN(o.created_at) as created_at,
+    COUNT(o.id) as total_orders,
+    SUM(CASE WHEN o.status = 2 THEN 1 ELSE 0 END) as active_orders
+FROM orders o
+GROUP BY o.user_phone
+ORDER BY MIN(o.created_at) DESC
+LIMIT %s OFFSET %s""", (limit, offset))
         members = cursor.fetchall()
-        cursor.execute('SELECT COUNT(*) as total FROM user_balances')
+        cursor.execute('SELECT COUNT(DISTINCT user_phone) as total FROM orders WHERE status IN (2,3,4)')
         total = cursor.fetchone()['total']
         conn.close()
         return json_response({'list': [dict(m) for m in members], 'total': total, 'page': page, 'limit': limit})

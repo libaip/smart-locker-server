@@ -895,25 +895,19 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
         if result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS':
             refund_id = result.get('refund_id') or result.get('out_refund_no', '')
             logger.info('[do_real_refund] Success: order=%s, refund_id=%s' % (order_no, refund_id))
-            # 扣除用户余额，防止双重给钱
+            # 更新订单退款状态（calc_balance 模式：余额实时计算，无需操作 user_balances）
             if order_id:
                 try:
                     conn_bal = get_db()
                     c_bal = conn_bal.cursor()
-                    c_bal.execute("SELECT user_phone, openid FROM orders WHERE id=%s", (order_id,))
-                    phone_row = c_bal.fetchone()
-                    if phone_row and phone_row['user_phone'] and not skip_balance:
-                        bal_openid = phone_row.get('openid') or ''
-                        if bal_openid:
-                            c_bal.execute("UPDATE user_balances SET balance = GREATEST(balance - %s, 0) WHERE openid=%s", (amount, bal_openid))
-                        else:
-                            c_bal.execute("UPDATE user_balances SET balance = GREATEST(balance - %s, 0) WHERE phone=%s", (amount, phone_row['user_phone']))
-                        if c_bal.rowcount > 0:
-                            logger.info('[do_real_refund] Balance deducted: openid=%s, amount=%s' % (bal_openid, amount))
+                    c_bal.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=%s WHERE id=%s", (refund_id, order_id))
+                    if c_bal.rowcount > 0:
+                        logger.info("[do_real_refund] Orders updated: order_id=%s" % order_id)
+                    c_bal.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order_id,))
                     conn_bal.commit()
                     conn_bal.close()
                 except Exception as be:
-                    logger.error('[do_real_refund] Balance deduction err: %s' % be)
+                    logger.error('[do_real_refund] Order status update err: %s' % be)
                     try: conn_bal.close()
                     except: pass
             return True, refund_id, 'Refund successful'
@@ -1423,6 +1417,23 @@ def get_online_device_ids():
         return set()
 
 
+def is_device_online(device_id, heartbeat=None):
+    """设备管理开门前校验：离线设备禁止发送/排队开锁指令"""
+    device_id = str(device_id)
+    if device_id in connected_devices:
+        return True
+    if device_id in get_online_device_ids():
+        return True
+    if heartbeat:
+        try:
+            if isinstance(heartbeat, str):
+                heartbeat = datetime.strptime(str(heartbeat)[:19], "%Y-%m-%d %H:%M:%S")
+            return (datetime.now() - heartbeat).total_seconds() < 120
+        except Exception:
+            pass
+    return False
+
+
 # ============================================
 # PushPlus 推送 & 商户号健康检查
 # ============================================
@@ -1505,3 +1516,56 @@ _MERCHANT_ERROR_CODES = {'SIGN_ERROR', 'MCH_NOT_EXIST', 'MCH_ID_INVALID', 'SYSTE
 _merchant_health_state = {'last_alert_time': 0, 'consecutive_errors': 0}
 _failover_standby_id = 8
 _failover_consecutive_fails = 0
+
+
+def calc_balance(user_id=None, phone=None, openid=None):
+    """按订单金额实时计算可用余额：订单保证金 - 已退款 - 已提现 - 待提现（每订单封顶）"""
+    from database import get_db
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        phones, openids = set(), set()
+        uid = user_id
+        if not uid and phone:
+            c.execute("SELECT id FROM users WHERE phone=%s LIMIT 1", (phone,))
+            r = c.fetchone()
+            if r: uid = r[0]
+        if not uid and openid:
+            c.execute("SELECT user_id FROM user_openids WHERE openid=%s LIMIT 1", (openid,))
+            r = c.fetchone()
+            if r: uid = r[0]
+        if uid:
+            c.execute("SELECT phone FROM users WHERE id=%s", (uid,))
+            r = c.fetchone()
+            if r and r[0]: phones.add(r[0])
+            c.execute("SELECT phone FROM user_phones WHERE user_id=%s", (uid,))
+            for r in c.fetchall():
+                if r[0]: phones.add(r[0])
+            c.execute("SELECT openid FROM user_openids WHERE user_id=%s", (uid,))
+            for r in c.fetchall():
+                if r[0]: openids.add(r[0])
+        if phone: phones.add(phone)
+        if openid: openids.add(openid)
+        pl = list(phones) if phones else []
+        ol = list(openids) if openids else []
+        if not pl and not ol:
+            return 0.0
+        where_parts = []
+        params = []
+        if pl:
+            ph = ",".join(["%s"] * len(pl))
+            where_parts.append("user_phone IN (" + ph + ")")
+            params.extend(pl)
+        if ol:
+            oi = ",".join(["%s"] * len(ol))
+            where_parts.append("openid IN (" + oi + ")")
+            params.extend(ol)
+        where = " OR ".join(where_parts)
+        excl = "('管理员-自动退款','微信投诉自动退款','投诉自动','管理员-投诉退款'))"
+        sql = "SELECT COALESCE(SUM(GREATEST(o.deposit_amount - CASE WHEN o.refund_status='refunded' THEN o.deposit_amount ELSE 0 END - COALESCE(w.wd,0) - COALESCE(p.pd,0), 0)),0) FROM orders o LEFT JOIN (SELECT order_id, SUM(amount) as wd FROM withdrawal_records WHERE status=2 AND (approver IS NULL OR approver NOT IN " + excl + " GROUP BY order_id) w ON w.order_id=o.id LEFT JOIN (SELECT order_id, SUM(amount) as pd FROM withdrawal_records WHERE status=0 GROUP BY order_id) p ON p.order_id=o.id WHERE o.status IN (3,4) AND (" + where + ")"
+        c.execute(sql, params)
+        r = c.fetchone()
+        return max(0.0, float(r[0] or 0))
+    finally:
+        try: conn.close()
+        except: pass

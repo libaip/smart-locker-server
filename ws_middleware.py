@@ -273,10 +273,12 @@ def fix_websocket(app):
                     except Exception: pass
                 
                 # 消息循环
+                _disconnect_reason = 'unknown'
                 try:
                     while not ws.closed:
                         msg = ws.receive()
                         if msg is None:
+                            _disconnect_reason = 'receive_none'
                             logger.info(f'[WS-MW] 连接关闭(收到None): device_id={device_id}')
                             break
                         try:
@@ -339,7 +341,6 @@ def fix_websocket(app):
                                         db = get_db()
                                         db.execute(
                                             "UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (device_id,))
-                                        (device_id,))
                                         db.commit()
                                         db.close()
                                     except:
@@ -484,8 +485,14 @@ def fix_websocket(app):
                             logger.error(f'[WS-MW] 消息处理错误: {e}')
                 
                 except Exception as e:
+                    _disconnect_reason = 'exception: ' + str(e)[:120]
                     logger.error(f'[WS-MW] 连接异常: device_id={device_id}, {e}')
                 finally:
+                    try:
+                        with open('/tmp/ws_disconnect.log', 'a') as _dlog:
+                            _dlog.write(f'[{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}] device={device_id} reason={_disconnect_reason}\n')
+                    except Exception:
+                        pass
                     if device_id:
                         if device_id in connected_devices and connected_devices[device_id] is ws:
                             del connected_devices[device_id]

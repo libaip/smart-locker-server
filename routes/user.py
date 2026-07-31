@@ -3230,7 +3230,7 @@ def _auto_process_self_complaint(complaint_id, phone, openid_val):
             conn.close()
             return
         from helpers import do_real_refund
-        success, refund_id, msg, _ = do_real_refund(order_id=order[0], order_no=order[1], amount=order[2], payment_channel_id=order[3])
+        success, refund_id, msg = do_real_refund(order_id=order[0], order_no=order[1], amount=order[2], payment_channel_id=order[3])
         if success:
             cur.execute("UPDATE orders SET refund_status='refunded', status=4, refund_amount=%s, refund_time=CURRENT_TIMESTAMP WHERE id=%s", (order[2], order[0]))
             ok_msg = chr(0x5df2) + chr(0x81ea) + chr(0x52a8) + chr(0x9000) + chr(0x6b3e) + chr(0x5904) + chr(0x7406)

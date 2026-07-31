@@ -987,13 +987,16 @@ def open_single_slot(cabinet_id, slot_id):
     try:
         conn = get_db()
         c = conn.cursor()
-        c.execute('SELECT cs.slot_number, cs.board_no, cs.lock_no, c.mainboard_device_id FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id WHERE cs.id = %s AND cs.cabinet_id = %s', (slot_id, cabinet_id))
+        c.execute('SELECT cs.slot_number, cs.board_no, cs.lock_no, c.mainboard_device_id, c.last_heartbeat FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id WHERE cs.id = %s AND cs.cabinet_id = %s', (slot_id, cabinet_id))
         row = c.fetchone()
         conn.close()
         if not row:
             return json_response(message='柜门不存在', code=404)
         if not row['mainboard_device_id']:
             return json_response(message='未找到主板编号', code=400)
+        from helpers import is_device_online
+        if not is_device_online(str(row['mainboard_device_id']), row.get('last_heartbeat')):
+            return json_response(message='设备离线，无法发送开门指令', code=400)
         bn = row.get('board_no') or 1
         ln = row.get('lock_no') or row['slot_number']
         send_open_lock(str(row['mainboard_device_id']), int(bn), int(ln), None, '', slot_number=row['slot_number'])
@@ -1010,12 +1013,21 @@ def open_all_normal_slots(cabinet_id):
     try:
         conn = get_db()
         c = conn.cursor()
-        c.execute('SELECT cs.slot_number, cs.board_no, cs.lock_no, c.mainboard_device_id FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id WHERE cs.cabinet_id = %s AND cs.status IN (1, 2)', (cabinet_id,))
+        c.execute('SELECT mainboard_device_id, last_heartbeat FROM cabinets WHERE id = %s', (cabinet_id,))
+        cabinet = c.fetchone()
+        if not cabinet or not cabinet['mainboard_device_id']:
+            conn.close()
+            return json_response(message='未找到设备', code=400)
+        did = str(cabinet['mainboard_device_id'])
+        from helpers import is_device_online
+        if not is_device_online(did, cabinet.get('last_heartbeat')):
+            conn.close()
+            return json_response(message='设备离线，无法发送开门指令', code=400)
+        c.execute('SELECT cs.slot_number FROM cabinet_slots cs WHERE cs.cabinet_id = %s AND cs.status IN (1, 2)', (cabinet_id,))
         slots = c.fetchall()
         conn.close()
         if not slots:
             return json_response(message='没有可开的正常柜门', code=400)
-        did = str(slots[0]['mainboard_device_id'])
         opened = [s['slot_number'] for s in slots]
         send_open_all(did)
         return json_response(message=f'已发送{len(opened)}个柜门开锁指令（批量）', data={'opened': opened})

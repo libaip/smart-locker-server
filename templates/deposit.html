@@ -1206,6 +1206,21 @@ var wxUnionid = params.get('unionid') || localStorage.getItem('wxUnionid') || ''
                 allowH5ToMp = loc.allow_h5_to_mp || 0;
                 mpAppId = loc.mp_appid || '';
                 mpPath = loc.mp_path || '';
+                // 用柜子实际配置的价格覆盖硬编码默认值
+                var cabPrice = null;
+                if (loc.charge_mode && loc.charge_mode !== 'deposit' && loc.charge_mode !== 'free' && parseFloat(loc.per_use_price) > 0) {
+                    cabPrice = parseFloat(loc.per_use_price);
+                } else if (loc.deposit_amount !== undefined && loc.deposit_amount !== null && loc.deposit_amount !== '') {
+                    cabPrice = parseFloat(loc.deposit_amount);
+                }
+                if (cabPrice !== null && !isNaN(cabPrice)) {
+                    depositPrices['S'] = cabPrice; depositPrices['M'] = cabPrice; depositPrices['L'] = cabPrice;
+                    document.getElementById('priceS').textContent = cabPrice;
+                    document.getElementById('priceM').textContent = cabPrice;
+                    document.getElementById('priceL').textContent = cabPrice;
+                    document.getElementById('s1Price').textContent = cabPrice;
+                    document.getElementById('s1DepositNote').textContent = cabPrice;
+                }
             }
         })
         .catch(function() {});

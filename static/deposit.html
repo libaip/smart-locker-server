@@ -449,7 +449,7 @@
             </div>
             <div class="info-row">
                 <span class="info-label">收费规则</span>
-                <span class="info-price" id="s1PriceLabel">保证金：<span id="s1Price">20</span></span>
+                <span class="info-price"><span id="s1PriceLabel">保证金：</span><span id="s1Price">20</span></span>
             </div>
             <div class="size-bar">
                 <div class="size-btn" data-size="S" onclick="selectSize('S')">小柜 ¥<span id="priceS">10</span></div>
@@ -894,7 +894,7 @@
     var mpOpenedTime = 0;
     var h5RedirectUrl = '';
     var sizeNames = { 'S': '小柜', 'M': '中柜', 'L': '大柜' };
-    var _chargeMode=(typeof s!=='undefined'&&s.charge_mode)?s.charge_mode:'deposit'; var _perUsePrice=(typeof s!=='undefined'&&s.per_use_price)?s.per_use_price:0; var _baseDeposit = (typeof DA !== 'undefined' && DA > 0) ? DA : 20; var depositPrices = { 'S': Math.round(_baseDeposit * 0.5), 'M': _baseDeposit, 'L': Math.round(_baseDeposit * 1.5), 'small': Math.round(_baseDeposit * 0.5), 'medium': _baseDeposit, 'large': Math.round(_baseDeposit * 1.5) }; function _showPrice(size){ if(_chargeMode==='per_use'){ var t=(_baseDeposit||0)+(_perUsePrice||0); return Math.round(t*100)/100; } return depositPrices[size]||0; } function _ruleText(size){ if(_chargeMode==='per_use'){ var d=_baseDeposit||0,p=_perUsePrice||0; return '按次收费：保证金'+d+'元+按次费'+p+'元，本次收取'+(d+p)+'元；寄存结束退保证金'+d+'元'; } return '保证金：'+(_showPrice(size)); } function applyChargeUI(){ var d=_baseDeposit||0,p=_perUsePrice||0,t=d+p; var lab=document.getElementById('s1PriceLabel'); var note=document.getElementById('s1Note2'); if(lab){ if(_chargeMode==='per_use'){ lab.textContent='按次收费：'; if(note)note.innerHTML='按次收费：保证金'+d+'元+按次费'+p+'元，本次收取'+t+'元；寄存结束退保证金'+d+'元'; } else if(_chargeMode==='free'){ lab.textContent='免费寄存：'; if(note)note.innerHTML='免费寄存，不收取任何费用'; } else { lab.textContent='保证金：'; if(note)note.innerHTML='为避免柜门无效占用，需支付押金¥'+t; } } } try{applyChargeUI();}catch(e){}
+    var _chargeMode=(typeof s!=='undefined'&&s.charge_mode)?s.charge_mode:'deposit'; var _perUsePrice=(typeof s!=='undefined'&&s.per_use_price)?s.per_use_price:0; var _baseDeposit = (typeof DA !== 'undefined' && DA > 0) ? DA : 20; var depositPrices = { 'S': Math.round(_baseDeposit * 0.5), 'M': _baseDeposit, 'L': Math.round(_baseDeposit * 1.5), 'small': Math.round(_baseDeposit * 0.5), 'medium': _baseDeposit, 'large': Math.round(_baseDeposit * 1.5) }; function _setTxt(id,val){ var el=document.getElementById(id); if(el) el.textContent=val; } function _showPrice(size){ if(_chargeMode==='per_use'){ var t=(_baseDeposit||0)+(_perUsePrice||0); return Math.round(t*100)/100; } return depositPrices[size]||0; } function _ruleText(size){ if(_chargeMode==='per_use'){ var d=_baseDeposit||0,p=_perUsePrice||0; return '按次收费：保证金'+d+'元+按次费'+p+'元，本次收取'+(d+p)+'元；寄存结束退保证金'+d+'元'; } return '保证金：'+(_showPrice(size)); } function applyChargeUI(){ var d=_baseDeposit||0,p=_perUsePrice||0,t=d+p; var lab=document.getElementById('s1PriceLabel'); var note=document.getElementById('s1Note2'); if(lab){ if(_chargeMode==='per_use'){ lab.textContent='按次收费：'; if(note)note.innerHTML='按次收费：保证金'+d+'元+按次费'+p+'元，本次收取'+t+'元；寄存结束退保证金'+d+'元'; } else if(_chargeMode==='free'){ lab.textContent='免费寄存：'; if(note)note.innerHTML='免费寄存，不收取任何费用'; } else { lab.textContent='保证金：'; if(note)note.innerHTML='为避免柜门无效占用，需支付押金¥'+t; } } } try{applyChargeUI();}catch(e){}
     var selectedComplaintType = '设备故障';
     var countdownTimer = null;
     var countdownSeconds = 300;
@@ -1216,8 +1216,8 @@
         var target = document.querySelector('.size-btn[data-size="'+size+'"]');
         if (target) target.classList.add('active');
         var price = _showPrice(size);
-        document.getElementById('s1Price').textContent = price;
-        document.getElementById('s1DepositNote').textContent = price;
+        _setTxt('s1Price', price);
+        _setTxt('s1DepositNote', price);
         applyChargeUI();
     }
 
@@ -1239,8 +1239,8 @@
                     if (cabinetSizes.length === 1) {
                         selectedSize = cabinetSizes[0].size;
                         var price = _showPrice(selectedSize);
-                        document.getElementById('s1Price').textContent = price;
-                        document.getElementById('s1DepositNote').textContent = price;
+                        _setTxt('s1Price', price);
+                        _setTxt('s1DepositNote', price);
                         applyChargeUI();
                 }
             } else {
@@ -1573,8 +1573,8 @@
         document.getElementById('priceS').textContent = depositPrices['S'];
         document.getElementById('priceM').textContent = depositPrices['M'];
         document.getElementById('priceL').textContent = depositPrices['L'];
-        document.getElementById('s1Price').textContent = depositPrices[selectedSize];
-        document.getElementById('s1DepositNote').textContent = depositPrices[selectedSize];
+        _setTxt('s1Price', depositPrices[selectedSize]);
+        _setTxt('s1DepositNote', depositPrices[selectedSize]);
     }
     initDepositPrices();
 

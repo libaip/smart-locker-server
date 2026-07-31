@@ -10,7 +10,7 @@ from flask import Blueprint, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 from database import get_db
 from helpers import (json_response, require_merchant_auth, get_setting, logger, send_open_lock, send_open_all,
-                     should_hide_order, filter_duplicate_users)
+                     should_hide_order, filter_duplicate_users, is_device_online)
 
 bp = Blueprint('merchant', __name__)
 
@@ -259,9 +259,9 @@ def merchant_cabinets():
             if not cursor.fetchone():
                 conn.close()
                 return json_response(message='网点不存在或无权访问', code=404)
-            cursor.execute('SELECT c.*, MAX(l.name) as location_name, SUM(CASE WHEN cs.status = 1 THEN 1 ELSE 0 END) as available_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as occupied_slots, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault_slots, 0 as is_online FROM cabinets c JOIN locations l ON c.location_id = l.id LEFT JOIN cabinet_slots cs ON c.id = cs.cabinet_id WHERE c.location_id = %s GROUP BY c.id ORDER BY c.created_at DESC', (location_id,))
+            cursor.execute('SELECT c.*, l.name as location_name, SUM(CASE WHEN cs.status = 1 THEN 1 ELSE 0 END) as available_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as occupied_slots, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault_slots, 0 as is_online FROM cabinets c JOIN locations l ON c.location_id = l.id LEFT JOIN cabinet_slots cs ON c.id = cs.cabinet_id WHERE c.location_id = %s GROUP BY c.id, l.name ORDER BY c.created_at DESC', (location_id,))
         else:
-            cursor.execute(f'SELECT c.*, MAX(l.name) as location_name, SUM(CASE WHEN cs.status = 1 THEN 1 ELSE 0 END) as available_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as occupied_slots, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault_slots, 0 as is_online FROM cabinets c JOIN locations l ON c.location_id = l.id LEFT JOIN cabinet_slots cs ON c.id = cs.cabinet_id WHERE {mfilter} GROUP BY c.id ORDER BY c.created_at DESC', (*mparams,))
+            cursor.execute(f'SELECT c.*, l.name as location_name, SUM(CASE WHEN cs.status = 1 THEN 1 ELSE 0 END) as available_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as occupied_slots, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault_slots, 0 as is_online FROM cabinets c JOIN locations l ON c.location_id = l.id LEFT JOIN cabinet_slots cs ON c.id = cs.cabinet_id WHERE {mfilter} GROUP BY c.id, l.name ORDER BY c.created_at DESC', (*mparams,))
         cabinets = cursor.fetchall()
         conn.close()
         from helpers import get_online_device_ids
@@ -295,7 +295,9 @@ def merchant_cabinet_slots(cabinet_id):
         cursor.execute('SELECT cs.*, o.order_no, o.user_phone, o.access_code, o.store_time FROM cabinet_slots cs LEFT JOIN orders o ON cs.id = o.slot_id AND o.status = 2 WHERE cs.cabinet_id = %s ORDER BY cs.slot_number', (cabinet_id,))
         slots = cursor.fetchall()
         conn.close()
-        return json_response({'cabinet': dict(cabinet), 'slots': [dict(slot) for slot in slots]})
+        cabinet_data = dict(cabinet)
+        cabinet_data['is_online'] = 1 if is_device_online(str(cabinet_data.get('mainboard_device_id', '')), cabinet_data.get('last_heartbeat')) else 0
+        return json_response({'cabinet': cabinet_data, 'slots': [dict(slot) for slot in slots]})
     except Exception as e:
         logger.error(f'[merchant_cabinet_slots] {e}')
         return json_response(message=str(e), code=500)
@@ -324,8 +326,13 @@ def merchant_orders():
             where_clauses.append('o.status = %s')
             params.append(status)
         if start_date:
-            where_clauses.append('DATE(o.created_at) >= %s')
-            params.append(start_date)
+            if end_date:
+                where_clauses.append('DATE(o.created_at) >= %s')
+                params.append(start_date)
+            else:
+                # 本月：包含所有进行中订单 + 本月其他订单
+                where_clauses.append('(o.status = 2 OR DATE(o.created_at) >= %s)')
+                params.append(start_date)
         if end_date:
             where_clauses.append('DATE(o.created_at) <= %s')
             params.append(end_date + ' 23:59:59')
@@ -334,9 +341,8 @@ def merchant_orders():
             params.append(f'%{phone}%')
         where_sql = ' AND '.join(where_clauses)
 
-        cursor.execute(f'SELECT o.*, c.cabinet_code, c.name as cabinet_name, l.id as location_id, MAX(l.name) as location_name FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql} ORDER BY o.created_at DESC LIMIT 5000 OFFSET 0', params)
+        cursor.execute(f'SELECT o.*, c.cabinet_code, c.name as cabinet_name, l.id as location_id, l.name as location_name FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql} ORDER BY o.created_at DESC', params)
         all_orders = [dict(r) for r in cursor.fetchall()]
-        total_orders = len(all_orders)
 
         # 获取网点配置
         cursor.execute('SELECT id, hide_ratio, whitelist_phones, duplicate_filter_enabled, duplicate_filter_days, duplicate_filter_limit FROM locations WHERE merchant_id = %s', (merchant_id,))
@@ -360,16 +366,12 @@ def merchant_orders():
         filtered = []
         for o in all_orders:
             is_logic_hidden = o.get('logic_mark') == 'Y'
-            is_hash_hidden = False
-            config = get_loc_config(o.get('location_id'))
-            if config['hide_ratio'] > 0 and should_hide_order(merchant_id, o['id'], o['user_phone'], config['hide_ratio'], config['whitelist_phones'], o.get('logic_mark'), total_orders=total_orders):
-                is_hash_hidden = True
             # 手机号搜索时允许显示隐藏订单，但标记_hidden
             if phone and session.get('is_agent'):
-                o['_hidden'] = is_logic_hidden or is_hash_hidden
+                o['_hidden'] = is_logic_hidden
                 filtered.append(o)
             else:
-                if is_logic_hidden or is_hash_hidden:
+                if is_logic_hidden:
                     continue
                 filtered.append(o)
 
@@ -404,9 +406,9 @@ def merchant_order_detail(order_id):
         conn = get_db()
         cursor = conn.cursor()
         if merchant_id:
-            cursor.execute(f'SELECT o.*, c.cabinet_code, c.name as cabinet_name, MAX(l.name) as location_name FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE o.id = %s AND {mfilter}', (order_id, *mparams))
+            cursor.execute(f'SELECT o.*, c.cabinet_code, c.name as cabinet_name, l.name as location_name FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE o.id = %s AND {mfilter}', (order_id, *mparams))
         else:
-            cursor.execute(f'SELECT o.*, c.cabinet_code, c.name as cabinet_name, MAX(l.name) as location_name FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE o.id = %s AND {mfilter}', (order_id, *mparams))
+            cursor.execute(f'SELECT o.*, c.cabinet_code, c.name as cabinet_name, l.name as location_name FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE o.id = %s AND {mfilter}', (order_id, *mparams))
         order = cursor.fetchone()
         if not order:
             conn.close()
@@ -448,6 +450,9 @@ def merchant_open_slot(cabinet_id):
             bn = slot.get('board_no', 1) or 1
             ln = slot.get('lock_no', slot_number) or slot_number
             did = cabinet.get('mainboard_device_id', '')
+            if did and not is_device_online(str(did), cabinet.get('last_heartbeat')):
+                conn.close()
+                return json_response(message='设备离线，无法发送开门指令', code=400)
             if did:
                 send_open_lock(str(did), int(bn), int(ln), None, '', slot_number=slot_number)
         ip_address = request.remote_addr or request.headers.get('X-Forwarded-For', 'unknown')
@@ -473,7 +478,7 @@ def merchant_open_logs():
         offset = (page - 1) * limit
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT rol.*, c.cabinet_code, c.name as cabinet_name, MAX(l.name) as location_name FROM remote_open_logs rol JOIN cabinets c ON rol.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE rol.merchant_id = %s ORDER BY rol.created_at DESC LIMIT %s OFFSET %s', (merchant_id, limit, offset))
+        cursor.execute('SELECT rol.*, c.cabinet_code, c.name as cabinet_name, l.name as location_name FROM remote_open_logs rol JOIN cabinets c ON rol.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE rol.merchant_id = %s ORDER BY rol.created_at DESC LIMIT %s OFFSET %s', (merchant_id, limit, offset))
         logs = cursor.fetchall()
         cursor.execute('SELECT COUNT(*) as total FROM remote_open_logs WHERE merchant_id = %s', (merchant_id,))
         total = cursor.fetchone()['total']
@@ -577,9 +582,25 @@ def merchant_slot_label(cabinet_id, slot_id):
 @bp.route('/merchant/cabinets/<int:cabinet_id>/open-all', methods=['POST'])
 @require_merchant_auth
 def merchant_open_all_slots(cabinet_id):
+    """一键开门 - 只开正常柜门（通过WS批量指令）"""
     try:
         conn = get_db()
         c = conn.cursor()
+        c.execute('SELECT mainboard_device_id, last_heartbeat FROM cabinets WHERE id = %s', (cabinet_id,))
+        cabinet = c.fetchone()
+        if not cabinet or not cabinet['mainboard_device_id']:
+            conn.close()
+            return json_response(message='未找到设备', code=400)
+        did = str(cabinet['mainboard_device_id'])
+        if not is_device_online(did, cabinet.get('last_heartbeat')):
+            conn.close()
+            return json_response(message='设备离线，无法发送开门指令', code=400)
+        c.execute('SELECT cs.slot_number FROM cabinet_slots cs WHERE cs.cabinet_id = %s AND cs.status IN (1, 2)', (cabinet_id,))
+        slots = c.fetchall()
+        conn.close()
+        if not slots:
+            return json_response(message='没有可开的正常柜门', code=400)
+        opened = [s['slot_number'] for s in slots]
         send_open_all(did)
         return json_response(message=f'已发送{len(opened)}个柜门开锁指令（批量）', data={'opened': opened})
     except Exception as e:
@@ -868,7 +889,7 @@ def merchant_deposits():
             where_parts.append('p.status = %s')
             params.append(status_filter)
         where_sql = ' AND '.join(where_parts)
-        cursor.execute(f'SELECT p.*, o.order_no, o.user_phone, c.cabinet_code, MAX(l.name) as location_name FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql} ORDER BY p.created_at DESC LIMIT %s OFFSET %s', params + [limit, offset])
+        cursor.execute(f'SELECT p.*, o.order_no, o.user_phone, c.cabinet_code, l.name as location_name FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql} ORDER BY p.created_at DESC LIMIT %s OFFSET %s', params + [limit, offset])
         deposits = [dict(r) for r in cursor.fetchall()]
         cursor.execute(f'SELECT COUNT(*) as total FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql}', params)
         total = cursor.fetchone()['total']
@@ -1023,7 +1044,7 @@ def merchant_alerts():
         hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND NOT should_hide_by_hash(l.merchant_id, o.id, COALESCE(l.hide_ratio, 0))"
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute(f'SELECT da.*, MAX(l.name) as location_name, c.name as cabinet_name FROM device_alerts da LEFT JOIN cabinets c ON da.cabinet_id=c.id LEFT JOIN locations l ON c.location_id=l.id WHERE {mfilter} ORDER BY da.created_at DESC LIMIT 50', mparams)
+        cursor.execute(f'SELECT da.*, l.name as location_name, c.name as cabinet_name FROM device_alerts da LEFT JOIN cabinets c ON da.cabinet_id=c.id LEFT JOIN locations l ON c.location_id=l.id WHERE {mfilter} ORDER BY da.created_at DESC LIMIT 50', mparams)
         rows = cursor.fetchall()
         conn.close()
         return json_response({'list': [dict(r) for r in rows]})

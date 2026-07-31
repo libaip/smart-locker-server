@@ -449,7 +449,7 @@
             </div>
             <div class="info-row">
                 <span class="info-label">收费规则</span>
-                <span class="info-price">保证金：<span id="s1Price">20</span></span>
+                <span class="info-price" id="s1PriceLabel">保证金：<span id="s1Price">20</span></span>
             </div>
             <div class="size-bar">
                 <div class="size-btn" data-size="S" onclick="selectSize('S')">小柜 ¥<span id="priceS">10</span></div>
@@ -459,7 +459,7 @@
             <div class="notes">
                 <div class="notes-title">注意事项</div>
                 <div class="note-item">存放时间截止到当日23:00，请提前取走物品</div>
-                <div class="note-item">为避免柜门无效占用，需支付押金¥<span id="s1DepositNote">20</span></div>
+                <div class="note-item" id="s1Note2">为避免柜门无效占用，需支付押金¥<span id="s1DepositNote">20</span></div>
                 <div class="note-item">寄存结束后押金即可退回，请务必关好柜门</div>
             </div>
             <div class="info-row door-row" style="display:none">
@@ -814,7 +814,7 @@
 
 <script>
     
-    var s=typeof ssr_cabinet!="undefined"?{ssr_cabinet}:{};var DI="{device}";var OI="{openid}";var CI="{cabinet_id}";var DA=typeof deposit_amount!="undefined"?{deposit_amount}:{};
+    var s={ssr_cabinet}||{};var DI="{device}";var OI="{openid}";var CI="{cabinet_id}";var DA={deposit_amount}||0;
     var params = new URLSearchParams(window.location.search);
     if (params.get("page") === "profile") {
         var _oidList = params.getAll("openid");
@@ -831,7 +831,7 @@
     if (!currentCabinetId && _deviceParam) {
         var xhr = new XMLHttpRequest();
         xhr.open('GET', API_BASE + '/api/cabinets/by-mainboard/' + encodeURIComponent(_deviceParam), false);
-        try { xhr.send(); var _r = JSON.parse(xhr.responseText); if (_r.code===200 && _r.data && _r.data.id) { currentCabinetId = String(_r.data.id); if (_r.data.deposit_amount && _r.data.deposit_amount > 0) { _baseDeposit = _r.data.deposit_amount; depositPrices['S'] = Math.round(_baseDeposit * 0.5); depositPrices['M'] = _baseDeposit; depositPrices['L'] = Math.round(_baseDeposit * 1.5); depositPrices['small'] = depositPrices['S']; depositPrices['medium'] = depositPrices['M']; depositPrices['large'] = depositPrices['L']; } } } catch(e) {}
+        try { xhr.send(); var _r = JSON.parse(xhr.responseText); if (_r.code===200 && _r.data && _r.data.id) { currentCabinetId = String(_r.data.id); _chargeMode=_r.data.charge_mode||'deposit'; _perUsePrice=_r.data.per_use_price||0; if (_r.data.deposit_amount && _r.data.deposit_amount > 0) { _baseDeposit = _r.data.deposit_amount; depositPrices['S'] = Math.round(_baseDeposit * 0.5); depositPrices['M'] = _baseDeposit; depositPrices['L'] = Math.round(_baseDeposit * 1.5); depositPrices['small'] = depositPrices['S']; depositPrices['medium'] = depositPrices['M']; depositPrices['large'] = depositPrices['L']; } try{applyChargeUI();}catch(e){} } } catch(e) {}
     } else if (currentCabinetId) {
         // 已有 cabinet_id 时也要查一次押金
         try {
@@ -839,7 +839,7 @@
             xhr2.open('GET', API_BASE + '/api/cabinets/info/' + currentCabinetId, false);
             xhr2.send();
             var _r2 = JSON.parse(xhr2.responseText);
-            if (_r2.code===200 && _r2.data && _r2.data.deposit_amount && _r2.data.deposit_amount > 0) {
+            if (_r2.code===200 && _r2.data) { _chargeMode=_r2.data.charge_mode||'deposit'; _perUsePrice=_r2.data.per_use_price||0; if (_r2.data.deposit_amount && _r2.data.deposit_amount > 0) {
                 _baseDeposit = _r2.data.deposit_amount;
                 depositPrices['S'] = Math.round(_baseDeposit * 0.5);
                 depositPrices['M'] = _baseDeposit;
@@ -847,6 +847,8 @@
                 depositPrices['small'] = depositPrices['S'];
                 depositPrices['medium'] = depositPrices['M'];
                 depositPrices['large'] = depositPrices['L'];
+            }
+            try{applyChargeUI();}catch(e){}
             }
         } catch(e2) {}
     }
@@ -892,7 +894,7 @@
     var mpOpenedTime = 0;
     var h5RedirectUrl = '';
     var sizeNames = { 'S': '小柜', 'M': '中柜', 'L': '大柜' };
-    var _baseDeposit = (typeof DA !== 'undefined' && DA > 0) ? DA : 20; var depositPrices = { 'S': Math.round(_baseDeposit * 0.5), 'M': _baseDeposit, 'L': Math.round(_baseDeposit * 1.5), 'small': Math.round(_baseDeposit * 0.5), 'medium': _baseDeposit, 'large': Math.round(_baseDeposit * 1.5) };
+    var _chargeMode=(typeof s!=='undefined'&&s.charge_mode)?s.charge_mode:'deposit'; var _perUsePrice=(typeof s!=='undefined'&&s.per_use_price)?s.per_use_price:0; var _baseDeposit = (typeof DA !== 'undefined' && DA > 0) ? DA : 20; var depositPrices = { 'S': Math.round(_baseDeposit * 0.5), 'M': _baseDeposit, 'L': Math.round(_baseDeposit * 1.5), 'small': Math.round(_baseDeposit * 0.5), 'medium': _baseDeposit, 'large': Math.round(_baseDeposit * 1.5) }; function _showPrice(size){ if(_chargeMode==='per_use'){ var t=(_baseDeposit||0)+(_perUsePrice||0); return Math.round(t*100)/100; } return depositPrices[size]||0; } function _ruleText(size){ if(_chargeMode==='per_use'){ var d=_baseDeposit||0,p=_perUsePrice||0; return '按次收费：保证金'+d+'元+按次费'+p+'元，本次收取'+(d+p)+'元；寄存结束退保证金'+d+'元'; } return '保证金：'+(_showPrice(size)); } function applyChargeUI(){ var d=_baseDeposit||0,p=_perUsePrice||0,t=d+p; var lab=document.getElementById('s1PriceLabel'); var note=document.getElementById('s1Note2'); if(lab){ if(_chargeMode==='per_use'){ lab.textContent='按次收费：'; if(note)note.innerHTML='按次收费：保证金'+d+'元+按次费'+p+'元，本次收取'+t+'元；寄存结束退保证金'+d+'元'; } else if(_chargeMode==='free'){ lab.textContent='免费寄存：'; if(note)note.innerHTML='免费寄存，不收取任何费用'; } else { lab.textContent='保证金：'; if(note)note.innerHTML='为避免柜门无效占用，需支付押金¥'+t; } } } try{applyChargeUI();}catch(e){}
     var selectedComplaintType = '设备故障';
     var countdownTimer = null;
     var countdownSeconds = 300;
@@ -1113,10 +1115,10 @@
     }
 
     function goToStep2Direct() {
-        var price = depositPrices[selectedSize];
+        var price = _showPrice(selectedSize);
         document.getElementById('payAmount').textContent = price;
         document.getElementById('paySiteName').textContent = document.getElementById('s1SiteName').textContent;
-        document.getElementById('payRule').textContent = '保证金：' + price;
+        document.getElementById('payRule').textContent = _ruleText(selectedSize);
         document.getElementById('orderIdDisplay').textContent = '';
         startCountdown();
         showPage('step2Page');
@@ -1213,9 +1215,10 @@
         for (var i = 0; i < btns.length; i++) btns[i].classList.remove('active');
         var target = document.querySelector('.size-btn[data-size="'+size+'"]');
         if (target) target.classList.add('active');
-        var price = depositPrices[size];
+        var price = _showPrice(size);
         document.getElementById('s1Price').textContent = price;
         document.getElementById('s1DepositNote').textContent = price;
+        applyChargeUI();
     }
 
     function loadAvailableSizes() {
@@ -1235,9 +1238,10 @@
                     sizeBar.style.display = 'none';
                     if (cabinetSizes.length === 1) {
                         selectedSize = cabinetSizes[0].size;
-                        var price = depositPrices[selectedSize] || 0;
+                        var price = _showPrice(selectedSize);
                         document.getElementById('s1Price').textContent = price;
                         document.getElementById('s1DepositNote').textContent = price;
+                        applyChargeUI();
                 }
             } else {
                     sizeBar.style.display = 'flex';

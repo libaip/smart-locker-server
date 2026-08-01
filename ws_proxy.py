@@ -144,7 +144,7 @@ def flush_lock_results():
                     "board_no": data.get("board_no"),
                     "lock_no": data.get("lock_no"),
                     "success": data.get("success", False),
-                    "order_id": data.get("order_id", ""),
+                    "order_id": data.get("orderId") or data.get("order_id", ""),
                     "timestamp": data.get("timestamp", int(time.time() * 1000))
                 }).encode()
                 req.urlopen("http://127.0.0.1:5001/api/device/lock-result", data=body, timeout=5)

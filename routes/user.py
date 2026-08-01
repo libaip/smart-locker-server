@@ -583,8 +583,8 @@ def retrieve():
                             did = str(order.get("mainboard_device_id", ""))
                             bn = int(slot.get("board_no", 1) or 1)
                             ln = int(slot.get("lock_no", slot.get("slot_number", 1)) or slot.get("slot_number", 1))
-                            if did:
-                                send_open_lock(did, bn, ln, order_id=str(order["id"]))
+                            if did and not data.get("local_opened"):
+                                send_open_lock(did, bn, ln, order_id=order.get("order_no", str(order["id"])))
                 except Exception as open_err:
                     logger.error(f"[retrieve] 开锁失败(order={order.get('id')}): {open_err}")
                 # 5分钟保护：订单创建不足5分钟不允许结束
@@ -694,6 +694,7 @@ def retrieve_verify():
     try:
         data = request.get_json()
         cabinet_id = data.get('cabinet_id')
+        device_id = data.get('device_id', '')
         phone = data.get('phone')
         access_code = data.get('access_code')
         openid = data.get('openid', '')
@@ -703,11 +704,21 @@ def retrieve_verify():
                 _vlog.write(f'[retrieve_verify] REQ cabinet_id={cabinet_id!r} phone={phone!r} access_code={access_code!r} openid={openid!r} unionid={unionid!r}\n')
         except Exception:
             pass
-        if cabinet_id is None or not phone or not access_code:
+        if not phone or not access_code:
             return json_response(message='参数不完整', code=400)
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT o.*, COALESCE(cs.slot_size, o.slot_size) as slot_size, cs.board_no, cs.lock_no FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE o.cabinet_id = %s AND o.user_phone = %s AND o.access_code = %s AND o.status IN (2, 3) ORDER BY o.id DESC LIMIT 1',
+        if cabinet_id is None and device_id:
+            cursor.execute('SELECT id FROM cabinets WHERE mainboard_device_id = %s', (device_id,))
+            _cab_row = cursor.fetchone()
+            if not _cab_row:
+                conn.close()
+                return json_response(message='设备不存在', code=404)
+            cabinet_id = _cab_row['id']
+        if cabinet_id is None:
+            conn.close()
+            return json_response(message='参数不完整', code=400)
+        cursor.execute('SELECT o.*, cs.slot_number, COALESCE(cs.slot_size, o.slot_size) as slot_size, cs.board_no, cs.lock_no FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE o.cabinet_id = %s AND o.user_phone = %s AND o.access_code = %s AND o.status IN (2, 3) ORDER BY o.id DESC LIMIT 1',
                        (cabinet_id, phone, access_code))
         order = cursor.fetchone()
         if not order:
@@ -717,14 +728,18 @@ def retrieve_verify():
         if order['status'] == 3:
             _deposit = order.get('deposit_amount', 0)
             conn.close()
+            _slot_no = order.get('slot_number') or order['compartment_number']
             return json_response({'order_id': order['id'], 'order_no': order['order_no'], 'slot_id': order['slot_id'],
-                                  'compartment_number': order['compartment_number'], 'slot_size': order['slot_size'],
+                                  'compartment_number': _slot_no, 'compartment_label': order['compartment_number'],
+                                  'slot_number': _slot_no, 'slot_size': order['slot_size'],
                                   'board_no': order['board_no'], 'lock_no': order['lock_no'],
                                   'deposit_amount': _deposit, 'store_time': order['store_time']})
         _deposit = order.get('deposit_amount', 0)
         conn.close()
+        _slot_no = order.get('slot_number') or order['compartment_number']
         return json_response({'order_id': order['id'], 'order_no': order['order_no'], 'slot_id': order['slot_id'],
-                              'compartment_number': order['compartment_number'], 'slot_size': order['slot_size'],
+                              'compartment_number': _slot_no, 'compartment_label': order['compartment_number'],
+                              'slot_number': _slot_no, 'slot_size': order['slot_size'],
                               'board_no': order['board_no'], 'lock_no': order['lock_no'],
                               'deposit_amount': _deposit, 'store_time': order['store_time']})
     except Exception as e:
@@ -739,15 +754,27 @@ def retrieve_confirm():
         data = request.get_json()
         order_id = data.get('order_id')
         action = data.get('action')
+        device_id = data.get('device_id', '')
+        cabinet_id = data.get('cabinet_id')
+        cabinet_code = data.get('cabinet_code', '')
         if not all([order_id, action]):
             return json_response(message='参数不完整', code=400)
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM orders WHERE id = %s', (order_id,))
+        cursor.execute('SELECT o.*, c.mainboard_device_id, c.cabinet_code FROM orders o JOIN cabinets c ON o.cabinet_id = c.id WHERE o.id = %s', (order_id,))
         order = cursor.fetchone()
         if not order:
             conn.close()
             return json_response(message='订单不存在', code=404)
+        if device_id and str(device_id) != str(order['mainboard_device_id']):
+            conn.close()
+            return json_response(message='订单不属于当前设备', code=400)
+        if cabinet_id is not None and int(cabinet_id) != int(order['cabinet_id']):
+            conn.close()
+            return json_response(message='订单不属于当前设备', code=400)
+        if cabinet_code and str(cabinet_code) != str(order['cabinet_code'] or ''):
+            conn.close()
+            return json_response(message='订单不属于当前柜体', code=400)
         if action == 'continue':
             conn.close()
             return json_response({'action': 'continue', 'message': '请继续使用，已为您保留柜格'})
@@ -1241,25 +1268,29 @@ def deposit_retrieve():
             return json_response(message='请输入正确的手机号', code=400)
         conn = get_db()
         cursor = conn.cursor()
-        if group_code:
+        cabinet = None
+        if cabinet_code:
+            cursor.execute('SELECT id FROM cabinets WHERE cabinet_code = %s', (cabinet_code,))
+            cabinet = cursor.fetchone()
+        if not cabinet and group_code:
             cursor.execute('SELECT id FROM cabinet_groups WHERE group_code = %s', (group_code,))
             group = cursor.fetchone()
             if not group:
                 conn.close()
                 return json_response(message='柜组不存在', code=404)
-            cursor.execute('SELECT o.*, cs.slot_number, COALESCE(cs.slot_size, o.slot_size) as slot_size, c.cabinet_code, c.name as cabinet_name, cs.board_no, cs.lock_no, c.mainboard_device_id FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id JOIN cabinets c ON o.cabinet_id = c.id WHERE c.group_id = %s AND o.user_phone = %s AND o.access_code = %s AND o.status = 2 ORDER BY o.id DESC',
-                           (group['id'], phone, access_code))
-        else:
-            if not cabinet_code:
+            cursor.execute('SELECT id FROM cabinets WHERE group_id = %s', (group['id'],))
+            _grp_cabs = cursor.fetchall()
+            if len(_grp_cabs) == 1:
+                cabinet = {'id': _grp_cabs[0]['id']}
+            else:
                 conn.close()
-                return json_response(message='柜体或柜组编号不能为空', code=400)
-            cursor.execute('SELECT id FROM cabinets WHERE cabinet_code = %s', (cabinet_code,))
-            cabinet = cursor.fetchone()
-            if not cabinet:
-                conn.close()
-                return json_response(message='柜体不存在', code=404)
-            cursor.execute('SELECT o.*, cs.slot_number, COALESCE(cs.slot_size, o.slot_size) as slot_size, cs.board_no, cs.lock_no, c.mainboard_device_id FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id JOIN cabinets c ON o.cabinet_id = c.id WHERE o.cabinet_id = %s AND o.user_phone = %s AND o.access_code = %s AND o.status = 2 ORDER BY o.id DESC',
+                return json_response(message='订单不在此柜，请到原存包柜取件', code=400)
+        if cabinet:
+            cursor.execute('SELECT o.*, cs.slot_number, COALESCE(cs.slot_size, o.slot_size) as slot_size, c.cabinet_code, c.name as cabinet_name, cs.board_no, cs.lock_no, c.mainboard_device_id FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id JOIN cabinets c ON o.cabinet_id = c.id WHERE o.cabinet_id = %s AND o.user_phone = %s AND o.access_code = %s AND o.status = 2 ORDER BY o.id DESC',
                            (cabinet['id'], phone, access_code))
+        else:
+            conn.close()
+            return json_response(message='柜体或柜组编号不能为空', code=400)
         orders = cursor.fetchall()
         if not orders:
             conn.close()
@@ -1272,7 +1303,7 @@ def deposit_retrieve():
                 device_id = order_dict.get('mainboard_device_id')
                 board_no = order_dict.get('board_no') or ''
                 lock_no = order_dict.get('lock_no') or ''
-                if device_id and board_no and lock_no:
+                if device_id and board_no and lock_no and not data.get("local_opened"):
                     send_open_lock(device_id, board_no, lock_no, order_id=order_dict.get('order_no', str(order_dict['id'])))
                     logger.info(f'[取物开门] device={device_id}, board={board_no}, lock={lock_no}, order_id={order_dict["id"]}')
                     # 取物即结束订单
@@ -1381,6 +1412,12 @@ def deposit_end_storage():
         if data.get('device_id') and str(data.get('device_id')) != str(order['mainboard_device_id']):
             conn.close()
             return json_response(message='订单不属于当前设备', code=400)
+        if data.get('cabinet_id') is not None and int(data.get('cabinet_id')) != int(order['cabinet_id']):
+            conn.close()
+            return json_response(message='订单不属于当前柜体', code=400)
+        if data.get('cabinet_code') and str(data.get('cabinet_code')) != str(order['cabinet_code'] or ''):
+            conn.close()
+            return json_response(message='订单不属于当前柜体', code=400)
         # 防误触：订单创建不足5分钟不允许结束
         if order['store_time'] and (datetime.now() - order['store_time']).total_seconds() < 300:
             conn.close()
@@ -1394,6 +1431,14 @@ def deposit_end_storage():
         if _dup.fetchone():
             conn.close()
             return json_response(message='操作太频繁，请稍后再试', code=400)
+        # 10分钟防重：设备本地开锁路径同一订单10分钟内不允许重复结束
+        if data.get('local_opened') and not data.get('force_end'):
+            _rep = conn.cursor()
+            _rep.execute("SELECT 1 FROM storage_records WHERE user_phone=%s AND cabinet_id=%s AND COALESCE(compartment_number,'')=COALESCE(%s,'') AND store_time=%s AND status='1' AND retrieve_time > NOW() - INTERVAL '10 minutes' LIMIT 1",
+                         (order['user_phone'], order['cabinet_id'], order['compartment_number'] or '', order['store_time']))
+            if _rep.fetchone():
+                conn.close()
+                return json_response(message='操作太频繁，请稍后再试', code=400)
         refund_amount = order['deposit_amount']
         compartment_number = order['slot_number'] or order['compartment_number']
         cursor.execute('INSERT INTO storage_records (cabinet_id, compartment_number, user_phone, access_code, status, store_time, retrieve_time) VALUES (%s, %s, %s, %s, 1, %s, %s)',
@@ -1459,12 +1504,12 @@ def deposit_end_storage():
                         _exist_id, _exist_mp = _exist
                         # 如果已有记录的mp_openid跟自己不同且不为空，说明是另一个微信，不共享余额
                         if _exist_mp and _exist_mp != _mp_openid and _exist_mp != order.get("openid", ""):
-                            cursor.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+                            cursor.execute("INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (phone) DO UPDATE SET balance = user_balances.balance + EXCLUDED.balance, total_deposited = user_balances.total_deposited + EXCLUDED.total_deposited, mp_openid = CASE WHEN user_balances.mp_openid IS NULL OR user_balances.mp_openid = '' THEN EXCLUDED.mp_openid ELSE user_balances.mp_openid END",
                                            (order['user_phone'], _openid, _unionid, _mp_openid, _wechat_name2, refund_amount, refund_amount, datetime.now()))
                         else:
                             cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s, mp_openid = %s WHERE id = %s', (refund_amount, refund_amount, _mp_openid, _exist_id))
                     else:
-                        cursor.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+                        cursor.execute("INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (phone) DO UPDATE SET balance = user_balances.balance + EXCLUDED.balance, total_deposited = user_balances.total_deposited + EXCLUDED.total_deposited, mp_openid = CASE WHEN user_balances.mp_openid IS NULL OR user_balances.mp_openid = '' THEN EXCLUDED.mp_openid ELSE user_balances.mp_openid END",
                                        (order['user_phone'], _openid, _unionid, _mp_openid, _wechat_name2, refund_amount, refund_amount, datetime.now()))
             else:
                 # 没有mp_openid，按phone找已有记录（可能来自H5扫码存包）
@@ -1594,6 +1639,12 @@ def deposit_mid_retrieve():
         if data.get('device_id') and str(data.get('device_id')) != str(order['mainboard_device_id']):
             conn.close()
             return json_response(message='订单不属于当前设备', code=400)
+        if data.get('cabinet_id') is not None and int(data.get('cabinet_id')) != int(order['cabinet_id']):
+            conn.close()
+            return json_response(message='订单不属于当前柜体', code=400)
+        if data.get('cabinet_code') and str(data.get('cabinet_code')) != str(order['cabinet_code'] or ''):
+            conn.close()
+            return json_response(message='订单不属于当前柜体', code=400)
         # 15秒防重：同一柜格刚操作过就不再重复开门
         _dup = conn.cursor()
         _dup.execute("SELECT 1 FROM storage_records WHERE cabinet_id=%s AND COALESCE(compartment_number,'')=COALESCE(%s,'') AND retrieve_time > NOW() - INTERVAL '15 seconds' LIMIT 1",
@@ -1603,6 +1654,14 @@ def deposit_mid_retrieve():
         if _dup.fetchone():
             conn.close()
             return json_response(message='操作太频繁，请稍后再试', code=400)
+        # 10分钟防重：设备本地开锁路径同一订单10分钟内不允许重复中途取物
+        if data.get('local_opened') and not data.get('force_open'):
+            _rep = conn.cursor()
+            _rep.execute("SELECT 1 FROM storage_records WHERE user_phone=%s AND cabinet_id=%s AND COALESCE(compartment_number,'')=COALESCE(%s,'') AND store_time=%s AND status='2' AND retrieve_time > NOW() - INTERVAL '10 minutes' LIMIT 1",
+                         (order['user_phone'], order['cabinet_id'], order['compartment_number'] or '', order['store_time']))
+            if _rep.fetchone():
+                conn.close()
+                return json_response(message='操作太频繁，请稍后再试', code=400)
         # Record mid-retrieve
         cursor.execute('INSERT INTO storage_records (cabinet_id, compartment_number, user_phone, access_code, status, store_time, retrieve_time) VALUES (%s, %s, %s, %s, 2, %s, %s)',
                        (order['cabinet_id'], order['compartment_number'], order['user_phone'], order['access_code'], order['store_time'], datetime.now()))
@@ -2447,10 +2506,25 @@ def get_user_orders():
         
         # 统一解析 user_id
         user_id = _resolve_user(cur, mp_openid=openid, phone=phone)
-        
+        unionid = request.args.get('unionid', '') or ''
+        if not unionid and user_id:
+            try:
+                cur.execute("SELECT unionid FROM users WHERE id=%s", (user_id,))
+                _ur = cur.fetchone()
+                if _ur and _ur['unionid']:
+                    unionid = _ur['unionid']
+            except Exception:
+                pass
+        if not unionid and phone:
+            try:
+                cur.execute("SELECT unionid FROM phone_openids WHERE phone=%s AND unionid IS NOT NULL AND unionid != '' LIMIT 1", (phone,))
+                _ur2 = cur.fetchone()
+                if _ur2 and _ur2['unionid']:
+                    unionid = _ur2['unionid']
+            except Exception:
+                pass
         orders = []
-        if user_id:
-            cur.execute("""
+        cur.execute("""
                 SELECT o.id, o.order_no, o.user_phone, o.cabinet_id, o.compartment_number, o.slot_size, o.access_code,
                        o.deposit_amount, o.status, o.store_time, o.retrieve_time, o.created_at,
                        c.name as cabinet_name, c.cabinet_code,
@@ -2458,25 +2532,15 @@ def get_user_orders():
                 FROM orders o
                 LEFT JOIN cabinets c ON o.cabinet_id = c.id
                 LEFT JOIN locations l ON c.location_id = l.id
-                WHERE o.user_id = %s AND o.status != 1
+                WHERE o.status != 1 AND (
+                       o.user_id = %s
+                       OR o.user_phone = %s
+                       OR (o.unionid IS NOT NULL AND o.unionid != '' AND o.unionid = %s)
+                )
                 ORDER BY o.created_at DESC
                 LIMIT 50
-            """, (user_id,))
-            orders = [dict(row) for row in cur.fetchall()]
-        if not orders and phone:
-            cur.execute("""
-                SELECT o.id, o.order_no, o.user_phone, o.cabinet_id, o.compartment_number, o.slot_size, o.access_code,
-                       o.deposit_amount, o.status, o.store_time, o.retrieve_time, o.created_at,
-                       c.name as cabinet_name, c.cabinet_code,
-                       l.name as location_name
-                FROM orders o
-                LEFT JOIN cabinets c ON o.cabinet_id = c.id
-                LEFT JOIN locations l ON c.location_id = l.id
-                WHERE o.user_phone = %s AND o.status != 1
-                ORDER BY o.created_at DESC
-                LIMIT 50
-            """, (phone,))
-            orders = [dict(row) for row in cur.fetchall()]
+        """, (user_id, phone, unionid))
+        orders = [dict(row) for row in cur.fetchall()]
         if not orders:
             conn.close()
             return json_response(message='请先登录', code=400)
@@ -2778,6 +2842,10 @@ def user_withdraw():
                 if not ok:
                     all_ok = False
                     cursor.execute('UPDATE user_balances SET balance = balance + %s, total_withdrawn = total_withdrawn - %s WHERE phone = %s', (refund_this, refund_this, phone))
+                    try:
+                        cursor.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (oid,))
+                    except Exception:
+                        pass
                 all_order_ids.append(str(oid))
                 if ok and '已退款' not in rmsg and '全额退款' not in rmsg:
                     cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_amount = COALESCE(refund_amount, 0) + %s WHERE id = %s', (rid, refund_this, oid))

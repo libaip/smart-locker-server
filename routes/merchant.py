@@ -94,9 +94,12 @@ def merchant_login():
         session['merchant_id'] = merchant['id']
         session['merchant_name'] = merchant['name']
         session['merchant_phone'] = merchant['contact_phone']
-        session['permissions'] = json.loads(merchant['permissions'] or '[]')
+        merchant_perms = json.loads(merchant['permissions'] or '[]')
+        if 'merchant_manage' in merchant_perms:
+            merchant_perms.remove('merchant_manage')
+        session['permissions'] = merchant_perms
         conn.close()
-        return json_response({'id': merchant['id'], 'name': merchant['name'], 'permissions': merchant['permissions'] or '[]',
+        return json_response({'id': merchant['id'], 'name': merchant['name'], 'permissions': json.dumps(merchant_perms, ensure_ascii=False),
                               'contact_name': merchant['contact_name'], 'contact_phone': merchant['contact_phone'],
                               'token': token})
     except Exception as e:

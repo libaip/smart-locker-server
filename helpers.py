@@ -334,13 +334,28 @@ def send_open_lock(device_id, board_no, lock_no, protocol=None, order_id='', slo
     """
     发送开锁指令 - 支持原始WebSocket + Socket.IO + HTTP轮询兜底
     """
-    # 防重：同一 order_id 5秒内不重复发送
+    # 防重1（快速路径）：同一 order_id 60秒内，内存级防重（仅同worker有效）
     _now = time.time()
     if order_id and order_id in _last_open_lock_time:
-        if _now - _last_open_lock_time[order_id] < 5:
-            logger.info(f'[SEND_LOCK] 防重跳过: order_id={order_id}, last_sent={_now - _last_open_lock_time[order_id]:.1f}s ago')
+        if _now - _last_open_lock_time[order_id] < 60:
+            logger.info(f'[SEND_LOCK] 内存防重跳过: order_id={order_id}, {_now - _last_open_lock_time[order_id]:.1f}s ago')
             return True
+    # 防重2（跨worker）：数据库级检查同一 order_id 60秒内是否已创建命令
     if order_id:
+        try:
+            import psycopg2 as _psycopg2
+            from config import DATABASE_URL as _SL_DB
+            _chk_conn = _psycopg2.connect(_SL_DB, connect_timeout=3)
+            _chk_cur = _chk_conn.cursor()
+            _chk_cur.execute("SELECT COUNT(*) FROM pending_lock_cmds WHERE order_id = %s AND created_at > NOW() - interval '60 seconds'", (order_id,))
+            _dup_count = _chk_cur.fetchone()[0]
+            _chk_cur.close()
+            _chk_conn.close()
+            if _dup_count > 0:
+                logger.info(f'[SEND_LOCK] DB防重跳过: order_id={order_id}, found {_dup_count} recent cmds')
+                return True
+        except Exception as _chk_e:
+            logger.warning(f'[SEND_LOCK] DB防重检查失败(继续执行): {_chk_e}')
         _last_open_lock_time[order_id] = _now
     # 自动从数据库解析协议类型
     if protocol is None:

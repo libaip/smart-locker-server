@@ -510,6 +510,35 @@ def device_lock_result():
             (device_id, slot_id, slot_number, "success" if success else "failed", 1 if success else 0, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         )
         
+        # === 幽灵开门监控：检测APK上报了但服务器没下过命令的开锁 ===
+        try:
+            _now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            _phantom_check = db.execute(
+                "SELECT id FROM door_records WHERE device_id=%s AND board_no::text=%s::text AND lock_no::text=%s::text "
+                "AND create_time BETWEEN %s::timestamp - INTERVAL '60 seconds' AND %s::timestamp + INTERVAL '60 seconds' "
+                "LIMIT 1",
+                (device_id, str(board_no), str(lock_no), _now_ts, _now_ts)
+            ).fetchone()
+            if not _phantom_check:
+                import json as _pjson
+                _req_dump = _pjson.dumps(data, ensure_ascii=False, default=str)[:500]
+                _order_id = data.get("order_id", "")
+                _ts = data.get("timestamp", "")
+                _phantom_line = (
+                    f"PHANTOM|{_now_ts}|dev={device_id}|board={board_no}|lock={lock_no}"
+                    f"|slot={slot_number}|order_id={_order_id}|ts={_ts}"
+                    f"|req={_req_dump}"
+                )
+                logger.warning(f"[PHANTOM_OPEN] {_phantom_line}")
+                try:
+                    with open("/home/ubuntu/smart-locker/phantom_open.log", "a") as _pf:
+                        _pf.write(_phantom_line + "\n")
+                except:
+                    pass
+        except Exception as _pe:
+            logger.warning(f"[phantom_check] error: {_pe}")
+        # === 幽灵开门监控 END ===
+        
         # 根据logical_mark决定动作: end=结束订单, mid=中途取物
         if success and slot_id:
             try:
@@ -520,7 +549,7 @@ def device_lock_result():
                     db.execute("UPDATE orders SET logical_mark='N' WHERE id=%s", (_o2["id"],))
                     logger.info(f"[lock_result] action=mid: slot={slot_id} mid-retrieve (no end)")
                 elif _o2 and _o2["logical_mark"] == "end":
-                    db.execute("UPDATE orders SET status=3,retrieve_time=NOW(),logical_mark='N',refund_mark=1,refund_amount=_o2['deposit_amount'] WHERE id=%s AND status=2", (_o2["id"],))
+                    db.execute("UPDATE orders SET status=3,retrieve_time=NOW(),logical_mark='N',refund_mark=1,refund_amount=deposit_amount WHERE id=%s AND status=2", (_o2["id"],))
                     db.execute("UPDATE cabinet_slots SET status=1 WHERE id=%s", (slot_id,))
                     logger.info(f"[lock_result] action=end: slot={slot_id} ended (free slot)")
                 else:

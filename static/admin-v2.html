@@ -720,6 +720,7 @@ tr:hover td.action-col{background:#f5f7fa}
 <div class="modal-header"><h3>编辑柜格</h3><span class="close" @click="slotEditModal=false">×</span></div>
 <div class="modal-body">
 <div class="form-group"><label>柜格号</label><input :value="slotEditForm.slot_number" disabled></div>
+<div class="form-group"><label>柜格显示名</label><input v-model="slotEditForm.slot_label" placeholder="例如 D24"></div>
 <div class="form-group"><label>柜格大小</label><select v-model="slotEditForm.slot_size"><option value="small">小柜</option><option value="medium">中柜</option><option value="large">大柜</option></select></div>
 <div class="form-group"><label>状态</label><select v-model="slotEditForm.status"><option :value="1">空闲</option><option :value="2">使用中</option><option :value="3">故障</option><option :value="4">锁定</option></select></div>
 </div>

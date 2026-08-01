@@ -391,6 +391,11 @@ def admin_slot_save():
         logger.info(f'[slot_save] BEFORE: slot_id={data.get("id")}, status={data.get("status")}')
         c.execute('UPDATE cabinet_slots SET slot_size=%s,status=%s,slot_label=%s WHERE id=%s',
                   (data.get('slot_size'), data.get('status'), data.get('slot_label', ''), data['id']))
+        # 同步占用订单显示的柜格名，保证小程序/屏幕看到的新标签一致
+        _new_label = (data.get('slot_label') or '').strip()
+        if _new_label:
+            c.execute("UPDATE orders SET compartment_number=%s WHERE slot_id=%s AND status IN (2,3)",
+                      (_new_label, data['id']))
         logger.info(f'[slot_save] AFTER: affected={c.rowcount}, slot_id={data["id"]}')
         c.execute('SELECT cabinet_id FROM cabinet_slots WHERE id=%s', (data["id"],))
         _cab_row = c.fetchone()
@@ -664,7 +669,7 @@ def admin_orders():
         c.execute(f'SELECT COUNT(*) FROM orders o LEFT JOIN cabinets c ON o.cabinet_id=c.id LEFT JOIN locations l ON c.location_id=l.id LEFT JOIN (SELECT DISTINCT ON (phone) * FROM user_balances ORDER BY phone, id DESC) ub ON o.user_phone=ub.phone LEFT JOIN phone_openids po ON o.user_phone=po.phone LEFT JOIN user_profiles up ON po.openid=up.openid WHERE {where}', params)
         total = c.fetchone()[0]
         c.execute(f"""SELECT o.id, o.order_no, o.user_phone, o.access_code as password, o.compartment_number, o.deposit_amount, CASE WHEN o.status=4 THEN COALESCE(o.refund_amount,0) ELSE 0 END as refund_amount, o.status,
-            o.store_time, o.retrieve_time, o.created_at, o.group_id, o.cabinet_code,
+            o.store_time, o.retrieve_time, o.created_at, o.group_id, COALESCE(c.cabinet_code, o.cabinet_code) as cabinet_code, c.name as cabinet_name,
             o.transaction_id, o.pay_time, o.refund_time, o.refund_mark, o.logic_mark,
             COALESCE(NULLIF(ub.wechat_name,''), NULLIF(po.wechat_name,''), up.wechat_name) as wechat_name,""" + f"""
             l.id as location_id, l.name as location_name, m.name as merchant_name, m.id as merchant_id, pc.mch_id as pay_mch_id
@@ -3842,6 +3847,22 @@ def withdrawal_batch_auto():
         c = conn.cursor()
         approved = 0
         rejected = 0
+
+        # 兜底：清理卡住24小时以上的处理中提现，自动拒绝并恢复明细
+        try:
+            _stuck = c.execute("""
+                SELECT id, order_id, order_ids FROM withdrawal_records
+                WHERE status=1 AND created_at < NOW() - INTERVAL '24 hours'
+            """).fetchall()
+            for _s in _stuck:
+                c.execute("UPDATE withdrawal_records SET status=3, approve_time=NOW(), approver='系统清理', error_msg='处理超时自动拒绝' WHERE id=%s", (_s['id'],))
+                if _s.get('order_id'):
+                    try:
+                        c.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (_s['order_id'],))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         
         # 1. ?????auto_approve_time ?????
         rows = c.execute("""
@@ -3853,7 +3874,7 @@ def withdrawal_batch_auto():
             JOIN locations l ON cb.location_id = l.id
             WHERE w.status = 0 AND l.withdraw_mode = 'queue_approve'
             AND w.auto_approve_time IS NOT NULL
-            AND datetime(w.auto_approve_time) <= datetime('now')
+            AND w.auto_approve_time <= NOW()
         """).fetchall()
         for r in rows:
             rate = (r['refund_approve_rate'] or 80) / 100.0
@@ -3869,16 +3890,25 @@ def withdrawal_batch_auto():
                 if ord:
                     success, refund_id, msg = do_real_refund(order_id=order_id, order_no=ord['order_no'], amount=amt, payment_channel_id=ord['payment_channel_id'])
                     if success:
-                        c2.execute("UPDATE withdrawal_records SET status=2, approve_time=datetime('now'), approver='自动' WHERE id=%s", (r['id'],))
-                        c2.execute("UPDATE orders SET status=4, refund_id=%s, refund_time=datetime('now') WHERE id=%s", (refund_id, order_id))
+                        c2.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), approver='自动' WHERE id=%s", (r['id'],))
+                        c2.execute("UPDATE orders SET status=4, refund_id=%s, refund_time=NOW() WHERE id=%s", (refund_id, order_id))
                         approved += 1
                     else:
-                        c2.execute("UPDATE withdrawal_records SET status=1, approve_time=datetime('now'), approver='自动' WHERE id=%s", (r['id'],))
+                        c2.execute("UPDATE withdrawal_records SET status=3, approve_time=NOW(), approver='自动', error_msg='退款失败' WHERE id=%s", (r['id'],))
+                        try:
+                            c2.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (order_id,))
+                        except Exception:
+                            pass
+                        rejected += 1
             else:
                 # ?????????????
                 c.execute("UPDATE user_balances SET balance = balance + %s, total_withdrawn = total_withdrawn - %s WHERE phone = %s",
                           (r['amount'], r['amount'], r['user_phone']))
-                c.execute("UPDATE withdrawal_records SET status=3, approve_time=datetime('now'), approver='队列' WHERE id=%s", (r['id'],))
+                c.execute("UPDATE withdrawal_records SET status=3, approve_time=NOW(), approver='队列' WHERE id=%s", (r['id'],))
+                try:
+                    c.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (r['order_id'],))
+                except Exception:
+                    pass
                 rejected += 1
         conn.commit()
         

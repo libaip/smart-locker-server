@@ -1500,7 +1500,7 @@
 
     function endRetrieval() {
         if (!currentRetrieveOrderId) return;
-        fetch(API_BASE + '/api/retrieve/confirm', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentRetrieveOrderId, action: 'end'}) })
+        fetch(API_BASE + '/api/retrieve/confirm', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentRetrieveOrderId, action: 'end', cabinet_id: parseInt(currentCabinetId)}) })
         .then(function(res) { return res.json(); })
         .then(function(data) {
             if (data.code === 200 && data.data && data.data.need_confirm) {
@@ -1516,7 +1516,7 @@
 
     function forceEndRetrieval() {
         if (!currentRetrieveOrderId) return;
-        fetch(API_BASE + '/api/retrieve/confirm', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentRetrieveOrderId, action: 'end', force_end: true}) })
+        fetch(API_BASE + '/api/retrieve/confirm', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentRetrieveOrderId, action: 'end', force_end: true, cabinet_id: parseInt(currentCabinetId)}) })
         .then(function(res) { return res.json(); })
         .then(function(data) {
             if (data.code === 0 || data.code === 200) { alert(data.data && data.data.message ? data.data.message : '取包成功，押金已退至余额'); refreshBalanceAfterEnd(); goToHomePage(); }
@@ -1527,7 +1527,7 @@
 
     function midOpen() {
         if (!currentRetrieveOrderId) return;
-        fetch(API_BASE + '/api/deposit/mid-retrieve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentRetrieveOrderId}) })
+        fetch(API_BASE + '/api/deposit/mid-retrieve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentRetrieveOrderId, cabinet_id: parseInt(currentCabinetId)}) })
         .then(function(res) { return res.json(); })
         .then(function(data) {
             if (data.code === 0 || data.code === 200) { showToast('柜门已开，取物后请关好柜门'); }

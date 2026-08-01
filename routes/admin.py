@@ -683,14 +683,6 @@ def get_cabinet_by_mainboard(mainboard_id):
     if mainboard_id in _CABINET_CACHE:
         cached = _CABINET_CACHE[mainboard_id]
         if now - cached['time'] < _CABINET_CACHE_TTL:
-            # 缓存命中，只更新心跳（轻量操作）
-            try:
-                conn = get_db()
-                conn.cursor().execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (mainboard_id,))
-                conn.commit()
-                conn.close()
-            except:
-                pass
             return cached['data']
     try:
         conn = get_db()
@@ -707,13 +699,10 @@ def get_cabinet_by_mainboard(mainboard_id):
         try:
             c_up = conn.cursor()
             if biz_status == 'inactive':
-                c_up.execute("UPDATE cabinets SET business_status='active', last_heartbeat=NOW() WHERE id=%s", (cabinet['id'],))
+                c_up.execute("UPDATE cabinets SET business_status='active' WHERE id=%s", (cabinet['id'],))
                 biz_status = 'active'
                 logger.info(f"[自动激活] 设备 {mainboard_id} 已自动恢复激活")
-            else:
-                c_up.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE id=%s", (cabinet['id'],))
             conn.commit()
-            result['last_heartbeat'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         except Exception as e:
             logger.error(f"[心跳刷新] 失败: {e}")
         result['biz_status'] = biz_status

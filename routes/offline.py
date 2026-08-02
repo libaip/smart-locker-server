@@ -335,3 +335,29 @@ def offline_retrieve_batch():
     except Exception as e:
         logger.error(f'[offline_batch] {e}')
         return json_response(message=str(e), code=500)
+
+
+@bp.route('/offline-retrieve/mid-retrieve', methods=['POST'])
+def mid_retrieve():
+    try:
+        data = request.get_json()
+        order_id = data.get('order_id')
+        order_no = data.get('order_no')
+        logger.info(f'[mid_retrieve] order_id={order_id}, order_no={order_no}')
+        if not order_id and not order_no:
+            return json_response(message='no order info', code=400)
+        conn = get_db()
+        cursor = conn.cursor()
+        if order_id:
+            cursor.execute('SELECT id, status, user_phone FROM orders WHERE id = %s', (order_id,))
+        else:
+            cursor.execute('SELECT id, status, user_phone FROM orders WHERE order_no = %s', (order_no,))
+        order = cursor.fetchone()
+        if not order:
+            conn.close()
+            return json_response(message='order not found', code=404)
+        conn.close()
+        return json_response({'message': 'mid retrieve recorded', 'order_id': order['id']})
+    except Exception as e:
+        logger.error(f'[mid_retrieve] {e}')
+        return json_response(message=str(e), code=500)

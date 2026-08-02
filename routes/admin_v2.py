@@ -391,11 +391,6 @@ def admin_slot_save():
         logger.info(f'[slot_save] BEFORE: slot_id={data.get("id")}, status={data.get("status")}')
         c.execute('UPDATE cabinet_slots SET slot_size=%s,status=%s,slot_label=%s WHERE id=%s',
                   (data.get('slot_size'), data.get('status'), data.get('slot_label', ''), data['id']))
-        # 同步占用订单显示的柜格名，保证小程序/屏幕看到的新标签一致
-        _new_label = (data.get('slot_label') or '').strip()
-        if _new_label:
-            c.execute("UPDATE orders SET compartment_number=%s WHERE slot_id=%s AND status IN (2,3)",
-                      (_new_label, data['id']))
         logger.info(f'[slot_save] AFTER: affected={c.rowcount}, slot_id={data["id"]}')
         c.execute('SELECT cabinet_id FROM cabinet_slots WHERE id=%s', (data["id"],))
         _cab_row = c.fetchone()
@@ -808,6 +803,14 @@ def admin_order_refund():
             return json_response(message='订单不存在或状态不允许退款', code=400)
         order_dict = dict(order)
         amount = order_dict.get('deposit_amount', 0)
+        # 原支付金额优先取微信支付流水，兜底用押金+按次费
+        c.execute("SELECT amount FROM payments WHERE order_id=%s AND type=1 AND status=1 AND amount<=1000 ORDER BY id LIMIT 1", (order_id,))
+        _paid_row = c.fetchone()
+        if _paid_row and _paid_row[0]:
+            total_fee = int(float(_paid_row[0]) * 100)
+        else:
+            total_fee = int((float(amount) + float(order_dict.get('per_use_price') or 0)) * 100)
+        refund_fee = int(float(amount) * 100)
         transaction_id = order_dict.get('transaction_id', '')
         order_no = order_dict.get('order_no', '')
         payment_channel_id = order_dict.get('payment_channel_id')
@@ -833,11 +836,10 @@ def admin_order_refund():
                         wxpay_inst, _ = get_channel_wxpay(dict(active_ch))
                     else:
                         return json_response(message='无可用活跃商户，无法退款', code=400)
-                total_fee = int(amount * 100)
                 refund_result = wxpay_inst.refund(
                     out_trade_no=order_no,
                     total_fee=total_fee,
-                    refund_fee=total_fee,
+                    refund_fee=refund_fee,
                     out_refund_no=refund_no,
                     refund_desc=''
                 )
@@ -874,7 +876,7 @@ def admin_order_refund():
         # 如果订单还在使用中(2)，释放柜格
         # [Agent-modified 2026-07-04] 退款时释放格口：无论订单是使用中(2)还是已结算(3)，都要释放格口为空闲(0)
         if order_dict.get('status') in (2, 3) and order_dict.get('slot_id'):
-            c.execute('UPDATE cabinet_slots SET status=0 WHERE id=%s', (order_dict['slot_id'],))
+            c.execute('UPDATE cabinet_slots SET status=1 WHERE id=%s', (order_dict['slot_id'],))
         conn.commit()
         
         
@@ -1663,7 +1665,7 @@ def admin_agent_save():
         conn = get_db()
         c = conn.cursor()
         if data.get('id'):
-            fields = ['name','contact_name','contact_phone','status','commission_rate']
+            fields = ['name','contact_name','contact_phone','status','commission_rate','permissions','dashboard_config']
             sets, params = [], []
             for f in fields:
                 if f in data:
@@ -1681,8 +1683,8 @@ def admin_agent_save():
                 conn.close()
                 return json_response(message='参数不完整', code=400)
             pwd = data.get('password') or 'Agt@' + ''.join(random.choices(string.ascii_letters + string.digits, k=2))
-            c.execute('INSERT INTO agents (name, contact_name, contact_phone, password_hash, commission_rate, plain_password) VALUES (%s,%s,%s,%s,%s,%s)',
-                      (data['name'], data.get('contact_name',''), data['contact_phone'], generate_password_hash(pwd), data.get('commission_rate', 0), pwd))
+            c.execute('INSERT INTO agents (name, contact_name, contact_phone, password_hash, commission_rate, plain_password, permissions, dashboard_config) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)',
+                      (data['name'], data.get('contact_name',''), data['contact_phone'], generate_password_hash(pwd), data.get('commission_rate', 0), pwd, data.get('permissions','[]'), data.get('dashboard_config','{}')))
         conn.commit()
         conn.close()
         resp_data = None
@@ -3847,22 +3849,6 @@ def withdrawal_batch_auto():
         c = conn.cursor()
         approved = 0
         rejected = 0
-
-        # 兜底：清理卡住24小时以上的处理中提现，自动拒绝并恢复明细
-        try:
-            _stuck = c.execute("""
-                SELECT id, order_id, order_ids FROM withdrawal_records
-                WHERE status=1 AND created_at < NOW() - INTERVAL '24 hours'
-            """).fetchall()
-            for _s in _stuck:
-                c.execute("UPDATE withdrawal_records SET status=3, approve_time=NOW(), approver='系统清理', error_msg='处理超时自动拒绝' WHERE id=%s", (_s['id'],))
-                if _s.get('order_id'):
-                    try:
-                        c.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (_s['order_id'],))
-                    except Exception:
-                        pass
-        except Exception:
-            pass
         
         # 1. ?????auto_approve_time ?????
         rows = c.execute("""
@@ -3874,7 +3860,7 @@ def withdrawal_batch_auto():
             JOIN locations l ON cb.location_id = l.id
             WHERE w.status = 0 AND l.withdraw_mode = 'queue_approve'
             AND w.auto_approve_time IS NOT NULL
-            AND w.auto_approve_time <= NOW()
+            AND datetime(w.auto_approve_time) <= datetime('now')
         """).fetchall()
         for r in rows:
             rate = (r['refund_approve_rate'] or 80) / 100.0
@@ -3890,25 +3876,16 @@ def withdrawal_batch_auto():
                 if ord:
                     success, refund_id, msg = do_real_refund(order_id=order_id, order_no=ord['order_no'], amount=amt, payment_channel_id=ord['payment_channel_id'])
                     if success:
-                        c2.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), approver='自动' WHERE id=%s", (r['id'],))
-                        c2.execute("UPDATE orders SET status=4, refund_id=%s, refund_time=NOW() WHERE id=%s", (refund_id, order_id))
+                        c2.execute("UPDATE withdrawal_records SET status=2, approve_time=datetime('now'), approver='自动' WHERE id=%s", (r['id'],))
+                        c2.execute("UPDATE orders SET status=4, refund_id=%s, refund_time=datetime('now') WHERE id=%s", (refund_id, order_id))
                         approved += 1
                     else:
-                        c2.execute("UPDATE withdrawal_records SET status=3, approve_time=NOW(), approver='自动', error_msg='退款失败' WHERE id=%s", (r['id'],))
-                        try:
-                            c2.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (order_id,))
-                        except Exception:
-                            pass
-                        rejected += 1
+                        c2.execute("UPDATE withdrawal_records SET status=1, approve_time=datetime('now'), approver='自动' WHERE id=%s", (r['id'],))
             else:
                 # ?????????????
                 c.execute("UPDATE user_balances SET balance = balance + %s, total_withdrawn = total_withdrawn - %s WHERE phone = %s",
                           (r['amount'], r['amount'], r['user_phone']))
-                c.execute("UPDATE withdrawal_records SET status=3, approve_time=NOW(), approver='队列' WHERE id=%s", (r['id'],))
-                try:
-                    c.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (r['order_id'],))
-                except Exception:
-                    pass
+                c.execute("UPDATE withdrawal_records SET status=3, approve_time=datetime('now'), approver='队列' WHERE id=%s", (r['id'],))
                 rejected += 1
         conn.commit()
         
@@ -4804,7 +4781,7 @@ def admin_device_clear_all():
                       (now, now, now, o_dict['id']))
             # 释放格口为空闲
             if o_dict.get('slot_id'):
-                c.execute('UPDATE cabinet_slots SET status=0 WHERE id=%s', (o_dict['slot_id'],))
+                c.execute('UPDATE cabinet_slots SET status=1 WHERE id=%s', (o_dict['slot_id'],))
             # 退押金到余额（使用中的订单押金未退，已结算的已退过余额不再重复退）
             deposit_amount = o_dict.get('deposit_amount', 0)
             if deposit_amount > 0 and o_dict.get('user_phone') and o_dict.get('status') == 2:

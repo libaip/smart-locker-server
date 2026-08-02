@@ -799,15 +799,6 @@ def retrieve_confirm():
             conn.close()
             return json_response(message='订单刚创建，请稍后再试', code=400)
 
-        # 15秒防重：同一柜格刚操作过就不再重复开门
-        _dup = conn.cursor()
-        _dup.execute("SELECT 1 FROM storage_records WHERE cabinet_id=%s AND COALESCE(compartment_number,'')=COALESCE(%s,'') AND retrieve_time > NOW() - INTERVAL '15 seconds' LIMIT 1",
-                     (order['cabinet_id'], order['compartment_number'] or ''))
-        if not _dup.fetchone():
-            _dup.execute("SELECT 1 FROM door_records WHERE order_id=%s AND create_time > NOW() - INTERVAL '15 seconds' LIMIT 1", (str(order_id),))
-        if _dup.fetchone():
-            conn.close()
-            return json_response(message='操作太频繁，请稍后再试', code=400)
 
         deposit_amount = order['deposit_amount']
         transaction_id = order['transaction_id']
@@ -1422,15 +1413,6 @@ def deposit_end_storage():
         if order['store_time'] and (datetime.now() - order['store_time']).total_seconds() < 300:
             conn.close()
             return json_response(message='订单刚创建，请稍后再试', code=400)
-        # 15秒防重：同一柜格刚操作过就不再重复开门
-        _dup = conn.cursor()
-        _dup.execute("SELECT 1 FROM storage_records WHERE cabinet_id=%s AND COALESCE(compartment_number,'')=COALESCE(%s,'') AND retrieve_time > NOW() - INTERVAL '15 seconds' LIMIT 1",
-                     (order['cabinet_id'], order['compartment_number'] or ''))
-        if not _dup.fetchone():
-            _dup.execute("SELECT 1 FROM door_records WHERE order_id=%s AND create_time > NOW() - INTERVAL '15 seconds' LIMIT 1", (str(order_id),))
-        if _dup.fetchone():
-            conn.close()
-            return json_response(message='操作太频繁，请稍后再试', code=400)
         # 10分钟防重：设备本地开锁路径同一订单10分钟内不允许重复结束
         if data.get('local_opened') and not data.get('force_end'):
             _rep = conn.cursor()
@@ -1531,8 +1513,23 @@ def deposit_end_storage():
         cursor.execute("UPDATE orders SET logical_mark='end' WHERE id=%s", (order_id,))
         conn.commit()
         conn.close()
-        # Send open_lock via send_open_lock (includes door_records)
-        if not data.get('local_opened'):
+        # 记录开门记录（无论是否本地开门）
+        if data.get('local_opened'):
+            # 本地开门：直接写 door_records，不发开门指令
+            try:
+                from config import DATABASE_URL as _DR_URL
+                _dr_conn = psycopg2.connect(_DR_URL, connect_timeout=5)
+                _dr_cur = _dr_conn.cursor()
+                _dr_cur.execute("INSERT INTO door_records (device_id, board_no, lock_no, order_id, open_type) VALUES (%s,%s,%s,%s,%s)",
+                             (order['mainboard_device_id'], order['board_no'] or 1, order['lock_no'] or 1, str(order_id), 'local'))
+                _dr_cur.close()
+                _dr_conn.commit()
+                _dr_conn.close()
+                logger.info(f'[end_storage] door_records写入(local): device={order["mainboard_device_id"]}, board={order["board_no"]}, lock={order["lock_no"]}')
+            except Exception as dre:
+                logger.error(f'[end_storage] door_records写入失败: {dre}')
+        else:
+            # 远程开门：调用 send_open_lock（会写 door_records + 发开门指令）
             try:
                 from helpers import send_open_lock
                 device_id = order['mainboard_device_id']
@@ -1636,6 +1633,16 @@ def deposit_mid_retrieve():
         if order['status'] != 2:
             conn.close()
             return json_response(message='订单状态不允许中途取物', code=400)
+        # 网点设置：不允许中途取物时提示去屏幕开门
+        try:
+            _lc = conn.cursor()
+            _lc.execute("SELECT l.allow_mid_retrieve FROM cabinets cb JOIN locations l ON cb.location_id=l.id WHERE cb.id=%s", (order['cabinet_id'],))
+            _lrow = _lc.fetchone()
+            if _lrow and not _lrow['allow_mid_retrieve']:
+                conn.close()
+                return json_response(message='请到屏幕上开门', code=400)
+        except Exception:
+            pass
         if data.get('device_id') and str(data.get('device_id')) != str(order['mainboard_device_id']):
             conn.close()
             return json_response(message='订单不属于当前设备', code=400)
@@ -1645,15 +1652,6 @@ def deposit_mid_retrieve():
         if data.get('cabinet_code') and str(data.get('cabinet_code')) != str(order['cabinet_code'] or ''):
             conn.close()
             return json_response(message='订单不属于当前柜体', code=400)
-        # 15秒防重：同一柜格刚操作过就不再重复开门
-        _dup = conn.cursor()
-        _dup.execute("SELECT 1 FROM storage_records WHERE cabinet_id=%s AND COALESCE(compartment_number,'')=COALESCE(%s,'') AND retrieve_time > NOW() - INTERVAL '15 seconds' LIMIT 1",
-                     (order['cabinet_id'], order['compartment_number'] or ''))
-        if not _dup.fetchone():
-            _dup.execute("SELECT 1 FROM door_records WHERE order_id=%s AND create_time > NOW() - INTERVAL '15 seconds' LIMIT 1", (str(order_id),))
-        if _dup.fetchone():
-            conn.close()
-            return json_response(message='操作太频繁，请稍后再试', code=400)
         # 10分钟防重：设备本地开锁路径同一订单10分钟内不允许重复中途取物
         if data.get('local_opened') and not data.get('force_open'):
             _rep = conn.cursor()
@@ -1668,8 +1666,23 @@ def deposit_mid_retrieve():
         cursor.execute("UPDATE orders SET logical_mark='mid' WHERE id=%s", (order_id,))
         conn.commit()
         conn.close()
-        # Send open_lock via send_open_lock (includes door_records)
-        if not data.get('local_opened'):
+        # 记录开门记录（无论是否本地开门）
+        if data.get('local_opened'):
+            # 本地开门：直接写 door_records，不发开门指令
+            try:
+                from config import DATABASE_URL as _DR_URL
+                _dr_conn = psycopg2.connect(_DR_URL, connect_timeout=5)
+                _dr_cur = _dr_conn.cursor()
+                _dr_cur.execute("INSERT INTO door_records (device_id, board_no, lock_no, order_id, open_type) VALUES (%s,%s,%s,%s,%s)",
+                             (order['mainboard_device_id'], order['board_no'] or 1, order['lock_no'] or 1, str(order_id), 'local'))
+                _dr_cur.close()
+                _dr_conn.commit()
+                _dr_conn.close()
+                logger.info(f'[中途取物] door_records写入(local): device={order["mainboard_device_id"]}, board={order["board_no"]}, lock={order["lock_no"]}')
+            except Exception as dre:
+                logger.error(f'[中途取物] door_records写入失败: {dre}')
+        else:
+            # 远程开门：调用 send_open_lock（会写 door_records + 发开门指令）
             try:
                 from helpers import send_open_lock
                 device_id = order['mainboard_device_id']
@@ -1727,6 +1740,16 @@ def order_reopen():
         if not order:
             conn.close()
             return json_response(message='订单不存在', code=404)
+        # 网点设置：结束后默认禁止开门
+        try:
+            _lc = conn.cursor()
+            _lc.execute("SELECT l.allow_open_after_end FROM cabinets cb JOIN locations l ON cb.location_id=l.id WHERE cb.id=%s", (order['cabinet_id'],))
+            _lr = _lc.fetchone()
+            if order['status'] in (3, 4) and (_lr is None or not _lr['allow_open_after_end']):
+                conn.close()
+                return json_response(message='订单已结束，请到屏幕处理', code=400)
+        except Exception:
+            pass
         compartment = order['slot_number']
         conn.close()
         # Send open_lock via send_open_lock (writes to DB + WS + HTTP poll fallback)
@@ -3180,9 +3203,20 @@ def order_reopen_by_url(order_id):
             FROM orders o LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id
             LEFT JOIN cabinets c ON o.cabinet_id = c.id WHERE o.id = %s''', (order_id,))
         order = cursor.fetchone()
-        conn.close()
         if not order:
+            conn.close()
             return json_response(message='\u8ba2\u5355\u4e0d\u5b58\u5728', code=404)
+        # \u7f51\u70b9\u8bbe\u7f6e\uff1a\u7ed3\u675f\u540e\u9ed8\u8ba4\u7981\u6b62\u5f00\u95e8
+        try:
+            _lc2 = conn.cursor()
+            _lc2.execute("SELECT l.allow_open_after_end FROM cabinets cb JOIN locations l ON cb.location_id=l.id WHERE cb.id=%s", (order['cabinet_id'],))
+            _lr2 = _lc2.fetchone()
+            if order['status'] in (3, 4) and (_lr2 is None or not _lr2['allow_open_after_end']):
+                conn.close()
+                return json_response(message='\u8ba2\u5355\u5df2\u7ed3\u675f\uff0c\u8bf7\u5230\u5c4f\u5e55\u5904\u7406', code=400)
+        except Exception:
+            pass
+        conn.close()
         device_id = order['mainboard_device_id']
         send_open_lock(device_id, order['board_no'] or 1, order['lock_no'] or 1, order_id=order.get('order_no', str(order_id)))
         return json_response(message='\u5f00\u9501\u6307\u4ee4\u5df2\u53d1\u9001')

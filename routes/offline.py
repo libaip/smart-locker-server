@@ -119,7 +119,7 @@ def get_pending_commands(device_id):
 
 
         now = datetime.now()
-        cursor.execute("SELECT o.id as order_id, o.order_no, o.user_phone, o.access_code, o.deposit_amount, o.compartment_number, o.slot_size, o.cabinet_id, o.store_time, cs.board_no, cs.lock_no FROM orders o JOIN cabinets c ON o.cabinet_id = c.id LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE c.mainboard_device_id = %s AND o.status = 2 ORDER BY o.id DESC", (device_id,))
+        cursor.execute("SELECT o.id as order_id, o.order_no, o.access_code, o.compartment_number, o.cabinet_id, cs.board_no, cs.lock_no FROM orders o JOIN cabinets c ON o.cabinet_id = c.id LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE c.mainboard_device_id = %s AND o.status = 2 ORDER BY o.id DESC", (device_id,))
         orders = [dict(row) for row in cursor.fetchall()]
         conn.commit()
         conn.close()
@@ -156,7 +156,7 @@ def get_active_orders_by_device(device_id):
         # 更新设备心跳
         cursor.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (device_id,))
         conn.commit()
-        cursor.execute("SELECT o.id as order_id, o.order_no, o.user_phone, o.access_code, o.deposit_amount, o.compartment_number, o.slot_size, o.cabinet_id, o.store_time, cs.board_no, cs.lock_no FROM orders o JOIN cabinets c ON o.cabinet_id = c.id LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE c.mainboard_device_id = %s AND o.status = 2 ORDER BY o.id DESC", (device_id,))
+        cursor.execute("SELECT o.id as order_id, o.order_no, o.access_code, o.compartment_number, o.cabinet_id, cs.board_no, cs.lock_no FROM orders o JOIN cabinets c ON o.cabinet_id = c.id LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE c.mainboard_device_id = %s AND o.status = 2 ORDER BY o.id DESC", (device_id,))
         orders = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return json_response({'orders': orders, 'count': len(orders), 'device_id': device_id,

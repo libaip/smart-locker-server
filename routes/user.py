@@ -279,7 +279,7 @@ def deposit_pay_order():
         payment_channel_id = payment_channel['id'] if payment_channel else None
 
         openid = data.get('openid')
-        pay_params = get_payment_params(order_id, order['order_no'], order['deposit_amount'],
+        pay_params = get_payment_params(order_id, order['order_no'], float(order['deposit_amount']) + float(order['per_use_price'] or 0),
                                          order['user_phone'], openid,
                                          payment_channel=payment_channel,
                                          payment_channel_id=payment_channel_id)
@@ -482,7 +482,7 @@ def get_pay_params_api():
             conn.close()
             return json_response(message='订单已过期，请重新下单', code=400)
         conn.close()
-        pay_params = get_payment_params(order_id, order['order_no'], order['deposit_amount'], phone, openid, payment_channel_id=order.get('payment_channel_id'))
+        pay_params = get_payment_params(order_id, order['order_no'], float(order['deposit_amount']) + float(order['per_use_price'] or 0), phone, openid, payment_channel_id=order.get('payment_channel_id'))
         return json_response({
             'order_id': order['id'], 'order_no': order['order_no'],
             'compartment_number': order['compartment_number'],
@@ -937,7 +937,7 @@ def create_deposit_order():
         if existing_order:
             conn.close()
             logger.info(f'[create_deposit_order] 复用已有未支付订单 {existing_order["id"]}, phone={user_phone}')
-            pay_params = get_payment_params(existing_order['id'], existing_order['order_no'], existing_order['deposit_amount'], user_phone, openid, payment_channel_id=existing_order.get('payment_channel_id'))
+            pay_params = get_payment_params(existing_order['id'], existing_order['order_no'], float(existing_order['deposit_amount']) + float(existing_order['per_use_price'] or 0), user_phone, openid, payment_channel_id=existing_order.get('payment_channel_id'))
             return json_response({
                 'order_id': existing_order['id'], 'order_no': existing_order['order_no'],
                 'access_code': existing_order['access_code'],
@@ -1033,10 +1033,12 @@ def store_pay():
             if not cursor.fetchone():
                 cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
                                (order_id, order['deposit_amount'], transaction_id))
-            cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s',
+            cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s AND status = 1',
                            (transaction_id, datetime.now(), order_id))
-            if order['slot_id']:
-                cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
+            we_updated = cursor.rowcount > 0
+            if we_updated:
+                if order['slot_id']:
+                    cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
             conn.commit()
             try:
                 cursor2 = get_db().cursor()
@@ -1931,17 +1933,16 @@ def get_pay_status(order_id):
                             conn3 = get_db()
                             cur3 = conn3.cursor()
                             txn_id = qr.get('transaction_id', '')
-                            cur3.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s',
+                            cur3.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s AND status = 1',
                                          (txn_id, datetime.now(), order['id']))
-                            if order['slot_id']:
-                                cur3.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
-                            try:
-                                pass  # 支付确认不再增加余额
-                            except: pass
-                            cur3.execute("SELECT id FROM payments WHERE order_id=%s AND type=1 AND transaction_id=%s LIMIT 1", (order['id'], txn_id))
-                            if not cur3.fetchone():
-                                cur3.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
-                                             (order['id'], order['deposit_amount'], txn_id))
+                            we_updated = cur3.rowcount > 0
+                            if we_updated:
+                                if order['slot_id']:
+                                    cur3.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
+                                cur3.execute("SELECT id FROM payments WHERE order_id=%s AND type=1 AND transaction_id=%s LIMIT 1", (order['id'], txn_id))
+                                if not cur3.fetchone():
+                                    cur3.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
+                                                 (order['id'], order['deposit_amount'], txn_id))
                             conn3.commit()
                             conn3.close()
                             # 开锁（H5支付成功时直接开门）

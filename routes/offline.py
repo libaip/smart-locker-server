@@ -106,6 +106,34 @@ def get_pending_commands(device_id):
         logger.info(f"[DEBUG_POLL] device={device_id} querying pending cmds")
         for row in cursor.fetchall():
             command_text = row['command'] if 'command' in row and row['command'] else ''
+            skip = False
+            if row.get('order_id'):
+                _check = conn.cursor()
+                _check.execute("SELECT id, status, slot_id FROM orders WHERE id=%s OR order_no=%s", (row['order_id'], row['order_id']))
+                _ord = _check.fetchone()
+                if not _ord or _ord['status'] != 2:
+                    skip = True
+                elif row.get('slot_id'):
+                    _check.execute("SELECT id FROM orders WHERE slot_id=%s AND status=2 ORDER BY id DESC LIMIT 1", (row['slot_id'],))
+                    _cur_ord = _check.fetchone()
+                    if not _cur_ord or str(_cur_ord[0]) != str(row['order_id']):
+                        skip = True
+                if skip:
+                    cursor.execute("UPDATE pending_lock_cmds SET delivered=1, status='skipped_order_ended' WHERE id=%s", (row['id'],))
+                    continue
+            # 指令超过5分钟作废，防止设备恢复联网后执行旧开门指令
+            if not skip and row.get('created_at'):
+                try:
+                    _created = row['created_at']
+                    if isinstance(_created, str):
+                        from datetime import datetime as _dt
+                        _created = _dt.fromisoformat(str(_created))
+                    if (datetime.now() - _created).total_seconds() > 300:
+                        skip = True
+                        cursor.execute("UPDATE pending_lock_cmds SET delivered=1, status='skipped_expired' WHERE id=%s", (row['id'],))
+                        continue
+                except Exception:
+                    pass
             if command_text:
                 try:
                     cmd = json.loads(command_text)
@@ -114,8 +142,10 @@ def get_pending_commands(device_id):
                     valid_commands.append({'order_id': str(row['order_id']) if row['order_id'] else '', 'board_no': row['board_no'], 'lock_no': row['lock_no'], 'action': 'open', 'protocol': row['protocol'], 'timestamp': row['created_at']})
             else:
                 valid_commands.append({'order_id': str(row['order_id']) if row['order_id'] else '', 'board_no': row['board_no'], 'lock_no': row['lock_no'], 'action': 'open', 'protocol': row['protocol'], 'timestamp': row['created_at']})
-            cursor.execute('UPDATE pending_lock_cmds SET delivered=1 WHERE id=%s', (row['id'],))
+            cursor.execute("UPDATE pending_lock_cmds SET delivered=1, status='completed' WHERE id=%s", (row['id'],))
             logger.info(f'[DEBUG_POLL] device={device_id} delivered cmd id={row["id"]} command={command_text[:100]}')
+            if len(valid_commands) >= 10:
+                break
 
 
         now = datetime.now()

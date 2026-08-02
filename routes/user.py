@@ -300,6 +300,7 @@ def store_init():
     try:
         data = request.get_json()
         cabinet_id = data.get('cabinet_id')
+        device_id = data.get('device_id', '')
         slot_size = data.get('slot_size', 'M')
         user_phone = data.get('phone')
         sms_code = data.get('sms_code')
@@ -343,6 +344,8 @@ def store_init():
             from datetime import datetime as _dt
             if (_dt.now() - hb).total_seconds() > 300:
                 return json_response(message='设备离线，请稍后再试', code=400)
+        if device_id and cab0 and cab0['mainboard_device_id'] and str(cab0['mainboard_device_id']) != str(device_id):
+            return json_response(message='设备与柜体不匹配', code=400)
         # 如果没有绑定设备ID，允许仅从数据库分配
 
 
@@ -718,6 +721,12 @@ def retrieve_verify():
         if cabinet_id is None:
             conn.close()
             return json_response(message='参数不完整', code=400)
+        if device_id:
+            cursor.execute('SELECT mainboard_device_id FROM cabinets WHERE id = %s', (cabinet_id,))
+            _chk_cab = cursor.fetchone()
+            if not _chk_cab or str(_chk_cab['mainboard_device_id'] or '') != str(device_id):
+                conn.close()
+                return json_response(message='设备与订单柜体不匹配', code=400)
         cursor.execute('SELECT o.*, cs.slot_number, COALESCE(cs.slot_size, o.slot_size) as slot_size, cs.board_no, cs.lock_no FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE o.cabinet_id = %s AND o.user_phone = %s AND o.access_code = %s AND o.status IN (2, 3) ORDER BY o.id DESC LIMIT 1',
                        (cabinet_id, phone, access_code))
         order = cursor.fetchone()
@@ -882,6 +891,7 @@ def create_deposit_order():
     try:
         data = request.get_json()
         cabinet_id = data.get('cabinet_id')
+        device_id = data.get('device_id', '')
         slot_size = data.get('slot_size', 'M')
         user_phone = data.get('phone')
         sms_code = data.get('sms_code')
@@ -919,6 +929,9 @@ def create_deposit_order():
             if not hb or (datetime.now() - hb).total_seconds() > 300:
                 conn.close()
                 return json_response(message='设备离线，请稍后再试', code=400)
+        if device_id and cab and cab['mainboard_device_id'] and str(cab['mainboard_device_id']) != str(device_id):
+            conn.close()
+            return json_response(message='设备与柜体不匹配', code=400)
         # ===== 设备在线检测结束 =====
         # 清理超过15分钟的未支付订单，释放柜门
         from datetime import timedelta

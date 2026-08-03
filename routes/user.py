@@ -396,13 +396,22 @@ def store_init():
                                   'slot_size': existing_order.get('slot_size', ''),
                                   'deposit_amount': existing_order['deposit_amount']})
 
-        cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id LEFT JOIN orders o ON o.slot_id = cs.id WHERE c.id = %s AND cs.status = 1 AND cs.slot_size = %s GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1',
-                       (cabinet_id, slot_size))
-        slot = cursor.fetchone()
-        if not slot:
-            cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id LEFT JOIN orders o ON o.slot_id = cs.id WHERE c.id = %s AND cs.status = 1 GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1',
-                           (cabinet_id,))
+        claimed_slot = None
+        for _attempt in range(5):
+            cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id LEFT JOIN orders o ON o.slot_id = cs.id WHERE c.id = %s AND cs.status = 1 AND cs.slot_size = %s GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1',
+                           (cabinet_id, slot_size))
             slot = cursor.fetchone()
+            if not slot:
+                cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id LEFT JOIN orders o ON o.slot_id = cs.id WHERE c.id = %s AND cs.status = 1 GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1',
+                               (cabinet_id,))
+                slot = cursor.fetchone()
+            if not slot:
+                break
+            cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s AND status = 1', (slot['id'],))
+            if cursor.rowcount > 0:
+                claimed_slot = slot
+                break
+        slot = claimed_slot
         if not slot:
             conn.close()
             return json_response(message='暂无可用柜格', code=400)
@@ -520,16 +529,24 @@ def store_legacy():
 
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT cs.* FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id WHERE c.id = %s AND cs.status = 1 AND cs.slot_size = %s LIMIT 1',
-                       (cabinet_id, compartment_size))
-        slot = cursor.fetchone()
-        if not slot:
-            cursor.execute('SELECT cs.* FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id WHERE c.id = %s AND cs.status = 1 LIMIT 1', (cabinet_id,))
+        claimed_slot = None
+        for _attempt in range(5):
+            cursor.execute('SELECT cs.* FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id WHERE c.id = %s AND cs.status = 1 AND cs.slot_size = %s LIMIT 1',
+                           (cabinet_id, compartment_size))
             slot = cursor.fetchone()
+            if not slot:
+                cursor.execute('SELECT cs.* FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id WHERE c.id = %s AND cs.status = 1 LIMIT 1', (cabinet_id,))
+                slot = cursor.fetchone()
+            if not slot:
+                break
+            cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s AND status = 1', (slot['id'],))
+            if cursor.rowcount > 0:
+                claimed_slot = slot
+                break
+        slot = claimed_slot
         if not slot:
             conn.close()
             return json_response(message='暂无可用柜格', code=400)
-        cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (slot['id'],))
         cursor.execute('INSERT INTO storage_records (cabinet_id, compartment_number, user_phone, access_code, status, store_time) VALUES (%s, %s, %s, %s, 2, %s)',
                        (cabinet_id, slot['slot_number'], user_phone, access_code, datetime.now()))
         conn.commit()
@@ -961,12 +978,22 @@ def create_deposit_order():
                 'pay_params': pay_params
             })
 
-        cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id LEFT JOIN orders o ON o.slot_id = cs.id WHERE c.id = %s AND cs.status = 1 AND cs.slot_size = %s GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1',
-                       (cabinet_id, slot_size))
-        slot = cursor.fetchone()
-        if not slot:
-            cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id LEFT JOIN orders o ON o.slot_id = cs.id WHERE c.id = %s AND cs.status = 1 GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1', (cabinet_id,))
+        claimed_slot = None
+        for _attempt in range(5):
+            cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id LEFT JOIN orders o ON o.slot_id = cs.id WHERE c.id = %s AND cs.status = 1 AND cs.slot_size = %s GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1',
+                           (cabinet_id, slot_size))
             slot = cursor.fetchone()
+            if not slot:
+                cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id LEFT JOIN orders o ON o.slot_id = cs.id WHERE c.id = %s AND cs.status = 1 GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1',
+                               (cabinet_id,))
+                slot = cursor.fetchone()
+            if not slot:
+                break
+            cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s AND status = 1', (slot['id'],))
+            if cursor.rowcount > 0:
+                claimed_slot = slot
+                break
+        slot = claimed_slot
         if not slot:
             conn.close()
             return json_response(message='暂无可用柜格', code=400)
@@ -986,8 +1013,6 @@ def create_deposit_order():
         payment_channel = select_payment_channel()
         payment_channel_id = payment_channel['id'] if payment_channel else None
         compartment_display = slot['slot_label'] if 'slot_label' in slot.keys() and slot['slot_label'] else (slot['display_number'] if slot['display_number'] else slot['slot_number'])
-        # Mark slot as occupied immediately to prevent double allocation
-        cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (slot['id'],))
         _wn2 = chr(39)+chr(39)
         if openid:
             _wnc3 = conn.cursor()
@@ -1195,12 +1220,20 @@ def h5_store():
         cursor.execute("SELECT l.allow_h5_to_mp FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE c.id = %s", (cabinet_id,))
         _lr = cursor.fetchone()
         need_redirect = bool(_lr and _lr['allow_h5_to_mp'])
-        cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs LEFT JOIN orders o ON o.slot_id = cs.id WHERE cs.cabinet_id = %s AND cs.status = 1 GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1', (cabinet_id,))
-        slot = cursor.fetchone()
+        claimed_slot = None
+        for _attempt in range(5):
+            cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs LEFT JOIN orders o ON o.slot_id = cs.id WHERE cs.cabinet_id = %s AND cs.status = 1 GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1', (cabinet_id,))
+            slot = cursor.fetchone()
+            if not slot:
+                break
+            cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s AND status = 1', (slot['id'],))
+            if cursor.rowcount > 0:
+                claimed_slot = slot
+                break
+        slot = claimed_slot
         if not slot:
             conn.close()
             return json_response(message='暂无可用柜格', code=303)
-        cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (slot['id'],))
         order_no = 'ORD' + datetime.now().strftime('%Y%m%d%H%M%S') + ''.join(random.choices(string.digits, k=4))
         deposit = cabinet['deposit_amount'] if cabinet.get('deposit_amount') is not None else 0
         per_use_price = cabinet.get('per_use_price') or 0

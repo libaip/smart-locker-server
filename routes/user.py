@@ -2880,7 +2880,7 @@ def user_withdraw():
             JOIN user_balances ub ON bd.user_phone = ub.phone
             WHERE ub.phone=%s AND bd.status='available' AND o.status IN (3,4) AND o.transaction_id IS NOT NULL AND o.transaction_id != ''
             ORDER BY bd.id DESC"""
-            cursor.execute(sql, (mp_openid,))
+            cursor.execute(sql, (phone,))
             balance_records = cursor.fetchall()
             if not balance_records:
                 conn.close()

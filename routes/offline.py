@@ -109,14 +109,14 @@ def get_pending_commands(device_id):
             skip = False
             if row.get('order_id'):
                 _check = conn.cursor()
-                _check.execute("SELECT id, status, slot_id FROM orders WHERE id=%s OR order_no=%s", (row['order_id'], row['order_id']))
+                _check.execute("SELECT id, status, slot_id FROM orders WHERE id::text=%s OR order_no=%s", (row['order_id'], row['order_id']))
                 _ord = _check.fetchone()
                 if not _ord or _ord['status'] != 2:
                     skip = True
                 elif row.get('slot_id'):
-                    _check.execute("SELECT id FROM orders WHERE slot_id=%s AND status=2 ORDER BY id DESC LIMIT 1", (row['slot_id'],))
+                    _check.execute("SELECT order_no FROM orders WHERE slot_id=%s AND status=2 ORDER BY id DESC LIMIT 1", (row['slot_id'],))
                     _cur_ord = _check.fetchone()
-                    if not _cur_ord or str(_cur_ord[0]) != str(row['order_id']):
+                    if not _cur_ord or str(_cur_ord['order_no']) != str(row['order_id']):
                         skip = True
                 if skip:
                     cursor.execute("UPDATE pending_lock_cmds SET delivered=1, status='skipped_order_ended' WHERE id=%s", (row['id'],))

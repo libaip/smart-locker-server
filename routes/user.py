@@ -2843,12 +2843,10 @@ def user_withdraw():
             amount = float(balance)
         else:
             amount = float(amount)
-        cursor.execute("UPDATE user_balances SET balance = GREATEST(COALESCE(balance,0) - %s, 0), total_withdrawn = COALESCE(total_withdrawn,0) + %s WHERE phone = %s", (amount, amount, phone))
-        
         
         # 检查用户最近使用的网点是否允许提现
         cursor.execute("""
-            SELECT l.withdraw_enabled, l.withdraw_mode, l.auto_approve_rate 
+            SELECT l.withdraw_enabled, l.withdraw_mode, l.auto_approve_rate, l.refund_approve_start_min, l.refund_approve_end_min 
             FROM orders o 
             JOIN cabinets c ON o.cabinet_id = c.id 
             JOIN locations l ON c.location_id = l.id 
@@ -2903,6 +2901,7 @@ def user_withdraw():
             remaining = actual_amount
             first_wid = None
             all_ok = True
+            all_order_ids = []
             for oid, refundable, br in order_refund_plan:
                 if remaining <= 0.001:
                     break
@@ -2921,6 +2920,11 @@ def user_withdraw():
                     cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_amount = COALESCE(refund_amount, 0) + %s WHERE id = %s', (rid, refund_this, oid))
                     cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (oid,))
                 remaining -= refund_this
+            import json as _json_auto
+            if all_order_ids:
+                cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, approver, order_ids, approve_time) VALUES (%s,%s,%s,2,'自动',%s,NOW()) RETURNING id",
+                               (order_refund_plan[0][0] if order_refund_plan else None, phone, actual_amount, _json_auto.dumps(all_order_ids)))
+                first_wid = cursor.fetchone()['id']
             conn.commit()
             conn.close()
             if all_ok:
@@ -3033,6 +3037,14 @@ def user_withdraw():
             remaining = actual_amount
             first_wid = None
             _auto_time = None
+            if loc_row and loc_row.get('withdraw_mode') == 'queue_approve':
+                _sm = int(loc_row.get('refund_approve_start_min') or 1)
+                _em = int(loc_row.get('refund_approve_end_min') or 60)
+                if _sm > _em:
+                    _sm, _em = _em, _sm
+                _delay_min = random.randint(_sm, _em)
+                from datetime import timedelta
+                _auto_time = (datetime.now() + timedelta(minutes=_delay_min)).strftime('%Y-%m-%d %H:%M:%S')
             for oid, refundable, br in order_plan:
                 if remaining <= 0.001:
                     break

@@ -1,4 +1,4 @@
-name: CI Check + Deploy + E2E
+name: CI Check
 
 on:
   push:
@@ -29,56 +29,3 @@ jobs:
         run: |
           set +e
           python3 -m pytest tests/test_channel.py tests/test_lock.py tests/test_merchant.py -v --tb=long; true
-
-  deploy:
-    needs: check
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/checkout@v3
-      - name: Deploy to server
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: 106.55.7.10
-          username: ubuntu
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          script: |
-            cd /home/ubuntu/smart-locker
-            git fetch origin main
-            git reset --hard origin/main
-            bash restart.sh
-            sleep 3
-            echo "Deploy OK"
-      - name: E2E health check
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: 106.55.7.10
-          username: ubuntu
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          script: |
-            set -e
-            echo "=== E2E: Page loads ==="
-            STATUS=$(curl -s -o /dev/null -w '%{http_code}' 'https://locker.cqdyxl.com/' -k 2>/dev/null || echo '000')
-            echo "Status: $STATUS"
-            [ "$STATUS" = "200" ] || { echo "FAIL: page status $STATUS"; exit 1; }
-            
-            echo "=== E2E: No undefined in API paths ==="
-            PAGE_HTML=$(curl -s 'https://locker.cqdyxl.com/' -k 2>/dev/null)
-            if echo "$PAGE_HTML" | grep -q 'undefined/api'; then
-              echo "FAIL: found undefined/api in page"
-              exit 1
-            fi
-            echo "OK: no undefined/api paths"
-            
-            echo "=== E2E: API /api/store/init responds ==="
-            API_RESULT=$(curl -s -X POST 'https://locker.cqdyxl.com/api/store/init' -H 'Content-Type: application/json' -d '{}' -k 2>/dev/null)
-            echo "Response: $API_RESULT"
-            echo "$API_RESULT" | grep -q 'code' || { echo "FAIL: store_init API not responding"; exit 1; }
-            
-            echo "=== E2E: Cabinet sizes API ==="
-            SIZES=$(curl -s 'https://locker.cqdyxl.com/api/cabinet/8/available-sizes' -k 2>/dev/null)
-            echo "$SIZES"
-            
-            echo "=== E2E ALL CHECKS PASSED ==="

@@ -12,7 +12,7 @@ from flask import Blueprint, request, session, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from database import get_db
 import threading, uuid
-from helpers import json_response, manage_user_tokens, require_auth, logger, connected_devices, should_hide_order, supersede_force_update_cmds, \
+from helpers import json_response, manage_user_tokens, require_auth, logger, connected_devices, supersede_force_update_cmds, \
     upsert_user_balance_row, find_user_balance_row
 from config import WX_API_V3_KEY, WX_MCH_ID, WX_CERT_SERIAL_NO, WX_KEY_PATH, WX_CERT_PATH, WX_APP_ID, WX_APP_SECRET, WX_MP_APP_ID, WX_MP_APP_SECRET
 def _fmt_time(t):
@@ -567,6 +567,7 @@ def admin_location_save():
                      'auto_approve_day',
                      'auto_approve_time','auto_approve_rate','click_free_count',
                      'anti_test_minutes','anti_test_auto_refund','hide_ratio',
+                    'hide_start_orders',
                      'whitelist_phones','duplicate_filter_enabled','duplicate_filter_days','duplicate_filter_limit',
                      'refund_approve_rate','refund_approve_start_min','refund_approve_end_min',
                      'balance_hide_enabled','balance_hide_days']
@@ -686,9 +687,10 @@ def admin_orders():
         if status:
             where += ' AND o.status = %s'
             params.append(int(status))
-        if data.get('logic_mark'):
-            where += ' AND o.logic_mark = %s'
-            params.append(data['logic_mark'])
+        if data.get('logic_mark') == 'Y':
+            where += " AND (o.logic_mark = 'Y' OR (o.auto_hidden = 1 AND (o.logic_mark IS NULL OR o.logic_mark != 'N')))"
+        elif data.get('logic_mark') == 'N':
+            where += " AND o.logic_mark = 'N'"
         if data.get('refund_mark'):
             where += ' AND o.refund_mark = %s'
             params.append(data['refund_mark'])
@@ -723,7 +725,7 @@ def admin_orders():
         total = c.fetchone()[0]
         c.execute(f"""SELECT o.id, o.order_no, o.user_phone, o.access_code as password, o.compartment_number, o.deposit_amount, CASE WHEN o.status=4 THEN COALESCE(o.refund_amount,0) ELSE 0 END as refund_amount, o.status,
             o.store_time, o.retrieve_time, o.created_at, o.group_id, COALESCE(c.cabinet_code, o.cabinet_code) as cabinet_code, c.name as cabinet_name,
-            o.transaction_id, o.pay_time, o.refund_time, o.refund_mark, o.logic_mark,
+            o.transaction_id, o.pay_time, o.refund_time, o.refund_mark, o.logic_mark, o.auto_hidden,
             COALESCE(NULLIF(ub.wechat_name,''), NULLIF(po.wechat_name,''), up.wechat_name) as wechat_name,""" + f"""
             l.id as location_id, l.name as location_name, m.name as merchant_name, m.id as merchant_id, pc.mch_id as pay_mch_id
             FROM orders o LEFT JOIN cabinets c ON o.cabinet_id=c.id
@@ -742,16 +744,9 @@ def admin_orders():
             d['status_text'] = {1:'待支付',2:'使用中',3:'可退款',4:'已退款',5:'已取消',6:'退款异常'}.get(d.get('status'), '未知')
             d['created_at'] = _fmt_time(d.get('created_at'))
             d['retrieve_time'] = _fmt_time(d.get('retrieve_time'))
-            # 计算订单是否被 hide_ratio 隐藏
-            if d.get('logic_mark') != 'N' and d.get('merchant_id') and d.get('location_id'):
-                # 查询网点 hide_ratio
-                c2 = conn.cursor()
-                c2.execute('SELECT hide_ratio, whitelist_phones FROM locations WHERE id = %s', (d['location_id'],))
-                loc = c2.fetchone()
-                if loc and loc['hide_ratio'] and loc['hide_ratio'] > 0:
-                    whitelist = set((loc['whitelist_phones'] or '').split(',')) if loc['whitelist_phones'] else set()
-                    if should_hide_order(d['merchant_id'], d['id'], d.get('user_phone', ''), loc['hide_ratio'], whitelist, d.get('logic_mark')):
-                        d['logic_mark'] = 'Y'
+            # 显示规则：手动隐藏或自动隐藏且未手动显示
+            if d.get('logic_mark') != 'N' and (d.get('auto_hidden') or 0) == 1:
+                d['logic_mark'] = 'Y'
             orders.append(d)
         conn.close()
         return json_response(data={'list': orders, 'total': total})
@@ -1943,23 +1938,19 @@ def admin_merchants():
             placeholders = ','.join(['%s'] * len(merchant_ids))
             c.execute(f'''SELECT o.id, o.user_phone, o.logic_mark, o.deposit_amount,
                 CASE WHEN o.status=4 THEN COALESCE(o.refund_amount,0) ELSE 0 END as refund_amount,
+                o.auto_hidden,
                 l.merchant_id, l.hide_ratio, l.whitelist_phones
                 FROM orders o
                 LEFT JOIN cabinets cab ON o.cabinet_id=cab.id
                 LEFT JOIN locations l ON cab.location_id=l.id
                 WHERE l.merchant_id IN ({placeholders}) AND o.status NOT IN (5)
-                  AND (o.logic_mark IS NULL OR o.logic_mark != 'Y')''', merchant_ids)
+                  AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)''', merchant_ids)
             counts = {}
             revenues = {}
             for r in c.fetchall():
                 if r['logic_mark'] == 'Y':
                     continue
-                visible = True
-                if r['logic_mark'] != 'N' and r['merchant_id'] and r['hide_ratio'] and r['hide_ratio'] > 0:
-                    whitelist = set((r['whitelist_phones'] or '').split(',')) if r['whitelist_phones'] else set()
-                    if should_hide_order(r['merchant_id'], r['id'], r['user_phone'] or '', r['hide_ratio'], whitelist):
-                        visible = False
-                if not visible:
+                if r['logic_mark'] != 'N' and (r.get('auto_hidden') or 0) == 1:
                     continue
                 counts[r['merchant_id']] = counts.get(r['merchant_id'], 0) + 1
                 revenues[r['merchant_id']] = revenues.get(r['merchant_id'], 0.0) + float(r['deposit_amount'] or 0)
@@ -2462,7 +2453,7 @@ def admin_biz_stats():
         # 订单汇总统计（含隐藏订单统计）
         c.execute(f'''SELECT 
             COUNT(*) as total,
-            COUNT(CASE WHEN o.logic_mark IS NULL OR o.logic_mark != 'Y' THEN 1 END) as visible_count,
+            COUNT(CASE WHEN (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0) THEN 1 END) as visible_count,
             SUM(CASE WHEN o.status=2 THEN 1 ELSE 0 END) as active_count,
             COALESCE(SUM(o.deposit_amount),0) as deposit_total,
             COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END),0) as refund_total
@@ -2480,23 +2471,7 @@ def admin_biz_stats():
             'net_income': float(row[3] if row and row[3] else 0) - float(row[4] if row and row[4] else 0)
         }
         
-        # 根据 hide_ratio 调整 visible_count（SQL 只看 logic_mark，hash 隐藏的需要额外计算）
-        c.execute("SELECT o.id, o.user_phone, o.logic_mark, cab.location_id, l.merchant_id, l.hide_ratio, l.whitelist_phones FROM orders o LEFT JOIN cabinets cab ON o.cabinet_id=cab.id LEFT JOIN locations l ON cab.location_id=l.id " + (where_clause or ''), params)
-        hidden_count = 0
-        for r in c.fetchall():
-            if r['logic_mark'] == 'N':
-                continue
-            if r['logic_mark'] == 'Y':
-                continue
-            mid = r['merchant_id']
-            hide_ratio = r['hide_ratio'] or 0
-            if hide_ratio <= 0 or not mid:
-                continue
-            whitelist = set((r['whitelist_phones'] or '').split(',')) if r['whitelist_phones'] else set()
-            if should_hide_order(mid, r['id'], r['user_phone'] or '', hide_ratio, whitelist):
-                hidden_count += 1
-        orderStats['visible_count'] = max(0, orderStats['visible_count'] - hidden_count)
-        
+
         # 按日期明细统计：改为先查询所有订单，然后在Python中分组统计（支持hide_ratio）
         has_location_filter = bool(location_id)
         if has_location_filter:
@@ -2507,6 +2482,7 @@ def admin_biz_stats():
                 o.id as order_id,
                 o.user_phone,
                 o.logic_mark,
+                o.auto_hidden,
                 o.deposit_amount,
                 CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END as refund_amount,
                 l.merchant_id,
@@ -2523,6 +2499,7 @@ def admin_biz_stats():
                 o.id as order_id,
                 o.user_phone,
                 o.logic_mark,
+                o.auto_hidden,
                 o.deposit_amount,
                 CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END as refund_amount,
                 l.merchant_id,
@@ -2578,10 +2555,8 @@ def admin_biz_stats():
             is_hidden = False
             if logic_mark == 'Y':
                 is_hidden = True
-            elif logic_mark != 'N' and merchant_id and hide_ratio > 0:
-                whitelist = set((whitelist_phones or '').split(',')) if whitelist_phones else set()
-                if should_hide_order(merchant_id, order_id, user_phone, hide_ratio, whitelist):
-                    is_hidden = True
+            elif logic_mark != 'N' and (row.get('auto_hidden') or 0) == 1:
+                is_hidden = True
             
             if not is_hidden:
                 grouped[key]['visible_count'] += 1
@@ -4469,7 +4444,7 @@ def admin_merchant_share_stats():
         conn = get_db()
         c = conn.cursor()
         
-        where_parts = ["(o.logic_mark IS NULL OR o.logic_mark != 'Y')", "o.status NOT IN (5)"]
+        where_parts = ["(o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)", "o.status NOT IN (5)"]
         params = []
         
         if agent_id:
@@ -4487,7 +4462,7 @@ def admin_merchant_share_stats():
         where_clause = ' WHERE ' + ' AND '.join(where_parts)
         
         c.execute(f'''SELECT
-            o.id, o.user_phone, o.logic_mark, o.deposit_amount,
+            o.id, o.user_phone, o.logic_mark, o.auto_hidden, o.deposit_amount,
             CASE WHEN o.status=4 THEN COALESCE(o.refund_amount,0) ELSE 0 END as refund_amount,
             loc.id as location_id, loc.name as location_name, loc.merchant_id,
             loc.hide_ratio, loc.whitelist_phones,
@@ -4505,12 +4480,7 @@ def admin_merchant_share_stats():
         for r in c.fetchall():
             if r['logic_mark'] == 'Y':
                 continue
-            visible = True
-            if r['logic_mark'] != 'N' and r['merchant_id'] and r['hide_ratio'] and r['hide_ratio'] > 0:
-                whitelist = set((r['whitelist_phones'] or '').split(',')) if r['whitelist_phones'] else set()
-                if should_hide_order(r['merchant_id'], r['id'], r['user_phone'] or '', r['hide_ratio'], whitelist):
-                    visible = False
-            if not visible:
+            if r['logic_mark'] != 'N' and (r.get('auto_hidden') or 0) == 1:
                 continue
             key = (
                 r['location_id'], r['location_name'], r['merchant_id'], r['merchant_name'],

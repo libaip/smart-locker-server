@@ -306,6 +306,39 @@ def should_hide_order(merchant_id, order_id, phone, hide_rate, whitelist, logic_
     return (hash_val % 100) < hide_rate
 
 
+def apply_order_auto_hide(cursor, order_id, cabinet_id, user_phone=None):
+    """新订单创建后调用：按网点当前配置决定是否自动隐藏（固化 auto_hidden）。"""
+    cursor.execute("""
+        SELECT l.id AS location_id, l.merchant_id,
+               COALESCE(l.hide_ratio, 0) AS hide_ratio,
+               COALESCE(l.hide_start_orders, 0) AS hide_start_orders,
+               l.whitelist_phones
+        FROM cabinets cb
+        JOIN locations l ON cb.location_id = l.id
+        WHERE cb.id = %s
+    """, (cabinet_id,))
+    loc = cursor.fetchone()
+    if not loc or loc['merchant_id'] is None or loc['hide_ratio'] <= 0:
+        return
+    if user_phone and loc['whitelist_phones']:
+        whitelist = [x.strip() for x in (loc['whitelist_phones'] or '').split(',') if x.strip()]
+        if user_phone in whitelist:
+            return
+    if loc['hide_start_orders'] > 0:
+        cursor.execute("""
+            SELECT COUNT(*) AS cnt
+            FROM orders o
+            JOIN cabinets cb ON o.cabinet_id = cb.id
+            WHERE cb.location_id = %s
+        """, (loc['location_id'],))
+        if cursor.fetchone()['cnt'] <= loc['hide_start_orders']:
+            return
+    cursor.execute("""
+        UPDATE orders SET auto_hidden = 1
+        WHERE id = %s AND should_hide_by_hash(%s, %s, %s)
+    """, (order_id, loc['merchant_id'], order_id, loc['hide_ratio']))
+
+
 def filter_duplicate_users(orders, days, limit):
     """?????????"""
     if not days or not limit or limit <= 0:

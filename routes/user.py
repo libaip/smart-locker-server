@@ -21,7 +21,8 @@ from helpers import (json_response, get_setting, is_mock_mode, is_wechat_browser
                      check_withdraw_auto_approve, mark_user_withdraw, get_withhold_hours,
                      phone_openid_rows, resolve_user_identity, find_user_balance_row,
                      upsert_user_balance_row, upsert_phone_openid_row,
-                     get_mid_retrieve_config, get_order_mid_retrieve_info, try_increment_mid_retrieve)
+                     get_mid_retrieve_config, get_order_mid_retrieve_info, try_increment_mid_retrieve,
+                     apply_order_auto_hide)
 from models import BRAND_DEFAULTS
 
 bp = Blueprint('user', __name__)
@@ -474,6 +475,7 @@ def store_init():
             conn.close()
             return json_response(message="订单创建失败", code=500)
         order_id = row["id"]
+        apply_order_auto_hide(cursor, order_id, cabinet_id, user_phone)
         conn.commit()
         conn.close()
 
@@ -1055,6 +1057,7 @@ def create_deposit_order():
                        (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, per_use_price, datetime.now(), group_id, payment_channel_id, openid, unionid, mp_openid, _wn2, _cdo_uid))
         row = cursor.fetchone()
         order_id = row["id"]
+        apply_order_auto_hide(cursor, order_id, cabinet_id, user_phone)
         conn.commit()
         conn.close()
         pay_params = get_payment_params(order_id, order_no, deposit_amount + per_use_price, user_phone, openid, payment_channel=payment_channel, payment_channel_id=payment_channel_id)
@@ -1286,6 +1289,7 @@ def h5_store():
                        (order_no, phone, slot['id'], cabinet_id, slot['slot_number'], pwd, deposit, per_use_price, datetime.now(), cabinet['group_id'], cabinet['cabinet_code'], cabinet['name'], slot['slot_size'], payment_channel_id, openid, unionid, _wn3, _h5_uid))
         row = cursor.fetchone()
         order_id = row["id"]
+        apply_order_auto_hide(cursor, order_id, cabinet_id, phone)
         conn.commit()
         result = {'order_id': order_id, 'order_no': order_no, 'need_redirect': need_redirect, 'slot_number': str(slot['slot_number']), 'pwd': pwd, 'deposit': str(deposit), 'cabinet_id': cabinet_id, 'cabinet_device_id': cabinet['mainboard_device_id'], 'board_no': 1}
         try:

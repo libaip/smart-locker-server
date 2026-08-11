@@ -153,8 +153,8 @@ def merchant_dashboard():
     permissions = session.get('permissions') or []
     show_hidden = session.get('is_agent') and 'show_hidden' in permissions
     logic_filter = '' if show_hidden else " {hide_filter}"
-    hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND NOT should_hide_by_hash(l.merchant_id, o.id, COALESCE(l.hide_ratio, 0))"
-    hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND NOT should_hide_by_hash(l.merchant_id, o.id, COALESCE(l.hide_ratio, 0))"
+    hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
+    hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
     
     try:
         merchant_id, mfilter, mparams = _get_merchant_filter()
@@ -296,7 +296,7 @@ def merchant_locations():
         merchant_id, mfilter, mparams = _get_merchant_filter()
         permissions = session.get('permissions') or []
         show_hidden = session.get('is_agent') and 'show_hidden' in permissions
-        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND NOT should_hide_by_hash(l.merchant_id, o.id, COALESCE(l.hide_ratio, 0))"
+        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute(f'SELECT l.*, COUNT(DISTINCT c.id) as cabinet_count, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as occupied_count, SUM(CASE WHEN cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) THEN 1 ELSE 0 END) as available_count FROM locations l LEFT JOIN cabinets c ON l.id = c.location_id LEFT JOIN cabinet_slots cs ON c.id = cs.cabinet_id WHERE {mfilter} GROUP BY l.id ORDER BY l.created_at DESC', mparams)
@@ -349,7 +349,7 @@ def merchant_cabinet_slots(cabinet_id):
         merchant_id, mfilter, mparams = _get_merchant_filter()
         permissions = session.get('permissions') or []
         show_hidden = session.get('is_agent') and 'show_hidden' in permissions
-        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND NOT should_hide_by_hash(l.merchant_id, o.id, COALESCE(l.hide_ratio, 0))"
+        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute(f'SELECT c.*, l.name as location_name FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE c.id = %s AND {mfilter}', (cabinet_id, *mparams))
@@ -431,12 +431,14 @@ def merchant_orders():
         filtered = []
         for o in all_orders:
             is_logic_hidden = o.get('logic_mark') == 'Y'
+            is_auto_hidden = o.get('logic_mark') != 'N' and bool(o.get('auto_hidden'))
+            is_hidden = is_logic_hidden or is_auto_hidden
             # 手机号搜索时允许显示隐藏订单，但标记_hidden
             if phone and session.get('is_agent'):
-                o['_hidden'] = is_logic_hidden
+                o['_hidden'] = is_hidden
                 filtered.append(o)
             else:
-                if is_logic_hidden:
+                if is_hidden:
                     continue
                 filtered.append(o)
 
@@ -467,13 +469,13 @@ def merchant_order_detail(order_id):
         merchant_id, mfilter, mparams = _get_merchant_filter()
         permissions = session.get('permissions') or []
         show_hidden = session.get('is_agent') and 'show_hidden' in permissions
-        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND NOT should_hide_by_hash(l.merchant_id, o.id, COALESCE(l.hide_ratio, 0))"
+        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
         conn = get_db()
         cursor = conn.cursor()
         if merchant_id:
-            cursor.execute(f'SELECT o.*, c.cabinet_code, c.name as cabinet_name, l.name as location_name FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE o.id = %s AND {mfilter}', (order_id, *mparams))
+            cursor.execute(f'SELECT o.*, c.cabinet_code, c.name as cabinet_name, l.name as location_name FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE o.id = %s AND {mfilter}{hide_filter}', (order_id, *mparams))
         else:
-            cursor.execute(f'SELECT o.*, c.cabinet_code, c.name as cabinet_name, l.name as location_name FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE o.id = %s AND {mfilter}', (order_id, *mparams))
+            cursor.execute(f'SELECT o.*, c.cabinet_code, c.name as cabinet_name, l.name as location_name FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE o.id = %s AND {mfilter}{hide_filter}', (order_id, *mparams))
         order = cursor.fetchone()
         if not order:
             conn.close()
@@ -684,7 +686,7 @@ def merchant_cabinet_status(cabinet_id):
         merchant_id, mfilter, mparams = _get_merchant_filter()
         permissions = session.get('permissions') or []
         show_hidden = session.get('is_agent') and 'show_hidden' in permissions
-        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND NOT should_hide_by_hash(l.merchant_id, o.id, COALESCE(l.hide_ratio, 0))"
+        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute(f'SELECT c.id, c.cabinet_code, c.name, c.last_heartbeat, l.merchant_id FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE c.id = %s AND {mfilter}', (cabinet_id, *mparams))
@@ -776,7 +778,7 @@ def merchant_get_slot_status(cabinet_id, slot_id):
         merchant_id, mfilter, mparams = _get_merchant_filter()
         permissions = session.get('permissions') or []
         show_hidden = session.get('is_agent') and 'show_hidden' in permissions
-        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND NOT should_hide_by_hash(l.merchant_id, o.id, COALESCE(l.hide_ratio, 0))"
+        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
         conn = get_db()
         cursor = conn.cursor()
         # 验证权限
@@ -808,8 +810,8 @@ def merchant_business_stats():
     permissions = session.get('permissions') or []
     show_hidden = session.get('is_agent') and 'show_hidden' in permissions
     logic_filter = '' if show_hidden else " {hide_filter}"
-    hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND NOT should_hide_by_hash(l.merchant_id, o.id, COALESCE(l.hide_ratio, 0))"
-    hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND NOT should_hide_by_hash(l.merchant_id, o.id, COALESCE(l.hide_ratio, 0))"
+    hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
+    hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
     
     try:
         merchant_id, mfilter, mparams = _get_merchant_filter()
@@ -977,7 +979,7 @@ def merchant_refund_deposit(payment_id):
         merchant_id, mfilter, mparams = _get_merchant_filter()
         permissions = session.get('permissions') or []
         show_hidden = session.get('is_agent') and 'show_hidden' in permissions
-        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND NOT should_hide_by_hash(l.merchant_id, o.id, COALESCE(l.hide_ratio, 0))"
+        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
         conn = get_db()
         cursor = conn.cursor()
         # Verify payment belongs to this merchant's orders
@@ -1028,7 +1030,7 @@ def merchant_balance():
         merchant_id, mfilter, mparams = _get_merchant_filter()
         permissions = session.get('permissions') or []
         show_hidden = session.get('is_agent') and 'show_hidden' in permissions
-        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND NOT should_hide_by_hash(l.merchant_id, o.id, COALESCE(l.hide_ratio, 0))"
+        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
         conn = get_db()
         cursor = conn.cursor()
         # 总收入
@@ -1090,7 +1092,7 @@ def merchant_withdrawals():
         merchant_id, mfilter, mparams = _get_merchant_filter()
         permissions = session.get('permissions') or []
         show_hidden = session.get('is_agent') and 'show_hidden' in permissions
-        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND NOT should_hide_by_hash(l.merchant_id, o.id, COALESCE(l.hide_ratio, 0))"
+        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
         conn = get_db()
         cursor = conn.cursor()
         if merchant_id:
@@ -1112,7 +1114,7 @@ def merchant_alerts():
         merchant_id, mfilter, mparams = _get_merchant_filter()
         permissions = session.get('permissions') or []
         show_hidden = session.get('is_agent') and 'show_hidden' in permissions
-        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND NOT should_hide_by_hash(l.merchant_id, o.id, COALESCE(l.hide_ratio, 0))"
+        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute(f'SELECT da.*, l.name as location_name, c.name as cabinet_name FROM device_alerts da LEFT JOIN cabinets c ON da.cabinet_id=c.id LEFT JOIN locations l ON c.location_id=l.id WHERE {mfilter} ORDER BY da.created_at DESC LIMIT 50', mparams)
@@ -1134,7 +1136,7 @@ def merchant_device_status():
         merchant_id, mfilter, mparams = _get_merchant_filter()
         permissions = session.get('permissions') or []
         show_hidden = session.get('is_agent') and 'show_hidden' in permissions
-        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND NOT should_hide_by_hash(l.merchant_id, o.id, COALESCE(l.hide_ratio, 0))"
+        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
         conn = get_db()
         cursor = conn.cursor()
         sql = "SELECT c.id, c.name, c.cabinet_code, c.mainboard_device_id, c.last_heartbeat, l.name as location_name FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE " + mfilter + " AND (c.last_heartbeat IS NULL OR c.last_heartbeat < NOW() - INTERVAL '30 seconds') ORDER BY l.name, c.name"
@@ -1272,7 +1274,7 @@ def merchant_query_physical_lock_status(cabinet_id, slot_id):
         merchant_id, mfilter, mparams = _get_merchant_filter()
         permissions = session.get('permissions') or []
         show_hidden = session.get('is_agent') and 'show_hidden' in permissions
-        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND NOT should_hide_by_hash(l.merchant_id, o.id, COALESCE(l.hide_ratio, 0))"
+        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute(f'SELECT c.id, c.mainboard_device_id, cs.slot_number, cs.board_no, cs.lock_no FROM cabinets c JOIN locations l ON c.location_id = l.id JOIN cabinet_slots cs ON cs.cabinet_id = c.id WHERE c.id = %s AND cs.id = %s AND {mfilter}', (cabinet_id, slot_id, *mparams))

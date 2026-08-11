@@ -66,7 +66,7 @@ def register_device():
             mainboard = cursor.fetchone()
 
             # Get actual slot count from cabinet_slots table
-            cursor.execute('SELECT COUNT(*) as total, SUM(CASE WHEN status=1 THEN 1 ELSE 0 END) as available FROM cabinet_slots WHERE cabinet_id=%s', (cabinet['id'],))
+            cursor.execute('SELECT COUNT(*) as total, SUM(CASE WHEN status=1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cabinet_slots.id AND o2.status = 2) THEN 1 ELSE 0 END) as available FROM cabinet_slots WHERE cabinet_id=%s', (cabinet['id'],))
             slot_info = cursor.fetchone()
             total_slots = slot_info['total'] if slot_info and slot_info['total'] else cabinet['total_slots']
             available_slots = slot_info['available'] if slot_info and slot_info['available'] else total_slots

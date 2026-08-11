@@ -21,99 +21,114 @@ logging.basicConfig(
 logger = logging.getLogger("ws_proxy")
 
 device_connections = {}
-
-def _db_st(did,st):
-    try:
-        import psycopg2
-        co = psycopg2.connect(**DB_CONF)
-        cu = co.cursor()
-        cu.execute("INSERT INTO devices (device_id,status,update_time) VALUES (%s,%s,NOW()) ON CONFLICT (device_id) DO UPDATE SET status=%s,update_time=NOW()", (did,st,st))
-        cu.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (did,))
-        co.commit()
-        cu.close()
-        co.close()
-    except Exception as e:
-        logger.error(f"[DB] {e}")
+device_traffic = {}
 
 lock_results_buffer = []
 
-def _update_version(device_id, version, version_code=0):
-    try:
+MAX_RESULT_BUFFER = 5000
+HEARTBEAT_TIMEOUT = 120
+
+# 单条常驻连接复用，带连接/语句超时，断线自动重连
+_db_conn = None
+
+def _get_db_conn():
+    global _db_conn
+    if _db_conn is not None:
+        try:
+            if _db_conn.closed:
+                _db_conn = None
+        except Exception:
+            _db_conn = None
+    if _db_conn is None:
         import psycopg2
-        co = psycopg2.connect(**DB_CONF)
+        _db_conn = psycopg2.connect(connect_timeout=3, **DB_CONF)
+    return _db_conn
+
+def _close_db_conn():
+    global _db_conn
+    if _db_conn is not None:
+        try:
+            _db_conn.close()
+        except Exception:
+            pass
+        _db_conn = None
+
+def _db_exec(sql, params):
+    try:
+        co = _get_db_conn()
         cu = co.cursor()
-        cu.execute("UPDATE cabinets SET app_version=%s, app_version_code=%s WHERE mainboard_device_id=%s",
-                   (version, version_code, device_id))
+        cu.execute("SET LOCAL statement_timeout = 5000")
+        cu.execute(sql, params)
         co.commit()
         cu.close()
-        co.close()
+        return True
     except Exception as e:
-        logger.error(f"[DB_VER] {e}")
+        _close_db_conn()
+        logger.error(f"[DB] {e}")
+        return False
+
+def _db_st(did, st):
+    _db_exec("INSERT INTO devices (device_id,status,update_time) VALUES (%s,%s,NOW()) ON CONFLICT (device_id) DO UPDATE SET status=%s,update_time=NOW()", (did, st, st))
+    if st != 'offline':
+        _db_exec("UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (did,))
 
 def _update_version(device_id, version, version_code=0):
-    try:
-        import psycopg2
-        co = psycopg2.connect(**DB_CONF)
-        cu = co.cursor()
-        cu.execute("UPDATE cabinets SET app_version=%s, app_version_code=%s WHERE mainboard_device_id=%s",
-                   (version, version_code, device_id))
-        co.commit()
-        cu.close()
-        co.close()
-    except Exception as e:
-        logger.error(f"[DB_VER] {e}")
+    _db_exec("UPDATE cabinets SET app_version=%s, app_version_code=%s WHERE mainboard_device_id=%s", (version, version_code, device_id))
 
-def _update_version(device_id, version, version_code=0):
-    try:
-        import psycopg2
-        co = psycopg2.connect(**DB_CONF)
-        cu = co.cursor()
-        cu.execute("UPDATE cabinets SET app_version=%s, app_version_code=%s WHERE mainboard_device_id=%s",
-                   (version, version_code, device_id))
-        co.commit()
-        cu.close()
-        co.close()
-    except Exception as e:
-        logger.error(f"[DB_VER] {e}")
+def _count_traffic(device_id, rx=0, tx=0, rx_msgs=0, tx_msgs=0):
+    d = device_traffic.setdefault(device_id, {
+        "rx_bytes": 0, "tx_bytes": 0, "rx_msgs": 0, "tx_msgs": 0
+    })
+    d["rx_bytes"] += rx
+    d["tx_bytes"] += tx
+    d["rx_msgs"] += rx_msgs
+    d["tx_msgs"] += tx_msgs
+    return d
 
-def _update_version(device_id, version, version_code=0):
-    try:
-        import psycopg2
-        co = psycopg2.connect(**DB_CONF)
-        cu = co.cursor()
-        cu.execute("UPDATE cabinets SET app_version=%s, app_version_code=%s WHERE mainboard_device_id=%s",
-                   (version, version_code, device_id))
-        co.commit()
-        cu.close()
-        co.close()
-    except Exception as e:
-        logger.error(f"[DB_VER] {e}")
+def _ws_send(device_id, ws, payload):
+    if isinstance(payload, str):
+        _count_traffic(device_id, tx=len(payload.encode("utf-8")), tx_msgs=1)
+    ws.send(payload)
 
 def handle_ws(ws, device_id):
     """处理单个 WebSocket 连接"""
     device_connections[device_id] = ws
+    device_traffic.setdefault(device_id, {
+        "rx_bytes": 0, "tx_bytes": 0, "rx_msgs": 0, "tx_msgs": 0
+    })
     _db_st(device_id, 'online')
     logger.info(f"[WS] 设备连接: {device_id}, 当前在线: {len(device_connections)}")
     
     try:
         while not ws.closed:
-            message = ws.receive()
+            try:
+                with gevent.Timeout(HEARTBEAT_TIMEOUT):
+                    message = ws.receive()
+            except gevent.Timeout:
+                logger.warning(f"[WS] 心跳超时，清理死连接: {device_id}")
+                break
             if message is None:
                 break
+            _count_traffic(device_id, rx=len(message.encode("utf-8")), rx_msgs=1)
             try:
                 msg = json.loads(message)
                 t = msg.get("type", "")
                 if t == "heartbeat":
                     try:
-                        ws.send(json.dumps({"type": "heartbeat_ack", "timestamp": int(time.time() * 1000)}))
+                        _ws_send(device_id, ws, json.dumps({"type": "heartbeat_ack", "timestamp": int(time.time() * 1000)}))
                     except:
                         pass
                 elif t == "lock_result":
-                    lock_results_buffer.append((device_id, msg))
+                    if len(lock_results_buffer) >= MAX_RESULT_BUFFER:
+                        logger.warning(f"[WS] 开锁结果队列已满，丢弃新结果: {device_id}")
+                    else:
+                        lock_results_buffer.append((device_id, msg))
+                elif t == "door_status_result":
+                    _forward_door_status(device_id, msg)
                 elif t == "register":
                     try:
                         logger.info(f"[WS_REGISTER] device={device_id}, msg={msg}")
-                        ws.send(json.dumps({"type": "register_ack", "device_id": device_id}))
+                        _ws_send(device_id, ws, json.dumps({"type": "register_ack", "device_id": device_id}))
                         reg_ver = msg.get("version", "")
                         reg_code = msg.get("version_code", 0) or 0
                         if reg_ver:
@@ -150,6 +165,26 @@ def flush_lock_results():
                 req.urlopen("http://127.0.0.1:5001/api/device/lock-result", data=body, timeout=5)
             except Exception as e:
                 logger.error(f"[LOCK_RESULT] 转发失败: {e}")
+
+
+def _forward_door_status(device_id, data):
+    """将设备上报的柜门物理状态结果转发给主服务"""
+    try:
+        import urllib.request as req
+        query_ok = bool(data.get("query_success"))
+        body = json.dumps({
+            "device_id": device_id,
+            "request_id": data.get("request_id", ""),
+            "board_no": data.get("board_no"),
+            "lock_no": data.get("lock_no"),
+            "is_open": bool(data.get("is_open", False)),
+            "door_status": data.get("door_status", "unknown"),
+            "status": data.get("status", "ok" if query_ok else "read_failed"),
+            "query_success": query_ok
+        }).encode()
+        req.urlopen("http://127.0.0.1:5001/api/device/lock-status-report", data=body, timeout=5)
+    except Exception as e:
+        logger.error(f"[DOOR_STATUS] 转发失败: {e}")
 
 
 def app(environ, start_response):
@@ -189,7 +224,7 @@ def app(environ, start_response):
             if not ws or ws.closed:
                 start_response("200 OK", [("Content-Type", "application/json")])
                 return [json.dumps({"success": False, "error": "offline"}).encode()]
-            gevent.spawn(ws.send, json.dumps(command))
+            gevent.spawn(_ws_send, device_id, ws, json.dumps(command))
             start_response("200 OK", [("Content-Type", "application/json")])
             return [json.dumps({"success": True}).encode()]
         except Exception as e:
@@ -204,6 +239,11 @@ def app(environ, start_response):
             "online_devices": list(device_connections.keys()),
             "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }).encode()]
+
+    # 设备收发字节计数（自进程启动累计）
+    if path == "/traffic":
+        start_response("200 OK", [("Content-Type", "application/json")])
+        return [json.dumps({"devices": device_traffic}).encode()]
     
     if path == "/health":
         start_response("200 OK", [("Content-Type", "text/plain")])

@@ -38,14 +38,14 @@ def get_wxpay(mch_id):
     os.environ["PGPASSWORD"] = DB_CFG["password"]
     conn = psycopg2.connect(**DB_CFG)
     c = conn.cursor()
-    c.execute("SELECT id, api_key, cert_name, api_v3_key FROM payment_channels WHERE mch_id=%s AND is_active=1", (mch_id,))
+    c.execute("SELECT id, api_key, cert_name, api_v3_key FROM payment_channels WHERE mch_id=%s", (mch_id,))
     ch = c.fetchone()
     conn.close()
     if not ch:
         # fallback: try any active channel
         conn = psycopg2.connect(**DB_CFG)
         c = conn.cursor()
-        c.execute("SELECT id, api_key, cert_name, api_v3_key FROM payment_channels WHERE cert_name IS NOT NULL AND cert_name != '' AND is_active=1 ORDER BY id LIMIT 1")
+        c.execute("SELECT id, api_key, cert_name, api_v3_key FROM payment_channels WHERE cert_name IS NOT NULL AND cert_name != '' ORDER BY id LIMIT 1")
         ch = c.fetchone()
         conn.close()
     return ch
@@ -108,12 +108,39 @@ def process_complaint(complaint, mch_id, key_path, cert_path):
     
     print(f"  处理投诉 {cid} | 订单 {order_no}")
     
-    # 1. 退款
-    ok, msg = do_refund(order_no, amount, mch_id)
-    print(f"    退款: {'OK' if ok else 'FAIL'} - {msg}")
+    # 预检查：订单是否已退款
+    _pre_conn = psycopg2.connect(**DB_CFG)
+    _pre_cur = _pre_conn.cursor()
+    _pre_cur.execute("SELECT refund_status FROM orders WHERE order_no=%s LIMIT 1", (order_no,))
+    _pre_row = _pre_cur.fetchone()
+    _pre_conn.close()
+    already_refunded = bool(_pre_row and _pre_row[0] in ('success','refunded'))
+    if already_refunded:
+        print(f"    订单已退款(refund_status={_pre_row[0]})，跳过退款，直接回复+结案")
+        ok = True
+        msg = "already_refunded"
+    else:
+        # 1. 退款
+        ok, msg = do_refund(order_no, amount, mch_id)
+        print(f"    退款: {'OK' if ok else 'FAIL'} - {msg}")
     if not ok:
-        print(f"    退款失败，跳过回复+结案，下次重试")
-        return
+        if "已全额退款" in msg or "订单已全额退款" in msg:
+            already_refunded = True
+            print(f"    订单已退款，直接回复+结案")
+        else:
+            print(f"    退款失败({msg})，标记但不结案")
+            _conn = psycopg2.connect(**DB_CFG)
+            _c = _conn.cursor()
+            _c.execute("SELECT id FROM complaints WHERE wx_complaint_id=%s", (cid,))
+            _ex = _c.fetchone()
+            if _ex:
+                try:
+                    _c.execute("UPDATE complaints SET refund_status='refund_failed', refund_fail_reason=%s WHERE wx_complaint_id=%s", (msg[:200], cid))
+                    _conn.commit()
+                except Exception:
+                    pass
+            _conn.close()
+            return
     
     # 2. 回复投诉
     reply_body = {"complainted_mchid": mch_id, "response_content": REPLY_MSG}
@@ -141,7 +168,7 @@ def process_complaint(complaint, mch_id, key_path, cert_path):
 def main():
     conn = psycopg2.connect(**DB_CFG)
     c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    c.execute("SELECT id, mch_id, cert_name FROM payment_channels WHERE cert_name IS NOT NULL AND cert_name != '' AND is_active=1")
+    c.execute("SELECT id, mch_id, cert_name FROM payment_channels WHERE cert_name IS NOT NULL AND cert_name != ''")
     channels = c.fetchall()
     conn.close()
     

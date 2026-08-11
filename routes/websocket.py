@@ -91,24 +91,37 @@ def register_websocket_handlers(socketio):
             except Exception as e:
                 logger.error(f'[WebSocket] 心跳更新失败: {e}')
             logger.debug(f'[WebSocket] 心跳: device_id={device_id}')
-            # 自动检查版本并推送更新
+            # 自动检查版本并推送更新：版本以数据库 apk_version 和设备上报的 app_version_code 为准
             try:
-                from config import LATEST_VERSION_CODE, LATEST_VERSION_NAME, APK_DOWNLOAD_URL
-                app_ver_code = data.get('version_code', 0)
-                if isinstance(app_ver_code, str):
-                    try: app_ver_code = int(app_ver_code)
-                    except: app_ver_code = 0
-                if app_ver_code < LATEST_VERSION_CODE:
+                from database import get_db as _get_db
+                _db = None
+                try:
+                    _db = _get_db()
+                    _cur = _db.cursor()
+                    _cur.execute("SELECT app_version_code FROM cabinets WHERE mainboard_device_id=%s", (device_id,))
+                    _row = _cur.fetchone()
+                    _cur.execute("SELECT version_code, version_name, download_url FROM apk_version ORDER BY version_code DESC LIMIT 1")
+                    _apk = _cur.fetchone()
+                finally:
+                    if _db is not None:
+                        try:
+                            _db.close()
+                        except Exception:
+                            pass
+                if not _apk:
+                    return
+                app_ver_code = int(_row['app_version_code'] or 0) if _row else 0
+                if app_ver_code < int(_apk['version_code']):
                     import json as _json
                     version_info = {
                         'type': 'force_update',
-                        'version_code': LATEST_VERSION_CODE,
-                        'version_name': LATEST_VERSION_NAME,
-                        'download_url': APK_DOWNLOAD_URL,
+                        'version_code': _apk['version_code'],
+                        'version_name': _apk['version_name'],
+                        'download_url': _apk['download_url'],
                         'force': True
                     }
                     socketio.emit('message', version_info, room=request.sid, namespace='/')
-                    logger.info(f'[WebSocket] 自动推送更新: device_id={device_id}, current={app_ver_code}, target={LATEST_VERSION_CODE}')
+                    logger.info(f'[WebSocket] 自动推送更新: device_id={device_id}, current={app_ver_code}, target={_apk["version_code"]}')
             except Exception as e:
                 logger.error(f'[WebSocket] 自动更新推送失败: {e}')
 

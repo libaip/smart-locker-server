@@ -11,7 +11,8 @@ from datetime import datetime
 from flask import Blueprint, request
 from database import get_db
 from helpers import (json_response, require_auth, get_setting, is_mock_mode, logger, _get_device_protocol,
-                     get_wxpay, get_channel_wxpay, update_channel_stats, send_open_lock)
+                     get_wxpay, get_channel_wxpay, update_channel_stats, send_open_lock,
+                     upsert_user_balance_row)
 from wxpay import WxPay, ThirdPartyPay
 
 bp = Blueprint('payment', __name__)
@@ -216,7 +217,7 @@ def pay_notify():
 
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM orders WHERE order_no = %s', (out_trade_no,))
+        cursor.execute('SELECT * FROM orders WHERE order_no = %s FOR UPDATE', (out_trade_no,))
         order = cursor.fetchone()
         if not order:
             conn.close()
@@ -235,69 +236,21 @@ def pay_notify():
                                (transaction_id, datetime.now(), order['id']))
             if order['slot_id']:
                 cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
-            cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
-                           (order['id'], float(order['deposit_amount']) + float(order.get('per_use_price') or 0), transaction_id))
+            cursor.execute("SELECT id FROM payments WHERE order_id=%s AND type=1 AND transaction_id=%s LIMIT 1", (order['id'], transaction_id))
+            if not cursor.fetchone():
+                cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
+                               (order['id'], float(order['deposit_amount']) + float(order.get('per_use_price') or 0), transaction_id))
             # 更新用户余额 - 统一用 mp_openid 查找
             try:
                 _o_openid = order.get('openid', '') or ''
                 _o_unionid = order.get('unionid', '') or ''
                 _o_wechat_name = order.get('wechat_name', '') or ''
                 _o_mp_openid = order.get('mp_openid', '') or _o_openid
-                # 统一用 mp_openid 查找
-                if _o_mp_openid:
-                    cursor.execute('SELECT id, phone FROM user_balances WHERE mp_openid = %s', (_o_mp_openid,))
-                    ub = cursor.fetchone()
-                    if not ub:
-                        # 尝试从 openid 字段查找并获取 mp_openid
-                        cursor.execute('SELECT id, phone, mp_openid FROM user_balances WHERE openid = %s', (_o_openid,))
-                        ub = cursor.fetchone()
-                        if ub and not ub.get('mp_openid'):
-                            # 更新 mp_openid
-                            cursor.execute('UPDATE user_balances SET mp_openid = %s WHERE id = %s', (_o_mp_openid, ub['id']))
-                else:
-                    cursor.execute('SELECT id, phone, mp_openid FROM user_balances WHERE phone = %s', (order['user_phone'],))
-                    ub = cursor.fetchone()
-                    if ub and ub.get('mp_openid'):
-                        _o_mp_openid = ub['mp_openid']
-                if ub:
-                    cursor.execute("UPDATE user_balances SET total_deposited = total_deposited + %s, phone = %s, mp_openid = COALESCE(NULLIF(mp_openid, ''), %s), unionid = COALESCE(NULLIF(%s, ''), unionid), wechat_name = COALESCE(NULLIF(%s, ''), wechat_name) WHERE mp_openid = %s",
-                                   (order['deposit_amount'], order['user_phone'], _o_mp_openid, _o_unionid, _o_wechat_name, _o_mp_openid))
-                else:
-                    # 没找到，先用 phone 查，避免重复
-                    _dup = None
-                    try:
-                        cursor.execute("SELECT id FROM user_balances WHERE phone = %s LIMIT 1", (order['user_phone'],))
-                        _dup = cursor.fetchone()
-                    except:
-                        pass
-                    if _dup:
-                        # phone_openids 桥接，获取正确的 mp_openid
-                        try:
-                            cursor.execute("SELECT mp_openid, openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1", (order['user_phone'],))
-                            _po_r = cursor.fetchone()
-                            if _po_r:
-                                if _po_r['mp_openid']:
-                                    _o_mp_openid = _po_r['mp_openid']
-                                if _po_r['openid']:
-                                    _o_openid = _po_r['openid']
-                        except:
-                            pass
-                        cursor.execute("UPDATE user_balances SET openid = %s, mp_openid = %s, total_deposited = total_deposited + %s, unionid = COALESCE(NULLIF(%s, ''), unionid), wechat_name = COALESCE(NULLIF(%s, ''), wechat_name) WHERE id = %s",
-                                       (_o_openid, _o_mp_openid, order['deposit_amount'], _o_unionid, _o_wechat_name, _dup['id']))
-                    else:
-                        # 真的没找到，插入新记录
-                        _wn_name = ''
-                    cursor.execute("SELECT wechat_name FROM phone_openids WHERE phone = %s AND wechat_name IS NOT NULL AND wechat_name != '' LIMIT 1", (order['user_phone'],))
-                    _wn_r = cursor.fetchone()
-                    if _wn_r:
-                        _wn_name = _wn_r['wechat_name']
-                    if not _wn_name and _o_openid:
-                        cursor.execute("SELECT wechat_name FROM user_profiles WHERE openid = %s AND wechat_name IS NOT NULL AND wechat_name != '' LIMIT 1", (_o_openid,))
-                        _wn_r = cursor.fetchone()
-                        if _wn_r:
-                            _wn_name = _wn_r['wechat_name']
-                    cursor.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, first_use_time) VALUES (%s, %s, %s, %s, %s, 0, 0, %s)',
-                                   (order['user_phone'], _o_openid, _o_unionid, _o_mp_openid, _wn_name, datetime.now()))
+                upsert_user_balance_row(cursor, phone=order['user_phone'], openid=_o_openid,
+                                        unionid=_o_unionid, mp_openid=_o_mp_openid,
+                                        wechat_name=_o_wechat_name,
+                                        total_deposited=order.get('deposit_amount') or 0,
+                                        user_id=order.get('user_id') or 0)
             except Exception as e:
                 logger.error(f'[支付回调更新余额失败] {e}')
 
@@ -363,7 +316,7 @@ def pay_notify():
                 if not openid:
                     try:
                         cur = conn.cursor()
-                        cur.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s', (order['user_phone'],))
+                        cur.execute('SELECT COALESCE(mp_openid, openid) as openid FROM users WHERE phone = %s', (order['user_phone'],))
                         r = cur.fetchone()
                         if r:
                             openid = r['openid']
@@ -381,7 +334,7 @@ def pay_notify():
                         'time4': {'value': datetime.now().strftime('%Y-%m-%d %H:%M')},
                         'time5': {'value': datetime.now().strftime('%Y-%m-%d %H:%M')}
                     }
-                    send_wx_subscribe_message(openid, 'aUc6gRRMUXKxy94Pd6kLWaLGwzcutYMW_cQT_Hks1fg', subscribe_data)
+                    send_wx_subscribe_message('', 'aUc6gRRMUXKxy94Pd6kLWaLGwzcutYMW_cQT_Hks1fg', subscribe_data, phone=order.get('user_phone'))
             except Exception as e:
                 logger.error(f'[支付回调发送订阅消息失败] {e}')
         

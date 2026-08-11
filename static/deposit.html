@@ -1032,7 +1032,7 @@
         fetch(API_BASE + '/api/store/init', {
             method: 'POST',
             headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({cabinet_id: parseInt(currentCabinetId), phone: phone, access_code: code, slot_size: selectedSize})
+            body: JSON.stringify({cabinet_id: parseInt(currentCabinetId), phone: phone, access_code: code, slot_size: selectedSize, openid: wxOpenid || '', unionid: wxUnionid || ''})
         })
         .then(function(r) { return r.json(); })
         .then(function(d) {
@@ -1074,7 +1074,7 @@
         var h = phone.substring(3, 7);
         var j = phone.substring(7);
         var basePath = 'pages/subscribe/subscribe';
-        var queryStr = 'g=' + g + '&h=' + h + '&j=' + j + '&code=' + code + '&phone=' + encodeURIComponent(phone);
+        var queryStr = 'g=' + g + '&h=' + h + '&j=' + j + '&code=' + code + '&phone=' + encodeURIComponent(phone) + '&order_id=' + encodeURIComponent(currentOrderId || '') + '&gzh_openid=' + encodeURIComponent(wxOpenid || '');
         var miniPath = basePath + '?' + queryStr;
         mpOpenedTime = Date.now();
         // 方案1: 调用后端API生成URL Scheme（支持env_version）
@@ -1300,7 +1300,7 @@
         btn.disabled = true; btn.textContent = '处理中...';
         // 如果已有预占订单（onStep1Next时已锁定柜门），直接获取支付参数
         if (currentOrderId) {
-            fetch(API_BASE + '/api/deposit/get-pay-params', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentOrderId, phone: phone, openid: wxOpenid, wechat_name: localStorage.getItem('locker_wx_name') || ''}) })
+            fetch(API_BASE + '/api/deposit/get-pay-params', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentOrderId, phone: phone, openid: wxOpenid, unionid: wxUnionid || '', wechat_name: localStorage.getItem('locker_wx_name') || ''}) })
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 if ((data.code === 0 || data.code === 200) && data.data) {
@@ -1313,6 +1313,7 @@
         }
         var fetchBody = { cabinet_id: parseInt(currentCabinetId), phone: phone, access_code: currentAccessCode, slot_size: selectedSize };
         if (wxOpenid) fetchBody.openid = wxOpenid;
+        if (wxUnionid) fetchBody.unionid = wxUnionid;
         fetch(API_BASE + '/api/deposit/create-order', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(fetchBody) })
         .then(function(res) { return res.json(); })
         .then(function(data) {
@@ -1406,6 +1407,8 @@
 
     function showDonePage() {
         document.getElementById('doneDoorBig').textContent = currentCompartmentNumber || '-';
+        sessionStorage.setItem('reopenOrderId', String(currentOrderId));
+        sessionStorage.setItem('reopenCompartment', currentCompartmentNumber || '');
         showPage('donePage');
         setTimeout(function() {
             var p = new URLSearchParams(window.location.search);
@@ -1419,11 +1422,12 @@
 
     function finishDeposit() { goToHomePage(); }
     function reopenCabinet() {
-        if (!currentOrderId) return;
+        var oid = currentOrderId || parseInt(sessionStorage.getItem('reopenOrderId') || '0') || 0;
+        if (!oid) return;
         fetch(API_BASE + '/api/order/reopen', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({order_id: currentOrderId})
+            body: JSON.stringify({order_id: oid})
         })
         .then(function(r) { return r.json(); })
         .then(function(data) {

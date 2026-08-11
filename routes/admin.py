@@ -23,7 +23,8 @@ from database import get_db
 from helpers import (json_response, require_auth, require_merchant_auth, require_agent_auth, require_employee_auth,
                      get_setting, is_mock_mode, send_open_lock, should_hide_order,
                      filter_duplicate_users, logger, get_wxpay, get_channel_wxpay, send_open_all,
-                     select_payment_channel, connected_devices)
+                     select_payment_channel, connected_devices,
+                     find_user_balance_row, upsert_user_balance_row)
 from models import ORDER_STATUS, BUSINESS_STATUS_MAP, BUSINESS_STATUS_ACTIVE
 
 bp = Blueprint('admin', __name__)
@@ -319,9 +320,9 @@ def get_cabinet_groups():
         conn = get_db()
         cursor = conn.cursor()
         if location_id:
-            cursor.execute('SELECT cg.*, l.name as location_name, COUNT(DISTINCT c.id) as cabinet_count, SUM(CASE WHEN cs.status = 1 THEN 1 ELSE 0 END) as available_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as occupied_slots, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault_slots FROM cabinet_groups cg JOIN locations l ON cg.location_id = l.id LEFT JOIN cabinets c ON c.group_id = cg.id LEFT JOIN cabinet_slots cs ON c.id = cs.cabinet_id WHERE cg.location_id = %s GROUP BY cg.id ORDER BY cg.created_at DESC', (location_id,))
+            cursor.execute('SELECT cg.*, l.name as location_name, COUNT(DISTINCT c.id) as cabinet_count, SUM(CASE WHEN cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) THEN 1 ELSE 0 END) as available_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as occupied_slots, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault_slots FROM cabinet_groups cg JOIN locations l ON cg.location_id = l.id LEFT JOIN cabinets c ON c.group_id = cg.id LEFT JOIN cabinet_slots cs ON c.id = cs.cabinet_id WHERE cg.location_id = %s GROUP BY cg.id ORDER BY cg.created_at DESC', (location_id,))
         else:
-            cursor.execute('SELECT cg.*, l.name as location_name, COUNT(DISTINCT c.id) as cabinet_count, SUM(CASE WHEN cs.status = 1 THEN 1 ELSE 0 END) as available_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as occupied_slots, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault_slots FROM cabinet_groups cg JOIN locations l ON cg.location_id = l.id LEFT JOIN cabinets c ON c.group_id = cg.id LEFT JOIN cabinet_slots cs ON c.id = cs.cabinet_id GROUP BY cg.id ORDER BY cg.created_at DESC')
+            cursor.execute('SELECT cg.*, l.name as location_name, COUNT(DISTINCT c.id) as cabinet_count, SUM(CASE WHEN cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) THEN 1 ELSE 0 END) as available_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as occupied_slots, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault_slots FROM cabinet_groups cg JOIN locations l ON cg.location_id = l.id LEFT JOIN cabinets c ON c.group_id = cg.id LEFT JOIN cabinet_slots cs ON c.id = cs.cabinet_id GROUP BY cg.id ORDER BY cg.created_at DESC')
         groups = cursor.fetchall()
         conn.close()
         return json_response([dict(g) for g in groups])
@@ -410,7 +411,7 @@ def get_group_cabinets(group_id):
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT c.*, l.name as location_name, SUM(CASE WHEN cs.status = 1 THEN 1 ELSE 0 END) as available_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as occupied_slots, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault_slots, CASE WHEN c.last_heartbeat >= datetime(\'now\', \'-30 seconds\') THEN 1 ELSE 0 END as is_online FROM cabinets c JOIN locations l ON c.location_id = l.id LEFT JOIN cabinet_slots cs ON c.id = cs.cabinet_id WHERE c.group_id = %s GROUP BY c.id ORDER BY c.created_at DESC', (group_id,))
+        cursor.execute('SELECT c.*, l.name as location_name, SUM(CASE WHEN cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) THEN 1 ELSE 0 END) as available_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as occupied_slots, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault_slots, CASE WHEN c.last_heartbeat >= datetime(\'now\', \'-30 seconds\') THEN 1 ELSE 0 END as is_online FROM cabinets c JOIN locations l ON c.location_id = l.id LEFT JOIN cabinet_slots cs ON c.id = cs.cabinet_id WHERE c.group_id = %s GROUP BY c.id ORDER BY c.created_at DESC', (group_id,))
         cabinets = cursor.fetchall()
         conn.close()
         return json_response([dict(c) for c in cabinets])
@@ -430,9 +431,9 @@ def get_group_available_slots(group_id):
             conn.close()
             return json_response(message='柜组不存在', code=404)
         if slot_size:
-            cursor.execute('SELECT cs.*, c.cabinet_code, c.name as cabinet_name, cg.group_code FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id JOIN cabinet_groups cg ON c.group_id = cg.id WHERE c.group_id = %s AND cs.status = 1 AND cs.slot_size = %s ORDER BY cs.slot_number', (group_id, slot_size))
+            cursor.execute('SELECT cs.*, c.cabinet_code, c.name as cabinet_name, cg.group_code FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id JOIN cabinet_groups cg ON c.group_id = cg.id WHERE c.group_id = %s AND cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) AND cs.slot_size = %s ORDER BY cs.slot_number', (group_id, slot_size))
         else:
-            cursor.execute('SELECT cs.*, c.cabinet_code, c.name as cabinet_name, cg.group_code FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id JOIN cabinet_groups cg ON c.group_id = cg.id WHERE c.group_id = %s AND cs.status = 1 ORDER BY cs.slot_number', (group_id,))
+            cursor.execute('SELECT cs.*, c.cabinet_code, c.name as cabinet_name, cg.group_code FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id JOIN cabinet_groups cg ON c.group_id = cg.id WHERE c.group_id = %s AND cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) ORDER BY cs.slot_number', (group_id,))
         slots = cursor.fetchall()
         conn.close()
         return json_response([dict(s) for s in slots])
@@ -469,7 +470,7 @@ def get_cabinet_group_by_code(group_code):
         if not group:
             conn.close()
             return json_response(message='柜组不存在', code=404)
-        cursor.execute('SELECT c.id, c.cabinet_code, c.name as cabinet_name, SUM(CASE WHEN cs.status = 1 THEN 1 ELSE 0 END) as available_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as occupied_slots FROM cabinets c LEFT JOIN cabinet_slots cs ON c.id = cs.cabinet_id WHERE c.group_id = %s GROUP BY c.id', (group['id'],))
+        cursor.execute('SELECT c.id, c.cabinet_code, c.name as cabinet_name, SUM(CASE WHEN cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) THEN 1 ELSE 0 END) as available_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as occupied_slots FROM cabinets c LEFT JOIN cabinet_slots cs ON c.id = cs.cabinet_id WHERE c.group_id = %s GROUP BY c.id', (group['id'],))
         cabinets = cursor.fetchall()
         conn.close()
         return json_response({**dict(group), 'cabinets': [dict(c) for c in cabinets]})
@@ -588,6 +589,15 @@ def get_cabinet(cabinet_id):
 def update_cabinet(cabinet_id):
     try:
         data = request.get_json()
+        # 校验 per_use_price 范围
+        _pp = data.get('per_use_price')
+        if _pp is not None:
+            try:
+                _ppv = float(_pp)
+                if _ppv < 0 or _ppv > 10000:
+                    return json_response(message='per_use_price 必须在 0-10000 分（0-100元）之间', code=400)
+            except (ValueError, TypeError):
+                return json_response(message='per_use_price 格式错误', code=400)
         conn = get_db()
         cursor = conn.cursor()
         if 'group_id' in data:
@@ -639,12 +649,16 @@ def get_cabinet_public_info(cabinet_id):
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT c.id, c.deposit_amount, c.charge_mode, c.per_use_price, c.name, c.last_heartbeat, l.name as location_name, l.address as location_address, l.allow_h5_to_mp, l.h5_url FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.id=%s', (cabinet_id,))
+        cursor.execute('SELECT c.id, c.deposit_amount, c.charge_mode, c.per_use_price, c.name, c.last_heartbeat, c.mid_retrieve_limit, l.name as location_name, l.address as location_address, l.allow_h5_to_mp, l.h5_url, l.allow_mid_retrieve, l.mid_retrieve_limit as location_mid_retrieve_limit FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.id=%s', (cabinet_id,))
         row = cursor.fetchone()
         if not row:
             conn.close()
             return json_response(message='设备不存在', code=404)
         result = dict(row)
+        result['allow_mid_retrieve'] = 1 if result.get('allow_mid_retrieve') else 0
+        if result.get('mid_retrieve_limit') is None:
+            result['mid_retrieve_limit'] = result.get('location_mid_retrieve_limit')
+        result['location_mid_retrieve_limit'] = result.get('location_mid_retrieve_limit')
         # 补充小程序跳转信息
         if result.get('allow_h5_to_mp'):
             import config
@@ -657,13 +671,13 @@ def get_cabinet_public_info(cabinet_id):
                 hb = result['last_heartbeat']
                 if isinstance(hb, str):
                     hb = datetime.strptime(hb[:19], "%Y-%m-%d %H:%M:%S")
-                result['is_online'] = (datetime.now() - hb).total_seconds() < 300
+                result['is_online'] = (datetime.now() - hb).total_seconds() < 120
             except:
                 result['is_online'] = False
         else:
             result['is_online'] = False
         # 查询可用柜门
-        cursor.execute('SELECT id, slot_number, slot_size, slot_label FROM cabinet_slots WHERE cabinet_id=%s AND status=1 ORDER BY slot_number LIMIT 10', (cabinet_id,))
+        cursor.execute('SELECT id, slot_number, slot_size, slot_label FROM cabinet_slots WHERE cabinet_id=%s AND status=1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cabinet_slots.id AND o2.status = 2) ORDER BY slot_number LIMIT 10', (cabinet_id,))
         slots = cursor.fetchall()
         result['available_slots_list'] = [{'id': s['id'], 'slot_number': s['slot_number'], 'slot_size': s.get('slot_size', 'M'), 'slot_label': s.get('slot_label', '') or ''} for s in slots]
         conn.close()
@@ -706,12 +720,12 @@ def get_cabinet_by_mainboard(mainboard_id):
         except Exception as e:
             logger.error(f"[心跳刷新] 失败: {e}")
         result['biz_status'] = biz_status
-        # 寄存规则只用设备自己的，不用网点的
-        # if not result.get('usage_rules'):
-        #     result['usage_rules'] = result.get('location_usage_rules', '')
-        cursor.execute("SELECT cs.*, m.board_index, m.slot_count FROM cabinet_slots cs LEFT JOIN mainboards m ON cs.mainboard_id = m.id WHERE cs.cabinet_id = %s ORDER BY cs.slot_number", (cabinet['id'],))
+        # 寄存规则优先用设备自己的，设备没配就用网点的
+        if not result.get('usage_rules'):
+            result['usage_rules'] = result.get('location_usage_rules', '')
+        cursor.execute("SELECT cs.*, m.board_index, m.slot_count FROM cabinet_slots cs LEFT JOIN mainboards m ON cs.mainboard_id = m.id WHERE cs.cabinet_id = %s AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) ORDER BY cs.slot_number", (cabinet['id'],))
         slots = [dict(s) for s in cursor.fetchall()]
-        result['slots'] = slots
+        # 精简：不返回64格全量slots（APK轮询只需可用柜格列表，省流量）
         result['available_slots'] = sum(1 for s in slots if s.get('status') == 1)
         result['total_slots_count'] = len(slots)
         # 查询主板串口配置
@@ -742,20 +756,24 @@ def get_cabinet_by_mainboard(mainboard_id):
             result['usage_rules'] = rules
         # 补充location级别的配置
         if result.get('location_id'):
-            cursor.execute('SELECT allow_h5_to_mp, h5_url FROM locations WHERE id=%s', (result['location_id'],))
+            cursor.execute('SELECT allow_h5_to_mp, h5_url, allow_mid_retrieve, mid_retrieve_limit FROM locations WHERE id=%s', (result['location_id'],))
             loc_row = cursor.fetchone()
             if loc_row:
                 result['allow_h5_to_mp'] = loc_row['allow_h5_to_mp'] or 0
                 result['mp_appid'] = config.WX_MP_APP_ID  # 用户端小程序AppID
                 result['mp_path'] = 'pages/subscribe/subscribe'
                 result['h5_url'] = loc_row['h5_url'] or ''
+                result['allow_mid_retrieve'] = 1 if loc_row['allow_mid_retrieve'] else 0
+                result['location_mid_retrieve_limit'] = loc_row['mid_retrieve_limit']
+                if result.get('mid_retrieve_limit') is None:
+                    result['mid_retrieve_limit'] = loc_row['mid_retrieve_limit']
         # 计算设备在线状态
         if result.get('last_heartbeat'):
             try:
                 hb = result['last_heartbeat']
                 if isinstance(hb, str):
                     hb = datetime.strptime(hb, "%Y-%m-%d %H:%M:%S")
-                result['is_online'] = (datetime.now() - hb).total_seconds() < 300
+                result['is_online'] = (datetime.now() - hb).total_seconds() < 120
             except:
                 result['is_online'] = False
         else:
@@ -809,7 +827,7 @@ def get_mainboards(cabinet_id):
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT mb.*, COUNT(cs.id) as slot_count_actual, SUM(CASE WHEN cs.status = 1 THEN 1 ELSE 0 END) as free_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as used_slots, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault_slots, MIN(cs.display_number) as min_display, MAX(cs.display_number) as max_display FROM mainboards mb LEFT JOIN cabinet_slots cs ON mb.id = cs.mainboard_id WHERE mb.cabinet_id = %s GROUP BY mb.id ORDER BY mb.board_index', (cabinet_id,))
+        cursor.execute('SELECT mb.*, COUNT(cs.id) as slot_count_actual, SUM(CASE WHEN cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) THEN 1 ELSE 0 END) as free_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as used_slots, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault_slots, MIN(cs.display_number) as min_display, MAX(cs.display_number) as max_display FROM mainboards mb LEFT JOIN cabinet_slots cs ON mb.id = cs.mainboard_id WHERE mb.cabinet_id = %s GROUP BY mb.id ORDER BY mb.board_index', (cabinet_id,))
         mainboards = [dict(m) for m in cursor.fetchall()]
         conn.close()
         return json_response(mainboards)
@@ -988,7 +1006,7 @@ def open_single_slot(cabinet_id, slot_id):
             return json_response(message='设备离线，无法发送开门指令', code=400)
         bn = row.get('board_no') or 1
         ln = row.get('lock_no') or row['slot_number']
-        send_open_lock(str(row['mainboard_device_id']), int(bn), int(ln), None, '', slot_number=row['slot_number'])
+        send_open_lock(str(row['mainboard_device_id']), int(bn), int(ln), None, '', slot_number=row['slot_number'], require_online=True)
         return json_response(message=f'{row["slot_number"]}号柜门开锁指令已发送')
     except Exception as e:
         logger.error(f'[open_single_slot] {e}')
@@ -1027,19 +1045,7 @@ def open_all_normal_slots(cabinet_id):
 @require_auth
 def clear_all_slots(cabinet_id):
     """一键清柜 - 释放所有占用和故障的柜格"""
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        # 关闭所有相关订单
-        c.execute('UPDATE orders SET status = 5, retrieve_time = %s WHERE cabinet_id = %s AND status = 2', (datetime.now(), cabinet_id))
-        # 释放所有柜格
-        c.execute('UPDATE cabinet_slots SET status = 1 WHERE cabinet_id = %s AND status != 1', (cabinet_id,))
-        conn.commit()
-        conn.close()
-        return json_response(message='一键清柜完成，所有柜格已释放')
-    except Exception as e:
-        logger.error(f'[clear_all_slots] {e}')
-        return json_response(message=str(e), code=500)
+    return json_response(message='该清柜接口已停用，请使用新版清柜', code=400)
 
 
 # ============================================
@@ -1169,7 +1175,7 @@ def open_order_lock(order_id):
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT o.*, c.mainboard_device_id, c.mainboard_source, cs.board_no, cs.lock_no FROM orders o LEFT JOIN cabinets c ON o.cabinet_id = c.id LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE o.id = %s', (order_id,))
+        cursor.execute('SELECT o.*, c.mainboard_device_id, c.mainboard_source, c.last_heartbeat, cs.board_no, cs.lock_no FROM orders o LEFT JOIN cabinets c ON o.cabinet_id = c.id LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE o.id = %s', (order_id,))
         order = cursor.fetchone()
         if not order:
             conn.close()
@@ -1184,7 +1190,14 @@ def open_order_lock(order_id):
         if not device_id:
             conn.close()
             return json_response(message='该设备未配置主板ID', code=400)
-        success = send_open_lock(device_id, board_no, lock_no, protocol, order.get('order_no', str(order_id)))
+        operator = (session.get('admin_username') or '').strip()
+        if not operator:
+            return json_response(message='缺少操作人信息', code=400)
+        from helpers import is_device_online
+        if not is_device_online(str(device_id), order.get('last_heartbeat')):
+            conn.close()
+            return json_response(message='设备离线，无法开门', code=400)
+        success = send_open_lock(device_id, board_no, lock_no, protocol, order.get('order_no', str(order_id)), require_online=True, manual=True)
         if success:
             cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status, created_at) VALUES (%s, 5, 0, %s, 1, %s)',
                            (order_id, f'MANUAL_OPEN_{order_id}', datetime.now()))
@@ -1632,14 +1645,16 @@ def approve_withdrawal(withdrawal_id):
         phone = record['user_phone']
         # 扣除余额
         _wd_openid = record['openid'] if 'openid' in record.keys() and record['openid'] else ''
-        # 统一用 mp_openid 查找
-        cursor.execute("""SELECT balance, mp_openid as rec_openid FROM user_balances WHERE mp_openid = (SELECT mp_openid FROM user_balances WHERE phone=%s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1) LIMIT 1""", (phone,))
-        if cursor.rowcount == 0:
-            cursor.execute('SELECT balance, openid as rec_openid FROM user_balances WHERE phone=%s AND (openid=%s OR openid=\'\') ORDER BY CASE WHEN openid=%s THEN 0 ELSE 1 END LIMIT 1', (phone, _wd_openid, _wd_openid))
-        bal = cursor.fetchone()
-        _wd_real_openid = bal['rec_openid'] if bal else _wd_openid
-        if bal and bal['balance'] >= amount:
-            cursor.execute('UPDATE user_balances SET balance = GREATEST(balance - %s, 0), total_withdrawn = total_withdrawn + %s WHERE mp_openid = %s', (amount, amount, _wd_real_openid))
+        _ub = find_user_balance_row(cursor, phone=phone, openid=_wd_openid,
+                                    mp_openid=record.get('mp_openid', '') or '',
+                                    unionid=record.get('unionid', '') or '',
+                                    user_id=record.get('user_id') or 0)
+        if _ub and float(_ub['balance'] or 0) >= amount:
+            upsert_user_balance_row(cursor, phone=phone, openid=_wd_openid,
+                                    unionid=_ub.get('unionid', '') or '',
+                                    mp_openid=_ub.get('mp_openid', '') or '',
+                                    balance=-amount, total_withdrawn=amount,
+                                    user_id=_ub.get('user_id') or 0)
         # 真正退款
         if order_id:
             from helpers import do_real_refund
@@ -1690,16 +1705,10 @@ def reject_withdrawal(withdrawal_id):
         cursor.execute('UPDATE withdrawal_records SET status = 3, approver = %s, approve_time = %s WHERE id = %s',
                        (approver + ':' + reason if reason else approver, datetime.now(), withdrawal_id))
         _rj_openid = record['openid'] if 'openid' in record.keys() and record['openid'] else ''
-        # 统一用 mp_openid 查找
-        cursor.execute("""SELECT *, mp_openid as rec_openid FROM user_balances WHERE mp_openid = (SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1) LIMIT 1""", (record['user_phone'],))
-        if cursor.rowcount == 0:
-            cursor.execute('SELECT *, openid as rec_openid FROM user_balances WHERE phone = %s AND (openid = %s OR openid = \'\') ORDER BY CASE WHEN openid = %s THEN 0 ELSE 1 END LIMIT 1', (record['user_phone'], _rj_openid, _rj_openid))
-        balance = cursor.fetchone()
-        _rj_real_openid = balance['rec_openid'] if balance else _rj_openid
-        if balance:
-            cursor.execute('UPDATE user_balances SET balance = balance + %s WHERE mp_openid = %s', (record['amount'], _rj_real_openid))
-        else:
-            cursor.execute('INSERT INTO user_balances (phone, openid, mp_openid, balance, total_deposited) VALUES (%s, %s, %s, %s, 0)', (record['user_phone'], _rj_openid, _rj_openid, record['amount']))
+        upsert_user_balance_row(cursor, phone=record['user_phone'], openid=_rj_openid,
+                                unionid=record.get('unionid', '') or '',
+                                mp_openid=record.get('mp_openid', '') or '',
+                                balance=record['amount'], user_id=record.get('user_id') or 0)
         conn.commit()
         conn.close()
         return json_response(message='已拒绝，押金已添加到用户余额')

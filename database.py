@@ -6,10 +6,28 @@ import sqlite3
 import logging
 from werkzeug.security import generate_password_hash
 import re
+import os
+import signal
+import threading
+import time
 from config import DATABASE, DATABASE_URL as CFG_DB_URL
 from models import BRAND_DEFAULTS
 
 logger = logging.getLogger(__name__)
+
+_pool_exhaust_events = []
+_pool_guard_lock = threading.Lock()
+_POOL_EXHAUST_RESTART_COUNT = 3
+_POOL_EXHAUST_RESTART_WINDOW = 60
+
+
+def _record_pool_exhaust():
+    """记录一次连接池耗尽；窗口内连续超过阈值时触发 worker 自愈重启。"""
+    now = time.time()
+    with _pool_guard_lock:
+        _pool_exhaust_events.append(now)
+        _pool_exhaust_events[:] = [t for t in _pool_exhaust_events if now - t <= _POOL_EXHAUST_RESTART_WINDOW]
+        return len(_pool_exhaust_events) >= _POOL_EXHAUST_RESTART_COUNT
 
 
 
@@ -139,14 +157,43 @@ class _PGConn:
             import threading
             from psycopg2 import pool
             cls._pool_lock = threading.Lock()
-            cls._pool = pool.ThreadedConnectionPool(5, 50, dsn)
+            cls._pool = pool.ThreadedConnectionPool(5, 20, dsn)
 
     def __init__(self, dsn):
         import psycopg2
+        from psycopg2 import pool as _pg_pool
         self.__class__._init_pool(dsn)
-        self._conn = self.__class__._pool.getconn()
-        self._conn.autocommit = True
         self._returned = False
+        last_err = None
+        for _attempt in range(3):
+            try:
+                self._conn = self.__class__._pool.getconn()
+            except _pg_pool.PoolError:
+                if _record_pool_exhaust():
+                    logger.critical("[database] connection pool exhausted, restarting worker to recover")
+                    time.sleep(1)
+                    os.kill(os.getpid(), signal.SIGTERM)
+                raise
+            try:
+                self._conn.autocommit = True
+                _check = self._conn.cursor()
+                _check.execute("SELECT 1")
+                _check.fetchone()
+                _check.close()
+                break
+            except Exception as _e:
+                last_err = _e
+                try:
+                    self.__class__._pool.putconn(self._conn, close=True)
+                except Exception:
+                    try:
+                        self._conn.close()
+                    except Exception:
+                        pass
+                self._conn = None
+        if self._conn is None:
+            logger.error("[database] 连接池取到坏连接，重试失败: %s", last_err)
+            raise psycopg2.OperationalError("server closed the connection unexpectedly") from last_err
     def cursor(self):
         from psycopg2.extras import RealDictCursor
         cur = self._conn.cursor(cursor_factory=RealDictCursor)

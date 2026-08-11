@@ -132,6 +132,9 @@ except Exception as e:
     logger.error(f'[注册] 加载device blueprint失败: {e}')
 
 # 注册所有Blueprint
+from routes.refund_fee import bp as refund_fee_bp
+blueprints.append((refund_fee_bp, "/api"))
+
 for bp, prefix in blueprints:
     try:
         app.register_blueprint(bp, url_prefix=prefix)
@@ -177,34 +180,34 @@ except Exception as e:
 # 后台定时任务：清理超时未付款订单（每60秒）
 # ============================================
 def _cleanup_expired_orders():
-    import threading, sqlite3
-    from config import DATABASE
+    import threading
+    from database import get_db
     while True:
+        db = None
         try:
             threading.Event().wait(60)
-            db = sqlite3.connect(DATABASE)
-            db.row_factory = sqlite3.Row
+            db = get_db()
             cur = db.cursor()
-            cur.execute("SELECT o.id, o.slot_id, o.order_no FROM orders o WHERE o.status IN (0,1) AND o.store_time < NOW()::timestamp - INTERVAL '1 minute'")
+            cur.execute("SELECT o.id, o.slot_id, o.order_no FROM orders o WHERE o.status IN (0,1) AND o.store_time < NOW() - INTERVAL '3 minutes'")
             expired = cur.fetchall()
             released = 0
             for order in expired:
                 if order['slot_id']:
-                    cur.execute('UPDATE cabinet_slots SET status = 1 WHERE id = ? AND status = 2', (order['slot_id'],))
+                    cur.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s AND status = 2', (order['slot_id'],))
                     if cur.rowcount > 0:
                         released += 1
-                cur.execute('UPDATE orders SET status = 5 WHERE id = ?', (order['id'],))
+                cur.execute('UPDATE orders SET status = 5 WHERE id = %s', (order['id'],))
             if expired:
                 db.commit()
                 logger.info(f'[超时清理] 清理{len(expired)}笔未付款订单,释放{released}个柜格')
-            db.close()
         except Exception as e:
             logger.error(f'[超时清理] 异常: {e}')
         finally:
-            try:
-                db.close()
-            except Exception:
-                pass
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:
+                    pass
 
 import threading
 t = threading.Thread(target=_cleanup_expired_orders, daemon=True)
@@ -242,6 +245,28 @@ def handle_exception(e):
 @app.route("/favicon.ico")
 def favicon():
     return "", 204
+
+
+@app.route('/api/health', methods=['GET'])
+def api_health():
+    conn = None
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute('SELECT 1')
+        if cur.fetchone():
+            return jsonify({'status': 'ok', 'db': 'ok'})
+        return jsonify({'status': 'error', 'db': 'error'}), 503
+    except Exception as e:
+        logger.error('[health] %s', e)
+        return jsonify({'status': 'error', 'db': str(e)}), 503
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 # ============================================
 
@@ -374,7 +399,7 @@ def store_page():
                 try:
                     from datetime import datetime
                     hb = datetime.strptime(str(row["last_heartbeat"])[:19], "%Y-%m-%d %H:%M:%S")
-                    _ssr["is_online"] = (datetime.now() - hb).total_seconds() < 300
+                    _ssr["is_online"] = (datetime.now() - hb).total_seconds() < 120
                 except:
                     _ssr["is_online"] = False
             else:
@@ -383,7 +408,7 @@ def store_page():
             if _cabinet_id:
                 try:
                     c2 = conn.cursor()
-                    c2.execute("SELECT slot_label FROM cabinet_slots WHERE cabinet_id=? AND status=1 ORDER BY slot_number LIMIT 1", (_cabinet_id,))
+                    c2.execute("SELECT slot_label FROM cabinet_slots WHERE cabinet_id=? AND status=1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cabinet_slots.id AND o2.status = 2) ORDER BY slot_number LIMIT 1", (_cabinet_id,))
                     r2 = c2.fetchone()
                     if r2:
                         _ssr["door_number"] = str(r2["slot_label"])
@@ -590,16 +615,7 @@ def template_files(filename):
 from routes.register_apis import register_new_api_blueprints
 register_new_api_blueprints(app)
 
-# 仅在 gunicorn master 进程中启动 WebSocket 服务（避免多 worker 抢端口）
-import os as _os
-if not _os.environ.get('GUNICORN_WORKER_ID'):
-    try:
-        from ws_server import start_ws_server
-        _ws_thread = threading.Thread(target=start_ws_server, daemon=True)
-        _ws_thread.start()
-        logging.getLogger(__name__).info("[启动] WebSocket 服务线程已启动（master进程）")
-    except Exception as _e:
-        logging.getLogger(__name__).warning(f"[启动] WebSocket 服务线程启动失败: {_e}")
+# WebSocket 已由独立的 ws_proxy.py 负责（5004 端口），不再启动遗留的 5002 ws_server
 
 logger.info('[注册] 竞品兼容API注册成功')
 
@@ -707,14 +723,19 @@ def wx_generate_scheme():
 @app.route('/api/app/version', methods=['GET'])
 @app.route('/api/app/version', methods=['GET'])
 def api_app_version():
+    try:
+        from database import get_db
+        db = get_db()
+        cur = db.cursor()
+        cur.execute("SELECT version_name, version_code, download_url FROM apk_version ORDER BY version_code DESC LIMIT 1")
+        row = cur.fetchone()
+        db.close()
+        if row:
+            return jsonify({'data': {'version_code': row['version_code'], 'version_name': row['version_name'], 'download_url': row['download_url']}})
+    except Exception:
+        pass
     from config import LATEST_VERSION_CODE, LATEST_VERSION_NAME, APK_DOWNLOAD_URL
-    return jsonify({
-        'data': {
-            'version_code': LATEST_VERSION_CODE,
-            'version_name': LATEST_VERSION_NAME,
-            'download_url': APK_DOWNLOAD_URL,
-        }
-    })
+    return jsonify({'data': {'version_code': LATEST_VERSION_CODE, 'version_name': LATEST_VERSION_NAME, 'download_url': APK_DOWNLOAD_URL}})
 
 
 
@@ -773,52 +794,41 @@ def get_order_minimal(order_id):
 @app.route("/push-update", methods=["POST"])
 def push_update():
     """推送更新到指定设备"""
-    from helpers import connected_devices, logger
     import json
-    import gevent
     try:
         data = request.get_json(force=True) or {}
         device_id = data.get("device_id", "")
         if not device_id:
             return jsonify({"code": -1, "msg": "缺少device_id"})
-        from config import LATEST_VERSION_CODE, LATEST_VERSION_NAME, APK_DOWNLOAD_URL
-        if device_id in connected_devices:
-            ws = connected_devices[device_id]
-            msg = json.dumps({"type": "force_update", "device_id": device_id, "version_code": LATEST_VERSION_CODE, "version_name": LATEST_VERSION_NAME, "download_url": APK_DOWNLOAD_URL, "force": True})
-            try:
-                with gevent.Timeout(5):
-                    ws.send(msg)
-                logger.info(f"[Push] force_update sent to {device_id} v{LATEST_VERSION_NAME}")
-                return jsonify({"code": 200, "msg": "SENT"})
-            except Exception as e:
-                logger.warning(f"[Push] ws.send failed for {device_id}, stale connection cleaned: {e}")
-                try:
-                    del connected_devices[device_id]
-                except KeyError:
-                    pass
+        from database import get_db
+        from helpers import is_device_online, supersede_force_update_cmds
+        db = get_db()
         try:
-            import sqlite3
-            conn_db = sqlite3.connect(DATABASE)
-            cur_db = conn_db.cursor()
-            cur_db.execute("SELECT last_heartbeat FROM cabinets WHERE mainboard_device_id=?", (device_id,))
-            row = cur_db.fetchone()
-            conn_db.close()
-            if row and row[0]:
-                cmd_obj = {"type": "force_update", "version_code": LATEST_VERSION_CODE, "version_name": LATEST_VERSION_NAME, "download_url": APK_DOWNLOAD_URL, "force": True}
-                conn2 = sqlite3.connect(DATABASE)
-                conn2.execute("INSERT INTO pending_lock_cmds (cabinet_id, command, status) VALUES (%s,%s,%s)", (device_id, json.dumps(cmd_obj), "pending"))
-                conn2.commit()
-                conn2.close()
-                logger.info(f"[Push] force_update queued via pending_lock_cmds for {device_id} v{LATEST_VERSION_NAME}")
-                return jsonify({"code": 200, "msg": "QUEUED"})
-        except Exception as he:
-            logger.error(f"[Push] queue fallback error: {he}")
+            cur = db.cursor()
+            cur.execute("SELECT version_name, version_code, download_url, COALESCE(file_md5, '') as file_md5 FROM apk_version ORDER BY version_code DESC LIMIT 1")
+            apk = cur.fetchone()
+            if not apk:
+                return jsonify({"code": -1, "msg": "未找到APK版本信息"})
+            cur.execute('SELECT id, app_version_code, last_heartbeat FROM cabinets WHERE mainboard_device_id=%s', (device_id,))
+            cab = cur.fetchone()
+            if not cab:
+                return jsonify({"code": -1, "msg": "设备不存在"})
+            if not is_device_online(device_id, cab.get('last_heartbeat')):
+                return jsonify({"code": -1, "msg": "设备离线，无法更新"})
+            if cab.get('app_version_code') is not None and int(cab['app_version_code']) >= int(apk['version_code']):
+                return jsonify({"code": -1, "msg": "设备已是最新版本，无需更新"})
+            cur.execute("SELECT id FROM pending_lock_cmds WHERE device_id=%s AND (delivered=0 OR status='pending') AND strpos(command,'force_update')>0 AND created_at > NOW() - INTERVAL '10 minutes' LIMIT 1", (device_id,))
+            if cur.fetchone():
+                return jsonify({"code": -1, "msg": "该设备已有待执行的更新指令"})
+            supersede_force_update_cmds(cur, device_id)
+            cmd_obj = {"type": "force_update", "device_id": device_id, "download_url": apk['download_url'], "version_name": apk['version_name'], "version_code": apk['version_code'], "force": True, "file_md5": apk['file_md5']}
+            cur.execute("INSERT INTO pending_lock_cmds (device_id, cabinet_id, command, status) VALUES (%s,%s,%s,'pending')",
+                        (device_id, cab['id'], json.dumps(cmd_obj)))
+            db.commit()
+            logger.info(f"[Push] force_update queued via pending_lock_cmds for {device_id} v{apk['version_name']}")
+            return jsonify({"code": 200, "msg": "QUEUED"})
         finally:
-            try:
-                conn_db.close()
-            except Exception:
-                pass
-        return jsonify({"code": -1, "msg": "设备不在线"})
+            db.close()
     except Exception as e:
         logger.error(f"[Push] error: {e}")
         return jsonify({"code": -1, "msg": str(e)})
@@ -912,6 +922,7 @@ def _auto_clear_cabinet_scheduler():
             import psycopg2.extras
             from datetime import datetime, timedelta
             from config import DATABASE_URL
+            from helpers import refund_deposit_to_balance, send_wx_subscribe_message
             conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
             c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             now = datetime.now()
@@ -952,8 +963,13 @@ def _auto_clear_cabinet_scheduler():
                 try:
                     cutoff_time = now - timedelta(days=cycle)
 
+                    lock_key = 2026080700 + int(loc_id)
+                    c.execute("SELECT pg_try_advisory_xact_lock(%s) AS acquired", (lock_key,))
+                    if not c.fetchone()['acquired']:
+                        continue
+
                     c.execute("""
-                        SELECT o.id, o.slot_id, o.user_phone, o.deposit_amount, o.openid, o.unionid
+                        SELECT o.id, o.slot_id, o.user_phone, o.deposit_amount, o.openid, o.unionid, o.mp_openid, o.wechat_name
                         FROM orders o
                         JOIN cabinets c ON o.cabinet_id = c.id
                         WHERE c.location_id = %s AND o.status = 2 AND o.store_time < %s
@@ -964,37 +980,29 @@ def _auto_clear_cabinet_scheduler():
                     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
                     for o in active_orders:
-                        c.execute("UPDATE orders SET status=3, retrieve_time=%s, pickup_time=%s, updated_at=%s, refund_mark=1 WHERE id=?",
+                        deposit_amount = float(o["deposit_amount"] or 0)
+                        c.execute("""UPDATE orders SET status=3, refund_mark=1, refund_amount=0, refund_status='none',
+                                     refund_time=NULL, logical_mark='end', retrieve_time=%s, pickup_time=%s, updated_at=%s WHERE id=%s""",
                                   (now_str, now_str, now_str, o["id"]))
 
                         if o["slot_id"]:
-                            c.execute("UPDATE cabinet_slots SET status=1 WHERE id=?", (o["slot_id"],))
+                            c.execute("UPDATE cabinet_slots SET status=1 WHERE id=%s", (o["slot_id"],))
 
-                        deposit_amount = float(o["deposit_amount"] or 0)
+                        refunded = False
+                        mp_openid = ''
+                        already_credited = False
                         if deposit_amount > 0 and o["user_phone"]:
-                            c.execute("SELECT id FROM user_balances WHERE phone=%s", (o["user_phone"],))
-                            ub = c.fetchone()
-                            u_openid = o["openid"] or ""
-                            u_unionid = o["unionid"] or ""
-                            if ub:
-                                c.execute("UPDATE user_balances SET balance=balance+%s, total_deposited=total_deposited+%s, openid=COALESCE(NULLIF(openid,''),%s), unionid=COALESCE(NULLIF(unionid,''),%s) WHERE phone=%s",
-                                          (deposit_amount, deposit_amount, u_openid, u_unionid, o["user_phone"]))
-                            else:
-                                c.execute("INSERT INTO user_balances (phone, openid, unionid, balance, total_deposited, total_withdrawn, first_use_time) VALUES (%s,%s,%s,%s,%s,0,NOW())",
-                                          (o["user_phone"], u_openid, u_unionid, deposit_amount, deposit_amount))
-                            c.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s,%s,%s,'available') ON CONFLICT (order_id) DO NOTHING",
-                                      (o["user_phone"], o["id"], deposit_amount))
+                            refunded, mp_openid, already_credited = refund_deposit_to_balance(c, o)
 
-                        if o.get("openid"):
+                        if refunded and not already_credited:
                             try:
-                                from helpers import send_wx_subscribe_message
                                 sub_data = {
                                     "amount6": {"value": "¥{:.2f}".format(deposit_amount)},
                                     "time4": {"value": now_str},
                                     "thing7": {"value": "已退还至小程序用户钱包"},
                                     "thing2": {"value": "请自行点击此通知消息跳转\u201c我的钱包\u201d提现"}
                                 }
-                                send_wx_subscribe_message(o["openid"], "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", sub_data, phone=o["user_phone"])
+                                send_wx_subscribe_message(mp_openid or "", "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", sub_data, phone=o["user_phone"])
                             except Exception as e:
                                 logger.error('[自动清柜] 发送通知失败')
 
@@ -1003,7 +1011,7 @@ def _auto_clear_cabinet_scheduler():
                     conn.commit()
 
                     # 【修复2】commit成功后才更新数据库标记
-                    c.execute("UPDATE locations SET last_clear_date=%s WHERE id=?", (today_str, loc_id))
+                    c.execute("UPDATE locations SET last_clear_date=%s WHERE id=%s", (today_str, loc_id))
                     conn.commit()
 
                     if total_ended > 0:

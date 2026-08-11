@@ -7,7 +7,9 @@ import json
 from datetime import datetime
 from flask import Blueprint, request, session
 from database import get_db
-from helpers import json_response, logger, pending_lock_commands, connected_devices, require_auth
+from helpers import json_response, logger, pending_lock_commands, connected_devices, require_auth, \
+    find_user_balance_row, upsert_user_balance_row, phone_openid_rows, \
+    get_mid_retrieve_config, try_increment_mid_retrieve
 
 def _return_balance_to_user(cursor, order_dict):
     """离线取包/APK取件时退还保证金到用户余额 - 统一用 mp_openid"""
@@ -22,29 +24,16 @@ def _return_balance_to_user(cursor, order_dict):
     _mp_openid = order_dict.get('mp_openid', '') or _openid
     # 统一用 mp_openid 查找用户余额
     if not _mp_openid and user_phone:
-        cursor.execute("SELECT mp_openid FROM phone_openids WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' ORDER BY updated_at DESC LIMIT 1", (user_phone,))
-        _po = cursor.fetchone()
-        if _po and _po.get('mp_openid'):
-            _mp_openid = _po['mp_openid']
+        _po_rows = phone_openid_rows(cursor, phone=user_phone, unionid=_unionid)
+        if len(_po_rows) == 1 and _po_rows[0].get('mp_openid'):
+            _mp_openid = _po_rows[0]['mp_openid']
         else:
-            cursor.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (user_phone,))
-            _ub_r = cursor.fetchone()
-            if _ub_r and _ub_r['mp_openid']:
+            _ub_r = find_user_balance_row(cursor, phone=user_phone, unionid=_unionid)
+            if _ub_r and _ub_r.get('mp_openid'):
                 _mp_openid = _ub_r['mp_openid']
-    _ub = None
-    if _mp_openid:
-        cursor.execute('SELECT id FROM user_balances WHERE mp_openid = %s', (_mp_openid,))
-        _ub = cursor.fetchone()
-    if _ub:
-        cursor.execute('UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE mp_openid = %s',
-                       (deposit_amount, deposit_amount, _mp_openid))
-    else:
-        if _mp_openid:
-            cursor.execute('INSERT INTO user_balances (phone, openid, unionid, mp_openid, balance, total_deposited, total_withdrawn, first_use_time) VALUES (%s, %s, %s, %s, %s, %s, 0, NOW()) ON CONFLICT (mp_openid) DO UPDATE SET balance = user_balances.balance + %s, total_deposited = user_balances.total_deposited + %s',
-                           (user_phone, _openid, _unionid, _mp_openid, deposit_amount, deposit_amount, deposit_amount, deposit_amount))
-        else:
-            cursor.execute('INSERT INTO user_balances (phone, openid, unionid, balance, total_deposited, total_withdrawn, first_use_time) VALUES (%s, %s, %s, %s, %s, 0, NOW())',
-                           (user_phone, _openid, _unionid, deposit_amount, deposit_amount))
+    upsert_user_balance_row(cursor, phone=user_phone, openid=_openid, unionid=_unionid,
+                            mp_openid=_mp_openid, balance=deposit_amount, total_deposited=deposit_amount,
+                            user_id=order_dict.get('user_id') or 0)
     # 写入余额明细
     cursor.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s, %s, %s, 'available') ON CONFLICT (order_id) DO NOTHING",
                    (user_phone, order_dict['id'], deposit_amount))
@@ -128,7 +117,7 @@ def get_pending_commands(device_id):
                     if isinstance(_created, str):
                         from datetime import datetime as _dt
                         _created = _dt.fromisoformat(str(_created))
-                    if (datetime.now() - _created).total_seconds() > 300:
+                    if (datetime.now() - _created).total_seconds() > 86400:
                         skip = True
                         cursor.execute("UPDATE pending_lock_cmds SET delivered=1, status='skipped_expired' WHERE id=%s", (row['id'],))
                         continue
@@ -149,7 +138,7 @@ def get_pending_commands(device_id):
 
 
         now = datetime.now()
-        cursor.execute("SELECT o.id as order_id, o.order_no, o.access_code, o.compartment_number, o.cabinet_id, cs.board_no, cs.lock_no FROM orders o JOIN cabinets c ON o.cabinet_id = c.id LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE c.mainboard_device_id = %s AND o.status = 2 ORDER BY o.id DESC", (device_id,))
+        cursor.execute("SELECT o.id as order_id, o.order_no, o.user_phone, o.access_code, o.compartment_number, o.cabinet_id, cs.board_no, cs.lock_no FROM orders o JOIN cabinets c ON o.cabinet_id = c.id LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE c.mainboard_device_id = %s AND o.status = 2 ORDER BY o.id DESC", (device_id,))
         orders = [dict(row) for row in cursor.fetchall()]
         conn.commit()
         conn.close()
@@ -186,7 +175,7 @@ def get_active_orders_by_device(device_id):
         # 更新设备心跳
         cursor.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (device_id,))
         conn.commit()
-        cursor.execute("SELECT o.id as order_id, o.order_no, o.access_code, o.compartment_number, o.cabinet_id, cs.board_no, cs.lock_no FROM orders o JOIN cabinets c ON o.cabinet_id = c.id LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE c.mainboard_device_id = %s AND o.status = 2 ORDER BY o.id DESC", (device_id,))
+        cursor.execute("SELECT o.id as order_id, o.order_no, o.user_phone, o.access_code, o.compartment_number, o.cabinet_id, cs.board_no, cs.lock_no FROM orders o JOIN cabinets c ON o.cabinet_id = c.id LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE c.mainboard_device_id = %s AND o.status = 2 ORDER BY o.id DESC", (device_id,))
         orders = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return json_response({'orders': orders, 'count': len(orders), 'device_id': device_id,
@@ -243,7 +232,7 @@ def offline_retrieve():
                 try:
                     _nc = get_db()
                     _ncur = _nc.cursor()
-                    _ncur.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (order['user_phone'],))
+                    _ncur.execute('SELECT COALESCE(mp_openid, openid) as openid FROM users WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (order['user_phone'],))
                     _nr = _ncur.fetchone()
                     if _nr:
                         _notify_openid = _nr['openid'] or ''
@@ -335,7 +324,7 @@ def offline_retrieve_batch():
                     try:
                         _nc2 = get_db()
                         _ncur2 = _nc2.cursor()
-                        _ncur2.execute('SELECT COALESCE(mp_openid, openid) as openid FROM phone_openids WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (_nphone,))
+                        _ncur2.execute('SELECT COALESCE(mp_openid, openid) as openid FROM users WHERE phone = %s ORDER BY updated_at DESC LIMIT 1', (_nphone,))
                         _nr2 = _ncur2.fetchone()
                         if _nr2:
                             _nopenid = _nr2['openid'] or ''
@@ -370,22 +359,95 @@ def offline_retrieve_batch():
 @bp.route('/offline-retrieve/mid-retrieve', methods=['POST'])
 def mid_retrieve():
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
+        records = data.get('records') or []
         order_id = data.get('order_id')
         order_no = data.get('order_no')
         logger.info(f'[mid_retrieve] order_id={order_id}, order_no={order_no}')
-        if not order_id and not order_no:
-            return json_response(message='no order info', code=400)
         conn = get_db()
         cursor = conn.cursor()
+        if records:
+            success = 0
+            errors = []
+            for rec in records:
+                rid = rec.get('order_id')
+                rno = rec.get('order_no')
+                if not rid and not rno:
+                    errors.append('no order info')
+                    continue
+                try:
+                    if rid:
+                        cursor.execute('''SELECT o.*, cs.slot_number, cs.board_no, cs.lock_no,
+                                          c.mainboard_device_id, c.cabinet_code
+                                          FROM orders o
+                                          LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id
+                                          LEFT JOIN cabinets c ON o.cabinet_id = c.id
+                                          WHERE o.id = %s''', (rid,))
+                    else:
+                        cursor.execute('''SELECT o.*, cs.slot_number, cs.board_no, cs.lock_no,
+                                          c.mainboard_device_id, c.cabinet_code
+                                          FROM orders o
+                                          LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id
+                                          LEFT JOIN cabinets c ON o.cabinet_id = c.id
+                                          WHERE o.order_no = %s''', (rno,))
+                    row = cursor.fetchone()
+                    if not row:
+                        errors.append('order not found: %s' % (rid or rno))
+                        continue
+                    _inc = try_increment_mid_retrieve(cursor, row['id'], row['cabinet_id'])
+                    if not _inc['allowed']:
+                        errors.append('mid retrieve limit reached for order %s' % (rid or rno))
+                        continue
+                    rtime = rec.get('retrieve_time') or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    compartment = row.get('compartment_number') or row.get('slot_number')
+                    cursor.execute("""INSERT INTO storage_records (cabinet_id, compartment_number, user_phone, access_code, status, store_time, retrieve_time)
+                                      SELECT %s,%s,%s,%s,2,%s,%s
+                                      WHERE NOT EXISTS (SELECT 1 FROM storage_records
+                                        WHERE user_phone=%s AND cabinet_id=%s
+                                          AND COALESCE(compartment_number,'')=%s
+                                          AND store_time=%s AND retrieve_time=%s)""",
+                                   (row['cabinet_id'], compartment, row['user_phone'], row.get('access_code'),
+                                    row.get('store_time'), rtime,
+                                    row['user_phone'], row['cabinet_id'], str(compartment or ''),
+                                    row.get('store_time'), rtime))
+                    if row.get('mainboard_device_id'):
+                        cursor.execute("""INSERT INTO door_records (device_id, board_no, lock_no, order_id, open_type, create_time)
+                                          SELECT %s,%s,%s,%s,'mid_offline',%s
+                                          WHERE NOT EXISTS (SELECT 1 FROM door_records
+                                            WHERE device_id=%s AND board_no=%s AND lock_no=%s
+                                              AND order_id=%s AND open_type='mid_offline')""",
+                                       (row['mainboard_device_id'], row.get('board_no') or 1, row.get('lock_no') or 1,
+                                        str(row['id']), rtime,
+                                        row['mainboard_device_id'], row.get('board_no') or 1, row.get('lock_no') or 1,
+                                        str(row['id'])))
+                    if row.get('status') == 2:
+                        cursor.execute("UPDATE orders SET logical_mark='mid' WHERE id=%s", (row['id'],))
+                    success += 1
+                except Exception as e:
+                    logger.error(f'[mid_retrieve] record处理异常: {e}')
+                    errors.append(str(e))
+            conn.commit()
+            conn.close()
+            if errors:
+                return json_response(data={'total': len(records), 'success': success, 'errors': errors}, message='partial sync errors', code=400)
+            return json_response({'message': 'mid retrieve recorded', 'total': len(records), 'success': success, 'errors': errors})
+        if not order_id and not order_no:
+            conn.close()
+            return json_response(message='no order info', code=400)
         if order_id:
-            cursor.execute('SELECT id, status, user_phone FROM orders WHERE id = %s', (order_id,))
+            cursor.execute('SELECT id, status, user_phone, cabinet_id FROM orders WHERE id = %s', (order_id,))
         else:
-            cursor.execute('SELECT id, status, user_phone FROM orders WHERE order_no = %s', (order_no,))
+            cursor.execute('SELECT id, status, user_phone, cabinet_id FROM orders WHERE order_no = %s', (order_no,))
         order = cursor.fetchone()
         if not order:
             conn.close()
             return json_response(message='order not found', code=404)
+        if order['status'] == 2:
+            _inc = try_increment_mid_retrieve(cursor, order['id'], order['cabinet_id'])
+            if not _inc['allowed']:
+                conn.close()
+                return json_response(message='mid retrieve limit reached', code=400)
+            conn.commit()
         conn.close()
         return json_response({'message': 'mid retrieve recorded', 'order_id': order['id']})
     except Exception as e:

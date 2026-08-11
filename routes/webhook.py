@@ -157,7 +157,7 @@ def wechat_message():
             _conn_msg = get_db()
             _cur_msg = _conn_msg.cursor()
             _phone = ''
-            _cur_msg.execute("SELECT phone FROM phone_openids WHERE (openid = %s OR mp_openid = %s) AND phone IS NOT NULL AND phone != '' LIMIT 1", (from_user, from_user,))
+            _cur_msg.execute("SELECT phone FROM users WHERE (openid = %s OR mp_openid = %s) AND phone IS NOT NULL AND phone != '' LIMIT 1", (from_user, from_user,))
             _r_msg = _cur_msg.fetchone()
             if _r_msg:
                 _phone = _r_msg[0]
@@ -175,7 +175,7 @@ def wechat_message():
                         _info_data = _json.loads(_info_resp.read().decode())
                         _unionid = _info_data.get("unionid", "")
                         if _unionid:
-                            _cur_msg.execute("SELECT phone FROM phone_openids WHERE unionid = %s AND phone IS NOT NULL AND phone != '' LIMIT 1", (_unionid,))
+                            _cur_msg.execute("SELECT phone FROM users WHERE unionid = %s AND phone IS NOT NULL AND phone != '' LIMIT 1", (_unionid,))
                             _r2 = _cur_msg.fetchone()
                             if _r2:
                                 _phone = _r2[0]
@@ -190,9 +190,9 @@ def wechat_message():
                 _exist_cr = _cur_msg.fetchone()
                 if _exist_cr:
                     _cid = _exist_cr[0]
-                    _cur_msg.execute("UPDATE complaints SET content = content || chr(10) || %s, reply_time = NOW() WHERE id = %s", (content_raw[:500], _cid))
+                    _cur_msg.execute("UPDATE complaints SET content = content || chr(10) || %s, reply_time = NOW(), source = COALESCE(NULLIF(source, ''), 'wechat_mp') WHERE id = %s", (content_raw[:500], _cid))
                 else:
-                    _cur_msg.execute("INSERT INTO complaints (user_phone, content, openid, type, status) VALUES (%s, %s, %s, 'self', '0') RETURNING id", (_phone, content_raw[:500], from_user))
+                    _cur_msg.execute("INSERT INTO complaints (user_phone, content, openid, type, status, source) VALUES (%s, %s, %s, 'self', '0', 'wechat_mp') RETURNING id", (_phone, content_raw[:500], from_user))
                     _cid_row = _cur_msg.fetchone()
                     _cid = _cid_row[0] if _cid_row else 0
                 if _cid:

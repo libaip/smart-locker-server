@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, send_from_directory, redirect, send_file
 from database import get_db
 from helpers import (json_response, get_setting, is_mock_mode, is_wechat_browser, select_payment_channel,
-                     is_mobile_browser, send_open_lock, is_device_online, update_channel_stats, get_payment_params,
+                     is_mobile_browser, send_open_lock, is_device_online, is_heartbeat_online, update_channel_stats, get_payment_params,
                      generate_order_no, generate_access_code, generate_sms_code,
                      logger,
                      check_withdraw_auto_approve, mark_user_withdraw, get_withhold_hours,
@@ -371,11 +371,7 @@ def store_init():
         cab0 = cur0.fetchone()
         conn0.close()
         if cab0 and cab0['mainboard_device_id']:
-            hb = cab0['last_heartbeat']
-            if not hb:
-                return json_response(message='设备离线，请稍后再试', code=400)
-            from datetime import datetime as _dt
-            if (_dt.now() - hb).total_seconds() > 120:
+            if not is_heartbeat_online(cab0.get('last_heartbeat')):
                 return json_response(message='设备离线，请稍后再试', code=400)
         if device_id and cab0 and cab0['mainboard_device_id'] and str(cab0['mainboard_device_id']) != str(device_id):
             return json_response(message='设备与柜体不匹配', code=400)
@@ -850,8 +846,7 @@ def retrieve_confirm():
         cursor.execute("SELECT mainboard_device_id, last_heartbeat FROM cabinets WHERE id = %s", (order['cabinet_id'],))
         _cab = cursor.fetchone()
         if _cab and _cab['mainboard_device_id']:
-            _hb = _cab['last_heartbeat']
-            if not _hb or (datetime.utcnow() - _hb).total_seconds() > 120:
+            if not is_heartbeat_online(_cab.get('last_heartbeat')):
                 conn.close()
                 return json_response(message='设备离线，请稍后再试', code=400)
 
@@ -966,8 +961,7 @@ def create_deposit_order():
         cursor.execute("SELECT mainboard_device_id, last_heartbeat FROM cabinets WHERE id = %s", (cabinet_id,))
         cab = cursor.fetchone()
         if cab and cab['mainboard_device_id']:
-            hb = cab['last_heartbeat']
-            if not hb or (datetime.now() - hb).total_seconds() > 120:
+            if not is_heartbeat_online(cab.get('last_heartbeat')):
                 conn.close()
                 return json_response(message='设备离线，请稍后再试', code=400)
         if device_id and cab and cab['mainboard_device_id'] and str(cab['mainboard_device_id']) != str(device_id):
@@ -1238,8 +1232,7 @@ def h5_store():
         # 检查设备是否在线（2分钟内有心跳即认为在线）
         dev_id = cabinet['mainboard_device_id'] or ''
         if dev_id:
-            hb = cabinet.get('last_heartbeat')
-            if not hb or (datetime.now() - hb).total_seconds() > 120:
+            if not is_heartbeat_online(cabinet.get('last_heartbeat')):
                 conn.close()
                 return json_response(message='设备离线，请稍后再试', code=400)
         cabinet_id = cabinet['id']

@@ -167,7 +167,7 @@ def merchant_dashboard():
         occupied_slots = cursor.fetchone()['count']
         cursor.execute(f'SELECT COALESCE(SUM(COALESCE(p.amount, 0)), 0) as total FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND p.type = 1 AND p.status = 1 AND p.amount < 100000 AND o.status NOT IN (0, 1, 5)  {hide_filter} AND DATE(o.created_at) = %s', (*mparams, today))
         today_income = cursor.fetchone()['total']
-        cursor.execute(f'SELECT COUNT(*) as count FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND c.last_heartbeat >= datetime(\'now\', \'-30 seconds\')', mparams)
+        cursor.execute(f'SELECT COUNT(*) as count FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND c.last_heartbeat >= NOW() - INTERVAL \'120 seconds\'', mparams)
         online_devices = cursor.fetchone()['count']
         cursor.execute(f'SELECT COUNT(*) as count FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE {mfilter}', mparams)
         total_devices = cursor.fetchone()['count']
@@ -329,12 +329,11 @@ def merchant_cabinets():
             cursor.execute(f'SELECT c.*, l.name as location_name, SUM(CASE WHEN cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) THEN 1 ELSE 0 END) as available_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as occupied_slots, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault_slots, 0 as is_online FROM cabinets c JOIN locations l ON c.location_id = l.id LEFT JOIN cabinet_slots cs ON c.id = cs.cabinet_id WHERE {mfilter} GROUP BY c.id, l.name ORDER BY c.created_at DESC', (*mparams,))
         cabinets = cursor.fetchall()
         conn.close()
-        from helpers import get_online_device_ids
-        _oids = get_online_device_ids()
+        from helpers import is_heartbeat_online
         result = []
         for cab in cabinets:
             d = dict(cab)
-            d['is_online'] = 1 if (d.get('mainboard_device_id') in _oids) or (d.get('last_heartbeat') and (datetime.now() - d['last_heartbeat']).total_seconds() < 30) else 0
+            d['is_online'] = 1 if is_heartbeat_online(d.get('last_heartbeat')) else 0
             result.append(d)
         return json_response(result)
     except Exception as e:
@@ -694,13 +693,8 @@ def merchant_cabinet_status(cabinet_id):
         if not cabinet:
             conn.close()
             return json_response(message='柜体不存在或无权访问', code=404)
-        online = cabinet['last_heartbeat'] is not None and cabinet['last_heartbeat'] >= datetime.now().strftime('%Y-%m-%d %H:%M:%S') if False else False
-        # 用SQLite计算在线状态
-        cursor.execute("SELECT mainboard_device_id FROM cabinets c WHERE c.id = %s", (cabinet_id,))
-        _did_row = cursor.fetchone()
-        _did = _did_row[0] if _did_row else None
-        from helpers import get_online_device_ids
-        is_online = _did in get_online_device_ids() if _did else False
+        from helpers import is_heartbeat_online
+        is_online = is_heartbeat_online(cabinet.get('last_heartbeat'))
         cursor.execute('SELECT COUNT(*) as total, SUM(CASE WHEN cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) THEN 1 ELSE 0 END) as free, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as using_cnt, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault FROM cabinet_slots cs WHERE cs.cabinet_id = %s', (cabinet_id,))
         slot_stats = cursor.fetchone()
         conn.close()
@@ -1139,19 +1133,11 @@ def merchant_device_status():
         hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
         conn = get_db()
         cursor = conn.cursor()
-        sql = "SELECT c.id, c.name, c.cabinet_code, c.mainboard_device_id, c.last_heartbeat, l.name as location_name FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE " + mfilter + " AND (c.last_heartbeat IS NULL OR c.last_heartbeat < NOW() - INTERVAL '30 seconds') ORDER BY l.name, c.name"
+        sql = "SELECT c.id, c.name, c.cabinet_code, c.mainboard_device_id, c.last_heartbeat, l.name as location_name FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE " + mfilter + " AND (c.last_heartbeat IS NULL OR c.last_heartbeat < NOW() - INTERVAL '120 seconds') ORDER BY l.name, c.name"
         cursor.execute(sql, mparams)
         rows = cursor.fetchall()
         conn.close()
-        from helpers import get_online_device_ids
-        _oids = get_online_device_ids()
-        result = []
-        for r in rows:
-            d = dict(r)
-            # 排除ws_proxy认为在线的设备
-            if d.get('mainboard_device_id') in _oids:
-                continue
-            result.append(d)
+        result = [dict(r) for r in rows]
         return json_response({'list': result})
     except Exception as e:
         from helpers import logger

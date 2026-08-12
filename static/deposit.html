@@ -1600,12 +1600,12 @@
                         depositPrices['large'] = depositPrices['L'];
                         initDepositPrices();
                     }
-                    // 用最后心跳判断在线（300秒内算在线）
+                    // 用最后心跳判断在线（120秒内算在线）
                     var hb = r.data.last_heartbeat || '';
                     if (hb) {
                         var hbTime = new Date(hb).getTime();
                         var now = Date.now();
-                        s.is_online = (now - hbTime) < 300000;
+                        s.is_online = (now - hbTime) < 120000;
                     } else {
                         s.is_online = false;
                     }

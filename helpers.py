@@ -2016,20 +2016,28 @@ def get_online_device_ids():
         return set()
 
 
+def is_heartbeat_online(heartbeat, timeout_seconds=120):
+    """Unified online check by last heartbeat (120s default)."""
+    if not heartbeat:
+        return False
+    try:
+        if isinstance(heartbeat, str):
+            heartbeat = datetime.strptime(str(heartbeat)[:19], "%Y-%m-%d %H:%M:%S")
+        return (datetime.now() - heartbeat).total_seconds() < timeout_seconds
+    except Exception:
+        return False
+
+
 def is_device_online(device_id, heartbeat=None):
     """??????????????????/??????"""
     device_id = str(device_id)
-    if device_id in connected_devices:
+    if is_heartbeat_online(heartbeat):
         return True
-    if device_id in get_online_device_ids():
-        return True
-    if heartbeat:
-        try:
-            if isinstance(heartbeat, str):
-                heartbeat = datetime.strptime(str(heartbeat)[:19], "%Y-%m-%d %H:%M:%S")
-            return (datetime.now() - heartbeat).total_seconds() < 120
-        except Exception:
-            pass
+    if heartbeat is None:
+        if device_id in connected_devices:
+            return True
+        if device_id in get_online_device_ids():
+            return True
     return False
 
 

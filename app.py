@@ -525,10 +525,9 @@ def scan_qr():
         if not cabinet:
             return jsonify({'code': 404, 'message': 'device not found'}), 404
         store = cabinet['name'] or ''
-        # 检查设备在线状态
-        from helpers import connected_devices
-        device_id = cabinet['mainboard_device_id'] or ''
-        is_online = device_id and device_id in connected_devices
+        # 检查设备在线状态（统一按 last_heartbeat 120 秒判断）
+        from helpers import is_heartbeat_online
+        is_online = is_heartbeat_online(cabinet['last_heartbeat'])
         if not is_online:
             return '<!DOCTYPE html><html><head><meta charset=UTF-8><meta name=viewport content="width=device-width,initial-scale=1.0"><title>设备离线</title><style>body{font-family:sans-serif;margin:0;padding:0;background:#f0f2f5;min-height:100vh;display:flex;align-items:center;justify-content:center}.card{background:#fff;border-radius:12px;padding:40px 30px;max-width:360px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.1)}.icon{font-size:64px;margin-bottom:16px}.card h2{color:#f56c6c;margin-bottom:8px;font-size:20px}.card p{color:#999;font-size:14px;margin-top:8px;line-height:1.6}</style></head><body><div class=card><div class=icon>📡</div><h2>设备未在线</h2><p>该寄存柜当前处于离线状态<br>暂时无法使用,请稍后再试</p></div></body></html>', 200
         html = '<!DOCTYPE html><html><head><meta charset=UTF-8><meta name=viewport content=width=device-width,initial-scale=1.0><title>智能寄存柜</title><style>body{font-family:sans-serif;margin:0;padding:20px;background:#f0f2f5;text-align:center}.card{background:#fff;border-radius:12px;padding:30px;max-width:400px;margin:40px auto;box-shadow:0 4px 20px rgba(0,0,0,0.1)}h2{color:#333;margin-bottom:10px}p{color:#666;font-size:14px}.btn{display:inline-block;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:14px 40px;border-radius:8px;text-decoration:none;font-size:16px;margin-top:20px}.info{margin:15px 0;color:#999;font-size:13px}</style></head><body><div class=card><h2>智能寄存柜</h2>'

@@ -411,7 +411,7 @@ def get_group_cabinets(group_id):
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT c.*, l.name as location_name, SUM(CASE WHEN cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) THEN 1 ELSE 0 END) as available_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as occupied_slots, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault_slots, CASE WHEN c.last_heartbeat >= datetime(\'now\', \'-30 seconds\') THEN 1 ELSE 0 END as is_online FROM cabinets c JOIN locations l ON c.location_id = l.id LEFT JOIN cabinet_slots cs ON c.id = cs.cabinet_id WHERE c.group_id = %s GROUP BY c.id ORDER BY c.created_at DESC', (group_id,))
+        cursor.execute('SELECT c.*, l.name as location_name, SUM(CASE WHEN cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) THEN 1 ELSE 0 END) as available_slots, SUM(CASE WHEN cs.status = 2 THEN 1 ELSE 0 END) as occupied_slots, SUM(CASE WHEN cs.status = 3 THEN 1 ELSE 0 END) as fault_slots, CASE WHEN c.last_heartbeat >= NOW() - INTERVAL \'120 seconds\' THEN 1 ELSE 0 END as is_online FROM cabinets c JOIN locations l ON c.location_id = l.id LEFT JOIN cabinet_slots cs ON c.id = cs.cabinet_id WHERE c.group_id = %s GROUP BY c.id ORDER BY c.created_at DESC', (group_id,))
         cabinets = cursor.fetchall()
         conn.close()
         return json_response([dict(c) for c in cabinets])
@@ -2281,12 +2281,7 @@ def admin_device_versions():
         from config import LATEST_VERSION_CODE, LATEST_VERSION_NAME
         conn = get_db()
         cursor = conn.cursor()
-        online_ids = list(connected_devices.keys())
-        if online_ids:
-            placeholders = ','.join(['%s' for _ in online_ids])
-            cursor.execute(f"SELECT c.id, c.cabinet_code, c.name, c.mainboard_device_id, c.app_version, c.app_version_code, CASE WHEN c.mainboard_device_id IN ({placeholders}) THEN 1 ELSE 0 END as is_online FROM cabinets c WHERE c.status = 1 ORDER BY c.app_version_code ASC, c.id ASC", online_ids)
-        else:
-            cursor.execute("SELECT c.id, c.cabinet_code, c.name, c.mainboard_device_id, c.app_version, c.app_version_code, 0 as is_online FROM cabinets c WHERE c.status = 1 ORDER BY c.app_version_code ASC, c.id ASC")
+        cursor.execute("SELECT c.id, c.cabinet_code, c.name, c.mainboard_device_id, c.app_version, c.app_version_code, CASE WHEN c.last_heartbeat >= NOW() - INTERVAL '120 seconds' THEN 1 ELSE 0 END as is_online FROM cabinets c WHERE c.status = 1 ORDER BY c.app_version_code ASC, c.id ASC")
         devices = []
         for row in cursor.fetchall():
             devices.append({'id': row[0], 'cabinet_code': row[1], 'name': row[2], 'mainboard_device_id': row[3],

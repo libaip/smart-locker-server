@@ -76,11 +76,11 @@ def admin_dashboard():
         loc_count = c.fetchone()[0]
         c.execute('SELECT COUNT(*) FROM cabinets WHERE status=1')
         dev_count = c.fetchone()[0]
-        # 统计在线设备：WebSocket连接 + 最近60秒有心跳的设备
+        # 统计在线设备：最近 120 秒有心跳
         import datetime as dt_mod
         now = dt_mod.datetime.now()
-        online_ids = set(connected_devices.keys())
-        c.execute("SELECT mainboard_device_id, last_heartbeat FROM cabinets WHERE last_heartbeat >= NOW() - INTERVAL '60 seconds'")
+        online_ids = set()
+        c.execute("SELECT mainboard_device_id, last_heartbeat FROM cabinets WHERE last_heartbeat >= NOW() - INTERVAL '120 seconds'")
         for row in c.fetchall():
             did = row['mainboard_device_id']
             if did:
@@ -163,19 +163,9 @@ def admin_devices():
             where += ' AND (cabinet_code LIKE %s OR name LIKE %s OR mainboard_device_id LIKE %s)'
             params.extend([f'%{keyword}%', f'%{keyword}%', f'%{keyword}%'])
         if status == 'online':
-            online_ids = list(connected_devices.keys())
-            if online_ids:
-                ph = ','.join(['%s' for _ in online_ids])
-                where += f' AND mainboard_device_id IN ({ph})'
-                params.extend(online_ids)
-            else:
-                where += ' AND 1=0'
+            where += " AND last_heartbeat >= NOW() - INTERVAL '120 seconds'"
         elif status == 'offline':
-            online_ids = list(connected_devices.keys())
-            if online_ids:
-                ph = ','.join(['%s' for _ in online_ids])
-                where += f' AND (mainboard_device_id NOT IN ({ph}) OR mainboard_device_id IS NULL OR mainboard_device_id="")'
-                params.extend(online_ids)
+            where += " AND (last_heartbeat IS NULL OR last_heartbeat < NOW() - INTERVAL '120 seconds')"
         c.execute(f'SELECT COUNT(*) FROM cabinets WHERE {where}', params)
         total = c.fetchone()[0]
         c.execute(f'''SELECT c.*, l.name as location_name,
@@ -187,20 +177,10 @@ def admin_devices():
             WHERE {where} ORDER BY c.created_at DESC LIMIT %s OFFSET %s''',
                   params + [page_size, (page-1)*page_size])
         devices = []
-        import datetime as dt_mod
-        now = dt_mod.datetime.now()
+        from helpers import is_heartbeat_online
         for row in c.fetchall():
             d = dict(row)
-            d['is_online'] = d.get('mainboard_device_id') in connected_devices
-            if not d['is_online'] and d.get('last_heartbeat'):
-                try:
-                    hb = d['last_heartbeat']
-                    # PostgreSQL 返回 datetime 对象，SQLite 返回字符串
-                    if isinstance(hb, str):
-                        hb = dt_mod.datetime.strptime(hb, '%Y-%m-%d %H:%M:%S')
-                    d['is_online'] = (now - hb).total_seconds() < 60
-                except:
-                    pass
+            d['is_online'] = is_heartbeat_online(d.get('last_heartbeat'))
             d['serial_port'] = d.get('mb_serial_port') or 'ttyS4'
             d['baud_rate'] = d.get('mb_baud_rate') or 9600
             if d.get('mb_protocol'): d['mainboard_source'] = d['mb_protocol']
@@ -533,7 +513,7 @@ def admin_locations():
         total = c.fetchone()[0]
         c.execute(f'''SELECT l.*, m.name as merchant_name,
             (SELECT COUNT(*) FROM cabinets WHERE location_id=l.id) as cabinet_count,
-            (SELECT COUNT(*) FROM cabinets WHERE location_id=l.id AND last_heartbeat>=NOW() - INTERVAL '5 minutes') as online_count,
+            (SELECT COUNT(*) FROM cabinets WHERE location_id=l.id AND last_heartbeat>=NOW() - INTERVAL '120 seconds') as online_count,
             (SELECT COUNT(*) FROM orders WHERE slot_id IN (SELECT id FROM cabinet_slots WHERE cabinet_id IN (SELECT id FROM cabinets WHERE location_id=l.id)) AND status=2) as active_orders
             FROM locations l LEFT JOIN merchants m ON l.merchant_id=m.id
             WHERE {where} ORDER BY l.created_at DESC LIMIT %s OFFSET %s''',
@@ -4958,17 +4938,8 @@ def admin_device_slot_open():
             return json_response(message='柜格不存在', code=404)
         device_id = slot['mainboard_device_id']
         # 检查设备是否在线
-        from helpers import connected_devices
-        is_online = device_id in connected_devices
-        if not is_online and slot['last_heartbeat']:
-            from datetime import datetime
-            try:
-                hb = slot['last_heartbeat']
-                if isinstance(hb, str):
-                    hb = datetime.strptime(hb, "%Y-%m-%d %H:%M:%S")
-                is_online = (datetime.now() - hb).total_seconds() < 120
-            except:
-                pass
+        from helpers import is_heartbeat_online
+        is_online = is_heartbeat_online(slot.get('last_heartbeat'))
         if not is_online:
             conn.close()
             return json_response(message='设备离线，请稍后再试', code=503)
@@ -5006,17 +4977,8 @@ def admin_device_batch_open():
             return json_response(message='设备不存在', code=404)
         # 检查设备是否在线
         device_id = cabinet['mainboard_device_id']
-        from helpers import connected_devices
-        is_online = device_id in connected_devices
-        if not is_online and cabinet['last_heartbeat']:
-            from datetime import datetime
-            try:
-                hb = cabinet['last_heartbeat']
-                if isinstance(hb, str):
-                    hb = datetime.strptime(hb, "%Y-%m-%d %H:%M:%S")
-                is_online = (datetime.now() - hb).total_seconds() < 120
-            except:
-                pass
+        from helpers import is_heartbeat_online
+        is_online = is_heartbeat_online(cabinet.get('last_heartbeat'))
         if not is_online:
             conn.close()
             return json_response(message='设备离线，请稍后再试', code=503)

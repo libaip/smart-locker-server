@@ -27,6 +27,7 @@ lock_results_buffer = []
 
 MAX_RESULT_BUFFER = 5000
 HEARTBEAT_TIMEOUT = 120
+KEEPALIVE_INTERVAL = 5
 
 # 单条常驻连接复用，带连接/语句超时，断线自动重连
 _db_conn = None
@@ -90,6 +91,19 @@ def _ws_send(device_id, ws, payload):
         _count_traffic(device_id, tx=len(payload.encode("utf-8")), tx_msgs=1)
     ws.send(payload)
 
+
+def _ws_keepalive(ws, device_id):
+    """每 5 秒向设备发一次心跳应答，防止 CDN/CLB 空闲回收长连接。"""
+    while not ws.closed:
+        gevent.sleep(KEEPALIVE_INTERVAL)
+        if ws.closed:
+            break
+        try:
+            _ws_send(device_id, ws, json.dumps({"type": "heartbeat_ack", "timestamp": int(time.time() * 1000)}))
+        except Exception:
+            break
+
+
 def handle_ws(ws, device_id):
     """处理单个 WebSocket 连接"""
     device_connections[device_id] = ws
@@ -97,6 +111,7 @@ def handle_ws(ws, device_id):
         "rx_bytes": 0, "tx_bytes": 0, "rx_msgs": 0, "tx_msgs": 0
     })
     _db_st(device_id, 'online')
+    gevent.spawn(_ws_keepalive, ws, device_id)
     logger.info(f"[WS] 设备连接: {device_id}, 当前在线: {len(device_connections)}")
     
     try:

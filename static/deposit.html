@@ -1600,14 +1600,18 @@
                         depositPrices['large'] = depositPrices['L'];
                         initDepositPrices();
                     }
-                    // 用最后心跳判断在线（120秒内算在线）
-                    var hb = r.data.last_heartbeat || '';
-                    if (hb) {
-                        var hbTime = new Date(hb).getTime();
-                        var now = Date.now();
-                        s.is_online = (now - hbTime) < 120000;
+                    // 优先用服务端 is_online（已按 120 秒心跳计算），兼容 iOS 日期解析
+                    if (typeof r.data.is_online !== 'undefined') {
+                        s.is_online = !!r.data.is_online;
                     } else {
-                        s.is_online = false;
+                        var hb = String(r.data.last_heartbeat || '').replace(' ', 'T');
+                        if (hb) {
+                            var hbTime = new Date(hb).getTime();
+                            var now = Date.now();
+                            s.is_online = !isNaN(hbTime) && (now - hbTime) < 120000;
+                        } else {
+                            s.is_online = false;
+                        }
                     }
                     gIsOnline = s.is_online !== false;
                     callback(s.is_online !== false);

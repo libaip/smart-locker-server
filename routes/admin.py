@@ -681,7 +681,10 @@ def get_cabinet_public_info(cabinet_id):
         slots = cursor.fetchall()
         result['available_slots_list'] = [{'id': s['id'], 'slot_number': s['slot_number'], 'slot_size': s.get('slot_size', 'M'), 'slot_label': s.get('slot_label', '') or ''} for s in slots]
         conn.close()
-        return json_response(data=result)
+        _resp = json_response(data=result)
+        _resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+        _resp.headers['Pragma'] = 'no-cache'
+        return _resp
     except Exception as e:
         logger.error(f'[get_cabinet_public_info] {e}')
         return json_response(message=str(e), code=500)
@@ -794,7 +797,7 @@ def get_cabinet_by_mainboard(mainboard_id):
         conn.close()
         # 存入缓存
         _CABINET_CACHE[mainboard_id] = {'data': json_response(result, headers={'Cache-Control': 'public, max-age=300'}), 'time': time.time()}
-        return json_response(result, headers={'Cache-Control': 'public, max-age=300'})
+        return json_response(result, headers={'Cache-Control': 'no-store, no-cache, must-revalidate', 'Pragma': 'no-cache'})
     except Exception as e:
         logger.error(f'[get_cabinet_by_mainboard] {e}')
         try:

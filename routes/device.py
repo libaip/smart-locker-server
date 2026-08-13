@@ -314,6 +314,73 @@ def device_heartbeat():
         return jsonify({'code': 500, 'message': str(e), 'data': None}), 500
 
 
+@bp.route('/device/local-open', methods=['POST'])
+def device_local_open():
+    """APK本地“再次开门”上报，服务端强制计数"""
+    try:
+        data = request.get_json(silent=True) or {}
+        order_id = data.get('order_id')
+        if not order_id:
+            return jsonify({'code': 400, 'message': '订单ID不能为空', 'data': None}), 400
+        from database import get_db
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute("""SELECT o.id, o.reopen_count, c.mainboard_device_id, c.reopen_times,
+                                 l.reopen_times as location_reopen_times
+                          FROM orders o
+                          JOIN cabinets c ON o.cabinet_id = c.id
+                          LEFT JOIN locations l ON c.location_id = l.id
+                          WHERE o.id = %s FOR UPDATE""", (order_id,))
+        order = cursor.fetchone()
+        if not order:
+            db.close()
+            return jsonify({'code': 404, 'message': '订单不存在', 'data': None}), 404
+        device_id = str(data.get('device_id') or '')
+        if device_id and str(order['mainboard_device_id'] or '') != device_id:
+            db.close()
+            return jsonify({'code': 400, 'message': '订单不属于当前设备', 'data': None}), 400
+        limit = order['reopen_times']
+        if limit is None or limit == '' or int(limit) <= 0:
+            limit = order['location_reopen_times']
+        used = int(order['reopen_count'] or 0)
+        if limit is not None and limit != '' and int(limit) > 0 and used >= int(limit):
+            db.close()
+            return jsonify({'code': 400, 'message': '已超过再次开门次数上限', 'data': {
+                'reopen_count': used,
+                'reopen_times': int(limit),
+                'reopen_remaining': 0,
+            }}), 400
+        cursor.execute('UPDATE orders SET reopen_count = COALESCE(reopen_count, 0) + 1 WHERE id = %s', (order_id,))
+        cursor.execute('SELECT cs.board_no, cs.lock_no FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE o.id = %s', (order_id,))
+        slot = cursor.fetchone()
+        if slot:
+            try:
+                cursor.execute("INSERT INTO door_records (device_id, board_no, lock_no, order_id, open_type) VALUES (%s,%s,%s,%s,%s)",
+                               (order['mainboard_device_id'], slot['board_no'] or 1, slot['lock_no'] or 1, str(order_id), 'local_reopen'))
+            except Exception as dre:
+                logger.warning('[local-open] door_records写入失败: %s', dre)
+        new_count = used + 1
+        remaining = -1
+        limit_val = -1
+        if limit is not None and limit != '' and int(limit) > 0:
+            limit_val = int(limit)
+            remaining = max(0, limit_val - new_count)
+        db.commit()
+        db.close()
+        return jsonify({'code': 200, 'message': 'ok', 'data': {
+            'reopen_count': new_count,
+            'reopen_times': limit_val,
+            'reopen_remaining': remaining,
+        }})
+    except Exception as e:
+        logger.error(f'[local-open] error: {e}')
+        try:
+            db.close()
+        except Exception:
+            pass
+        return jsonify({'code': 500, 'message': str(e), 'data': None}), 500
+
+
 @bp.route('/pending-update/<device_id>', methods=['GET'])
 def pending_update(device_id):
     """???? - ??force_update????3?????"""

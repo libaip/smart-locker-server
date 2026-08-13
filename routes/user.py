@@ -1953,11 +1953,21 @@ def order_reopen():
             return json_response(message='订单ID不能为空', code=400)
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT o.*, cs.slot_number, COALESCE(cs.slot_size, o.slot_size) as slot_size, cs.board_no, cs.lock_no, c.cabinet_code, c.mainboard_device_id, c.last_heartbeat FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id JOIN cabinets c ON o.cabinet_id = c.id WHERE o.id = %s', (order_id,))
+        cursor.execute('SELECT o.*, cs.slot_number, COALESCE(cs.slot_size, o.slot_size) as slot_size, cs.board_no, cs.lock_no, c.cabinet_code, c.mainboard_device_id, c.last_heartbeat, c.reopen_times, l.reopen_times as location_reopen_times FROM orders o JOIN cabinet_slots cs ON o.slot_id = cs.id JOIN cabinets c ON o.cabinet_id = c.id LEFT JOIN locations l ON c.location_id = l.id WHERE o.id = %s', (order_id,))
         order = cursor.fetchone()
         if not order:
             conn.close()
             return json_response(message='订单不存在', code=404)
+        _reopen_limit = order.get('reopen_times')
+        if _reopen_limit is None or _reopen_limit == '' or int(_reopen_limit) <= 0:
+            _reopen_limit = order.get('location_reopen_times')
+        if _reopen_limit is not None and _reopen_limit != '' and int(_reopen_limit) > 0 and int(order.get('reopen_count') or 0) >= int(_reopen_limit):
+            conn.close()
+            return json_response(message='已超过再次开门次数上限，请结束寄存', code=400, data={
+                'reopen_count': order.get('reopen_count') or 0,
+                'reopen_times': int(_reopen_limit),
+                'reopen_remaining': 0,
+            })
         # 网点设置：结束后默认禁止开门
         try:
             _lc = conn.cursor()
@@ -1987,6 +1997,14 @@ def order_reopen():
             logger.info(f'[重新开锁] send_open_lock called: device={device_id}, board={order["board_no"]}, lock={order["lock_no"]}')
         except Exception as we:
             logger.error(f'[重新开锁] send_open_lock失败: {we}')
+        try:
+            _c2 = get_db()
+            _cur2 = _c2.cursor()
+            _cur2.execute('UPDATE orders SET reopen_count = COALESCE(reopen_count, 0) + 1 WHERE id = %s', (order_id,))
+            _c2.commit()
+            _c2.close()
+        except Exception as _re:
+            logger.error(f'[重新开锁] reopen_count 更新失败: {_re}')
         # send_open_lock 已自动写入 door_records，无需重复插入
         logger.info(f'[重新开锁] order_id={order_id}, compartment={compartment}')
         return json_response({'message': '开门指令已发送', 'order_id': order_id, 'compartment_number': compartment, 'cabinet_code': order['cabinet_code']})
@@ -3623,13 +3641,24 @@ def order_reopen_by_url(order_id):
         from helpers import get_db, json_response, logger, send_open_lock
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('''SELECT o.*, cs.board_no, cs.lock_no, c.mainboard_device_id, c.cabinet_code, c.last_heartbeat
+        cursor.execute('''SELECT o.*, cs.board_no, cs.lock_no, c.mainboard_device_id, c.cabinet_code, c.last_heartbeat, c.reopen_times, l.reopen_times as location_reopen_times
             FROM orders o LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id
-            LEFT JOIN cabinets c ON o.cabinet_id = c.id WHERE o.id = %s''', (order_id,))
+            LEFT JOIN cabinets c ON o.cabinet_id = c.id
+            LEFT JOIN locations l ON c.location_id = l.id WHERE o.id = %s''', (order_id,))
         order = cursor.fetchone()
         if not order:
             conn.close()
             return json_response(message='\u8ba2\u5355\u4e0d\u5b58\u5728', code=404)
+        _reopen_limit2 = order.get('reopen_times')
+        if _reopen_limit2 is None or _reopen_limit2 == '' or int(_reopen_limit2) <= 0:
+            _reopen_limit2 = order.get('location_reopen_times')
+        if _reopen_limit2 is not None and _reopen_limit2 != '' and int(_reopen_limit2) > 0 and int(order.get('reopen_count') or 0) >= int(_reopen_limit2):
+            conn.close()
+            return json_response(message='\u5df2\u8d85\u8fc7\u518d\u6b21\u5f00\u95e8\u6b21\u6570\u4e0a\u9650\uff0c\u8bf7\u7ed3\u675f\u5bc4\u5b58', code=400, data={
+                'reopen_count': order.get('reopen_count') or 0,
+                'reopen_times': int(_reopen_limit2),
+                'reopen_remaining': 0,
+            })
         # \u7f51\u70b9\u8bbe\u7f6e\uff1a\u7ed3\u675f\u540e\u9ed8\u8ba4\u7981\u6b62\u5f00\u95e8
         try:
             _lc2 = conn.cursor()
@@ -3647,6 +3676,14 @@ def order_reopen_by_url(order_id):
         device_id = order['mainboard_device_id']
         if not send_open_lock(device_id, order['board_no'] or 1, order['lock_no'] or 1, order_id=order.get('order_no', str(order_id)), skip_dedup=True, require_online=True, manual=True):
             return json_response(message='设备离线，无法开门', code=400)
+        try:
+            _c3 = get_db()
+            _cur3 = _c3.cursor()
+            _cur3.execute('UPDATE orders SET reopen_count = COALESCE(reopen_count, 0) + 1 WHERE id = %s', (order_id,))
+            _c3.commit()
+            _c3.close()
+        except Exception as _re2:
+            logger.error(f'[order_reopen_url] reopen_count 更新失败: {_re2}')
         return json_response(message='\u5f00\u9501\u6307\u4ee4\u5df2\u53d1\u9001')
     except Exception as e:
         logger.error(f'[order_reopen_url] {e}')

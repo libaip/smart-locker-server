@@ -269,15 +269,18 @@ def update_location(location_id):
         conn = get_db()
         cursor = conn.cursor()
         updates, params = [], []
-        basic_fields = ['name', 'address', 'longitude', 'latitude', 'status']
+        basic_fields = ['name', 'address', 'longitude', 'latitude', 'status', 'rules_title', 'reopen_times']
         withdraw_fields = ['withdraw_enabled', 'auto_approve_day', 'auto_approve_time', 'auto_approve_rate',
                            'click_free_count', 'anti_test_minutes', 'anti_test_auto_refund', 'show_refunding_status',
                            'hide_ratio', 'whitelist_phones', 'duplicate_filter_enabled', 'duplicate_filter_days',
                            'duplicate_filter_limit']
         for field in basic_fields:
             if field in data:
+                v = data[field]
+                if field == 'reopen_times' and v in ('', None):
+                    v = None
                 updates.append(f'{field} = %s')
-                params.append(data[field])
+                params.append(v)
         for field in withdraw_fields:
             if field in data and data[field] is not None:
                 updates.append(f'{field} = %s')
@@ -704,7 +707,7 @@ def get_cabinet_by_mainboard(mainboard_id):
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("SELECT c.*, g.name as group_name, l.name as location_name, l.address as location_address, l.usage_rules, l.show_slot_count, '' as business_hours, '' as customer_phone, c.business_status, c.usage_rules, l.usage_rules as location_usage_rules FROM cabinets c LEFT JOIN cabinet_groups g ON c.group_id = g.id LEFT JOIN locations l ON c.location_id = l.id WHERE c.mainboard_device_id = %s", (mainboard_id,))
+        cursor.execute("SELECT c.*, g.name as group_name, l.name as location_name, l.address as location_address, l.usage_rules, l.rules_title as location_rules_title, l.reopen_times as location_reopen_times, l.show_slot_count, '' as business_hours, '' as customer_phone, c.business_status, c.usage_rules, l.usage_rules as location_usage_rules FROM cabinets c LEFT JOIN cabinet_groups g ON c.group_id = g.id LEFT JOIN locations l ON c.location_id = l.id WHERE c.mainboard_device_id = %s", (mainboard_id,))
         cabinet = cursor.fetchone()
         # 如果柜体没有自己的寄存规则，则用网点的
         if not cabinet:
@@ -726,6 +729,10 @@ def get_cabinet_by_mainboard(mainboard_id):
         # 寄存规则优先用设备自己的，设备没配就用网点的
         if not result.get('usage_rules'):
             result['usage_rules'] = result.get('location_usage_rules', '')
+        if not result.get('rules_title'):
+            result['rules_title'] = result.get('location_rules_title', '') or ''
+        if result.get('reopen_times') in (None, '', 0):
+            result['reopen_times'] = result.get('location_reopen_times')
         cursor.execute("SELECT cs.*, m.board_index, m.slot_count FROM cabinet_slots cs LEFT JOIN mainboards m ON cs.mainboard_id = m.id WHERE cs.cabinet_id = %s AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) ORDER BY cs.slot_number", (cabinet['id'],))
         slots = [dict(s) for s in cursor.fetchall()]
         # 精简：不返回64格全量slots（APK轮询只需可用柜格列表，省流量）
@@ -757,6 +764,13 @@ def get_cabinet_by_mainboard(mainboard_id):
             # 将字面量\n替换为真换行符，确保前端正确分行
             rules = rules.replace('\\n', '\n')
             result['usage_rules'] = rules
+        rules_title = result.get('rules_title', '') or ''
+        if rules_title:
+            da = result.get('deposit_amount', 0)
+            pp = result.get('per_use_price', 0)
+            rules_title = rules_title.replace('{deposit_amount}', str(int(da) if da and da == int(da) else da))
+            rules_title = rules_title.replace('{per_use_price}', str(int(pp) if pp and pp == int(pp) else pp))
+            result['rules_title'] = rules_title
         # 补充location级别的配置
         if result.get('location_id'):
             cursor.execute('SELECT allow_h5_to_mp, h5_url, allow_mid_retrieve, mid_retrieve_limit FROM locations WHERE id=%s', (result['location_id'],))
@@ -2368,17 +2382,20 @@ def admin_v2_cabinet_save():
     if cabinet_id:
         sets = []
         vals = []
-        for k in ['name','location_id','group_id','deposit_amount','mainboard_device_id','slot_count','status','usage_rules']:
+        for k in ['name','location_id','group_id','deposit_amount','mainboard_device_id','slot_count','status','usage_rules','rules_title','reopen_times']:
             if k in data:
+                v = data[k]
+                if k == 'reopen_times' and v in ('', None):
+                    v = None
                 sets.append(f'{k}=%s')
-                vals.append(data[k])
+                vals.append(v)
         if sets:
             vals.append(cabinet_id)
             c.execute(f'UPDATE cabinets SET {",".join(sets)} WHERE id=%s', vals)
             conn.commit()
     else:
-        c.execute('INSERT INTO cabinets (name,location_id,group_id,deposit_amount,mainboard_device_id,slot_count,status,usage_rules) VALUES (%s,%s,%s,%s,%s,%s,1,%s)',
-                  (data.get('name',''),data.get('location_id'),data.get('group_id'),data.get('deposit_amount',20),data.get('mainboard_device_id',''),data.get('slot_count',0),data.get('usage_rules') or '\n'.join(['24小时内取包免费','保证金{deposit_amount}元，寄存结束后按规则结算','存包后请保管好取件码','柜内禁止存放易燃易爆及违禁物品'])))
+        c.execute('INSERT INTO cabinets (name,location_id,group_id,deposit_amount,mainboard_device_id,slot_count,status,usage_rules,rules_title,reopen_times) VALUES (%s,%s,%s,%s,%s,%s,1,%s,%s,%s)',
+                  (data.get('name',''),data.get('location_id'),data.get('group_id'),data.get('deposit_amount',20),data.get('mainboard_device_id',''),data.get('slot_count',0),data.get('usage_rules') or '\n'.join(['24小时内取包免费','保证金{deposit_amount}元，寄存结束后按规则结算','存包后请保管好取件码','柜内禁止存放易燃易爆及违禁物品']),data.get('rules_title') or '',data.get('reopen_times') if data.get('reopen_times') not in ('', None) else None))
         cabinet_id = c.lastrowid
         conn.commit()
     conn.close()

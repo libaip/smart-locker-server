@@ -391,6 +391,8 @@ tr:hover td.action-col{background:#f5f7fa}
 <div class="form-group"><label>客户电话</label><input v-model="cabinetForm.merchant_phone" placeholder="商户联系电话"></div>
 </div>
 <div class="form-group"><label>寄存规则</label><textarea v-model="cabinetForm.usage_rules" rows="4" placeholder="存放时间截至到当日23:00，请提前取走物品\n避免无效占用，请支付保证金20元\n寄存结束后押金即可退回，请务必关好柜门" style="width:100%;padding:6px 10px;border:1px solid #dcdfe6;border-radius:4px;resize:vertical"></textarea></div>
+<div class="form-group"><label>寄存规则标题（留空=自动）</label><input v-model="cabinetForm.rules_title" placeholder="留空自动生成"></div>
+<div class="form-group"><label>再次开门次数（留空=不限）</label><input type="number" min="0" v-model.number="cabinetForm.reopen_times" placeholder="留空=不限"></div>
 <div class="form-group"><label>备注</label><textarea v-model="cabinetForm.remark" rows="3" placeholder="其他备注信息"></textarea></div>
 </div>
 </div>
@@ -421,6 +423,8 @@ tr:hover td.action-col{background:#f5f7fa}
 <div class="form-group"><label>寄存规则</label><textarea v-model="locationForm.usage_rules" rows="3" placeholder="每行一条规则，如：
 贵重物品请随身携带
 24小时内取包免费" style="width:100%;padding:6px 10px;border:1px solid #dcdfe6;border-radius:4px;resize:vertical"></textarea></div>
+<div class="form-group"><label>寄存规则标题（留空=自动）</label><input v-model="locationForm.rules_title" placeholder="留空自动生成"></div>
+<div class="form-group"><label>再次开门次数（留空=不限）</label><input type="number" min="0" v-model.number="locationForm.reopen_times" placeholder="留空=不限"></div>
 </div>
 <!-- Basic2 Tab (营业设置) -->
 <div v-if="locationEditTab==='basic2'">
@@ -840,6 +844,11 @@ tr:hover td.action-col{background:#f5f7fa}
 <tr><th>订单号</th><th>柜格</th><th>手机</th><th>金额</th><th>存包时间</th></tr>
 <tr v-for="o in deviceDetail.active_orders"><td>{{o.order_no}}</td><td>{{o.compartment_number||'-'}}</td><td>{{o.user_phone||'-'}}</td><td>&#165;{{o.deposit_amount||0}}</td><td>{{o.store_time||'-'}}</td></tr>
 </table>
+<div class="form-section">寄存规则设置</div>
+<div class="form-row">
+<div class="form-group"><label>规则标题（留空=自动）</label><input v-model="deviceDetail.rules_title" placeholder="留空自动生成"></div>
+<div class="form-group"><label>再次开门次数（留空=不限）</label><input type="number" min="0" v-model.number="deviceDetail.reopen_times" placeholder="留空=不限"></div>
+</div>
 <div class="form-section">中途取物设置</div>
 <div class="form-row">
 <div class="form-group"><label>本设备次数上限（留空=继承网点）</label><input type="number" min="0" v-model.number="deviceDetail.mid_retrieve_limit"></div>
@@ -1941,7 +1950,7 @@ loadDailyTrend:function(){var self=this;this.api('/admin/daily-trend').then(func
 renderTrendChart:function(){var el=document.getElementById('dailyChart');if(!el||typeof echarts==='undefined')return;var chart=echarts.init(el);var dates=[],counts=[],amounts=[];(this.dailyTrend||[]).forEach(function(d){dates.push(d.date);counts.push(d.count);amounts.push(parseFloat(d.amount||0));});chart.setOption({tooltip:{trigger:'axis'},legend:{data:['订单数','金额']},xAxis:{type:'category',data:dates},yAxis:[{type:'value',name:'订单数'},{type:'value',name:'金额(元)'}],series:[{name:'订单数',type:'bar',data:counts,itemStyle:{color:'#667eea'}},{name:'金额',type:'line',yAxisIndex:1,data:amounts,itemStyle:{color:'#e6a23c'}}]});window.addEventListener('resize',function(){chart.resize();});},
 // Machines
 loadMachines:function(p){var self=this;if(p)this.machinePage=p;var params={keyword:self.machineSearch.keyword,status:self.machineSearch.status,location_id:self.machineSearch.location_id,agent_id:self.machineSearch.agent_id,device_id:self.machineSearch.device_id,page:self.machinePage,limit:10};this.api('/admin/devices',params,'GET').then(function(d){self.machines=d.data&&d.data.list||[];self.machineTotal=d.data&&d.data.total||0;}).catch(function(){});},
-showCabinetModal:function(row){this.cabinetForm=row?JSON.parse(JSON.stringify(row)):{cabinet_code:'',name:'',total_slots:12,status:1,location_id:'',mainboard_device_id:'',mainboard_source:'YBM',serial_port:'ttyS4',baud_rate:9600,deposit_amount:20,per_use_price:0,charge_mode:'deposit',business_status:'open',device_type:'screen',customer_phone:'',iot_company:'',iot_iccid:'',clean_balance_enabled:false,clean_balance_time:'',clean_balance_period:1,deposit_timeout:24};if(row&&!this.cabinetForm.serial_port)this.cabinetForm.serial_port='ttyS4';if(row&&!this.cabinetForm.baud_rate)this.cabinetForm.baud_rate=9600;this.cabinetFormTitle=row?'编辑设备':'新增设备';this.cabinetEditTab='basic';this.cabinetModal=true;},
+showCabinetModal:function(row){this.cabinetForm=row?JSON.parse(JSON.stringify(row)):{cabinet_code:'',name:'',total_slots:12,status:1,location_id:'',mainboard_device_id:'',mainboard_source:'YBM',serial_port:'ttyS4',baud_rate:9600,deposit_amount:20,per_use_price:0,charge_mode:'deposit',business_status:'open',device_type:'screen',customer_phone:'',iot_company:'',iot_iccid:'',clean_balance_enabled:false,clean_balance_time:'',clean_balance_period:1,deposit_timeout:24,rules_title:'',reopen_times:null};if(row&&!this.cabinetForm.serial_port)this.cabinetForm.serial_port='ttyS4';if(row&&!this.cabinetForm.baud_rate)this.cabinetForm.baud_rate=9600;this.cabinetFormTitle=row?'编辑设备':'新增设备';this.cabinetEditTab='basic';this.cabinetModal=true;},
 saveCabinet:function(){var self=this;this.api('/admin/cabinet/save',this.cabinetForm).then(function(d){self.toast('保存成功');self.cabinetModal=false;self.loadMachines();}).catch(function(e){self.toast(e.message||'保存失败','error');});},
 deleteCabinet:function(row){var self=this;this.confirm2('确定删除设备 '+row.cabinet_code+'?',function(){self.api('/admin/cabinet/delete',{id:row.id}).then(function(){self.toast('删除成功');self.loadMachines();}).catch(function(e){self.toast(e.message||'删除失败','error');});});},
 toggleCabinetStatus:function(row){var self=this;var newSt=row.is_active===1?0:1;this.api('/admin/cabinet/save',Object.assign({},row,{is_active:newSt})).then(function(){self.toast('操作成功');self.loadMachines();}).catch(function(e){self.toast(e.message||'操作失败','error');});},
@@ -1966,7 +1975,7 @@ toggleSlotSelection:function($event,id){$event.stopPropagation();if($event.targe
 
 // Locations
 loadLocations:function(p){var self=this;if(p)this.locationPage=p;this.api('/admin/locations',{keyword:this.locationSearch.keyword,page:this.locationPage},'GET').then(function(d){self.locations=d.data&&d.data.list||[];self.locationTotal=d.data&&d.data.total||0;}).catch(function(){});},
-showLocationModal:function(row){if(!this.merchants.length){this.loadMerchants();}this.locationForm=row?JSON.parse(JSON.stringify(row)):{};if(!this.locationForm.id){Object.assign(this.locationForm,{name:'',address:'',merchant_id:'',status:1,allow_open_after_end:1,withdraw_enabled:true,show_refunding_status:true,auto_approve_day:7,auto_approve_time:'12:00',auto_approve_rate:80,click_free_count:0,anti_test_minutes:0,anti_test_auto_refund:false,hide_ratio:0,hide_start_orders:50,whitelist_phones:'',duplicate_filter_enabled:false,duplicate_filter_days:30,duplicate_filter_limit:5,allow_slot_select:false,slot_assign_mode:'auto',allow_mid_retrieve:true,retrieve_mode:'both',allow_h5_to_mp:false,show_qr_follow:false,force_follow_mp:false,h5_url:'',show_slot_count:true,screen_show_title:true,screen_title:'',slot_full_alert:false,slot_full_text:'',end_alert_minutes:0,enable_clear_box:false,clear_box_time:'23:00',clear_box_cycle:1,deposit_random:false,deposit_min:0,deposit_max:0,contact_phone:''});}this.locationFormTitle=row?'编辑网点':'新增网点';this.locationEditTab='basic';this.locationModal=true;},
+showLocationModal:function(row){if(!this.merchants.length){this.loadMerchants();}this.locationForm=row?JSON.parse(JSON.stringify(row)):{};if(!this.locationForm.id){Object.assign(this.locationForm,{name:'',address:'',merchant_id:'',status:1,allow_open_after_end:1,withdraw_enabled:true,show_refunding_status:true,auto_approve_day:7,auto_approve_time:'12:00',auto_approve_rate:80,click_free_count:0,anti_test_minutes:0,anti_test_auto_refund:false,hide_ratio:0,hide_start_orders:50,whitelist_phones:'',duplicate_filter_enabled:false,duplicate_filter_days:30,duplicate_filter_limit:5,allow_slot_select:false,slot_assign_mode:'auto',allow_mid_retrieve:true,retrieve_mode:'both',allow_h5_to_mp:false,show_qr_follow:false,force_follow_mp:false,h5_url:'',show_slot_count:true,screen_show_title:true,screen_title:'',slot_full_alert:false,slot_full_text:'',end_alert_minutes:0,enable_clear_box:false,clear_box_time:'23:00',clear_box_cycle:1,deposit_random:false,deposit_min:0,deposit_max:0,contact_phone:'',rules_title:'',reopen_times:null});}this.locationFormTitle=row?'编辑网点':'新增网点';this.locationEditTab='basic';this.locationModal=true;},
 saveLocation:function(){var self=this;this.api('/admin/location/save',this.locationForm).then(function(){self.toast('保存成功');self.locationModal=false;self.loadLocations();}).catch(function(e){self.toast(e.message||'保存失败','error');});},
 deleteLocation:function(row){var self=this;this.confirm2('确定删除网点 '+row.name+'?',function(){self.api('/admin/location/delete',{id:row.id}).then(function(){self.toast('删除成功');self.loadLocations();}).catch(function(e){self.toast(e.message||'删除失败','error');});});},
 // Orders

@@ -194,6 +194,51 @@ def admin_devices():
         return json_response(message=str(e), code=500)
 
 
+def _push_usage_rules_to_device(device_id):
+    """保存寄存规则后向在线设备推送 usage_rules_update"""
+    try:
+        import json as _json
+        from helpers import connected_devices as _cd
+        ws = _cd.get(str(device_id))
+        if not ws:
+            return
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""SELECT c.usage_rules, c.rules_title, c.reopen_times,
+                              l.usage_rules as loc_usage_rules, l.rules_title as loc_rules_title, l.reopen_times as loc_reopen_times
+                       FROM cabinets c LEFT JOIN locations l ON c.location_id = l.id
+                       WHERE c.mainboard_device_id = %s""", (device_id,))
+        row = cur.fetchone()
+        conn.close()
+        if not row:
+            return
+        rules = row['usage_rules'] or row['loc_usage_rules'] or ''
+        title = row['rules_title'] or row['loc_rules_title'] or ''
+        rt = row['reopen_times']
+        if rt is None or rt == '' or int(rt) <= 0:
+            rt = row['loc_reopen_times']
+        cmd = {'type': 'usage_rules_update', 'usage_rules': rules, 'rules_title': title,
+               'reopen_times': '' if rt is None or rt == '' else str(rt)}
+        ws.send(_json.dumps(cmd))
+        logger.info('[usage_rules_update] pushed to device=%s', device_id)
+    except Exception as e:
+        logger.warning('[usage_rules_update] push failed: %s', e)
+
+
+def _push_usage_rules_to_location(location_id):
+    """保存网点规则后向该网点所有在线设备推送"""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT mainboard_device_id FROM cabinets WHERE location_id=%s AND mainboard_device_id IS NOT NULL AND mainboard_device_id != ''", (location_id,))
+        rows = cur.fetchall()
+        conn.close()
+        for row in rows:
+            _push_usage_rules_to_device(row['mainboard_device_id'])
+    except Exception as e:
+        logger.warning('[usage_rules_update] location push failed: %s', e)
+
+
 @bp.route('/admin/cabinet/save', methods=['POST'])
 @require_auth
 def admin_cabinet_save():
@@ -214,7 +259,7 @@ def admin_cabinet_save():
             fields = ['name','cabinet_code','location_id','mainboard_device_id','mainboard_source',
                      'total_slots','business_status','status','charge_mode',
                      'deposit_amount','per_use_price','customer_phone',
-                     'usage_rules','mid_retrieve_limit']
+                     'usage_rules','rules_title','reopen_times','mid_retrieve_limit']
             sets, params = [], []
             for f in fields:
                 if f in data:
@@ -223,6 +268,8 @@ def admin_cabinet_save():
                         v = 1 if v else 0
                     elif f in ('deposit_amount','per_use_price') and (v == '' or v is None):
                         v = 0
+                    elif f == 'reopen_times' and (v == '' or v is None):
+                        v = None
                     elif f == 'mid_retrieve_limit' and (v == '' or v is None):
                         v = None
                     sets.append(f'{f}=%s')
@@ -233,7 +280,7 @@ def admin_cabinet_save():
             cabinet_code = data.get('cabinet_code') or f'CAB{datetime.now().strftime("%Y%m%d%H%M%S")}'
             c.execute("""INSERT INTO cabinets (cabinet_code,name,location_id,mainboard_device_id,mainboard_source,
                 total_slots,business_status,status,charge_mode,deposit_amount,
-                customer_phone,per_use_price,usage_rules) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                customer_phone,per_use_price,usage_rules,rules_title,reopen_times) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
                 (cabinet_code, data.get("name",""), int(data.get("location_id")) if data.get("location_id") and str(data.get("location_id")).strip() else None, data.get("mainboard_device_id"),
                  data.get("mainboard_source","WT"),
                  data.get("total_slots",12), data.get("business_status","open"),
@@ -241,7 +288,9 @@ def admin_cabinet_save():
                  float(data.get("deposit_amount") or 20),
                  data.get("customer_phone",""),
                  float(data.get("per_use_price") or 0),
-                 data.get("usage_rules") or "24h"))
+                 data.get("usage_rules") or "24h",
+                 data.get("rules_title") or "",
+                 data.get("reopen_times") if data.get("reopen_times") not in ('', None) else None))
             data['id'] = c.fetchone()[0]
         _sp = data.get('serial_port') or ''
         _br = data.get('baud_rate') or ''
@@ -285,6 +334,9 @@ def admin_cabinet_save():
                          (data['id'], _pr2))
         conn.commit()
         conn.close()
+        _did = data.get('mainboard_device_id')
+        if _did:
+            _push_usage_rules_to_device(_did)
         return json_response(message='保存成功')
     except Exception as e:
         logger.error(f'[cabinet_save] {e}')
@@ -537,7 +589,7 @@ def admin_location_save():
             fields = ['name','address','longitude','latitude','merchant_id','status',
                      'contact_name','contact_phone','open_time','close_time',
                      'allow_slot_select','slot_assign_mode','allow_mid_retrieve','mid_retrieve_limit','retrieve_mode',
-                     'usage_rules','allow_open_after_end',
+                     'usage_rules','rules_title','reopen_times','allow_open_after_end',
                      'allow_h5_to_mp','show_qr_follow','force_follow_mp','h5_url',
                      'show_slot_count','screen_show_title','screen_title',
                      'slot_full_alert','slot_full_text','end_alert_minutes',
@@ -559,6 +611,8 @@ def admin_location_save():
                         v = 1 if v else 0
                     elif f in ('deposit_amount','per_use_price') and (v == '' or v is None):
                         v = 0
+                    elif f == 'reopen_times' and (v == '' or v is None):
+                        v = None
                     elif f == 'mid_retrieve_limit' and (v == '' or v is None):
                         v = None
                     sets.append(f'{f}=%s')
@@ -567,13 +621,16 @@ def admin_location_save():
             c.execute(f'UPDATE locations SET {",".join(sets)} WHERE id=%s', params)
         else:
             c.execute('''INSERT INTO locations (name,address,longitude,latitude,merchant_id,status,
-                contact_name,contact_phone,allow_open_after_end,usage_rules,mid_retrieve_limit) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+                contact_name,contact_phone,allow_open_after_end,usage_rules,rules_title,reopen_times,mid_retrieve_limit) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
                 (data.get('name'), data.get('address'), data.get('longitude'),
                  data.get('latitude'), data.get('merchant_id'), data.get('status',1),
                  data.get('contact_name',''), data.get('contact_phone',''),
                  1 if data.get('allow_open_after_end', True) else 0,
                  data.get('usage_rules',''),
+                 data.get('rules_title') or '',
+                 data.get('reopen_times') if data.get('reopen_times') not in ('', None) else None,
                  data.get('mid_retrieve_limit') if data.get('mid_retrieve_limit') not in ('', None) else None))
+            data['id'] = c.lastrowid
         # 如果网点切换为自动审批，自动处理该网点pending的提现记录
         if data.get('id') and data.get('withdraw_mode') == 'auto_approve':
             try:
@@ -620,6 +677,9 @@ def admin_location_save():
 
         conn.commit()
         conn.close()
+        _lid = data.get('id')
+        if _lid:
+            _push_usage_rules_to_location(_lid)
         return json_response(message='保存成功')
     except Exception as e:
         logger.error(f'[location_save] {e}')

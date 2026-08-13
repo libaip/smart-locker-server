@@ -1978,6 +1978,76 @@ def _agent_settle_calc_month(c, agent_id, month, commission_rate, fee_rate):
     }
 
 
+def _allocate_cents(target_cents, raw_values):
+    if target_cents is None or target_cents <= 0:
+        return [0.0] * len(raw_values)
+    shares = [int(raw * 100) for raw in raw_values]
+    rem = target_cents - sum(shares)
+    if rem > 0:
+        order = sorted(range(len(raw_values)),
+                       key=lambda i: (raw_values[i] * 100 - shares[i], i), reverse=True)
+        for k in range(rem):
+            shares[order[k % len(order)]] += 1
+    return [round(s / 100.0, 2) for s in shares]
+
+
+def _agent_settle_calc_locations(c, agent_id, month, agent_calc, commission_rate, fee_rate):
+    start_dt = month + '-01'
+    nm = _agent_settle_next_month(month)
+    if not nm:
+        return []
+    end_dt = nm + '-01'
+    c.execute('''
+        SELECT l.id AS location_id, l.name AS location_name,
+               COUNT(o.id) AS order_count,
+               COALESCE(SUM(o.deposit_amount), 0) AS deposit_amount,
+               COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END), 0) AS refund_amount
+        FROM orders o
+        JOIN cabinets cab ON o.cabinet_id = cab.id
+        JOIN locations l ON cab.location_id = l.id
+        JOIN merchants m ON l.merchant_id = m.id
+        WHERE m.agent_id = %s AND o.status IN (2, 3, 4)
+          AND o.created_at >= %s AND o.created_at < %s
+        GROUP BY l.id, l.name
+        ORDER BY l.id
+    ''', (agent_id, start_dt, end_dt))
+    rows = c.fetchall()
+    if not rows:
+        return []
+    fee_cents = int(round(agent_calc['fee_amount'] * 100))
+    comm_cents = int(round(agent_calc['commission_amount'] * 100))
+    raw_fees = []
+    raw_comms = []
+    for r in rows:
+        dep = float(r['deposit_amount'] or 0)
+        ref = float(r['refund_amount'] or 0)
+        bal = dep - ref
+        raw_fees.append(bal * fee_rate / 100.0)
+        raw_comms.append(dep * commission_rate / 100.0)
+    fee_shares = _allocate_cents(fee_cents, raw_fees)
+    comm_shares = _allocate_cents(comm_cents, raw_comms)
+    out = []
+    for i, r in enumerate(rows):
+        dep = _m2(r['deposit_amount'] or 0)
+        ref = _m2(r['refund_amount'] or 0)
+        bal = _m2(dep - ref)
+        fee = fee_shares[i]
+        comm = comm_shares[i]
+        settle = _m2(bal - fee - comm)
+        out.append({
+            'location_id': r['location_id'],
+            'location_name': r['location_name'],
+            'order_count': int(r['order_count'] or 0),
+            'deposit_amount': dep,
+            'refund_amount': ref,
+            'balance_amount': bal,
+            'fee_amount': fee,
+            'commission_amount': comm,
+            'settle_amount': settle,
+        })
+    return out
+
+
 def _agent_settle_agents(c, agent_id):
     if agent_id:
         c.execute('SELECT id, name FROM agents WHERE id=%s', (agent_id,))
@@ -2016,6 +2086,8 @@ def admin_agent_settlement_preview():
                     continue
                 if calc['order_count'] == 0 and calc['settled_before'] == 0 and calc['delta_amount'] == 0:
                     continue
+                calc['locations'] = _agent_settle_calc_locations(
+                    c, agent['id'], month, calc, commission_rate, fee_rate)
                 calc.update({'agent_id': agent['id'], 'agent_name': agent['name'], 'settle_month': month})
                 rows.append(calc)
         carry_map = {}
@@ -2104,14 +2176,18 @@ def admin_agent_settlement_confirm():
                     continue
                 if calc['order_count'] == 0 and calc['settled_before'] == 0 and calc['delta_amount'] == 0:
                     continue
+                locations = _agent_settle_calc_locations(
+                    c, agent['id'], month, calc, commission_rate, fee_rate)
                 c.execute('''
                     INSERT INTO agent_settlement_logs
                     (batch_id, agent_id, agent_name, settle_month, order_count, deposit_amount, refund_amount,
-                     balance_amount, fee_amount, commission_amount, settle_amount, settled_before, delta_amount)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     balance_amount, fee_amount, commission_amount, settle_amount, settled_before, delta_amount,
+                     location_detail)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ''', (batch_id, agent['id'], agent['name'], month, calc['order_count'], calc['deposit_amount'],
                       calc['refund_amount'], calc['balance_amount'], calc['fee_amount'], calc['commission_amount'],
-                      calc['settle_amount'], calc['settled_before'], calc['delta_amount']))
+                      calc['settle_amount'], calc['settled_before'], calc['delta_amount'],
+                      json.dumps(locations, ensure_ascii=False)))
                 agent_delta[agent['id']] = _m2(agent_delta.get(agent['id'], 0) + calc['delta_amount'])
         total_payable = 0.0
         for aid, delta_sum in agent_delta.items():
@@ -2197,6 +2273,11 @@ def admin_agent_settlement_history_detail():
             return json_response(message='batch not found', code=404)
         c.execute('SELECT * FROM agent_settlement_logs WHERE batch_id=%s ORDER BY settle_month, agent_id', (batch_id,))
         logs = [dict(r) for r in c.fetchall()]
+        for log in logs:
+            try:
+                log['locations'] = json.loads(log.get('location_detail') or '[]')
+            except Exception:
+                log['locations'] = []
         c.execute('SELECT * FROM agent_settlement_payments WHERE batch_id=%s ORDER BY agent_id', (batch_id,))
         payments = [dict(r) for r in c.fetchall()]
         conn.close()

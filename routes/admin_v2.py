@@ -1876,6 +1876,336 @@ def admin_agent_stats():
         return json_response(message=str(e), code=500)
 
 
+# ============ Agent settlement (代理商分成结算) ============
+
+AGENT_SETTLE_COMMISSION_KEY = 'agent_settle_commission_rate'
+AGENT_SETTLE_FEE_KEY = 'agent_settle_fee_rate'
+
+
+def _m2(x):
+    from decimal import Decimal, ROUND_HALF_UP
+    try:
+        return float(Decimal(str(x)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+    except Exception:
+        return round(float(x or 0), 2)
+
+
+def _agent_settle_months(start_month, end_month):
+    try:
+        sy, sm = [int(v) for v in str(start_month).split('-')]
+        ey, em = [int(v) for v in str(end_month).split('-')]
+    except Exception:
+        return []
+    months = []
+    y, m = sy, sm
+    while (y, m) <= (ey, em):
+        months.append('%04d-%02d' % (y, m))
+        if m == 12:
+            y, m = y + 1, 1
+        else:
+            m += 1
+    return months
+
+
+def _agent_settle_next_month(month):
+    try:
+        y, m = [int(v) for v in str(month).split('-')]
+    except Exception:
+        return None
+    if m == 12:
+        return '%04d-%02d' % (y + 1, 1)
+    return '%04d-%02d' % (y, m + 1)
+
+
+def _agent_settle_config(c):
+    commission_rate = 5.0
+    fee_rate = 0.6
+    try:
+        c.execute("SELECT setting_key, setting_value FROM system_settings WHERE setting_key IN (%s, %s)",
+                  (AGENT_SETTLE_COMMISSION_KEY, AGENT_SETTLE_FEE_KEY))
+        for k, v in c.fetchall():
+            try:
+                if k == AGENT_SETTLE_COMMISSION_KEY and v:
+                    commission_rate = float(v)
+                elif k == AGENT_SETTLE_FEE_KEY and v:
+                    fee_rate = float(v)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return commission_rate, fee_rate
+
+
+def _agent_settle_calc_month(c, agent_id, month, commission_rate, fee_rate):
+    start_dt = month + '-01'
+    nm = _agent_settle_next_month(month)
+    if not nm:
+        return None
+    end_dt = nm + '-01'
+    c.execute('''
+        SELECT COUNT(*) AS order_count,
+               COALESCE(SUM(o.deposit_amount), 0) AS deposit_amount,
+               COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END), 0) AS refund_amount
+        FROM orders o
+        JOIN cabinets cab ON o.cabinet_id = cab.id
+        JOIN locations l ON cab.location_id = l.id
+        JOIN merchants m ON l.merchant_id = m.id
+        WHERE m.agent_id = %s AND o.status IN (2, 3, 4)
+          AND o.created_at >= %s AND o.created_at < %s
+    ''', (agent_id, start_dt, end_dt))
+    row = c.fetchone()
+    order_count = int(row['order_count'] or 0)
+    deposit = _m2(row['deposit_amount'] or 0)
+    refund = _m2(row['refund_amount'] or 0)
+    balance = _m2(deposit - refund)
+    fee = _m2(balance * fee_rate / 100.0)
+    commission = _m2(deposit * commission_rate / 100.0)
+    settle = _m2(balance - fee - commission)
+    c.execute('SELECT COALESCE(SUM(delta_amount), 0) AS h FROM agent_settlement_logs WHERE agent_id=%s AND settle_month=%s',
+              (agent_id, month))
+    settled_before = _m2(c.fetchone()['h'] or 0)
+    delta = _m2(settle - settled_before)
+    return {
+        'order_count': order_count,
+        'deposit_amount': deposit,
+        'refund_amount': refund,
+        'balance_amount': balance,
+        'fee_amount': fee,
+        'commission_amount': commission,
+        'settle_amount': settle,
+        'settled_before': settled_before,
+        'delta_amount': delta,
+    }
+
+
+def _agent_settle_agents(c, agent_id):
+    if agent_id:
+        c.execute('SELECT id, name FROM agents WHERE id=%s', (agent_id,))
+    else:
+        c.execute('SELECT id, name FROM agents WHERE status=1 ORDER BY id')
+    return [dict(r) for r in c.fetchall()]
+
+
+@bp.route('/admin/agent-settlement/preview', methods=['GET'])
+@require_auth
+def admin_agent_settlement_preview():
+    try:
+        agent_id = request.args.get('agent_id', type=int)
+        start_month = request.args.get('start_month', '')
+        end_month = request.args.get('end_month', '')
+        if not start_month:
+            start_month = end_month
+        if not end_month:
+            end_month = start_month
+        if not start_month or not end_month:
+            today = datetime.now()
+            y, m = (today.year, today.month - 1) if today.month > 1 else (today.year - 1, 12)
+            start_month = end_month = '%04d-%02d' % (y, m)
+        months = _agent_settle_months(start_month, end_month)
+        if not months:
+            return json_response(message='月份格式错误，应为YYYY-MM', code=400)
+        conn = get_db()
+        c = conn.cursor()
+        commission_rate, fee_rate = _agent_settle_config(c)
+        agents = _agent_settle_agents(c, agent_id)
+        rows = []
+        for agent in agents:
+            for month in months:
+                calc = _agent_settle_calc_month(c, agent['id'], month, commission_rate, fee_rate)
+                if not calc:
+                    continue
+                if calc['order_count'] == 0 and calc['settled_before'] == 0 and calc['delta_amount'] == 0:
+                    continue
+                calc.update({'agent_id': agent['id'], 'agent_name': agent['name'], 'settle_month': month})
+                rows.append(calc)
+        carry_map = {}
+        if agent_id:
+            c.execute('SELECT agent_id, COALESCE(carry_amount, 0) AS carry FROM agent_settlement_carry WHERE agent_id=%s',
+                      (agent_id,))
+        else:
+            c.execute('SELECT agent_id, COALESCE(carry_amount, 0) AS carry FROM agent_settlement_carry')
+        for r in c.fetchall():
+            carry_map[r['agent_id']] = _m2(r['carry'] or 0)
+        summary = {
+            'order_count': sum(r['order_count'] for r in rows),
+            'deposit_amount': _m2(sum(r['deposit_amount'] for r in rows)),
+            'refund_amount': _m2(sum(r['refund_amount'] for r in rows)),
+            'balance_amount': _m2(sum(r['balance_amount'] for r in rows)),
+            'fee_amount': _m2(sum(r['fee_amount'] for r in rows)),
+            'commission_amount': _m2(sum(r['commission_amount'] for r in rows)),
+            'settle_amount': _m2(sum(r['settle_amount'] for r in rows)),
+            'settled_before': _m2(sum(r['settled_before'] for r in rows)),
+            'delta_amount': _m2(sum(r['delta_amount'] for r in rows)),
+            'agents': []
+        }
+        for agent in agents:
+            agent_rows = [r for r in rows if r['agent_id'] == agent['id']]
+            delta_sum = _m2(sum(r['delta_amount'] for r in agent_rows))
+            carry = carry_map.get(agent['id'], 0)
+            net = _m2(carry + delta_sum)
+            summary['agents'].append({
+                'agent_id': agent['id'],
+                'agent_name': agent['name'],
+                'delta_sum': delta_sum,
+                'carry': carry,
+                'net': net,
+                'payable': _m2(max(0, net))
+            })
+        summary['carry_total'] = _m2(sum(a['carry'] for a in summary['agents']))
+        conn.close()
+        return json_response(data={
+            'rows': rows,
+            'summary': summary,
+            'rates': {'commission_rate': commission_rate, 'fee_rate': fee_rate},
+            'months': months
+        })
+    except Exception as e:
+        logger.error('[agent_settlement_preview] %s', e)
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/admin/agent-settlement/confirm', methods=['POST'])
+@require_auth
+def admin_agent_settlement_confirm():
+    conn = None
+    try:
+        data = request.get_json() or {}
+        start_month = str(data.get('start_month') or '')
+        end_month = str(data.get('end_month') or '')
+        if not start_month:
+            start_month = end_month
+        if not end_month:
+            end_month = start_month
+        agent_id = data.get('agent_id', 0) or 0
+        note = str(data.get('note') or '')
+        months = _agent_settle_months(start_month, end_month)
+        if not months:
+            return json_response(message='请选择结算月份', code=400)
+        conn = get_db()
+        c = conn.cursor()
+        c.execute('SELECT pg_try_advisory_xact_lock(2026081301)')
+        if not c.fetchone()[0]:
+            conn.close()
+            return json_response(message='有其他结算正在进行，请稍后再试', code=400)
+        commission_rate, fee_rate = _agent_settle_config(c)
+        agents = _agent_settle_agents(c, agent_id)
+        if not agents:
+            conn.close()
+            return json_response(message='没有可结算的代理商', code=400)
+        username = session.get('admin_username', 'admin')
+        c.execute("INSERT INTO agent_settlement_batches (settle_date, status, created_by, note, confirmed_at) "
+                  "VALUES (CURRENT_DATE, 'confirmed', %s, %s, NOW()) RETURNING id", (username, note))
+        batch_id = c.fetchone()['id']
+        agent_delta = {}
+        for agent in agents:
+            for month in months:
+                calc = _agent_settle_calc_month(c, agent['id'], month, commission_rate, fee_rate)
+                if not calc:
+                    continue
+                if calc['order_count'] == 0 and calc['settled_before'] == 0 and calc['delta_amount'] == 0:
+                    continue
+                c.execute('''
+                    INSERT INTO agent_settlement_logs
+                    (batch_id, agent_id, agent_name, settle_month, order_count, deposit_amount, refund_amount,
+                     balance_amount, fee_amount, commission_amount, settle_amount, settled_before, delta_amount)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ''', (batch_id, agent['id'], agent['name'], month, calc['order_count'], calc['deposit_amount'],
+                      calc['refund_amount'], calc['balance_amount'], calc['fee_amount'], calc['commission_amount'],
+                      calc['settle_amount'], calc['settled_before'], calc['delta_amount']))
+                agent_delta[agent['id']] = _m2(agent_delta.get(agent['id'], 0) + calc['delta_amount'])
+        total_payable = 0.0
+        for aid, delta_sum in agent_delta.items():
+            delta_sum = _m2(delta_sum)
+            c.execute('SELECT agent_id, COALESCE(carry_amount, 0) AS carry, name FROM agent_settlement_carry '
+                      'LEFT JOIN agents ON agents.id=agent_settlement_carry.agent_id WHERE agent_id=%s FOR UPDATE',
+                      (aid,))
+            row = c.fetchone()
+            carry_before = _m2(row['carry'] or 0) if row else 0
+            agent_name = row['name'] if row else ''
+            if not agent_name:
+                c.execute('SELECT name FROM agents WHERE id=%s', (aid,))
+                nr = c.fetchone()
+                agent_name = nr['name'] if nr else ''
+            net = _m2(carry_before + delta_sum)
+            payable = _m2(max(0, net))
+            carry_after = _m2(min(0, net))
+            total_payable = _m2(total_payable + payable)
+            c.execute('''
+                INSERT INTO agent_settlement_payments
+                (batch_id, agent_id, agent_name, delta_sum, carry_before, payable, carry_after)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+            ''', (batch_id, aid, agent_name, delta_sum, carry_before, payable, carry_after))
+            c.execute('INSERT INTO agent_settlement_carry (agent_id, carry_amount, updated_at) '
+                      'VALUES (%s,%s,NOW()) ON CONFLICT (agent_id) DO UPDATE '
+                      'SET carry_amount=EXCLUDED.carry_amount, updated_at=NOW()', (aid, carry_after))
+        conn.commit()
+        conn.close()
+        return json_response(data={'batch_id': batch_id, 'total_payable': total_payable},
+                             message='结算已确认落账')
+    except Exception as e:
+        logger.error('[agent_settlement_confirm] %s', e)
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/admin/agent-settlement/history', methods=['GET'])
+@require_auth
+def admin_agent_settlement_history():
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute('''
+            SELECT b.id, b.settle_date, b.created_by, b.note, b.created_at, b.confirmed_at,
+                   MIN(l.settle_month) AS start_month, MAX(l.settle_month) AS end_month,
+                   COUNT(DISTINCT l.agent_id) AS agent_count,
+                   COALESCE(SUM(l.delta_amount), 0) AS total_delta,
+                   COALESCE(SUM(p.payable), 0) AS total_payable
+            FROM agent_settlement_batches b
+            LEFT JOIN agent_settlement_logs l ON l.batch_id = b.id
+            LEFT JOIN agent_settlement_payments p ON p.batch_id = b.id
+            GROUP BY b.id
+            ORDER BY b.id DESC LIMIT 100
+        ''')
+        rows = [dict(r) for r in c.fetchall()]
+        for r in rows:
+            r['total_delta'] = _m2(r['total_delta'] or 0)
+            r['total_payable'] = _m2(r['total_payable'] or 0)
+        conn.close()
+        return json_response(data=rows)
+    except Exception as e:
+        logger.error('[agent_settlement_history] %s', e)
+        return json_response(data=[])
+
+
+@bp.route('/admin/agent-settlement/history/detail', methods=['GET'])
+@require_auth
+def admin_agent_settlement_history_detail():
+    try:
+        batch_id = request.args.get('batch_id', type=int)
+        if not batch_id:
+            return json_response(message='missing batch_id', code=400)
+        conn = get_db()
+        c = conn.cursor()
+        c.execute('SELECT * FROM agent_settlement_batches WHERE id=%s', (batch_id,))
+        batch = c.fetchone()
+        if not batch:
+            conn.close()
+            return json_response(message='batch not found', code=404)
+        c.execute('SELECT * FROM agent_settlement_logs WHERE batch_id=%s ORDER BY settle_month, agent_id', (batch_id,))
+        logs = [dict(r) for r in c.fetchall()]
+        c.execute('SELECT * FROM agent_settlement_payments WHERE batch_id=%s ORDER BY agent_id', (batch_id,))
+        payments = [dict(r) for r in c.fetchall()]
+        conn.close()
+        return json_response(data={'batch': dict(batch), 'logs': logs, 'payments': payments})
+    except Exception as e:
+        logger.error('[agent_settlement_history_detail] %s', e)
+        return json_response(message=str(e), code=500)
+
+
 # ============ Merchants ============
 
 @bp.route('/admin/merchants', methods=['GET', 'POST'])

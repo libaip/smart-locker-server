@@ -906,7 +906,7 @@ var menuGroupsData=[
 {key:'agent-mgr',title:'代理商管理',defaultOpen:false,items:[{key:'agent-list',label:'代理商列表'}]},
 {key:'merchant-mgr',title:'商家管理',defaultOpen:false,items:[{key:'merchant-list',label:'商家列表'},{key:'employee-list',label:'员工管理'}]},
 {key:'finance-mgr',title:'财务管理',defaultOpen:false,items:[{key:'settlement',label:'结算流水'},{key:'withdraw-manage',label:'提现管理'},{key:'platform-flow',label:'平台流水'},{key:'fund-flow',label:'资金流水'}]},
-{key:'stat-mgr',title:'统计分析',defaultOpen:false,items:[{key:'biz-stat',label:'业务统计'},{key:'merchant-share',label:'商家分成'}]},
+{key:'stat-mgr',title:'统计分析',defaultOpen:false,items:[{key:'biz-stat',label:'业务统计'},{key:'merchant-share',label:'商家分成'},{key:'agent-settlement',label:'代理商分成结算'}]},
 {key:'company-mgr',title:'公司管理',defaultOpen:false,items:[{key:'company-list',label:'公司管理'}]},
 {key:'personal-mgr',title:'个人中心',defaultOpen:false,items:[{key:'personal-info',label:'个人信息'},{key:'change-pwd',label:'修改密码'}]},
 {key:'after-mgr',title:'售后管理',defaultOpen:false,items:[{key:'store-record',label:'寄存记录'},{key:'blacklist',label:'黑名单'},{key:'alarm-record',label:'告警记录'},{key:'location-alarm',label:'网点告警'}]},
@@ -1263,6 +1263,90 @@ Vue.component('page-merchant-share',{template:`
 </table>
 </div>
 `,created:function(){this.$parent.loadShareStats();this.$parent.loadMerchantsAll();}});
+
+Vue.component('page-agent-settlement',{template:`
+<div class="page-content">
+<div class="page-header"><h2>代理商分成结算</h2></div>
+<div class="search-bar">
+<div class="search-item"><label>代理商</label><select v-model="filter.agent_id" @change="loadPreview()"><option value="">全部</option><option v-for="a in $parent.agents" :value="a.id">{{a.name}}</option></select></div>
+<div class="search-item"><label>起始月份</label><input type="month" v-model="filter.start_month"></div>
+<div class="search-item"><label>结束月份</label><input type="month" v-model="filter.end_month"></div>
+<div class="search-item"><label>&nbsp;</label><button class="btn btn-sm btn-blue" @click="loadPreview()">试算</button></div>
+<div class="search-item"><label>&nbsp;</label><button class="btn btn-sm" style="background:#e74c3c;border-color:#e74c3c;color:#fff" :disabled="!previewRows.length" @click="confirmSettle()">确认结算</button></div>
+</div>
+<div class="stats-cards" style="margin-bottom:16px">
+<div class="stat-card"><div class="stat-label">订单数</div><div class="stat-value">{{summary.order_count||0}}</div></div>
+<div class="stat-card"><div class="stat-label">押金(充值)</div><div class="stat-value">¥{{(summary.deposit_amount||0).toFixed(2)}}</div></div>
+<div class="stat-card"><div class="stat-label">微信退款</div><div class="stat-value">¥{{(summary.refund_amount||0).toFixed(2)}}</div></div>
+<div class="stat-card"><div class="stat-label">余额</div><div class="stat-value">¥{{(summary.balance_amount||0).toFixed(2)}}</div></div>
+<div class="stat-card"><div class="stat-label">手续费{{(rates.fee_rate||0)}}%</div><div class="stat-value">¥{{(summary.fee_amount||0).toFixed(2)}}</div></div>
+<div class="stat-card"><div class="stat-label">平台抽成{{(rates.commission_rate||0)}}%</div><div class="stat-value">¥{{(summary.commission_amount||0).toFixed(2)}}</div></div>
+<div class="stat-card"><div class="stat-label">本次应结</div><div class="stat-value" style="color:#67c23a">¥{{(summary.delta_amount||0).toFixed(2)}}</div></div>
+<div class="stat-card"><div class="stat-label">待抵扣余额</div><div class="stat-value" style="color:#e74c3c">¥{{(summary.carry_total||0).toFixed(2)}}</div></div>
+</div>
+<table>
+<thead><tr><th>月份</th><th>代理商</th><th>订单数</th><th>押金</th><th>微信退款</th><th>余额</th><th>手续费</th><th>平台抽成</th><th>本月应结</th><th>已结算</th><th>本次应结</th></tr></thead>
+<tbody>
+<tr v-for="r in previewRows" :key="r.agent_id+'-'+r.settle_month">
+<td>{{r.settle_month}}</td><td>{{r.agent_name}}</td><td>{{r.order_count}}</td>
+<td>¥{{r.deposit_amount.toFixed(2)}}</td><td>¥{{r.refund_amount.toFixed(2)}}</td><td>¥{{r.balance_amount.toFixed(2)}}</td>
+<td>¥{{r.fee_amount.toFixed(2)}}</td><td>¥{{r.commission_amount.toFixed(2)}}</td><td>¥{{r.settle_amount.toFixed(2)}}</td><td>¥{{r.settled_before.toFixed(2)}}</td>
+<td :style="{color:r.delta_amount<0?'#e74c3c':'#67c23a',fontWeight:'bold'}">¥{{r.delta_amount.toFixed(2)}}</td>
+</tr>
+<tr v-if="!previewRows.length"><td colspan="11" class="empty-row">暂无数据，请先试算</td></tr>
+</tbody>
+</table>
+<div v-if="summary.agents && summary.agents.length" style="margin-top:12px">
+<div class="box-header"><h3>按代理商汇总（含待抵扣）</h3></div>
+<table>
+<thead><tr><th>代理商</th><th>本次应结合计</th><th>待抵扣余额</th><th>抵扣后净值</th><th>本次应付</th></tr></thead>
+<tbody>
+<tr v-for="a in summary.agents">
+<td>{{a.agent_name}}</td><td>¥{{a.delta_sum.toFixed(2)}}</td><td>¥{{a.carry.toFixed(2)}}</td><td :style="{color:a.net<0?'#e74c3c':'#67c23a'}">¥{{a.net.toFixed(2)}}</td><td style="font-weight:bold;color:#67c23a">¥{{a.payable.toFixed(2)}}</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div style="margin-top:20px">
+<div class="box-header"><h3>历史结算批次</h3><button class="btn btn-sm" @click="loadHistory()">刷新</button></div>
+<table>
+<thead><tr><th>批次</th><th>结算日期</th><th>月份范围</th><th>代理商数</th><th>应结合计</th><th>应付合计</th><th>操作人</th><th>备注</th><th>操作</th></tr></thead>
+<tbody>
+<tr v-for="h in historyList">
+<td>{{h.id}}</td><td>{{h.settle_date}}</td><td>{{h.start_month}} ~ {{h.end_month}}</td><td>{{h.agent_count||0}}</td>
+<td>¥{{(h.total_delta||0).toFixed(2)}}</td><td>¥{{(h.total_payable||0).toFixed(2)}}</td><td>{{h.created_by||'-'}}</td><td>{{h.note||'-'}}</td>
+<td><button class="btn btn-sm" @click="viewDetail(h.id)">查看</button></td>
+</tr>
+<tr v-if="!historyList.length"><td colspan="9" class="empty-row">暂无结算记录</td></tr>
+</tbody>
+</table>
+</div>
+<div v-if="historyDetail" style="margin-top:20px">
+<div class="box-header"><h3>批次 #{{historyDetail.batch.id}} 明细</h3><button class="btn btn-sm" @click="exportDetail()">导出CSV</button> <button class="btn btn-sm" @click="historyDetail=null">关闭</button></div>
+<table>
+<thead><tr><th>月份</th><th>代理商</th><th>订单数</th><th>押金</th><th>微信退款</th><th>余额</th><th>手续费</th><th>平台抽成</th><th>本月应结</th><th>已结算</th><th>本次应结</th></tr></thead>
+<tbody>
+<tr v-for="r in historyDetail.logs">
+<td>{{r.settle_month}}</td><td>{{r.agent_name}}</td><td>{{r.order_count}}</td>
+<td>¥{{Number(r.deposit_amount||0).toFixed(2)}}</td><td>¥{{Number(r.refund_amount||0).toFixed(2)}}</td><td>¥{{Number(r.balance_amount||0).toFixed(2)}}</td>
+<td>¥{{Number(r.fee_amount||0).toFixed(2)}}</td><td>¥{{Number(r.commission_amount||0).toFixed(2)}}</td><td>¥{{Number(r.settle_amount||0).toFixed(2)}}</td><td>¥{{Number(r.settled_before||0).toFixed(2)}}</td>
+<td :style="{color:Number(r.delta_amount)<0?'#e74c3c':'#67c23a',fontWeight:'bold'}">¥{{Number(r.delta_amount||0).toFixed(2)}}</td>
+</tr>
+</tbody>
+</table>
+<div v-if="historyDetail.payments && historyDetail.payments.length" style="margin-top:10px">
+<table>
+<thead><tr><th>代理商</th><th>本次应结合计</th><th>抵扣前待扣</th><th>本次应付</th><th>结算后待扣</th></tr></thead>
+<tbody>
+<tr v-for="p in historyDetail.payments">
+<td>{{p.agent_name}}</td><td>¥{{Number(p.delta_sum||0).toFixed(2)}}</td><td>¥{{Number(p.carry_before||0).toFixed(2)}}</td><td style="font-weight:bold;color:#67c23a">¥{{Number(p.payable||0).toFixed(2)}}</td><td :style="{color:Number(p.carry_after)<0?'#e74c3c':'#67c23a'}">¥{{Number(p.carry_after||0).toFixed(2)}}</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+`,data:function(){return {filter:{agent_id:'',start_month:'',end_month:''},previewRows:[],summary:{agents:[]},rates:{},historyList:[],historyDetail:null};},created:function(){var d=new Date();var y=d.getFullYear();var m=d.getMonth();if(m===0){y-=1;m=12;}this.filter.start_month=y+'-'+(m<10?'0':'')+m;this.filter.end_month=this.filter.start_month;this.$parent.loadAgents();this.loadPreview();this.loadHistory();},methods:{loadPreview:function(){var self=this;this.$parent.api('/admin/agent-settlement/preview',{agent_id:this.filter.agent_id,start_month:this.filter.start_month,end_month:this.filter.end_month},'GET').then(function(d){self.previewRows=(d.data&&d.data.rows)||[];self.summary=(d.data&&d.data.summary)||{agents:[]};self.rates=(d.data&&d.data.rates)||{};}).catch(function(e){self.$parent.toast(e.message,'error');});},confirmSettle:function(){var self=this;this.$parent.confirm2('确认结算所选月份并落账？落账后不可撤销，负数将自动挂账抵扣。',function(){self.$parent.api('/admin/agent-settlement/confirm',{agent_id:self.filter.agent_id,start_month:self.filter.start_month,end_month:self.filter.end_month}).then(function(d){self.$parent.toast('结算成功，批次 #'+(d.data&&d.data.batch_id));self.loadPreview();self.loadHistory();}).catch(function(e){self.$parent.toast(e.message,'error');});});},loadHistory:function(){var self=this;this.$parent.api('/admin/agent-settlement/history',{},'GET').then(function(d){self.historyList=(d.data||[]);}).catch(function(e){self.$parent.toast(e.message,'error');});},viewDetail:function(id){var self=this;this.$parent.api('/admin/agent-settlement/history/detail',{batch_id:id},'GET').then(function(d){self.historyDetail=d.data;}).catch(function(e){self.$parent.toast(e.message,'error');});},exportDetail:function(){if(!this.historyDetail)return;var rows=this.historyDetail.logs||[];var lines=['月份,代理商,订单数,押金,微信退款,余额,手续费,平台抽成,本月应结,已结算,本次应结'];rows.forEach(function(r){lines.push([r.settle_month,r.agent_name,r.order_count,Number(r.deposit_amount||0).toFixed(2),Number(r.refund_amount||0).toFixed(2),Number(r.balance_amount||0).toFixed(2),Number(r.fee_amount||0).toFixed(2),Number(r.commission_amount||0).toFixed(2),Number(r.settle_amount||0).toFixed(2),Number(r.settled_before||0).toFixed(2),Number(r.delta_amount||0).toFixed(2)].join(','));});var blob=new Blob(['\ufeff'+lines.join('\n')],{type:'text/csv;charset=utf-8'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='agent_settlement_'+this.historyDetail.batch.id+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);}}});
 
 // Finance pages (placeholders)
 Vue.component('page-settlement',{template:`

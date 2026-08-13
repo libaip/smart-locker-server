@@ -245,7 +245,7 @@ def offline_retrieve():
                 send_wx_subscribe_message(_notify_openid, 'UT0PehBf71OaahgZbqFfLPQt55BWc7tSz4D4NqCPDhE', {
                     "thing1": {"value": str(order.get("compartment_number", "")) + "号柜门"},
                     "time3": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}
-                })
+                }, page='pages/mine/mine')
                 logger.info(f'[offline_retrieve] 结束通知已发送: order={order["id"]}')
                 _dep = order.get('deposit_amount', 0)
                 if _dep > 0:
@@ -253,7 +253,7 @@ def offline_retrieve():
                         "amount2": {"value": str(_dep) + "元"},
                         "thing4": {"value": "押金已退至余额"},
                         "time5": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}
-                    })
+                    }, page='pages/mine/mine')
                     logger.info('[offline_retrieve] 退款通知已发送')
         except Exception as ne:
             logger.error(f'[offline_retrieve发送通知失败] {ne}')
@@ -337,7 +337,7 @@ def offline_retrieve_batch():
                     send_wx_subscribe_message(_nopenid, 'UT0PehBf71OaahgZbqFfLPQt55BWc7tSz4D4NqCPDhE', {
                         "thing1": {"value": str(_r_order_data.get("compartment_number", "")) + "号柜门"},
                         "time3": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}
-                    })
+                    }, page='pages/mine/mine')
                     logger.info('[offline_batch] 结束通知已发送')
                     _dep2 = _r_order_data.get('deposit_amount', 0)
                     if _dep2 > 0:
@@ -345,7 +345,7 @@ def offline_retrieve_batch():
                             "amount2": {"value": str(_dep2) + "元"},
                             "thing4": {"value": "押金已退至余额"},
                             "time5": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}
-                        })
+                        }, page='pages/mine/mine')
                         logger.info('[offline_batch] 退款通知已发送')
             except Exception as ne:
                 logger.error(f'[offline_batch发送通知失败] {ne}')

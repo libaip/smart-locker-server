@@ -741,7 +741,7 @@ def retrieve():
                         "thing7": {"value": "已退还至小程序用户钱包"},
                         "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}
                     }
-                    send_wx_subscribe_message("", "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"))
+                    send_wx_subscribe_message("", "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
                 except Exception as e:
                     logger.error(f"[retrieve发送订阅消息失败] {e}")
             conn.commit()
@@ -976,7 +976,7 @@ def retrieve_confirm():
                     "thing7": {"value": "已退还至小程序用户钱包"},
                     "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}
                 }
-                send_wx_subscribe_message('', "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"))
+                send_wx_subscribe_message('', "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page='pages/mine/mine')
             except Exception as e:
                 logger.error(f"[retrieve_confirm发送订阅消息失败] {e}")
         if refund_success:
@@ -1514,7 +1514,7 @@ def deposit_retrieve():
                             'thing7': {'value': '已退还至小程序用户钱包'},
                             'thing2': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                         }
-                        send_wx_subscribe_message('', '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', _nsd, phone=_n_phone)
+                        send_wx_subscribe_message('', '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', _nsd, phone=_n_phone, page='pages/mine/mine')
                     except Exception as _ne:
                         logger.error('[deposit_retrieve_notify1] '+ str(_ne))
                 else:
@@ -3796,7 +3796,6 @@ def _auto_process_self_complaint(complaint_id, phone, openid_val):
         conn.close()
     except Exception as e:
         logger.error(f"[_auto_process_self_complaint] {e}")
-
 
 
 

@@ -1048,7 +1048,7 @@ def admin_order_close():
                     'thing7': {'value': '已退还至小程序用户钱包'},
                     'thing2': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                 }
-                send_wx_subscribe_message('', '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data, phone=order_dict.get('user_phone'))
+                send_wx_subscribe_message('', '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data, phone=order_dict.get('user_phone'), page='pages/mine/mine')
                 # 退款通知在用户提现时发送，不在结束寄存时发送
             except Exception as e:
                 logger.error(f"[order_close发送订阅消息失败] {e}") 
@@ -5829,7 +5829,7 @@ def admin_device_clear_all():
                             'thing7': {'value': '已退还至小程序用户钱包'},
                             'thing2': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                         }
-                        send_wx_subscribe_message(mp_openid or '', '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data, phone=o_dict.get('user_phone'))
+                        send_wx_subscribe_message(mp_openid or '', '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data, phone=o_dict.get('user_phone'), page='pages/mine/mine')
                         notified += 1
                     except Exception as e:
                         logger.error(f'[clear_all] 发送订阅消息失败 order={o_dict["id"]}: {e}')

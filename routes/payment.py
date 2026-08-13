@@ -367,7 +367,7 @@ def pay_notify():
                         'time4': {'value': datetime.now().strftime('%Y-%m-%d %H:%M')},
                         'time5': {'value': datetime.now().strftime('%Y-%m-%d %H:%M')}
                     }
-                    send_wx_subscribe_message('', 'aUc6gRRMUXKxy94Pd6kLWaLGwzcutYMW_cQT_Hks1fg', subscribe_data, phone=order.get('user_phone'))
+                    send_wx_subscribe_message('', 'aUc6gRRMUXKxy94Pd6kLWaLGwzcutYMW_cQT_Hks1fg', subscribe_data, phone=order.get('user_phone'), page='pages/mine/mine')
             except Exception as e:
                 logger.error(f'[支付回调发送订阅消息失败] {e}')
         

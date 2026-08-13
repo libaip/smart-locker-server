@@ -1286,44 +1286,50 @@ Vue.component('page-agent-settlement',{template:`
 <div class="stat-card"><div class="stat-label">余额</div><div class="stat-value">¥{{(summary.balance_amount||0).toFixed(2)}}</div></div>
 <div class="stat-card"><div class="stat-label">手续费{{(rates.fee_rate||0)}}%</div><div class="stat-value">¥{{(summary.fee_amount||0).toFixed(2)}}</div></div>
 <div class="stat-card"><div class="stat-label">平台抽成{{(rates.commission_rate||0)}}%</div><div class="stat-value">¥{{(summary.commission_amount||0).toFixed(2)}}</div></div>
+<div class="stat-card"><div class="stat-label">收费收益(使用费)</div><div class="stat-value">¥{{(summary.per_use_amount||0).toFixed(2)}}</div></div>
+<div class="stat-card"><div class="stat-label">收费手续费{{(rates.fee_rate||0)}}%</div><div class="stat-value">¥{{(summary.per_use_fee_amount||0).toFixed(2)}}</div></div>
 <div class="stat-card"><div class="stat-label">本次应结</div><div class="stat-value" style="color:#67c23a">¥{{(summary.delta_amount||0).toFixed(2)}}</div></div>
 <div class="stat-card"><div class="stat-label">待抵扣余额</div><div class="stat-value" style="color:#e74c3c">¥{{(summary.carry_total||0).toFixed(2)}}</div></div>
 </div>
 <table>
-<thead><tr><th>月份</th><th>代理商</th><th>订单数</th><th>押金</th><th>微信退款</th><th>余额</th><th>手续费</th><th>平台抽成</th><th>本月应结</th><th>已结算</th><th>本次应结</th><th>明细</th></tr></thead>
+<thead><tr><th>月份</th><th>代理商</th><th>订单数</th><th>押金</th><th>微信退款</th><th>余额</th><th>手续费</th><th>平台抽成</th><th>收费收益</th><th>收费手续费</th><th>收费应结</th><th>本月应结</th><th>已结算</th><th>本次应结</th><th>明细</th></tr></thead>
 <tbody>
 <tr v-for="r in previewRows" :key="r.agent_id+'-'+r.settle_month">
 <td>{{r.settle_month}}</td><td>{{r.agent_name}}</td><td>{{r.order_count}}</td>
 <td>¥{{r.deposit_amount.toFixed(2)}}</td><td>¥{{r.refund_amount.toFixed(2)}}</td><td>¥{{r.balance_amount.toFixed(2)}}</td>
 <td>¥{{r.fee_amount.toFixed(2)}}</td><td>¥{{r.commission_amount.toFixed(2)}}</td><td>¥{{r.settle_amount.toFixed(2)}}</td><td>¥{{r.settled_before.toFixed(2)}}</td>
+<td>¥{{r.per_use_amount.toFixed(2)}}</td><td>¥{{r.per_use_fee_amount.toFixed(2)}}</td><td>¥{{r.per_use_settle_amount.toFixed(2)}}</td>
 <td :style="{color:r.delta_amount<0?'#e74c3c':'#67c23a',fontWeight:'bold'}">¥{{r.delta_amount.toFixed(2)}}</td>
 <td><button class="btn btn-sm" @click="togglePreview(r.agent_id,r.settle_month)">{{isPreviewExpanded(r.agent_id,r.settle_month)?'收起':'明细'}}</button></td>
 </tr>
 <tr v-if="isPreviewExpanded(r.agent_id,r.settle_month)" v-for="r in previewRows" :key="'loc-'+r.agent_id+'-'+r.settle_month">
-<td colspan="12" style="padding:0">
+<td colspan="15" style="padding:0">
 <table style="margin:8px 0 8px 24px;width:calc(100% - 24px)">
-<thead><tr><th>网点</th><th>订单数</th><th>收(押金)</th><th>退(微信退款)</th><th>余额</th><th>手续费</th><th>抽成</th><th>应结</th></tr></thead>
+<thead><tr><th>网点</th><th>订单数</th><th>收(押金)</th><th>退(微信退款)</th><th>余额</th><th>手续费</th><th>抽成</th><th>收费收益</th><th>收费手续费</th><th>收费应结</th><th>应结</th></tr></thead>
 <tbody>
 <tr v-for="loc in (r.locations||[])">
 <td>{{loc.location_name}}</td><td>{{loc.order_count}}</td>
 <td>¥{{Number(loc.deposit_amount||0).toFixed(2)}}</td><td>¥{{Number(loc.refund_amount||0).toFixed(2)}}</td><td>¥{{Number(loc.balance_amount||0).toFixed(2)}}</td>
-<td>¥{{Number(loc.fee_amount||0).toFixed(2)}}</td><td>¥{{Number(loc.commission_amount||0).toFixed(2)}}</td><td>¥{{Number(loc.settle_amount||0).toFixed(2)}}</td>
+<td>¥{{Number(loc.fee_amount||0).toFixed(2)}}</td><td>¥{{Number(loc.commission_amount||0).toFixed(2)}}</td>
+<td>¥{{Number(loc.per_use_amount||0).toFixed(2)}}</td><td>¥{{Number(loc.per_use_fee_amount||0).toFixed(2)}}</td><td>¥{{Number(loc.per_use_settle_amount||0).toFixed(2)}}</td><td>¥{{Number(loc.settle_amount||0).toFixed(2)}}</td>
 </tr>
-<tr v-if="!(r.locations||[]).length"><td colspan="8" class="empty-row">暂无网点明细</td></tr>
+<tr v-if="!(r.locations||[]).length"><td colspan="11" class="empty-row">暂无网点明细</td></tr>
 </tbody>
 </table>
 </td>
 </tr>
-<tr v-if="!previewRows.length"><td colspan="12" class="empty-row">暂无数据，请先试算</td></tr>
+<tr v-if="!previewRows.length"><td colspan="15" class="empty-row">暂无数据，请先试算</td></tr>
 </tbody>
 </table>
 <div v-if="summary.agents && summary.agents.length" style="margin-top:12px">
 <div class="box-header"><h3>按代理商汇总（含待抵扣）</h3></div>
 <table>
-<thead><tr><th>代理商</th><th>本次应结合计</th><th>待抵扣余额</th><th>抵扣后净值</th><th>本次应付</th></tr></thead>
+<thead><tr><th>代理商</th><th>本次应结合计</th><th>收费收益</th><th>收费手续费</th><th>收费应结</th><th>待抵扣余额</th><th>抵扣后净值</th><th>本次应付</th></tr></thead>
 <tbody>
 <tr v-for="a in summary.agents">
-<td>{{a.agent_name}}</td><td>¥{{a.delta_sum.toFixed(2)}}</td><td>¥{{a.carry.toFixed(2)}}</td><td :style="{color:a.net<0?'#e74c3c':'#67c23a'}">¥{{a.net.toFixed(2)}}</td><td style="font-weight:bold;color:#67c23a">¥{{a.payable.toFixed(2)}}</td>
+<td>{{a.agent_name}}</td><td>¥{{a.delta_sum.toFixed(2)}}</td>
+<td>¥{{(a.per_use_amount||0).toFixed(2)}}</td><td>¥{{(a.per_use_fee_amount||0).toFixed(2)}}</td><td>¥{{(a.per_use_settle_amount||0).toFixed(2)}}</td>
+<td>¥{{a.carry.toFixed(2)}}</td><td :style="{color:a.net<0?'#e74c3c':'#67c23a'}">¥{{a.net.toFixed(2)}}</td><td style="font-weight:bold;color:#67c23a">¥{{a.payable.toFixed(2)}}</td>
 </tr>
 </tbody>
 </table>
@@ -1345,26 +1351,28 @@ Vue.component('page-agent-settlement',{template:`
 <div v-if="historyDetail" style="margin-top:20px">
 <div class="box-header"><h3>批次 #{{historyDetail.batch.id}} 明细</h3><button class="btn btn-sm" @click="exportDetail()">导出CSV</button> <button class="btn btn-sm" @click="historyDetail=null">关闭</button></div>
 <table>
-<thead><tr><th>月份</th><th>代理商</th><th>订单数</th><th>押金</th><th>微信退款</th><th>余额</th><th>手续费</th><th>平台抽成</th><th>本月应结</th><th>已结算</th><th>本次应结</th><th>明细</th></tr></thead>
+<thead><tr><th>月份</th><th>代理商</th><th>订单数</th><th>押金</th><th>微信退款</th><th>余额</th><th>手续费</th><th>平台抽成</th><th>收费收益</th><th>收费手续费</th><th>收费应结</th><th>本月应结</th><th>已结算</th><th>本次应结</th><th>明细</th></tr></thead>
 <tbody>
 <tr v-for="r in historyDetail.logs">
 <td>{{r.settle_month}}</td><td>{{r.agent_name}}</td><td>{{r.order_count}}</td>
 <td>¥{{Number(r.deposit_amount||0).toFixed(2)}}</td><td>¥{{Number(r.refund_amount||0).toFixed(2)}}</td><td>¥{{Number(r.balance_amount||0).toFixed(2)}}</td>
 <td>¥{{Number(r.fee_amount||0).toFixed(2)}}</td><td>¥{{Number(r.commission_amount||0).toFixed(2)}}</td><td>¥{{Number(r.settle_amount||0).toFixed(2)}}</td><td>¥{{Number(r.settled_before||0).toFixed(2)}}</td>
+<td>¥{{Number(r.per_use_amount||0).toFixed(2)}}</td><td>¥{{Number(r.per_use_fee_amount||0).toFixed(2)}}</td><td>¥{{Number(r.per_use_settle_amount||0).toFixed(2)}}</td>
 <td :style="{color:Number(r.delta_amount)<0?'#e74c3c':'#67c23a',fontWeight:'bold'}">¥{{Number(r.delta_amount||0).toFixed(2)}}</td>
 <td><button class="btn btn-sm" @click="toggleDetail(r.id)">{{isDetailExpanded(r.id)?'收起':'明细'}}</button></td>
 </tr>
 <tr v-if="isDetailExpanded(r.id)" v-for="r in historyDetail.logs" :key="'dloc-'+r.id">
-<td colspan="12" style="padding:0">
+<td colspan="15" style="padding:0">
 <table style="margin:8px 0 8px 24px;width:calc(100% - 24px)">
-<thead><tr><th>网点</th><th>订单数</th><th>收(押金)</th><th>退(微信退款)</th><th>余额</th><th>手续费</th><th>抽成</th><th>应结</th></tr></thead>
+<thead><tr><th>网点</th><th>订单数</th><th>收(押金)</th><th>退(微信退款)</th><th>余额</th><th>手续费</th><th>抽成</th><th>收费收益</th><th>收费手续费</th><th>收费应结</th><th>应结</th></tr></thead>
 <tbody>
 <tr v-for="loc in (r.locations||[])">
 <td>{{loc.location_name}}</td><td>{{loc.order_count}}</td>
 <td>¥{{Number(loc.deposit_amount||0).toFixed(2)}}</td><td>¥{{Number(loc.refund_amount||0).toFixed(2)}}</td><td>¥{{Number(loc.balance_amount||0).toFixed(2)}}</td>
-<td>¥{{Number(loc.fee_amount||0).toFixed(2)}}</td><td>¥{{Number(loc.commission_amount||0).toFixed(2)}}</td><td>¥{{Number(loc.settle_amount||0).toFixed(2)}}</td>
+<td>¥{{Number(loc.fee_amount||0).toFixed(2)}}</td><td>¥{{Number(loc.commission_amount||0).toFixed(2)}}</td>
+<td>¥{{Number(loc.per_use_amount||0).toFixed(2)}}</td><td>¥{{Number(loc.per_use_fee_amount||0).toFixed(2)}}</td><td>¥{{Number(loc.per_use_settle_amount||0).toFixed(2)}}</td><td>¥{{Number(loc.settle_amount||0).toFixed(2)}}</td>
 </tr>
-<tr v-if="!(r.locations||[]).length"><td colspan="8" class="empty-row">暂无网点明细</td></tr>
+<tr v-if="!(r.locations||[]).length"><td colspan="11" class="empty-row">暂无网点明细</td></tr>
 </tbody>
 </table>
 </td>
@@ -1383,7 +1391,7 @@ Vue.component('page-agent-settlement',{template:`
 </div>
 </div>
 </div>
-`,data:function(){return {filter:{agent_id:'',start_month:'',end_month:''},previewRows:[],summary:{agents:[]},rates:{},historyList:[],historyDetail:null,expandedPreview:{},expandedDetail:{}};},created:function(){var d=new Date();var y=d.getFullYear();var m=d.getMonth();if(m===0){y-=1;m=12;}this.filter.start_month=y+'-'+(m<10?'0':'')+m;this.filter.end_month=this.filter.start_month;this.$parent.loadAgents();this.loadPreview();this.loadHistory();},methods:{loadPreview:function(){var self=this;this.$parent.api('/admin/agent-settlement/preview',{agent_id:this.filter.agent_id,start_month:this.filter.start_month,end_month:this.filter.end_month},'GET').then(function(d){self.previewRows=(d.data&&d.data.rows)||[];self.summary=(d.data&&d.data.summary)||{agents:[]};self.rates=(d.data&&d.data.rates)||{};self.expandedPreview={};}).catch(function(e){self.$parent.toast(e.message,'error');});},togglePreview:function(aid,m){var k=aid+'-'+m;this.$set(this.expandedPreview,k,!this.expandedPreview[k]);},isPreviewExpanded:function(aid,m){return !!this.expandedPreview[aid+'-'+m];},confirmSettle:function(){var self=this;this.$parent.confirm2('确认结算所选月份并落账？落账后不可撤销，负数将自动挂账抵扣。',function(){self.$parent.api('/admin/agent-settlement/confirm',{agent_id:self.filter.agent_id,start_month:self.filter.start_month,end_month:self.filter.end_month}).then(function(d){self.$parent.toast('结算成功，批次 #'+(d.data&&d.data.batch_id));self.loadPreview();self.loadHistory();}).catch(function(e){self.$parent.toast(e.message,'error');});});},loadHistory:function(){var self=this;this.$parent.api('/admin/agent-settlement/history',{},'GET').then(function(d){self.historyList=(d.data||[]);}).catch(function(e){self.$parent.toast(e.message,'error');});},viewDetail:function(id){var self=this;this.$parent.api('/admin/agent-settlement/history/detail',{batch_id:id},'GET').then(function(d){self.historyDetail=d.data;self.expandedDetail={};}).catch(function(e){self.$parent.toast(e.message,'error');});},toggleDetail:function(id){this.$set(this.expandedDetail,id,!this.expandedDetail[id]);},isDetailExpanded:function(id){return !!this.expandedDetail[id];},exportDetail:function(){if(!this.historyDetail)return;var rows=this.historyDetail.logs||[];var lines=['月份,代理商,网点,订单数,收(押金),退(微信退款),余额,手续费,抽成,应结'];rows.forEach(function(r){lines.push([r.settle_month,r.agent_name,r.location_name||'合计',r.order_count,Number(r.deposit_amount||0).toFixed(2),Number(r.refund_amount||0).toFixed(2),Number(r.balance_amount||0).toFixed(2),Number(r.fee_amount||0).toFixed(2),Number(r.commission_amount||0).toFixed(2),Number(r.settle_amount||0).toFixed(2)].join(','));(r.locations||[]).forEach(function(loc){lines.push([r.settle_month,r.agent_name,loc.location_name,loc.order_count,Number(loc.deposit_amount||0).toFixed(2),Number(loc.refund_amount||0).toFixed(2),Number(loc.balance_amount||0).toFixed(2),Number(loc.fee_amount||0).toFixed(2),Number(loc.commission_amount||0).toFixed(2),Number(loc.settle_amount||0).toFixed(2)].join(','));});});var blob=new Blob(['\ufeff'+lines.join('\n')],{type:'text/csv;charset=utf-8'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='agent_settlement_'+this.historyDetail.batch.id+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);}}});
+`,data:function(){return {filter:{agent_id:'',start_month:'',end_month:''},previewRows:[],summary:{agents:[]},rates:{},historyList:[],historyDetail:null,expandedPreview:{},expandedDetail:{}};},created:function(){var d=new Date();var y=d.getFullYear();var m=d.getMonth();if(m===0){y-=1;m=12;}this.filter.start_month=y+'-'+(m<10?'0':'')+m;this.filter.end_month=this.filter.start_month;this.$parent.loadAgents();this.loadPreview();this.loadHistory();},methods:{loadPreview:function(){var self=this;this.$parent.api('/admin/agent-settlement/preview',{agent_id:this.filter.agent_id,start_month:this.filter.start_month,end_month:this.filter.end_month},'GET').then(function(d){self.previewRows=(d.data&&d.data.rows)||[];self.summary=(d.data&&d.data.summary)||{agents:[]};self.rates=(d.data&&d.data.rates)||{};self.expandedPreview={};}).catch(function(e){self.$parent.toast(e.message,'error');});},togglePreview:function(aid,m){var k=aid+'-'+m;this.$set(this.expandedPreview,k,!this.expandedPreview[k]);},isPreviewExpanded:function(aid,m){return !!this.expandedPreview[aid+'-'+m];},confirmSettle:function(){var self=this;this.$parent.confirm2('确认结算所选月份并落账？落账后不可撤销，负数将自动挂账抵扣。',function(){self.$parent.api('/admin/agent-settlement/confirm',{agent_id:self.filter.agent_id,start_month:self.filter.start_month,end_month:self.filter.end_month}).then(function(d){self.$parent.toast('结算成功，批次 #'+(d.data&&d.data.batch_id));self.loadPreview();self.loadHistory();}).catch(function(e){self.$parent.toast(e.message,'error');});});},loadHistory:function(){var self=this;this.$parent.api('/admin/agent-settlement/history',{},'GET').then(function(d){self.historyList=(d.data||[]);}).catch(function(e){self.$parent.toast(e.message,'error');});},viewDetail:function(id){var self=this;this.$parent.api('/admin/agent-settlement/history/detail',{batch_id:id},'GET').then(function(d){self.historyDetail=d.data;self.expandedDetail={};}).catch(function(e){self.$parent.toast(e.message,'error');});},toggleDetail:function(id){this.$set(this.expandedDetail,id,!this.expandedDetail[id]);},isDetailExpanded:function(id){return !!this.expandedDetail[id];},exportDetail:function(){if(!this.historyDetail)return;var rows=this.historyDetail.logs||[];var lines=['月份,代理商,网点,订单数,收(押金),退(微信退款),余额,手续费,抽成,收费收益,收费手续费,收费应结,应结'];rows.forEach(function(r){lines.push([r.settle_month,r.agent_name,r.location_name||'合计',r.order_count,Number(r.deposit_amount||0).toFixed(2),Number(r.refund_amount||0).toFixed(2),Number(r.balance_amount||0).toFixed(2),Number(r.fee_amount||0).toFixed(2),Number(r.commission_amount||0).toFixed(2),Number(r.per_use_amount||0).toFixed(2),Number(r.per_use_fee_amount||0).toFixed(2),Number(r.per_use_settle_amount||0).toFixed(2),Number(r.settle_amount||0).toFixed(2)].join(','));(r.locations||[]).forEach(function(loc){lines.push([r.settle_month,r.agent_name,loc.location_name,loc.order_count,Number(loc.deposit_amount||0).toFixed(2),Number(loc.refund_amount||0).toFixed(2),Number(loc.balance_amount||0).toFixed(2),Number(loc.fee_amount||0).toFixed(2),Number(loc.commission_amount||0).toFixed(2),Number(loc.per_use_amount||0).toFixed(2),Number(loc.per_use_fee_amount||0).toFixed(2),Number(loc.per_use_settle_amount||0).toFixed(2),Number(loc.settle_amount||0).toFixed(2)].join(','));});});var blob=new Blob(['\ufeff'+lines.join('\n')],{type:'text/csv;charset=utf-8'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='agent_settlement_'+this.historyDetail.batch.id+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);}}});
 
 // Finance pages (placeholders)
 Vue.component('page-settlement',{template:`

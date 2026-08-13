@@ -1945,7 +1945,8 @@ def _agent_settle_calc_month(c, agent_id, month, commission_rate, fee_rate):
     c.execute('''
         SELECT COUNT(*) AS order_count,
                COALESCE(SUM(o.deposit_amount), 0) AS deposit_amount,
-               COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END), 0) AS refund_amount
+               COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END), 0) AS refund_amount,
+               COALESCE(SUM(o.per_use_price), 0) AS per_use_amount
         FROM orders o
         JOIN cabinets cab ON o.cabinet_id = cab.id
         JOIN locations l ON cab.location_id = l.id
@@ -1960,7 +1961,10 @@ def _agent_settle_calc_month(c, agent_id, month, commission_rate, fee_rate):
     balance = _m2(deposit - refund)
     fee = _m2(balance * fee_rate / 100.0)
     commission = _m2(deposit * commission_rate / 100.0)
-    settle = _m2(balance - fee - commission)
+    per_use = _m2(row['per_use_amount'] or 0)
+    per_use_fee = _m2(per_use * fee_rate / 100.0)
+    per_use_settle = _m2(per_use - per_use_fee)
+    settle = _m2(balance - fee - commission + per_use_settle)
     c.execute('SELECT COALESCE(SUM(delta_amount), 0) AS h FROM agent_settlement_logs WHERE agent_id=%s AND settle_month=%s',
               (agent_id, month))
     settled_before = _m2(c.fetchone()['h'] or 0)
@@ -1972,6 +1976,9 @@ def _agent_settle_calc_month(c, agent_id, month, commission_rate, fee_rate):
         'balance_amount': balance,
         'fee_amount': fee,
         'commission_amount': commission,
+        'per_use_amount': per_use,
+        'per_use_fee_amount': per_use_fee,
+        'per_use_settle_amount': per_use_settle,
         'settle_amount': settle,
         'settled_before': settled_before,
         'delta_amount': delta,
@@ -2001,7 +2008,8 @@ def _agent_settle_calc_locations(c, agent_id, month, agent_calc, commission_rate
         SELECT l.id AS location_id, l.name AS location_name,
                COUNT(o.id) AS order_count,
                COALESCE(SUM(o.deposit_amount), 0) AS deposit_amount,
-               COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END), 0) AS refund_amount
+               COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END), 0) AS refund_amount,
+               COALESCE(SUM(o.per_use_price), 0) AS per_use_amount
         FROM orders o
         JOIN cabinets cab ON o.cabinet_id = cab.id
         JOIN locations l ON cab.location_id = l.id
@@ -2016,16 +2024,20 @@ def _agent_settle_calc_locations(c, agent_id, month, agent_calc, commission_rate
         return []
     fee_cents = int(round(agent_calc['fee_amount'] * 100))
     comm_cents = int(round(agent_calc['commission_amount'] * 100))
+    per_use_fee_cents = int(round(agent_calc['per_use_fee_amount'] * 100))
     raw_fees = []
     raw_comms = []
+    raw_per_use_fees = []
     for r in rows:
         dep = float(r['deposit_amount'] or 0)
         ref = float(r['refund_amount'] or 0)
         bal = dep - ref
         raw_fees.append(bal * fee_rate / 100.0)
         raw_comms.append(dep * commission_rate / 100.0)
+        raw_per_use_fees.append(float(r['per_use_amount'] or 0) * fee_rate / 100.0)
     fee_shares = _allocate_cents(fee_cents, raw_fees)
     comm_shares = _allocate_cents(comm_cents, raw_comms)
+    per_use_fee_shares = _allocate_cents(per_use_fee_cents, raw_per_use_fees)
     out = []
     for i, r in enumerate(rows):
         dep = _m2(r['deposit_amount'] or 0)
@@ -2033,7 +2045,10 @@ def _agent_settle_calc_locations(c, agent_id, month, agent_calc, commission_rate
         bal = _m2(dep - ref)
         fee = fee_shares[i]
         comm = comm_shares[i]
-        settle = _m2(bal - fee - comm)
+        per_use = _m2(r['per_use_amount'] or 0)
+        per_use_fee = per_use_fee_shares[i]
+        per_use_settle = _m2(per_use - per_use_fee)
+        settle = _m2(bal - fee - comm + per_use_settle)
         out.append({
             'location_id': r['location_id'],
             'location_name': r['location_name'],
@@ -2043,6 +2058,9 @@ def _agent_settle_calc_locations(c, agent_id, month, agent_calc, commission_rate
             'balance_amount': bal,
             'fee_amount': fee,
             'commission_amount': comm,
+            'per_use_amount': per_use,
+            'per_use_fee_amount': per_use_fee,
+            'per_use_settle_amount': per_use_settle,
             'settle_amount': settle,
         })
     return out
@@ -2105,6 +2123,9 @@ def admin_agent_settlement_preview():
             'balance_amount': _m2(sum(r['balance_amount'] for r in rows)),
             'fee_amount': _m2(sum(r['fee_amount'] for r in rows)),
             'commission_amount': _m2(sum(r['commission_amount'] for r in rows)),
+            'per_use_amount': _m2(sum(r['per_use_amount'] for r in rows)),
+            'per_use_fee_amount': _m2(sum(r['per_use_fee_amount'] for r in rows)),
+            'per_use_settle_amount': _m2(sum(r['per_use_settle_amount'] for r in rows)),
             'settle_amount': _m2(sum(r['settle_amount'] for r in rows)),
             'settled_before': _m2(sum(r['settled_before'] for r in rows)),
             'delta_amount': _m2(sum(r['delta_amount'] for r in rows)),
@@ -2119,6 +2140,9 @@ def admin_agent_settlement_preview():
                 'agent_id': agent['id'],
                 'agent_name': agent['name'],
                 'delta_sum': delta_sum,
+                'per_use_amount': _m2(sum(r['per_use_amount'] for r in agent_rows)),
+                'per_use_fee_amount': _m2(sum(r['per_use_fee_amount'] for r in agent_rows)),
+                'per_use_settle_amount': _m2(sum(r['per_use_settle_amount'] for r in agent_rows)),
                 'carry': carry,
                 'net': net,
                 'payable': _m2(max(0, net))
@@ -2181,11 +2205,12 @@ def admin_agent_settlement_confirm():
                 c.execute('''
                     INSERT INTO agent_settlement_logs
                     (batch_id, agent_id, agent_name, settle_month, order_count, deposit_amount, refund_amount,
-                     balance_amount, fee_amount, commission_amount, settle_amount, settled_before, delta_amount,
-                     location_detail)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     balance_amount, fee_amount, commission_amount, per_use_amount, per_use_fee_amount,
+                     per_use_settle_amount, settle_amount, settled_before, delta_amount, location_detail)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ''', (batch_id, agent['id'], agent['name'], month, calc['order_count'], calc['deposit_amount'],
                       calc['refund_amount'], calc['balance_amount'], calc['fee_amount'], calc['commission_amount'],
+                      calc['per_use_amount'], calc['per_use_fee_amount'], calc['per_use_settle_amount'],
                       calc['settle_amount'], calc['settled_before'], calc['delta_amount'],
                       json.dumps(locations, ensure_ascii=False)))
                 agent_delta[agent['id']] = _m2(agent_delta.get(agent['id'], 0) + calc['delta_amount'])

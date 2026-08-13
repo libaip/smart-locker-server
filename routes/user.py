@@ -145,7 +145,26 @@ def _resolve_mp_openid(cursor, mp_openid='', openid='', phone=''):
                 return _r['mp_openid']
         except Exception:
             pass
-        # 从 phone_openids 按 openid 查（mp_openid 或 openid 都行）
+        # 从 users 按 openid 查（公众号 openid）
+        try:
+            cursor.execute("SELECT mp_openid, openid FROM users WHERE openid = %s LIMIT 1", (openid,))
+            _r = cursor.fetchone()
+            if _r:
+                if _r['mp_openid']:
+                    return _r['mp_openid']
+                elif _r['openid']:
+                    return _r['openid']
+        except Exception:
+            pass
+        # 从 users 按 mp_openid 查（小程序 openid）
+        try:
+            cursor.execute("SELECT mp_openid FROM users WHERE mp_openid = %s LIMIT 1", (openid,))
+            _r = cursor.fetchone()
+            if _r and _r['mp_openid']:
+                return _r['mp_openid']
+        except Exception:
+            pass
+        # 旧表兜底：从 phone_openids 按 openid 查（mp_openid 或 openid 都行）
         try:
             cursor.execute("SELECT mp_openid, openid FROM phone_openids WHERE openid = %s LIMIT 1", (openid,))
             _r = cursor.fetchone()
@@ -156,7 +175,7 @@ def _resolve_mp_openid(cursor, mp_openid='', openid='', phone=''):
                     return _r['openid']
         except Exception:
             pass
-        # 从 phone_openids 按 mp_openid 查（小程序openid存这里）
+        # 旧表兜底：从 phone_openids 按 mp_openid 查
         try:
             cursor.execute("SELECT mp_openid FROM phone_openids WHERE mp_openid = %s LIMIT 1", (openid,))
             _r = cursor.fetchone()
@@ -209,10 +228,17 @@ def _resolve_order_identity(cursor, phone, openid='', unionid='', mp_openid=''):
             if not unionid and row.get('unionid'):
                 unionid = row['unionid']
         if phone and (openid or mp_openid or unionid):
+            _sp_name = 'sp_upsert_phone_openid'
             try:
+                cursor.execute('SAVEPOINT %s' % _sp_name)
                 upsert_phone_openid_row(cursor, phone=phone, openid=openid, mp_openid=mp_openid, unionid=unionid)
-            except Exception:
-                pass
+                cursor.execute('RELEASE SAVEPOINT %s' % _sp_name)
+            except Exception as _ue:
+                try:
+                    cursor.execute('ROLLBACK TO SAVEPOINT %s' % _sp_name)
+                except Exception:
+                    pass
+                logger.warning(f'[_resolve_order_identity] upsert_phone_openid_row failed: {_ue}')
     except Exception:
         pass
     return openid or '', unionid or '', mp_openid or ''
@@ -224,7 +250,7 @@ def _find_bound_phone_by_identity(cursor, openid='', unionid='', mp_openid='', e
     for column, value in (('openid', openid), ('mp_openid', mp_openid)):
         if not value:
             continue
-        for table in ('phone_openids', 'user_balances', 'users'):
+        for table in ('users', 'user_balances', 'phone_openids'):
             try:
                 cursor.execute(f"SELECT phone FROM {table} WHERE {column} = %s AND NULLIF(phone, '') IS NOT NULL", (value,))
                 for row in cursor.fetchall():
@@ -234,14 +260,15 @@ def _find_bound_phone_by_identity(cursor, openid='', unionid='', mp_openid='', e
             except Exception:
                 pass
     if unionid:
-        try:
-            cursor.execute("SELECT phone FROM phone_openids WHERE unionid = %s AND NULLIF(phone, '') IS NOT NULL", (unionid,))
-            for row in cursor.fetchall():
-                p = row['phone'] if 'phone' in row else row[0]
-                if p and p != exclude_phone and p not in phones:
-                    phones.append(p)
-        except Exception:
-            pass
+        for _tbl in ('users', 'phone_openids'):
+            try:
+                cursor.execute(f"SELECT phone FROM {_tbl} WHERE unionid = %s AND NULLIF(phone, '') IS NOT NULL", (unionid,))
+                for row in cursor.fetchall():
+                    p = row['phone'] if 'phone' in row else row[0]
+                    if p and p != exclude_phone and p not in phones:
+                        phones.append(p)
+            except Exception:
+                pass
     return phones
 
 
@@ -252,6 +279,13 @@ def _canonical_phone_for_identity(cursor, openid='', unionid='', mp_openid='', f
         return fallback_phone or ''
     for column, value in (('openid', openid), ('mp_openid', mp_openid), ('unionid', unionid)):
         if value:
+            try:
+                cursor.execute(f"SELECT phone FROM users WHERE {column} = %s AND NULLIF(phone, '') IS NOT NULL ORDER BY id LIMIT 1", (value,))
+                row = cursor.fetchone()
+                if row:
+                    return row['phone'] if 'phone' in row else row[0]
+            except Exception:
+                pass
             try:
                 cursor.execute(f"SELECT phone FROM phone_openids WHERE {column} = %s AND NULLIF(phone, '') IS NOT NULL ORDER BY id LIMIT 1", (value,))
                 row = cursor.fetchone()
@@ -427,11 +461,11 @@ def store_init():
 
         claimed_slot = None
         for _attempt in range(5):
-            cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id LEFT JOIN orders o ON o.slot_id = cs.id WHERE c.id = %s AND cs.status = 1 AND cs.slot_size = %s GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1',
+            cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id LEFT JOIN orders o ON o.slot_id = cs.id WHERE c.id = %s AND cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) AND cs.slot_size = %s GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1',
                            (cabinet_id, slot_size))
             slot = cursor.fetchone()
             if not slot:
-                cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id LEFT JOIN orders o ON o.slot_id = cs.id WHERE c.id = %s AND cs.status = 1 GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1',
+                cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id LEFT JOIN orders o ON o.slot_id = cs.id WHERE c.id = %s AND cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1',
                                (cabinet_id,))
                 slot = cursor.fetchone()
             if not slot:
@@ -442,6 +476,13 @@ def store_init():
                 break
         slot = claimed_slot
         if not slot:
+            conn.close()
+            return json_response(message='暂无可用柜格', code=400)
+        # 兜底：分配到的柜门如果已有未结束订单，禁止下单并释放柜门
+        cursor.execute('SELECT 1 FROM orders WHERE slot_id = %s AND status = 2 LIMIT 1', (slot['id'],))
+        if cursor.fetchone():
+            cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (slot['id'],))
+            conn.commit()
             conn.close()
             return json_response(message='暂无可用柜格', code=400)
 
@@ -577,11 +618,11 @@ def store_legacy():
         cursor = conn.cursor()
         claimed_slot = None
         for _attempt in range(5):
-            cursor.execute('SELECT cs.* FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id WHERE c.id = %s AND cs.status = 1 AND cs.slot_size = %s LIMIT 1',
+            cursor.execute('SELECT cs.* FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id WHERE c.id = %s AND cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) AND cs.slot_size = %s LIMIT 1',
                            (cabinet_id, compartment_size))
             slot = cursor.fetchone()
             if not slot:
-                cursor.execute('SELECT cs.* FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id WHERE c.id = %s AND cs.status = 1 LIMIT 1', (cabinet_id,))
+                cursor.execute('SELECT cs.* FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id WHERE c.id = %s AND cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) LIMIT 1', (cabinet_id,))
                 slot = cursor.fetchone()
             if not slot:
                 break
@@ -591,6 +632,13 @@ def store_legacy():
                 break
         slot = claimed_slot
         if not slot:
+            conn.close()
+            return json_response(message='暂无可用柜格', code=400)
+        # 兜底：分配到的柜门如果已有未结束订单，禁止下单并释放柜门
+        cursor.execute('SELECT 1 FROM orders WHERE slot_id = %s AND status = 2 LIMIT 1', (slot['id'],))
+        if cursor.fetchone():
+            cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (slot['id'],))
+            conn.commit()
             conn.close()
             return json_response(message='暂无可用柜格', code=400)
         cursor.execute('INSERT INTO storage_records (cabinet_id, compartment_number, user_phone, access_code, status, store_time) VALUES (%s, %s, %s, %s, 2, %s)',
@@ -825,7 +873,7 @@ def retrieve_confirm():
             return json_response(message='参数不完整', code=400)
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT o.*, c.mainboard_device_id, c.cabinet_code FROM orders o JOIN cabinets c ON o.cabinet_id = c.id WHERE o.id = %s', (order_id,))
+        cursor.execute('SELECT o.*, c.mainboard_device_id, c.cabinet_code, c.mainboard_source, cs.slot_number, cs.board_no, cs.lock_no FROM orders o JOIN cabinets c ON o.cabinet_id = c.id LEFT JOIN cabinet_slots cs ON o.slot_id = cs.id WHERE o.id = %s', (order_id,))
         order = cursor.fetchone()
         if not order:
             conn.close()
@@ -862,6 +910,28 @@ def retrieve_confirm():
             conn.close()
             return json_response(message='订单刚创建，请稍后再试', code=400)
 
+        # 先发远程开门指令，开门指令发出成功后才允许结束订单，避免“订单关了门没开”
+        try:
+            from helpers import send_open_lock
+            _open_ok = send_open_lock(
+                order['mainboard_device_id'],
+                order.get('board_no') or 1,
+                order.get('lock_no') or 1,
+                protocol=order.get('mainboard_source') or 'YBM',
+                order_id=order.get('order_no', str(order_id)),
+                slot_number=order.get('slot_number') or order.get('compartment_number'),
+                skip_dedup=True,
+                require_online=True,
+                manual=True,
+            )
+            if not _open_ok:
+                conn.close()
+                return json_response(message='开门指令发送失败，订单未结束，请稍后再试', code=400)
+            logger.info(f'[retrieve_confirm] send_open_lock called: device={order["mainboard_device_id"]}, board={order.get("board_no")}, lock={order.get("lock_no")}')
+        except Exception as _we:
+            logger.error(f'[retrieve_confirm] send_open_lock失败: {_we}')
+            conn.close()
+            return json_response(message='开门指令发送失败，订单未结束，请稍后再试', code=400)
 
         deposit_amount = order['deposit_amount']
         transaction_id = order['transaction_id']
@@ -998,11 +1068,11 @@ def create_deposit_order():
 
         claimed_slot = None
         for _attempt in range(5):
-            cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id LEFT JOIN orders o ON o.slot_id = cs.id WHERE c.id = %s AND cs.status = 1 AND cs.slot_size = %s GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1',
+            cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id LEFT JOIN orders o ON o.slot_id = cs.id WHERE c.id = %s AND cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) AND cs.slot_size = %s GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1',
                            (cabinet_id, slot_size))
             slot = cursor.fetchone()
             if not slot:
-                cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id LEFT JOIN orders o ON o.slot_id = cs.id WHERE c.id = %s AND cs.status = 1 GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1',
+                cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id LEFT JOIN orders o ON o.slot_id = cs.id WHERE c.id = %s AND cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1',
                                (cabinet_id,))
                 slot = cursor.fetchone()
             if not slot:
@@ -1013,6 +1083,13 @@ def create_deposit_order():
                 break
         slot = claimed_slot
         if not slot:
+            conn.close()
+            return json_response(message='暂无可用柜格', code=400)
+        # 兜底：分配到的柜门如果已有未结束订单，禁止下单并释放柜门
+        cursor.execute('SELECT 1 FROM orders WHERE slot_id = %s AND status = 2 LIMIT 1', (slot['id'],))
+        if cursor.fetchone():
+            cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (slot['id'],))
+            conn.commit()
             conn.close()
             return json_response(message='暂无可用柜格', code=400)
         if not access_code:
@@ -1040,7 +1117,7 @@ def create_deposit_order():
                 _wn2 = _wnr3[0]
         if not _wn2 or _wn2 == chr(39)+chr(39):
             _wnc4 = conn.cursor()
-            _wnc4.execute("SELECT wechat_name FROM phone_openids WHERE phone = %s AND wechat_name IS NOT NULL AND wechat_name != "+chr(39)+chr(39)+" LIMIT 1", (user_phone,))
+            _wnc4.execute("SELECT wechat_name FROM users WHERE phone = %s AND wechat_name IS NOT NULL AND wechat_name != "+chr(39)+chr(39)+" LIMIT 1", (user_phone,))
             _wnr4 = _wnc4.fetchone()
             if _wnr4 and _wnr4[0]:
                 _wn2 = _wnr4[0]
@@ -1078,13 +1155,13 @@ def store_pay():
         if not order:
             conn.close()
             return json_response(message='订单不存在', code=404)
-        if order['status'] in [2, 3, 5]:
+        if order['status'] == 2:
             # 已支付的订单，开门指令已由支付回调或首次/store/pay发送，不再重复发送
             conn.close()
             return json_response(data={'order_id': order_id}, message='支付已确认')
         if order['status'] != 1:
             conn.close()
-            return json_response(message='订单状态异常', code=400)
+            return json_response(message='订单已超时或状态异常，请重新下单', code=400)
         mock_mode = is_mock_mode()
         if mock_mode:
             transaction_id = 'MOCK' + datetime.now().strftime('%Y%m%d%H%M%S') + ''.join(random.choices(string.digits, k=6))
@@ -1147,7 +1224,7 @@ def store_pay():
                 cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s AND status = 1',
                                (transaction_id, datetime.now(), order_id))
                 we_updated = cursor.rowcount > 0
-                if order['slot_id']:
+                if we_updated and order['slot_id']:
                     cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
                 conn.commit()
                 # 只有本次更新了状态才发开门指令（否则回调已发过）
@@ -1242,7 +1319,7 @@ def h5_store():
         need_redirect = bool(_lr and _lr['allow_h5_to_mp'])
         claimed_slot = None
         for _attempt in range(5):
-            cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs LEFT JOIN orders o ON o.slot_id = cs.id WHERE cs.cabinet_id = %s AND cs.status = 1 GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1', (cabinet_id,))
+            cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs LEFT JOIN orders o ON o.slot_id = cs.id WHERE cs.cabinet_id = %s AND cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1', (cabinet_id,))
             slot = cursor.fetchone()
             if not slot:
                 break
@@ -1252,6 +1329,13 @@ def h5_store():
                 break
         slot = claimed_slot
         if not slot:
+            conn.close()
+            return json_response(message='暂无可用柜格', code=303)
+        # 兜底：分配到的柜门如果已有未结束订单，禁止下单并释放柜门
+        cursor.execute('SELECT 1 FROM orders WHERE slot_id = %s AND status = 2 LIMIT 1', (slot['id'],))
+        if cursor.fetchone():
+            cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (slot['id'],))
+            conn.commit()
             conn.close()
             return json_response(message='暂无可用柜格', code=303)
         order_no = 'ORD' + datetime.now().strftime('%Y%m%d%H%M%S') + ''.join(random.choices(string.digits, k=4))
@@ -1272,7 +1356,7 @@ def h5_store():
                 _wn3 = _wnr5[0]
         if not _wn3 or _wn3 == chr(39)+chr(39):
             _wnc6 = conn.cursor()
-            _wnc6.execute("SELECT wechat_name FROM phone_openids WHERE phone = %s AND wechat_name IS NOT NULL AND wechat_name != "+chr(39)+chr(39)+" LIMIT 1", (phone,))
+            _wnc6.execute("SELECT wechat_name FROM users WHERE phone = %s AND wechat_name IS NOT NULL AND wechat_name != "+chr(39)+chr(39)+" LIMIT 1", (phone,))
             _wnr6 = _wnc6.fetchone()
             if _wnr6 and _wnr6[0]:
                 _wn3 = _wnr6[0]
@@ -1412,7 +1496,7 @@ def deposit_retrieve():
                     try:
                         _n_conn = get_db()
                         _n_cur = _n_conn.cursor()
-                        _n_cur.execute("SELECT mp_openid FROM phone_openids WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (_n_phone,))
+                        _n_cur.execute("SELECT mp_openid FROM users WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (_n_phone,))
                         _n_row = _n_cur.fetchone()
                         _n_conn.close()
                         if _n_row and _n_row[0]:
@@ -1465,8 +1549,6 @@ def deposit_continue_storage():
             return json_response(message='订单不存在或状态异常', code=404 if not order else 400)
         cursor.execute('INSERT INTO storage_records (cabinet_id, compartment_number, user_phone, access_code, status, store_time, retrieve_time) VALUES (%s, %s, %s, %s, 2, %s, %s)',
                        (order['cabinet_id'], order['compartment_number'], order['user_phone'], order['access_code'], order['store_time'], datetime.now()))
-        if order['slot_id']:
-            cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (order['slot_id'],))
         conn.commit()
         conn.close()
         return json_response({'message': '继续存放成功', 'order_id': order_id, 'deposit_amount': order['deposit_amount']})
@@ -2291,10 +2373,10 @@ def user_complaints():
         bound_phones = _find_bound_phone_by_identity(cursor, openid=openid, mp_openid=openid)
         if not bound_phones:
             cursor.execute("""
-                SELECT unionid FROM phone_openids
+                SELECT unionid FROM users
                 WHERE (mp_openid = %s OR openid = %s) AND NULLIF(unionid, '') IS NOT NULL
                 UNION
-                SELECT unionid FROM users
+                SELECT unionid FROM phone_openids
                 WHERE (mp_openid = %s OR openid = %s) AND NULLIF(unionid, '') IS NOT NULL
                 LIMIT 1
             """, (openid, openid, openid, openid))
@@ -2453,24 +2535,32 @@ def wx_login():
                 _conn = get_db()
                 _cur = _conn.cursor()
                 
-                # 1. 先用mp_openid查
-                _cur.execute("SELECT phone FROM phone_openids WHERE mp_openid = %s LIMIT 1", (openid_val,))
+                # 1. 先用 users 按 mp_openid 查
+                _cur.execute("SELECT phone FROM users WHERE mp_openid = %s AND NULLIF(phone, '') IS NOT NULL LIMIT 1", (openid_val,))
                 _row = _cur.fetchone()
-                
-                # 2. 找不到，用openid查
+
+                # 2. 找不到，用 users 按 openid 查
+                if not _row and openid_from_h5:
+                    _cur.execute("SELECT phone FROM users WHERE openid = %s AND NULLIF(phone, '') IS NOT NULL LIMIT 1", (openid_from_h5,))
+                    _row = _cur.fetchone()
+
+                # 3. 旧表兜底：phone_openids
+                if not _row:
+                    _cur.execute("SELECT phone FROM phone_openids WHERE mp_openid = %s LIMIT 1", (openid_val,))
+                    _row = _cur.fetchone()
                 if not _row and openid_from_h5:
                     _cur.execute("SELECT phone FROM phone_openids WHERE openid = %s LIMIT 1", (openid_from_h5,))
                     _row = _cur.fetchone()
-                
-                # 3. 找到手机号
+
+                # 4. 找到手机号
                 if _row and _row[0]:
                     _phone = _row[0]
-                    # 4. 如果是通过openid找到的，更新mp_openid
+                    # 5. 如果是通过openid找到的，更新mp_openid
                     if openid_from_h5:
                         _cur.execute("UPDATE phone_openids SET mp_openid = %s WHERE openid = %s", (openid_val, openid_from_h5))
                         _conn.commit()
                 
-                # 5. unionid order lookup
+                # 6. unionid order lookup
                 _unionid = result.get('unionid', '')
                 # 只用于补空，且 unionid 必须唯一对应一个手机号，避免串号
                 if _unionid and not _phone:
@@ -2507,11 +2597,13 @@ def wx_login():
                                                 mp_openid=openid_val, unionid=unionid_val)
                         upsert_user_balance_row(_ucur_save, phone=_phone, openid=openid_from_h5,
                                                 unionid=unionid_val, mp_openid=openid_val)
+                        _ucur_save.execute("UPDATE users SET mp_openid = %s WHERE phone = %s AND (mp_openid IS NULL OR mp_openid = chr(39)||chr(39))", (openid_val, _phone))
                     else:
                         upsert_phone_openid_row(_ucur_save, phone=_phone or '', openid=openid_from_h5,
                                                 mp_openid=openid_val, unionid=unionid_val)
                         upsert_user_balance_row(_ucur_save, phone='', openid=openid_from_h5,
                                                 unionid=unionid_val, mp_openid=openid_val)
+                        _ucur_save.execute("UPDATE users SET mp_openid = %s WHERE mp_openid = %s AND (mp_openid IS NULL OR mp_openid = chr(39)||chr(39))", (openid_val, openid_val))
                     _uc_save.commit()
                     _ucur_save.close()
                     _uc_save.close()
@@ -2657,8 +2749,11 @@ def wx_login_phone():
                                 # Return earliest registered phone for this WeChat identity
                 try:
                     _pc = get_db(); _pcu = _pc.cursor()
-                    _pcu.execute('SELECT phone FROM phone_openids WHERE unionid=%s AND (openid=%s OR mp_openid=%s) ORDER BY id LIMIT 1', (unionid, openid, openid))
+                    _pcu.execute('SELECT phone FROM users WHERE unionid=%s AND (openid=%s OR mp_openid=%s) ORDER BY id LIMIT 1', (unionid, openid, openid))
                     _pr = _pcu.fetchone()
+                    if not _pr:
+                        _pcu.execute('SELECT phone FROM phone_openids WHERE unionid=%s AND (openid=%s OR mp_openid=%s) ORDER BY id LIMIT 1', (unionid, openid, openid))
+                        _pr = _pcu.fetchone()
                     _pc.close()
                     if _pr:
                         phone_number = _pr['phone']
@@ -2670,8 +2765,11 @@ def wx_login_phone():
                         from database import get_db
                         _pc = get_db()
                         _pcu = _pc.cursor()
-                        _pcu.execute("SELECT phone FROM phone_openids WHERE unionid=%s ORDER BY id LIMIT 1", (unionid,))
+                        _pcu.execute("SELECT phone FROM users WHERE unionid=%s ORDER BY id LIMIT 1", (unionid,))
                         _pr = _pcu.fetchone()
+                        if not _pr:
+                            _pcu.execute("SELECT phone FROM phone_openids WHERE unionid=%s ORDER BY id LIMIT 1", (unionid,))
+                            _pr = _pcu.fetchone()
                         _pc.close()
                         if _pr:
                             earliest = _pr[0]
@@ -2857,6 +2955,10 @@ def get_user_balance():
         row = find_user_balance_row(cur, phone=request_phone, openid=openid,
                                     mp_openid=ident['mp_openid'], unionid=ident['unionid'],
                                     user_id=ident['user_id'])
+        if row and not ident['user_id']:
+            ident['user_id'] = row.get('user_id') or 0
+            ident['unionid'] = ident['unionid'] or row.get('unionid') or ''
+            ident['mp_openid'] = ident['mp_openid'] or row.get('mp_openid') or ''
         phone = ident['phone'] or request_phone or ''
         _check_phone = row['phone'] if row else phone
         
@@ -2869,6 +2971,8 @@ def get_user_balance():
         has_pending_withdrawal = False
         if openid:
             cur.execute('SELECT COUNT(*) as cnt FROM withdrawal_records WHERE openid = %s AND status IN (0, 1)', (openid,))
+        elif ident['user_id']:
+            cur.execute('SELECT COUNT(*) as cnt FROM withdrawal_records w JOIN orders o ON w.order_id = o.id WHERE o.user_id = %s AND w.status IN (0, 1)', (ident['user_id'],))
         else:
             cur.execute('SELECT COUNT(*) as cnt FROM withdrawal_records WHERE user_phone = %s AND status IN (0, 1)', (_check_phone,))
         wd_row = cur.fetchone()
@@ -3013,6 +3117,9 @@ def user_withdraw():
         unionid = data.get('unionid', '') or ''
         wechat_name = data.get('wechat_name', '') or ''
         mp_openid = data.get('mp_openid', '')
+        # 小程序提现只传 openid（实际是小程序 openid），与 /user/balance 保持一致
+        if not mp_openid and openid:
+            mp_openid = openid
         wechat_name = data.get('wechat_name', '')
         amount = data.get('amount', 0)
 
@@ -3043,6 +3150,10 @@ def user_withdraw():
                                     unionid=ident['unionid'], user_id=ident['user_id'])
         if row:
             phone = row['phone']
+            if not ident['user_id']:
+                ident['user_id'] = row.get('user_id') or 0
+                ident['unionid'] = ident['unionid'] or row.get('unionid') or ''
+                ident['mp_openid'] = ident['mp_openid'] or row.get('mp_openid') or ''
         if not row:
             conn.rollback()
             return json_response(message='用户不存在', code=404)
@@ -3061,9 +3172,9 @@ def user_withdraw():
         else:
             amount = float(amount)
         
-        # 检查用户最近使用的网点是否允许提现
-        loc_conds = ['o.user_phone = %s']
-        loc_params = [phone]
+        # 检查用户最近使用的网点是否允许提现（身份优先，手机号只作兜底）
+        loc_conds = []
+        loc_params = []
         if ident['user_id']:
             loc_conds.append('o.user_id = %s')
             loc_params.append(ident['user_id'])
@@ -3073,6 +3184,9 @@ def user_withdraw():
         if mp_openid:
             loc_conds.append('o.mp_openid = %s')
             loc_params.append(mp_openid)
+        if not loc_conds:
+            loc_conds.append('o.user_phone = %s')
+            loc_params.append(phone)
         cursor.execute("""
             SELECT l.withdraw_enabled, l.withdraw_mode, l.auto_approve_rate, l.refund_approve_start_min, l.refund_approve_end_min 
             FROM orders o 
@@ -3103,11 +3217,11 @@ def user_withdraw():
             sql = """SELECT bd.id, bd.order_id, bd.amount, o.transaction_id, o.openid as order_openid
             FROM user_balance_details bd
             JOIN orders o ON bd.order_id = o.id
-            WHERE bd.user_phone=%s AND bd.status='available' AND o.status IN (3,4)
+            WHERE bd.status='available' AND o.status IN (3,4)
               AND o.transaction_id IS NOT NULL AND o.transaction_id != ''
               AND (o.user_id=%s OR o.unionid=%s OR o.mp_openid=%s OR o.openid=%s)
             ORDER BY bd.id DESC"""
-            cursor.execute(sql, (phone, ident['user_id'], ident['unionid'], mp_openid, openid))
+            cursor.execute(sql, (ident['user_id'], ident['unionid'], mp_openid, openid))
             balance_records = cursor.fetchall()
             if not balance_records:
                 conn.close()
@@ -3173,11 +3287,11 @@ def user_withdraw():
             # 从余额明细表查找可提现的记录（status='available'）
             cursor.execute("""SELECT bd.id, bd.order_id, bd.amount, o.transaction_id, o.openid as order_openid
                 FROM user_balance_details bd JOIN orders o ON bd.order_id = o.id
-                WHERE bd.user_phone=%s AND bd.status='available'
+                WHERE bd.status='available'
                   AND o.transaction_id IS NOT NULL AND o.transaction_id != ''
                   AND (o.user_id=%s OR o.unionid=%s OR o.mp_openid=%s OR o.openid=%s)
                 ORDER BY bd.id DESC""",
-                (phone, ident['user_id'], ident['unionid'], mp_openid, openid))
+                (ident['user_id'], ident['unionid'], mp_openid, openid))
             balance_records = cursor.fetchall()
             if not balance_records:
                 conn.close()
@@ -3234,8 +3348,11 @@ def user_withdraw():
                 conn.commit()
                 conn.close()
                 return json_response(data={'withdrawal_id': first_wid, 'status': 'refunded', 'amount': actual_amount, 'message': '白名单免审，已自动退款'})
-            # 检查是否被拒绝后重提
-            cursor.execute('SELECT COUNT(*) as cnt FROM withdrawal_records wr WHERE user_phone = %s AND status = 3', (phone,))
+            # 检查是否被拒绝后重提（按用户身份统计，避免同手机号另一微信的记录干扰）
+            if ident['user_id']:
+                cursor.execute('SELECT COUNT(*) as cnt FROM withdrawal_records wr JOIN orders o ON wr.order_id = o.id WHERE o.user_id = %s AND wr.status = 3', (ident['user_id'],))
+            else:
+                cursor.execute('SELECT COUNT(*) as cnt FROM withdrawal_records wr WHERE user_phone = %s AND status = 3', (phone,))
             reject_cnt = cursor.fetchone()['cnt']
             if reject_cnt > 0 and openid:
                 add_whitelist(openid, 'reject_retry', -1)
@@ -3395,6 +3512,7 @@ def link_mp_openid_from_mini():
         if phone and mp_openid:
 
             cursor.execute("UPDATE users SET mp_openid = %s WHERE unionid = %s AND (mp_openid IS NULL OR mp_openid = chr(39)||chr(39))", (mp_openid, unionid))
+            cursor.execute("UPDATE users SET mp_openid = %s WHERE phone = %s AND (mp_openid IS NULL OR mp_openid = chr(39)||chr(39))", (mp_openid, phone))
         # 把小程序身份写回已经创建的订单，H5 跳小程序订阅后订单就能带上 unionid
         if phone and mp_openid:
             if order_id:
@@ -3456,9 +3574,12 @@ def sync_mp_openid():
         # 2. 没有 -> 用公众号ID去匹配
         matched_gzh = gzh_openid or ''
         if not matched_gzh:
-            # 从 phone_openids 看有没有这个小程序ID对应的公众号ID
-            cur.execute("SELECT openid FROM phone_openids WHERE mp_openid = %s LIMIT 1", (mp_openid,))
+            # 从 users 看有没有这个小程序ID对应的公众号ID
+            cur.execute("SELECT openid FROM users WHERE mp_openid = %s AND NULLIF(openid, '') IS NOT NULL LIMIT 1", (mp_openid,))
             r = cur.fetchone()
+            if not r:
+                cur.execute("SELECT openid FROM phone_openids WHERE mp_openid = %s LIMIT 1", (mp_openid,))
+                r = cur.fetchone()
             if r:
                 matched_gzh = r[0]
 
@@ -3474,9 +3595,12 @@ def sync_mp_openid():
                 conn.close()
                 return json_response(message='同步成功', data={'matched': True, 'updated': True})
             else:
-                # 用公众号ID去 phone_openids 找到 phone，再用 phone 去 user_balances 找（兼容旧数据）
-                cur.execute("SELECT phone FROM phone_openids WHERE openid = %s LIMIT 1", (matched_gzh,))
+                # 用公众号ID去 users 找到 phone，再用 phone 去 user_balances 找
+                cur.execute("SELECT phone FROM users WHERE openid = %s AND NULLIF(phone, '') IS NOT NULL LIMIT 1", (matched_gzh,))
                 r = cur.fetchone()
+                if not r:
+                    cur.execute("SELECT phone FROM phone_openids WHERE openid = %s LIMIT 1", (matched_gzh,))
+                    r = cur.fetchone()
                 if r:
                     found_phone = r[0]
                     r = find_user_balance_row(cur, phone=found_phone, openid=matched_gzh)
@@ -3606,20 +3730,24 @@ def get_user_withdrawals():
         if ident['ambiguous'] or (not ident['user_id'] and not ident['unionid'] and not ident['mp_openid']):
             conn.close()
             return json_response(message='账号身份待确认，请重新登录', code=400)
+        # 手机号限定 + (身份匹配 或 无身份关联的历史记录也显示)
         wd_conds = ['w.user_phone = %s']
         wd_params = [phone]
+        wd_sub = []
         if openid:
-            wd_conds.append('w.openid = %s')
+            wd_sub.append('w.openid = %s')
             wd_params.append(openid)
         if ident['user_id']:
-            wd_conds.append('EXISTS (SELECT 1 FROM orders o WHERE o.id = w.order_id AND o.user_id = %s)')
+            wd_sub.append('EXISTS (SELECT 1 FROM orders o WHERE o.id = w.order_id AND o.user_id = %s)')
             wd_params.append(ident['user_id'])
         if ident['unionid']:
-            wd_conds.append('EXISTS (SELECT 1 FROM orders o WHERE o.id = w.order_id AND o.unionid = %s)')
+            wd_sub.append('EXISTS (SELECT 1 FROM orders o WHERE o.id = w.order_id AND o.unionid = %s)')
             wd_params.append(ident['unionid'])
         if ident['mp_openid']:
-            wd_conds.append('EXISTS (SELECT 1 FROM orders o WHERE o.id = w.order_id AND o.mp_openid = %s)')
+            wd_sub.append('EXISTS (SELECT 1 FROM orders o WHERE o.id = w.order_id AND o.mp_openid = %s)')
             wd_params.append(ident['mp_openid'])
+        wd_sub.append("(w.order_id IS NULL OR NOT EXISTS (SELECT 1 FROM orders o WHERE o.id = w.order_id AND (o.user_id > 0 OR NULLIF(o.unionid,'') IS NOT NULL OR NULLIF(o.mp_openid,'') IS NOT NULL OR NULLIF(o.openid,'') IS NOT NULL)))")
+        wd_conds.append('(' + ' OR '.join(wd_sub) + ')')
         cur.execute('''
             SELECT w.id, w.amount, w.status, w.apply_time, w.approve_time, w.error_msg
             FROM withdrawal_records w
@@ -3640,13 +3768,19 @@ def _auto_process_self_complaint(complaint_id, phone, openid_val):
         cur = conn.cursor()
         uid = None
         if openid_val:
-            cur.execute("SELECT unionid FROM phone_openids WHERE openid=%s AND unionid IS NOT NULL AND unionid != '' LIMIT 1", (openid_val,))
+            cur.execute("SELECT unionid FROM users WHERE openid=%s AND unionid IS NOT NULL AND unionid != '' LIMIT 1", (openid_val,))
             row = cur.fetchone()
+            if not row:
+                cur.execute("SELECT unionid FROM phone_openids WHERE openid=%s AND unionid IS NOT NULL AND unionid != '' LIMIT 1", (openid_val,))
+                row = cur.fetchone()
             if row and row[0]:
                 uid = row[0]
             if not uid:
-                cur.execute("SELECT unionid FROM phone_openids WHERE mp_openid=%s AND unionid IS NOT NULL AND unionid != '' LIMIT 1", (openid_val,))
+                cur.execute("SELECT unionid FROM users WHERE mp_openid=%s AND unionid IS NOT NULL AND unionid != '' LIMIT 1", (openid_val,))
                 row = cur.fetchone()
+                if not row:
+                    cur.execute("SELECT unionid FROM phone_openids WHERE mp_openid=%s AND unionid IS NOT NULL AND unionid != '' LIMIT 1", (openid_val,))
+                    row = cur.fetchone()
                 if row and row[0]:
                     uid = row[0]
         if not phone and not uid:

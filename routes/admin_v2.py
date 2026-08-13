@@ -6492,6 +6492,21 @@ def _bump_nonwechat_retry(cid2, msg2):
     else:
         logger.warning("[complaint_scheduler] 退款失败 id=%s msg=%s retry=%s/%s", cid2, msg2, cnt, _NONWECHAT_REFUND_RETRY_LIMIT)
 
+
+def _bump_transient_retry(cid2, msg2):
+    """瞬时错误（余额不足/操作过于频繁）：保持待处理并按 reply_time 冷却后自动重试，不永久标红。"""
+    try:
+        _tconn = get_db()
+        _tcur = _tconn.cursor()
+        _tcur.execute("UPDATE complaints SET status='0', reply=%s, reply_time=CURRENT_TIMESTAMP WHERE id=%s",
+                      ('自动退款失败，稍后自动重试', cid2))
+        _tconn.commit()
+        _tconn.close()
+        logger.info("[complaint_scheduler] transient refund fail, will retry later id=%s msg=%s", cid2, msg2)
+    except Exception as _te:
+        logger.error("[complaint_scheduler] mark transient retry error: %s", _te)
+
+
 _COMPLAINT_SCHEDULER_LOCK_FILE = "/tmp/complaint_scheduler.lock"
 
 
@@ -6511,6 +6526,27 @@ def _complaint_scheduler():
                 lock_fd = None
                 time.sleep(30)
                 continue
+            # 定期清红：订单已退款但投诉仍显示“自动退款失败”
+            try:
+                _clean_conn = get_db()
+                _clean_cur = _clean_conn.cursor()
+                _clean_cur.execute("""
+                    UPDATE complaints c
+                    SET reply='订单已退款，无需重复退款', reply_time=CURRENT_TIMESTAMP
+                    FROM orders o
+                    WHERE c.order_no = o.order_no
+                      AND c.status='2'
+                      AND (POSITION('自动退款失败' IN c.reply) > 0 OR POSITION('退款失败' IN c.reply) > 0)
+                      AND o.status=4
+                      AND COALESCE(o.refund_status,'') IN ('refunded','success')
+                """)
+                _clean_rows = _clean_cur.rowcount
+                _clean_conn.commit()
+                _clean_conn.close()
+                if _clean_rows:
+                    logger.info("[complaint_scheduler] stale red cleared count=%s", _clean_rows)
+            except Exception as _ce:
+                logger.error("[complaint_scheduler] clear stale red error: %s", _ce)
             conn = get_db()
             c = conn.cursor()
             c.execute("SELECT * FROM complaints WHERE status IN ('0','1') AND type IN ('wechat') AND created_at < NOW() - INTERVAL '2 minutes' AND created_at > NOW() - INTERVAL '7 days' ORDER By created_at LIMIT 100")
@@ -6601,7 +6637,7 @@ def _complaint_scheduler():
             try:
                 conn3 = get_db()
                 c3 = conn3.cursor()
-                c3.execute("SELECT * FROM complaints WHERE status=0 AND (type!='wechat' OR type IS NULL) AND created_at < NOW() - INTERVAL '2 minutes' ORDER BY id LIMIT 100")
+                c3.execute("SELECT * FROM complaints WHERE status=0 AND (type!='wechat' OR type IS NULL) AND created_at < NOW() - INTERVAL '2 minutes' AND NOT (POSITION('稍后自动重试' IN COALESCE(reply,'')) > 0 AND reply_time > NOW() - INTERVAL '30 minutes') ORDER BY id LIMIT 100")
                 rows2 = c3.fetchall()
                 conn3.close()
                 for row2 in rows2:
@@ -6623,14 +6659,30 @@ def _complaint_scheduler():
                         _fd.commit()
                         _fd.close()
 
-                    if src2 == 'wechat_mp' or openid2.startswith('oLhbm'):
-                        logger.info("[complaint_scheduler] wechat_mp message, no auto refund id=%s", cid2)
-                        _finish_nonwechat(cid2, received_reply)
-                        continue
+                    is_mp_msg = src2 == 'wechat_mp' or openid2.startswith('oLhbm')
                     if not ono2:
-                        logger.info("[complaint_scheduler] no order_no, no auto refund id=%s", cid2)
-                        _finish_nonwechat(cid2, received_reply)
-                        continue
+                        if is_mp_msg and phone2:
+                            try:
+                                _mo_conn = get_db()
+                                _mo_cur = _mo_conn.cursor()
+                                _mo_cur.execute("SELECT order_no FROM orders WHERE user_phone=%s AND status IN (2,3) AND COALESCE(refund_status,'') NOT IN ('success','refunded') AND COALESCE(refund_id,'') = '' ORDER BY id DESC LIMIT 1", (phone2,))
+                                _mo_row = _mo_cur.fetchone()
+                                if _mo_row and _mo_row[0]:
+                                    ono2 = _mo_row[0]
+                                    _mo_cur.execute("UPDATE complaints SET order_no=%s WHERE id=%s", (ono2, cid2))
+                                    logger.info("[complaint_scheduler] matched order by phone id=%s phone=%s order=%s", cid2, phone2, ono2)
+                                _mo_conn.commit()
+                                _mo_conn.close()
+                            except Exception as _me:
+                                logger.error("[complaint_scheduler] match order by phone error: %s", _me)
+                                try:
+                                    _mo_conn.close()
+                                except Exception:
+                                    pass
+                        if not ono2:
+                            logger.info("[complaint_scheduler] no order_no, no auto refund id=%s", cid2)
+                            _finish_nonwechat(cid2, received_reply)
+                            continue
 
                     try:
                         _precheck_conn = get_db()
@@ -6647,11 +6699,20 @@ def _complaint_scheduler():
                     try:
                         _dc = get_db()
                         _dcur = _dc.cursor()
-                        _dcur.execute("SELECT 1 FROM withdrawal_records WHERE user_phone=%s AND status IN (0,1,2) LIMIT 1", (phone2,))
+                        if ono2:
+                            _dcur.execute("""
+                                SELECT 1 FROM withdrawal_records w
+                                WHERE w.user_phone=%s AND w.status IN (0,1,2)
+                                  AND EXISTS (SELECT 1 FROM orders o WHERE o.order_no=%s
+                                              AND (w.order_id=o.id OR POSITION(('"' || o.id::text || '"') IN COALESCE(w.order_ids,''))>0))
+                                LIMIT 1
+                            """, (phone2, ono2))
+                        else:
+                            _dcur.execute("SELECT 1 FROM withdrawal_records WHERE user_phone=%s AND status IN (0,1,2) LIMIT 1", (phone2,))
                         _dup = _dcur.fetchone()
                         _dc.close()
                         if _dup:
-                            logger.info("[complaint_scheduler] phone %s has active withdrawal, finish as received id=%s", phone2, cid2)
+                            logger.info("[complaint_scheduler] order %s has active withdrawal, finish as received id=%s", ono2, cid2)
                             _finish_nonwechat(cid2, received_reply)
                             continue
                     except:
@@ -6670,8 +6731,10 @@ def _complaint_scheduler():
                     if refund_ok2:
                         if str(refund_msg2) == already_reply:
                             _finish_nonwechat(cid2, already_reply)
-                        else:
+                        elif str(refund_msg2) in ('无押金', '无可退金额'):
                             _finish_nonwechat(cid2, received_reply)
+                        else:
+                            _finish_nonwechat(cid2, '已自动原路退款')
                         logger.info("[complaint_scheduler] non-wechat refund ok id=%s order=%s msg=%s", cid2, ono2, refund_msg2)
                         continue
 
@@ -6688,7 +6751,10 @@ def _complaint_scheduler():
                     _reset_cur.execute("UPDATE complaints SET status='0' WHERE id=%s AND status='1'", (cid2,))
                     _reset_conn.commit()
                     _reset_conn.close()
-                    _bump_nonwechat_retry(cid2, refund_msg2)
+                    if ('余额不足' in fail_text2 or '操作过于频繁' in fail_text2 or '请稍后再试' in fail_text2):
+                        _bump_transient_retry(cid2, refund_msg2)
+                    else:
+                        _bump_nonwechat_retry(cid2, refund_msg2)
             except Exception as e2:
                 logger.error("[complaint_scheduler] non-wechat error: %s", e2, exc_info=True)
                 try:

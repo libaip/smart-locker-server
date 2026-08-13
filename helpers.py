@@ -973,7 +973,8 @@ def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='',
             out['ambiguous'] = True
             out['reason'] = 'multiple_users'
             return out
-        row = min(app_candidates, key=lambda r: r['id'])
+        union_rows = [r for r in app_candidates if r['unionid']]
+        row = min(union_rows, key=lambda r: r['id']) if union_rows else min(app_candidates, key=lambda r: r['id'])
         out['user_id'] = row['id']
         out['unionid'] = row['unionid'] or unionid or ''
         out['mp_openid'] = row['mp_openid'] or mp_openid or ''
@@ -1070,11 +1071,47 @@ def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='',
                 out['reason'] = 'multiple_phone_openids'
                 return out
         row = po_candidates[0]
-        out['user_id'] = row.get('user_id') or 0
+        out['user_id'] = row.get('id') or row.get('user_id') or 0
         out['unionid'] = row.get('unionid') or unionid or ''
         out['mp_openid'] = row.get('mp_openid') or mp_openid or ''
         out['phone'] = row.get('phone') or phone or ''
         return out
+
+    # users 主表没解析到时，用 user_balances 的 unionid 回退（users 仍是最终 user_id 来源）
+    if not out['user_id'] and not out['unionid']:
+        try:
+            _ucond = []
+            _uparams = []
+            if mp_openid:
+                _ucond.append('mp_openid = %s')
+                _uparams.append(mp_openid)
+            if openid:
+                _ucond.append('openid = %s')
+                _uparams.append(openid)
+            if phone:
+                _ucond.append('phone = %s')
+                _uparams.append(phone)
+            if _ucond:
+                cursor.execute(
+                    "SELECT DISTINCT unionid FROM user_balances WHERE NULLIF(unionid, '') IS NOT NULL AND ("
+                    + ' OR '.join(_ucond) + ")",
+                    _uparams,
+                )
+                _unions = [r['unionid'] for r in cursor.fetchall()]
+                if len(_unions) == 1:
+                    cursor.execute(
+                        "SELECT id, unionid, phone, openid, mp_openid FROM users WHERE unionid = %s AND id > 0 ORDER BY id LIMIT 1",
+                        (_unions[0],),
+                    )
+                    row = cursor.fetchone()
+                    if row:
+                        out['user_id'] = row['id']
+                        out['unionid'] = row['unionid'] or _unions[0]
+                        out['mp_openid'] = row['mp_openid'] or out['mp_openid'] or mp_openid
+                        out['phone'] = row['phone'] or out['phone'] or phone
+                        return out
+        except Exception:
+            pass
 
     return out
 
@@ -1169,15 +1206,11 @@ def upsert_user_balance_row(cursor, phone='', openid='', unionid='', mp_openid='
                 balance = COALESCE(balance,0) + %s,
                 total_deposited = COALESCE(total_deposited,0) + %s,
                 total_withdrawn = COALESCE(total_withdrawn,0) + %s,
-                phone = CASE WHEN %s <> '' THEN %s ELSE phone END,
-                openid = COALESCE(NULLIF(%s,''), openid),
-                unionid = COALESCE(NULLIF(%s,''), unionid),
-                mp_openid = COALESCE(NULLIF(%s,''), mp_openid),
                 wechat_name = COALESCE(NULLIF(%s,''), wechat_name),
                 user_id = CASE WHEN %s > 0 THEN %s ELSE user_id END
               WHERE id = %s""",
             (balance, total_deposited, total_withdrawn,
-             phone, phone, openid, unionid, mp_openid, wechat_name, user_id, user_id, row_id),
+             wechat_name, user_id, user_id, row_id),
         )
         return row_id
     if unionid:
@@ -1248,35 +1281,122 @@ def upsert_user_balance_row(cursor, phone='', openid='', unionid='', mp_openid='
     return row['id'] if row else None
 
 
-def upsert_phone_openid_row(cursor, phone='', openid='', mp_openid='', unionid='', wechat_name='', user_id=0):
-    """Insert or update a users row keyed by unionid/openid/phone."""
+def upsert_phone_openid_row(cursor, phone='', openid='', mp_openid='', unionid='', wechat_name='', gzh_openid='', user_id=0):
+    """Insert or update a phone_openids row keyed by identity, not by phone alone."""
     phone = _clean(phone)
     openid = _clean(openid)
     unionid = _clean(unionid)
     mp_openid = _clean(mp_openid)
     wechat_name = _clean(wechat_name)
+    gzh_openid = _clean(gzh_openid)
+    user_id = int(user_id or 0)
     if not phone:
         return None
     if unionid:
-        cursor.execute("SELECT id FROM users WHERE unionid = %s AND id > 0 LIMIT 1", (unionid,))
+        # 历史脏数据兜底：旧行可能只有 phone+openid/mp_openid 而没有 unionid，
+        # 直接 INSERT 会撞 (phone, openid) 唯一索引。先按已有身份找行并更新。
+        _existing_id = None
+        if openid:
+            cursor.execute("SELECT id FROM phone_openids WHERE phone = %s AND openid = %s LIMIT 1", (phone, openid))
+            _r = cursor.fetchone()
+            if _r:
+                _existing_id = _r['id']
+        if not _existing_id and mp_openid:
+            cursor.execute("SELECT id FROM phone_openids WHERE phone = %s AND mp_openid = %s LIMIT 1", (phone, mp_openid))
+            _r = cursor.fetchone()
+            if _r:
+                _existing_id = _r['id']
+        if not _existing_id:
+            cursor.execute("SELECT id FROM phone_openids WHERE phone = %s AND unionid = %s LIMIT 1", (phone, unionid))
+            _r = cursor.fetchone()
+            if _r:
+                _existing_id = _r['id']
+        if _existing_id:
+            cursor.execute(
+                """UPDATE phone_openids SET
+                     openid = COALESCE(NULLIF(%s,''), openid),
+                     mp_openid = COALESCE(NULLIF(%s,''), mp_openid),
+                     unionid = COALESCE(NULLIF(%s,''), unionid),
+                     wechat_name = COALESCE(NULLIF(%s,''), wechat_name),
+                     gzh_openid = COALESCE(NULLIF(%s,''), gzh_openid),
+                     user_id = CASE WHEN %s > 0 THEN %s ELSE user_id END,
+                     updated_at = NOW()
+                   WHERE id = %s
+                   RETURNING id""",
+                (openid, mp_openid, unionid, wechat_name, gzh_openid, user_id, user_id, _existing_id),
+            )
+            _row = cursor.fetchone()
+            return _row['id'] if _row else _existing_id
+        cursor.execute(
+            """INSERT INTO phone_openids (phone, openid, mp_openid, unionid, wechat_name, gzh_openid, user_id, updated_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,NOW())
+               ON CONFLICT (phone, unionid) WHERE unionid IS NOT NULL AND unionid <> ''
+               DO UPDATE SET
+                 openid = COALESCE(NULLIF(EXCLUDED.openid,''), phone_openids.openid),
+                 mp_openid = COALESCE(NULLIF(EXCLUDED.mp_openid,''), phone_openids.mp_openid),
+                 wechat_name = COALESCE(NULLIF(EXCLUDED.wechat_name,''), phone_openids.wechat_name),
+                 gzh_openid = COALESCE(NULLIF(EXCLUDED.gzh_openid,''), phone_openids.gzh_openid),
+                 user_id = CASE WHEN %s > 0 THEN %s ELSE phone_openids.user_id END,
+                 updated_at = NOW()
+               RETURNING id""",
+            (phone, openid, mp_openid, unionid, wechat_name, gzh_openid, user_id, user_id, user_id),
+        )
+    elif openid:
+        cursor.execute(
+            """INSERT INTO phone_openids (phone, openid, mp_openid, unionid, wechat_name, gzh_openid, user_id, updated_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,NOW())
+               ON CONFLICT (phone, openid) WHERE openid IS NOT NULL AND openid <> ''
+               DO UPDATE SET
+                 mp_openid = COALESCE(NULLIF(EXCLUDED.mp_openid,''), phone_openids.mp_openid),
+                 unionid = COALESCE(NULLIF(EXCLUDED.unionid,''), phone_openids.unionid),
+                 wechat_name = COALESCE(NULLIF(EXCLUDED.wechat_name,''), phone_openids.wechat_name),
+                 gzh_openid = COALESCE(NULLIF(EXCLUDED.gzh_openid,''), phone_openids.gzh_openid),
+                 user_id = CASE WHEN %s > 0 THEN %s ELSE phone_openids.user_id END,
+                 updated_at = NOW()
+               RETURNING id""",
+            (phone, openid, mp_openid, unionid, wechat_name, gzh_openid, user_id, user_id, user_id),
+        )
+    elif mp_openid:
+        cursor.execute(
+            """INSERT INTO phone_openids (phone, openid, mp_openid, unionid, wechat_name, gzh_openid, user_id, updated_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,NOW())
+               ON CONFLICT (phone, mp_openid) WHERE mp_openid IS NOT NULL AND mp_openid <> ''
+               DO UPDATE SET
+                 openid = COALESCE(NULLIF(EXCLUDED.openid,''), phone_openids.openid),
+                 unionid = COALESCE(NULLIF(EXCLUDED.unionid,''), phone_openids.unionid),
+                 wechat_name = COALESCE(NULLIF(EXCLUDED.wechat_name,''), phone_openids.wechat_name),
+                 gzh_openid = COALESCE(NULLIF(EXCLUDED.gzh_openid,''), phone_openids.gzh_openid),
+                 user_id = CASE WHEN %s > 0 THEN %s ELSE phone_openids.user_id END,
+                 updated_at = NOW()
+               RETURNING id""",
+            (phone, openid, mp_openid, unionid, wechat_name, gzh_openid, user_id, user_id, user_id),
+        )
+    else:
+        cursor.execute("SELECT id FROM phone_openids WHERE phone = %s LIMIT 1", (phone,))
         r = cursor.fetchone()
         if r:
-            cursor.execute("UPDATE users SET phone=COALESCE(NULLIF(%s,''),phone), openid=COALESCE(NULLIF(%s,''),openid), mp_openid=COALESCE(NULLIF(%s,''),mp_openid), wechat_name=COALESCE(NULLIF(%s,''),wechat_name), updated_at=NOW() WHERE id=%s", (phone, openid, mp_openid, wechat_name, r['id']))
-            return r['id']
-    if openid:
-        cursor.execute("SELECT id FROM users WHERE openid = %s AND id > 0 LIMIT 1", (openid,))
-        r = cursor.fetchone()
-        if r:
-            cursor.execute("UPDATE users SET phone=COALESCE(NULLIF(%s,''),phone), unionid=COALESCE(NULLIF(%s,''),unionid), mp_openid=COALESCE(NULLIF(%s,''),mp_openid), wechat_name=COALESCE(NULLIF(%s,''),wechat_name), updated_at=NOW() WHERE id=%s", (phone, unionid, mp_openid, wechat_name, r['id']))
-            return r['id']
-    cursor.execute("SELECT id FROM users WHERE phone = %s AND id > 0 LIMIT 1", (phone,))
-    r = cursor.fetchone()
-    if r:
-        cursor.execute("UPDATE users SET openid=COALESCE(NULLIF(%s,''),openid), unionid=COALESCE(NULLIF(%s,''),unionid), mp_openid=COALESCE(NULLIF(%s,''),mp_openid), wechat_name=COALESCE(NULLIF(%s,''),wechat_name), updated_at=NOW() WHERE id=%s", (openid, unionid, mp_openid, wechat_name, r['id']))
-        return r['id']
-    cursor.execute("INSERT INTO users (phone, openid, mp_openid, unionid, wechat_name) VALUES (%s,%s,%s,%s,%s) RETURNING id", (phone, openid, mp_openid, unionid, wechat_name))
-    r = cursor.fetchone()
-    return r['id'] if r else None
+            cursor.execute(
+                """UPDATE phone_openids SET
+                     openid = COALESCE(NULLIF(%s,''), openid),
+                     mp_openid = COALESCE(NULLIF(%s,''), mp_openid),
+                     unionid = COALESCE(NULLIF(%s,''), unionid),
+                     wechat_name = COALESCE(NULLIF(%s,''), wechat_name),
+                     gzh_openid = COALESCE(NULLIF(%s,''), gzh_openid),
+                     user_id = CASE WHEN %s > 0 THEN %s ELSE user_id END,
+                     updated_at = NOW()
+                   WHERE id = %s
+                   RETURNING id""",
+                (openid, mp_openid, unionid, wechat_name, gzh_openid, user_id, user_id, r['id']),
+            )
+        else:
+            cursor.execute(
+                """INSERT INTO phone_openids (phone, openid, mp_openid, unionid, wechat_name, gzh_openid, user_id, updated_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,NOW())
+                   RETURNING id""",
+                (phone, openid, mp_openid, unionid, wechat_name, gzh_openid, user_id),
+            )
+    row = cursor.fetchone()
+    return row['id'] if row else None
 
 def return_to_balance(phone, amount, withdrawal_id=None, openid='', order_id=None):
     try:
@@ -2256,6 +2376,7 @@ def calc_balance(user_id=None, phone=None, openid=None, mp_openid=None, unionid=
             return 0.0
         if ident['user_id'] == 0:
             return 0.0
+        # 身份条件：先按 user_id（unionid 换出的户口本编号），没有才退 unionid/mp_openid/openid/手机号
         cond = []
         params = []
         if ident['user_id']:
@@ -2275,9 +2396,10 @@ def calc_balance(user_id=None, phone=None, openid=None, mp_openid=None, unionid=
             params.append(phone)
         where = ' OR '.join(cond)
         sql = (
-            'SELECT COALESCE(SUM(o.deposit_amount), 0) FROM orders o '
-            'WHERE o.status = 3 AND (' + where + ') '
-            'AND NOT EXISTS (SELECT 1 FROM withdrawal_records w WHERE w.order_id = o.id AND w.status IN (0, 1, 2))'
+            "SELECT COALESCE(SUM(bd.amount), 0) FROM user_balance_details bd "
+            "JOIN orders o ON bd.order_id = o.id "
+            "WHERE bd.status = 'available' AND o.status = 3 AND (" + where + ") "
+            "AND NOT EXISTS (SELECT 1 FROM withdrawal_records w WHERE w.order_id = o.id AND w.status IN (0, 1, 2))"
         )
         c.execute(sql, params)
         r = c.fetchone()

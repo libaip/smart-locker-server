@@ -478,9 +478,12 @@ def device_lock_result():
                     db.execute("UPDATE orders SET logical_mark='N' WHERE id=%s", (_o2["id"],))
                     logger.info(f"[lock_result] action=mid: slot={slot_id} mid-retrieve (no end)")
                 elif _o2 and _o2["logical_mark"] == "end":
-                    db.execute("UPDATE orders SET status=3,retrieve_time=NOW(),logical_mark='N',refund_mark=1,refund_amount=deposit_amount WHERE id=%s AND status=2", (_o2["id"],))
-                    db.execute("UPDATE cabinet_slots SET status=1 WHERE id=%s", (slot_id,))
-                    logger.info(f"[lock_result] action=end: slot={slot_id} ended (free slot)")
+                    _end_cur = db.execute("UPDATE orders SET status=3,retrieve_time=NOW(),logical_mark='N',refund_mark=1,refund_amount=deposit_amount WHERE id=%s AND status=2", (_o2["id"],))
+                    if _end_cur.rowcount > 0:
+                        db.execute("UPDATE cabinet_slots SET status=1 WHERE id=%s", (slot_id,))
+                        logger.info(f"[lock_result] action=end: slot={slot_id} ended (free slot)")
+                    else:
+                        logger.warning(f"[lock_result] action=end but order update matched 0 rows: slot={slot_id} order={_o2['id']}, slot NOT released")
                 else:
                     logger.info(f"[lock_result] no action mark: slot={slot_id} (mark={_o2.get('logical_mark','?')})")
             except Exception as _e2:

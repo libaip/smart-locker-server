@@ -226,33 +226,65 @@ def pay_notify():
             conn.close()
             return notify_wxpay.build_pay_notify_response('SUCCESS', 'OK'), 200
 
+        # 订单已被超时取消，但微信实际已扣款：不复活订单、不占柜门，直接原路退款
+        if order['status'] == 5 and (trade_state == 'SUCCESS' or result.get('result_code') == 'SUCCESS'):
+            conn.commit()  # 释放 FOR UPDATE 行锁，避免和退款接口互相等待
+            try:
+                from helpers import do_real_refund
+                _refund_ok, _refund_id, _refund_msg = do_real_refund(
+                    order_id=order['id'],
+                    order_no=order['order_no'],
+                    amount=float(order['deposit_amount']) + float(order.get('per_use_price') or 0),
+                    payment_channel_id=order.get('payment_channel_id'))
+                if _refund_ok:
+                    cursor.execute("INSERT INTO payments (order_id, type, amount, transaction_id, refund_transaction_id, status, created_at) VALUES (%s, 2, %s, %s, %s, 1, CURRENT_TIMESTAMP)",
+                                   (order['id'], float(order['deposit_amount']) + float(order.get('per_use_price') or 0), order.get('transaction_id') or '', _refund_id))
+                    conn.commit()
+                    logger.warning(f"[pay_notify] 超时取消订单晚到支付，已原路退款 order={order['id']} refund_id={_refund_id}")
+                    conn.close()
+                    return notify_wxpay.build_pay_notify_response('SUCCESS', 'OK'), 200
+                logger.error(f"[pay_notify] 超时取消订单晚到支付，自动退款失败 order={order['id']} msg={_refund_msg}")
+                conn.close()
+                return 'fail', 500
+            except Exception as _re:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                logger.error(f"[pay_notify] 超时取消订单晚到支付，自动退款异常 order={order['id']} err={_re}")
+                conn.close()
+                return 'fail', 500
+
+        we_updated = False
         if trade_state == 'SUCCESS' or result.get('result_code') == 'SUCCESS':
             # 更新订单状态和支付渠道ID
             if order.get('payment_channel_id') is None and '_callback_channel_id' in locals() and _callback_channel_id:
-                cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s, payment_channel_id = %s WHERE id = %s',
+                cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s, payment_channel_id = %s WHERE id = %s AND status = 1',
                                (transaction_id, datetime.now(), _callback_channel_id, order['id']))
             else:
-                cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s',
+                cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s AND status = 1',
                                (transaction_id, datetime.now(), order['id']))
-            if order['slot_id']:
+            we_updated = cursor.rowcount > 0
+            if we_updated and order['slot_id']:
                 cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
             cursor.execute("SELECT id FROM payments WHERE order_id=%s AND type=1 AND transaction_id=%s LIMIT 1", (order['id'], transaction_id))
             if not cursor.fetchone():
                 cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
                                (order['id'], float(order['deposit_amount']) + float(order.get('per_use_price') or 0), transaction_id))
             # 更新用户余额 - 统一用 mp_openid 查找
-            try:
-                _o_openid = order.get('openid', '') or ''
-                _o_unionid = order.get('unionid', '') or ''
-                _o_wechat_name = order.get('wechat_name', '') or ''
-                _o_mp_openid = order.get('mp_openid', '') or _o_openid
-                upsert_user_balance_row(cursor, phone=order['user_phone'], openid=_o_openid,
-                                        unionid=_o_unionid, mp_openid=_o_mp_openid,
-                                        wechat_name=_o_wechat_name,
-                                        total_deposited=order.get('deposit_amount') or 0,
-                                        user_id=order.get('user_id') or 0)
-            except Exception as e:
-                logger.error(f'[支付回调更新余额失败] {e}')
+            if we_updated:
+                try:
+                    _o_openid = order.get('openid', '') or ''
+                    _o_unionid = order.get('unionid', '') or ''
+                    _o_wechat_name = order.get('wechat_name', '') or ''
+                    _o_mp_openid = order.get('mp_openid', '') or _o_openid
+                    upsert_user_balance_row(cursor, phone=order['user_phone'], openid=_o_openid,
+                                            unionid=_o_unionid, mp_openid=_o_mp_openid,
+                                            wechat_name=_o_wechat_name,
+                                            total_deposited=order.get('deposit_amount') or 0,
+                                            user_id=order.get('user_id') or 0)
+                except Exception as e:
+                    logger.error(f'[支付回调更新余额失败] {e}')
 
             # 记录开锁信息（在commit之前读取，避免DB锁）
             _open_lock_info = None
@@ -276,19 +308,20 @@ def pay_notify():
             _deposit_amount = float(order['deposit_amount']) + float(order.get('per_use_price') or 0)
             # 更新渠道统计（支付成功）
             try:
-                if _channel_id:
+                if we_updated and _channel_id:
                     update_channel_stats(_channel_id, _deposit_amount)
             except Exception as _es:
                 logger.error(f'[pay_notify] update_channel_stats: {_es}')
             conn.commit()
         else:
-            cursor.execute('UPDATE orders SET status = 5 WHERE id = %s', (order['id'],))
-            if order['slot_id']:
-                cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (order['slot_id'],))
-                conn.commit()
+            if order['status'] == 1:
+                cursor.execute('UPDATE orders SET status = 5 WHERE id = %s', (order['id'],))
+                if order['slot_id']:
+                    cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (order['slot_id'],))
+                    conn.commit()
         # 先在DB提交前发送开门指令（先commit释放DB锁，再发开门指令）（WebSocket立即发出，独立DB连接不冲突）
         if trade_state == 'SUCCESS' or result.get('result_code') == 'SUCCESS':
-            if _open_lock_info:
+            if we_updated and _open_lock_info:
                 # 查door_records：已有开门记录则跳过（防止与store_pay重复发送）
                 _dr_cur = conn.cursor()
                 _dr_cur.execute("SELECT id FROM door_records WHERE order_id=%s AND device_id=%s LIMIT 1", (_open_lock_info['order_id'], _open_lock_info['device_id']))
@@ -302,7 +335,7 @@ def pay_notify():
                         logger.error(f'[支付回调开锁失败] {e}')
                 else:
                     logger.info(f'[支付回调] door_records已有记录，跳过开门: order_id={_open_lock_info["order_id"]}')
-            if _channel_id:
+            if we_updated and _channel_id:
                 try:
                     update_channel_stats(_channel_id, _deposit_amount)
                 except Exception as e:
@@ -310,7 +343,7 @@ def pay_notify():
         conn.commit()
         
         # 发送寄存成功订阅消息
-        if trade_state == 'SUCCESS' or result.get('result_code') == 'SUCCESS':
+        if we_updated and (trade_state == 'SUCCESS' or result.get('result_code') == 'SUCCESS'):
             try:
                 openid = order.get('openid')
                 if not openid:
@@ -429,14 +462,18 @@ def third_party_pay_notify():
 
         if params.get('status') == 'OD' or params.get('return_code') == 'SUCCESS':
             transaction_id = params.get('transaction_id', params.get('order_id', ''))
-            cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s',
+            cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s AND status = 1',
                            (transaction_id, datetime.now(), order['id']))
-            if order['slot_id']:
+            _tpp_updated = cursor.rowcount > 0
+            if _tpp_updated and order['slot_id']:
                 cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
-            cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
-                           (order['id'], float(order['deposit_amount']) + float(order.get('per_use_price') or 0), transaction_id))
-            if order['payment_channel_id']:
-                update_channel_stats(order['payment_channel_id'], float(order['deposit_amount']) + float(order.get('per_use_price') or 0))
+            if _tpp_updated:
+                cursor.execute("SELECT id FROM payments WHERE order_id=%s AND type=1 AND transaction_id=%s LIMIT 1", (order['id'], transaction_id))
+                if not cursor.fetchone():
+                    cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
+                                   (order['id'], float(order['deposit_amount']) + float(order.get('per_use_price') or 0), transaction_id))
+                if order['payment_channel_id']:
+                    update_channel_stats(order['payment_channel_id'], float(order['deposit_amount']) + float(order.get('per_use_price') or 0))
             conn.commit()
             conn.close()
             return 'success'

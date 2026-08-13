@@ -1297,8 +1297,9 @@ Vue.component('page-agent-settlement',{template:`
 <tr v-for="r in previewRows" :key="r.agent_id+'-'+r.settle_month">
 <td>{{r.settle_month}}</td><td>{{r.agent_name}}</td><td>{{r.order_count}}</td>
 <td>¥{{r.deposit_amount.toFixed(2)}}</td><td>¥{{r.refund_amount.toFixed(2)}}</td><td>¥{{r.balance_amount.toFixed(2)}}</td>
-<td>¥{{r.fee_amount.toFixed(2)}}</td><td>¥{{r.commission_amount.toFixed(2)}}</td><td>¥{{r.settle_amount.toFixed(2)}}</td><td>¥{{r.settled_before.toFixed(2)}}</td>
+<td>¥{{r.fee_amount.toFixed(2)}}</td><td>¥{{r.commission_amount.toFixed(2)}}</td>
 <td>¥{{r.per_use_amount.toFixed(2)}}</td><td>¥{{r.per_use_fee_amount.toFixed(2)}}</td><td>¥{{r.per_use_settle_amount.toFixed(2)}}</td>
+<td>¥{{r.settle_amount.toFixed(2)}}</td><td>¥{{r.settled_before.toFixed(2)}}</td>
 <td :style="{color:r.delta_amount<0?'#e74c3c':'#67c23a',fontWeight:'bold'}">¥{{r.delta_amount.toFixed(2)}}</td>
 <td><button class="btn btn-sm" @click="togglePreview(r.agent_id,r.settle_month)">{{isPreviewExpanded(r.agent_id,r.settle_month)?'收起':'明细'}}</button></td>
 </tr>
@@ -1356,8 +1357,9 @@ Vue.component('page-agent-settlement',{template:`
 <tr v-for="r in historyDetail.logs">
 <td>{{r.settle_month}}</td><td>{{r.agent_name}}</td><td>{{r.order_count}}</td>
 <td>¥{{Number(r.deposit_amount||0).toFixed(2)}}</td><td>¥{{Number(r.refund_amount||0).toFixed(2)}}</td><td>¥{{Number(r.balance_amount||0).toFixed(2)}}</td>
-<td>¥{{Number(r.fee_amount||0).toFixed(2)}}</td><td>¥{{Number(r.commission_amount||0).toFixed(2)}}</td><td>¥{{Number(r.settle_amount||0).toFixed(2)}}</td><td>¥{{Number(r.settled_before||0).toFixed(2)}}</td>
+<td>¥{{Number(r.fee_amount||0).toFixed(2)}}</td><td>¥{{Number(r.commission_amount||0).toFixed(2)}}</td>
 <td>¥{{Number(r.per_use_amount||0).toFixed(2)}}</td><td>¥{{Number(r.per_use_fee_amount||0).toFixed(2)}}</td><td>¥{{Number(r.per_use_settle_amount||0).toFixed(2)}}</td>
+<td>¥{{Number(r.settle_amount||0).toFixed(2)}}</td><td>¥{{Number(r.settled_before||0).toFixed(2)}}</td>
 <td :style="{color:Number(r.delta_amount)<0?'#e74c3c':'#67c23a',fontWeight:'bold'}">¥{{Number(r.delta_amount||0).toFixed(2)}}</td>
 <td><button class="btn btn-sm" @click="toggleDetail(r.id)">{{isDetailExpanded(r.id)?'收起':'明细'}}</button></td>
 </tr>

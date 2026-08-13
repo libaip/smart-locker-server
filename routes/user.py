@@ -3330,42 +3330,7 @@ def user_withdraw():
                     conn.close()
                     return json_response(message='订单已有待处理提现，请勿重复提交', code=400)
             # 检查白名单
-            from helpers import check_whitelist, add_whitelist, consume_whitelist, do_real_refund
-            wl_record = check_whitelist(openid) if openid else None
-            if wl_record:
-                # 白名单免审，直接退款
-                upsert_user_balance_row(cursor, phone=phone, openid=openid, unionid=ident['unionid'],
-                                        mp_openid=mp_openid, balance=-actual_amount,
-                                        total_withdrawn=actual_amount, user_id=ident['user_id'])
-                import json as _json_cons3
-                remaining = actual_amount
-                _total_refunded = 0.0
-                _all_order_ids = []
-                _first_err = None
-                _first_oid_openid = None
-                for oid, refundable, br in order_plan:
-                    if remaining <= 0.001: break
-                    refund_this = min(remaining, refundable)
-                    order_openid = br.get('order_openid') or openid
-                    ok, rid, rmsg = do_real_refund(order_id=oid, amount=refund_this, openid=order_openid, skip_balance=True)
-                    if not ok and _first_err is None:
-                        _first_err = rmsg
-                    _total_refunded += refund_this
-                    _all_order_ids.append(str(oid))
-                    if _first_oid_openid is None:
-                        _first_oid_openid = order_openid
-                    if ok and '已退款' not in rmsg and '全额退款' not in rmsg:
-                        cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_amount = COALESCE(refund_amount, 0) + %s WHERE id = %s', (rid, refund_this, oid))
-                        cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (oid,))
-                    remaining -= refund_this
-                _st = 2 if _first_err is None else 4
-                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, error_msg, openid, order_ids) VALUES (%s, %s, %s, %s, 1, %s, %s, %s, %s) RETURNING id', (_all_order_ids[0] if _all_order_ids else None, phone, _total_refunded, _st, 'whitelist_auto', _first_err, _first_oid_openid or openid, _json_cons3.dumps(_all_order_ids)))
-                first_wid = cursor.fetchone()['id']
-                if wl_record['source'] == 'manual_help':
-                    consume_whitelist(openid)
-                conn.commit()
-                conn.close()
-                return json_response(data={'withdrawal_id': first_wid, 'status': 'refunded', 'amount': actual_amount, 'message': '白名单免审，已自动退款'})
+            # 白名单用户统一走队列，入口处不再即时退款
             # 检查是否被拒绝后重提（按用户身份统计，避免同手机号另一微信的记录干扰）
             if ident['user_id']:
                 cursor.execute('SELECT COUNT(*) as cnt FROM withdrawal_records wr JOIN orders o ON wr.order_id = o.id WHERE o.user_id = %s AND wr.status = 3', (ident['user_id'],))
@@ -3373,33 +3338,11 @@ def user_withdraw():
                 cursor.execute('SELECT COUNT(*) as cnt FROM withdrawal_records wr WHERE user_phone = %s AND status = 3', (phone,))
             reject_cnt = cursor.fetchone()['cnt']
             if reject_cnt > 0 and openid:
+                from helpers import add_whitelist
                 add_whitelist(openid, 'reject_retry', -1)
-                upsert_user_balance_row(cursor, phone=phone, openid=openid, unionid=ident['unionid'],
-                                        mp_openid=mp_openid, balance=-actual_amount,
-                                        total_withdrawn=actual_amount, user_id=ident['user_id'])
-                import json as _json_cons3; remaining = actual_amount; _total_refunded = 0.0; _all_order_ids = []; _first_err = None; _first_oid_openid = None
-                for oid, refundable, br in order_plan:
-                    if remaining <= 0.001: break
-                    refund_this = min(remaining, refundable)
-                    order_openid = br.get('order_openid') or openid
-                    ok, rid, rmsg = do_real_refund(order_id=oid, amount=refund_this, openid=order_openid, skip_balance=True)
-                    if not ok and _first_err is None:
-                        _first_err = rmsg
-                    _total_refunded += refund_this
-                    _all_order_ids.append(str(oid))
-                    if _first_oid_openid is None:
-                        _first_oid_openid = order_openid
-                    if ok and '已退款' not in rmsg and '全额退款' not in rmsg:
-                        cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_amount = COALESCE(refund_amount, 0) + %s WHERE id = %s', (rid, refund_this, oid))
-                        cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (oid,))
-                    remaining -= refund_this
-                _st = 2 if _first_err is None else 4
-                cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, error_msg, openid, order_ids) VALUES (%s, %s, %s, %s, 1, %s, %s, %s, %s) RETURNING id', (_all_order_ids[0] if _all_order_ids else None, phone, _total_refunded, _st, 'whitelist_auto', _first_err, _first_oid_openid or openid, _json_cons3.dumps(_all_order_ids)))
-                first_wid = cursor.fetchone()['id']
-                conn.commit()
-                conn.close()
-                return json_response(data={'withdrawal_id': first_wid, 'status': 'refunded', 'amount': actual_amount, 'message': '已加入白名单，自动退款'})
             # 冻结余额（严格按phone+openid）
+            from helpers import check_whitelist
+            wl_record = check_whitelist(openid) if openid else None
             upsert_user_balance_row(cursor, phone=phone, openid=openid, unionid=ident['unionid'],
                                     mp_openid=mp_openid, balance=-actual_amount,
                                     user_id=ident['user_id'])
@@ -3415,6 +3358,8 @@ def user_withdraw():
                 _delay_min = random.randint(_sm, _em)
                 from datetime import timedelta
                 _auto_time = (datetime.now() + timedelta(minutes=_delay_min)).strftime('%Y-%m-%d %H:%M:%S')
+            if wl_record:
+                _auto_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             for oid, refundable, br in order_plan:
                 if remaining <= 0.001:
                     break
@@ -3788,7 +3733,7 @@ def get_user_withdrawals():
         cur.execute('''
             SELECT w.id, w.amount, w.status, w.apply_time, w.approve_time, w.error_msg
             FROM withdrawal_records w
-            WHERE ''' + ' OR '.join(wd_conds) + '''
+            WHERE ''' + ' AND '.join(wd_conds) + '''
             ORDER BY w.created_at DESC
             LIMIT 50
         ''', wd_params)

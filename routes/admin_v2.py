@@ -1410,6 +1410,8 @@ def admin_withdrawal_approve():
         if order_ids_list and len(order_ids_list) > 0:
             from helpers import do_real_refund
             all_ok = True
+            failed_amount = 0.0
+            failed_oids = []
             for oid in order_ids_list:
                 c.execute('SELECT deposit_amount, COALESCE(refund_amount,0) as refund_amount FROM orders WHERE id=%s', (oid,))
                 od = c.fetchone()
@@ -1425,18 +1427,23 @@ def admin_withdrawal_approve():
                             pass
                         else:
                             all_ok = False
+                            failed_amount += refund_this
+                            failed_oids.append(oid)
             c.execute('UPDATE withdrawal_records SET status=%s, approver=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s',
-                       (2 if all_ok else 1, session.get('admin_username', 'admin'), withdrawal_id))
+                       (2 if all_ok else 4, session.get('admin_username', 'admin'), withdrawal_id))
+            if failed_amount > 0:
+                upsert_user_balance_row(c, phone=wd.get('user_phone', ''), openid=wd.get('openid', ''),
+                                        unionid=wd.get('unionid', '') or '',
+                                        mp_openid=wd.get('mp_openid', '') or '',
+                                        balance=failed_amount, total_withdrawn=-failed_amount,
+                                        user_id=wd.get('user_id') or 0)
+                for foid in failed_oids:
+                    c.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (foid,))
             conn.commit()
             conn.close()
             return json_response(message='审批通过，退款已处理' if all_ok else '审批通过，部分退款失败')
         # 兼容旧逻辑：单个order_id
         # 余额已在用户提现时扣除，无需再次扣除
-        upsert_user_balance_row(c, phone=phone, openid=wd.get('openid', ''),
-                                unionid=wd.get('unionid', '') or '',
-                                mp_openid=wd.get('mp_openid', '') or '',
-                                balance=-amount, total_withdrawn=amount,
-                                user_id=wd.get('user_id') or 0)
         # 真正退款/转账
         refund_success = False
         refund_id = ''
@@ -1464,10 +1471,16 @@ def admin_withdrawal_approve():
                 c.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=%s, refund_amount=%s WHERE id=%s', (refund_id, datetime.now(), amount, order_id))
                 c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (order_id,))
         else:
-            c.execute('UPDATE withdrawal_records SET status=1, error_msg=%s, approver=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s',
+            c.execute('UPDATE withdrawal_records SET status=4, error_msg=%s, approver=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s',
                        (str(refund_msg), session.get('admin_username', 'admin'), withdrawal_id))
             if order_id:
                 c.execute("UPDATE orders SET status=3, refund_status='none', refund_mark=0 WHERE id=%s", (order_id,))
+                c.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (order_id,))
+            upsert_user_balance_row(c, phone=wd.get('user_phone', ''), openid=wd.get('openid', ''),
+                                    unionid=wd.get('unionid', '') or '',
+                                    mp_openid=wd.get('mp_openid', '') or '',
+                                    balance=float(amount), total_withdrawn=-float(amount),
+                                    user_id=wd.get('user_id') or 0)
         conn.commit()
         conn.close()
         if refund_success or ('已退款' in str(refund_msg)) or ('全额退款' in str(refund_msg)):
@@ -4605,7 +4618,11 @@ def _process_auto_withdrawal_record(wid):
                         c2.execute("INSERT INTO user_balances (phone, balance, total_withdrawn, first_use_time) VALUES (%s, %s, 0, NOW())", (phone, failed_amount))
                     for foid in failed:
                         c2.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (foid,))
-                c2.execute("UPDATE withdrawal_records SET status=1, error_msg=%s, dedup_key=NULL, next_attempt_at=NULL, approve_time=NOW() WHERE id=%s", (first_msg, wid))
+                c2.execute("UPDATE withdrawal_records SET status=4, error_msg=%s, dedup_key=NULL, next_attempt_at=NULL, approve_time=NOW(), approver='自动' WHERE id=%s", (first_msg, wid))
+                try:
+                    c2.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('withdraw_refund_failed', NULL, %s, '0', NOW())", (('自动退款失败: ' + str(first_msg))[:500],))
+                except Exception as _alarm_e:
+                    logger.error('[auto_withdraw] alarm insert fail: %s', _alarm_e)
                 conn2.commit()
                 logger.error('[auto_withdraw] ???????? id=%s orders=%s msg=%s', wid, order_ids, first_msg)
                 done = True
@@ -4789,18 +4806,20 @@ def withdrawal_batch_auto():
         # 1. ?????auto_approve_time ?????
         rows = c.execute("""
             SELECT w.id, w.user_phone, w.amount, w.order_id, w.auto_approve_time,
-                   l.refund_approve_rate
+                   l.refund_approve_rate,
+                   ww.openid as wl_openid
             FROM withdrawal_records w
             JOIN orders o ON w.order_id = o.id
             JOIN cabinets cb ON o.cabinet_id = cb.id
             JOIN locations l ON cb.location_id = l.id
+            LEFT JOIN withdrawal_whitelist ww ON ww.openid = w.openid
             WHERE w.status = 0 AND l.withdraw_mode = 'queue_approve'
             AND w.auto_approve_time IS NOT NULL
             AND w.auto_approve_time::timestamp <= NOW()
         """).fetchall()
         for r in rows:
             rate = (r['refund_approve_rate'] or 80) / 100.0
-            if _rnd.random() < rate:
+            if bool(r.get('wl_openid')) or _rnd.random() < rate:
                 # ????????????
                 from helpers import do_real_refund
                 order_id = r['order_id']
@@ -4819,7 +4838,11 @@ def withdrawal_batch_auto():
                     else:
                         c2.execute("UPDATE user_balances SET balance=balance+%s, total_withdrawn=GREATEST(total_withdrawn-%s,0) WHERE phone=%s ", (amt, amt, r['user_phone']))
                         c2.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (order_id,))
-                        c2.execute("UPDATE withdrawal_records SET status=1, error_msg=%s, dedup_key=NULL, approve_time=datetime('now'), approver='自动' WHERE id=%s", (msg, r['id']))
+                        c2.execute("UPDATE withdrawal_records SET status=4, error_msg=%s, dedup_key=NULL, approve_time=datetime('now'), approver='自动' WHERE id=%s", (msg, r['id']))
+                        try:
+                            c2.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('withdraw_refund_failed', NULL, %s, '0', NOW())", (('队列退款失败: ' + str(msg))[:500],))
+                        except Exception:
+                            pass
             else:
                 # ?????????????
                 c.execute("UPDATE user_balances SET balance = balance + %s, total_withdrawn = total_withdrawn - %s WHERE phone = %s ",
@@ -4831,8 +4854,10 @@ def withdrawal_batch_auto():
         
         # 2. ?????????? >= 80% ?????????????
         rows2 = c.execute("""
-            SELECT w.id, w.amount, w.user_phone, w.order_id, w.order_ids, w.openid, l.auto_approve_rate
+            SELECT w.id, w.amount, w.user_phone, w.order_id, w.order_ids, w.openid, l.auto_approve_rate,
+                   ww.openid as wl_openid
             FROM withdrawal_records w
+            LEFT JOIN withdrawal_whitelist ww ON ww.openid = w.openid
             JOIN orders o ON w.order_id = o.id
             JOIN cabinets cb ON o.cabinet_id = cb.id
             JOIN locations l ON cb.location_id = l.id
@@ -4851,7 +4876,7 @@ def withdrawal_batch_auto():
                 local_conn = get_db()
                 lc = local_conn.cursor()
                 rate = (r['auto_approve_rate'] or 0) / 100.0
-                if _rnd.random() < rate:
+                if bool(r.get('wl_openid')) or _rnd.random() < rate:
                     from helpers import do_real_refund
                     order_id = r['order_id']
                     amt = r['amount']
@@ -4862,10 +4887,22 @@ def withdrawal_batch_auto():
                         if success:
                             lc.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), approver='自动' WHERE id=%s", (r['id'],))
                             lc.execute("UPDATE orders SET status=4, refund_id=%s, refund_time=NOW() WHERE id=%s", (refund_id, order_id))
+                            lc.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order_id,))
                         else:
-                            lc.execute("UPDATE withdrawal_records SET status=1, approve_time=NOW(), approver='自动' WHERE id=%s", (r['id'],))
+                            _rp = r.get('user_phone') or ''
+                            lc.execute("UPDATE user_balances SET balance=balance+%s, total_withdrawn=GREATEST(total_withdrawn-%s,0) WHERE phone=%s", (amt, amt, _rp))
+                            if lc.rowcount == 0 and _rp:
+                                lc.execute("INSERT INTO user_balances (phone, balance, total_withdrawn, first_use_time) VALUES (%s, %s, 0, NOW())", (_rp, amt))
+                            lc.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (order_id,))
+                            lc.execute("UPDATE withdrawal_records SET status=4, error_msg=%s, approve_time=NOW(), approver='自动', dedup_key=NULL WHERE id=%s", (str(msg)[:500], r['id']))
+                            try:
+                                lc.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('withdraw_refund_failed', NULL, %s, '0', NOW())", (('自动审批退款失败: ' + str(msg))[:500],))
+                            except Exception:
+                                pass
                     else:
-                        lc.execute("UPDATE withdrawal_records SET status=1, approve_time=NOW(), approver='自动' WHERE id=%s", (r['id'],))
+                        lc.execute("UPDATE user_balances SET balance=balance+%s, total_withdrawn=GREATEST(total_withdrawn-%s,0) WHERE phone=%s", (amt, amt, r.get('user_phone') or ''))
+                        lc.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (order_id,))
+                        lc.execute("UPDATE withdrawal_records SET status=4, error_msg=%s, approve_time=NOW(), approver='自动', dedup_key=NULL WHERE id=%s", ('订单不存在', r['id']))
                     approved += 1
                 else:
                     _oid = r.get('openid', '') or ''

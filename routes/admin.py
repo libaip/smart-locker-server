@@ -743,15 +743,15 @@ def get_cabinet_by_mainboard(mainboard_id):
             _dep = float(result.get('deposit_amount') or 0)
             _mn = result.get('deposit_min')
             _mx = result.get('deposit_max')
-            if _mn is not None and _mx is not None and float(_mx) > float(_mn):
-                _dep_txt = _fmt_amt(_mn) + '~' + _fmt_amt(_mx)
-                _cap_txt = _fmt_amt(_mx)
+            _random = _mn is not None and _mx is not None and float(_mx) > float(_mn)
+            if _random:
+                _dep_line = '预付费随机金额，封顶随机金额'
             else:
                 _dep_txt = _fmt_amt(_dep)
-                _cap_txt = _fmt_amt(_dep)
+                _dep_line = '预付费{}元，封顶{}元'.format(_dep_txt, _dep_txt)
             _fee_lines = [
                 '收费{}元/天'.format(_fmt_amt(_fd)),
-                '预付费{}元，封顶{}元'.format(_dep_txt, _cap_txt),
+                _dep_line,
                 '存放时间截止到当日23:00，请提前取走物品',
                 '限时免费使用{}天'.format(_fdays),
                 '请务必确认锁好柜门',

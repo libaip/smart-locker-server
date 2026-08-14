@@ -1584,6 +1584,7 @@ def admin_complaints():
         status = (data or {}).get('status', '') or request.args.get('status', '')
         phone = (data or {}).get('phone', '') or request.args.get('phone', '')
         order_no = (data or {}).get('order_no', '') or request.args.get('order_no', '')
+        mch_id = (data or {}).get('mch_id', '') or request.args.get('mch_id', '')
         start_date = (data or {}).get('start_date', '') or request.args.get('start_date', '')
         end_date = (data or {}).get('end_date', '') or request.args.get('end_date', '')
         page = int(request.args.get("page", (data or {}).get("page", 1)))
@@ -1593,8 +1594,12 @@ def admin_complaints():
         where, params = "1=1", []
         if complaint_type:
             if complaint_type == 'self':
-                where += " AND (c.complaint_type IN ('self','complaint') OR c.type IN ('self','complaint')) AND (c.status NOT IN ('2','3') OR (c.status='2' AND (c.reply LIKE %s OR c.reply LIKE %s)))"
-                params.extend(['%自动退款失败%', '%退款失败%'])
+                _search_active = bool(phone or order_no or mch_id or status)
+                if _search_active:
+                    where += " AND (c.complaint_type IN ('self','complaint') OR c.type IN ('self','complaint'))"
+                else:
+                    where += " AND (c.complaint_type IN ('self','complaint') OR c.type IN ('self','complaint')) AND (c.status IN ('0','1') OR (c.status='2' AND (c.reply LIKE %s OR c.reply LIKE %s)))"
+                    params.extend(['%自动退款失败%', '%退款失败%'])
             else:
                 where += ' AND c.complaint_type=%s'
                 params.append(complaint_type)
@@ -1608,22 +1613,28 @@ def admin_complaints():
             else:
                 try:
                     where += ' AND c.status=%s'
-                    params.append(int(status))
+                    params.append(str(int(status)))
                 except:
                     pass
         if phone:
-            where += ' AND c.user_phone LIKE %s'
-            params.append(f'%{phone}%')
+            where += ' AND (c.user_phone LIKE %s OR o.user_phone LIKE %s)'
+            params.extend([f'%{phone}%', f'%{phone}%'])
         if order_no:
-            where += ' AND o.order_no LIKE %s'
-            params.append(f'%{order_no}%')
+            where += ' AND (c.order_no LIKE %s OR o.order_no LIKE %s)'
+            params.extend([f'%{order_no}%', f'%{order_no}%'])
+        if mch_id:
+            where += ' AND (c.mch_id LIKE %s OR pc.mch_id LIKE %s)'
+            params.extend([f'%{mch_id}%', f'%{mch_id}%'])
         if start_date:
             where += ' AND c.created_at >= %s'
             params.append(start_date)
         if end_date:
             where += ' AND c.created_at < %s::date + INTERVAL \'1 day\''
             params.append(end_date)
-        c.execute(f'SELECT COUNT(*) FROM complaints c LEFT JOIN orders o ON c.order_id=o.id WHERE {where}', params)
+        c.execute(f'''SELECT COUNT(*) FROM complaints c
+            LEFT JOIN orders o ON c.order_id=o.id OR (c.order_no IS NOT NULL AND c.order_no = o.order_no)
+            LEFT JOIN payment_channels pc ON o.payment_channel_id=pc.id
+            WHERE {where}''', params)
         total = c.fetchone()[0]
         c.execute(f'''SELECT c.*, CASE WHEN c.source IS NOT NULL AND c.source != '' THEN c.source WHEN c.type IN ('self','complaint') OR c.complaint_type IN ('self','complaint') THEN '自有投诉' WHEN c.type='wechat' OR c.complaint_type='wechat' THEN '微信投诉' ELSE COALESCE(c.type,'') END as source, COALESCE(NULLIF(po.wechat_name,''), NULLIF(up.wechat_name,''), o.wechat_name, c.nick_name) as nickname, CASE WHEN o.status IN (2,3) THEN o.order_no ELSE c.order_no END as order_no, CASE WHEN c.type = 'self' THEN c.user_phone ELSE COALESCE(o.user_phone, c.user_phone) END as user_phone, pc.mch_id, ca.cabinet_code, l.name as location_name
             FROM complaints c LEFT JOIN orders o ON c.order_id=o.id OR (c.order_no IS NOT NULL AND c.order_no = o.order_no) LEFT JOIN (SELECT DISTINCT ON (phone) phone, openid, wechat_name FROM users ORDER BY phone, id DESC) po ON po.phone=COALESCE(NULLIF(o.user_phone,''), NULLIF(c.user_phone,'')) LEFT JOIN user_profiles up ON up.openid=COALESCE(c.openid, po.openid, o.openid) LEFT JOIN payment_channels pc ON o.payment_channel_id=pc.id LEFT JOIN cabinets ca ON o.cabinet_id=ca.id LEFT JOIN locations l ON ca.location_id=l.id
@@ -3132,17 +3143,24 @@ def admin_channels():
         c.execute("""
             SELECT pc.*,
                    COALESCE(oi.paid_count, 0) as paid_total_count,
-                   COALESCE(oi.paid_amount, 0) as paid_total_amount
+                   COALESCE(oi.paid_amount, 0) as paid_total_amount,
+                   COALESCE(ri.refund_count, 0) as refund_total_count,
+                   COALESCE(ri.refund_amount, 0) as refund_total_amount
             FROM payment_channels pc
             LEFT JOIN (SELECT payment_channel_id, COUNT(*) as paid_count, COALESCE(SUM(deposit_amount), 0) as paid_amount
                        FROM orders WHERE status IN (2,3,4) GROUP BY payment_channel_id) oi
                    ON pc.id = oi.payment_channel_id
+            LEFT JOIN (SELECT payment_channel_id, COUNT(*) as refund_count, COALESCE(SUM(refund_amount), 0) as refund_amount
+                       FROM orders WHERE refund_time IS NOT NULL AND COALESCE(refund_amount,0) > 0 GROUP BY payment_channel_id) ri
+                   ON pc.id = ri.payment_channel_id
             ORDER BY pc.created_at DESC
         """)
         channels = [dict(r) for r in c.fetchall()]
         for ch in channels:
             ch['total_count'] = ch.get('paid_total_count', 0)
             ch['total_amount'] = ch.get('paid_total_amount', 0)
+            ch['refund_total_count'] = ch.get('refund_total_count', 0)
+            ch['refund_total_amount'] = ch.get('refund_total_amount', 0)
         conn.close()
         return json_response(data=channels)
     except Exception as e:
@@ -4593,7 +4611,7 @@ def _process_auto_withdrawal_record(wid):
                 payment_channel_id=od['payment_channel_id'],
             )
             if success or ('???' in str(msg)) or ('????' in str(msg)):
-                c2.execute("UPDATE orders SET status=4, refund_id=COALESCE(%s, refund_id), refund_time=NOW() WHERE id=%s", (refund_id, oid))
+                c2.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=COALESCE(%s, refund_id), refund_amount=GREATEST(COALESCE(refund_amount,0), %s), refund_time=NOW(), refund_mark=1 WHERE id=%s", (refund_id, refund_this, oid))
                 c2.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (oid,))
             else:
                 failed.append(oid)
@@ -4812,7 +4830,9 @@ def withdrawal_batch_auto():
             JOIN orders o ON w.order_id = o.id
             JOIN cabinets cb ON o.cabinet_id = cb.id
             JOIN locations l ON cb.location_id = l.id
-            LEFT JOIN withdrawal_whitelist ww ON ww.openid = w.openid
+            LEFT JOIN withdrawal_whitelist ww
+                   ON (ww.unionid IS NOT NULL AND ww.unionid <> '' AND ww.unionid = o.unionid)
+                   OR (COALESCE(ww.unionid, '') = '' AND ww.openid = w.openid)
             WHERE w.status = 0 AND l.withdraw_mode = 'queue_approve'
             AND w.auto_approve_time IS NOT NULL
             AND w.auto_approve_time::timestamp <= NOW()
@@ -4857,15 +4877,18 @@ def withdrawal_batch_auto():
             SELECT w.id, w.amount, w.user_phone, w.order_id, w.order_ids, w.openid, l.auto_approve_rate,
                    ww.openid as wl_openid
             FROM withdrawal_records w
-            LEFT JOIN withdrawal_whitelist ww ON ww.openid = w.openid
             JOIN orders o ON w.order_id = o.id
             JOIN cabinets cb ON o.cabinet_id = cb.id
             JOIN locations l ON cb.location_id = l.id
+            LEFT JOIN withdrawal_whitelist ww
+                   ON (ww.unionid IS NOT NULL AND ww.unionid <> '' AND ww.unionid = o.unionid)
+                   OR (COALESCE(ww.unionid, '') = '' AND ww.openid = w.openid)
             WHERE w.status = 0 AND l.withdraw_mode = 'manual_approve'
-              AND (l.auto_approve_day IS NULL OR l.auto_approve_day <= 0
-                OR w.created_at::date <= CURRENT_DATE - l.auto_approve_day::integer)
-              AND (l.auto_approve_time IS NULL OR l.auto_approve_time = ''
-                OR CURRENT_TIME >= l.auto_approve_time::time)
+              AND (ww.openid IS NOT NULL
+                   OR ((l.auto_approve_day IS NULL OR l.auto_approve_day <= 0
+                        OR w.created_at::date <= CURRENT_DATE - l.auto_approve_day::integer)
+                       AND (l.auto_approve_time IS NULL OR l.auto_approve_time = ''
+                            OR CURRENT_TIME >= l.auto_approve_time::time)))
             LIMIT 200
         """).fetchall()
         conn.commit()
@@ -6455,8 +6478,8 @@ def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id="", p
             from datetime import datetime as dt_mod
             now = dt_mod.now().strftime('%Y-%m-%d %H:%M:%S')
             # 更新订单状态为已退款
-            c.execute("UPDATE orders SET refund_mark=1, refund_status='refunded', status=4, refund_amount=%s, refund_time=CURRENT_TIMESTAMP WHERE id=%s",
-                      (deposit, order_id))
+            c.execute("UPDATE orders SET refund_mark=1, refund_status='refunded', status=4, refund_id=%s, refund_amount=%s, refund_time=CURRENT_TIMESTAMP WHERE id=%s",
+                      (refund_id or '', deposit, order_id))
             c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order_id,))
             # 释放柜格（如果还在使用中）
             if status == 2 and order.get('slot_id'):
@@ -7198,7 +7221,7 @@ def _complaint_scheduler():
                             try:
                                 _mo_conn = get_db()
                                 _mo_cur = _mo_conn.cursor()
-                                _mo_cur.execute("SELECT order_no FROM orders WHERE user_phone=%s AND status IN (2,3) AND COALESCE(refund_status,'') NOT IN ('success','refunded') AND COALESCE(refund_id,'') = '' ORDER BY id DESC LIMIT 1", (phone2,))
+                                _mo_cur.execute("SELECT order_no FROM orders WHERE user_phone=%s AND status IN (2,3) AND COALESCE(refund_status,'') NOT IN ('success','refunded') AND COALESCE(refund_id,'') = '' AND COALESCE(transaction_id,'') != '' ORDER BY id DESC LIMIT 1", (phone2,))
                                 _mo_row = _mo_cur.fetchone()
                                 if _mo_row and _mo_row[0]:
                                     ono2 = _mo_row[0]
@@ -7224,6 +7247,14 @@ def _complaint_scheduler():
                         _precheck = _precheck_cur.fetchone()
                         _precheck_conn.close()
                         if _precheck and (_precheck[0] == 4 or (_precheck[1] in ('success', 'refunded')) or _precheck[2]):
+                            try:
+                                _wa2_conn = get_db()
+                                _wa2_cur = _wa2_conn.cursor()
+                                _wa2_cur.execute("""UPDATE withdrawal_records SET status=2, approver='投诉自动退款', approve_time=CURRENT_TIMESTAMP WHERE order_id=(SELECT id FROM orders WHERE order_no=%s LIMIT 1) AND status='0'""", (ono2,))
+                                _wa2_conn.commit()
+                                _wa2_conn.close()
+                            except Exception:
+                                pass
                             _finish_nonwechat(cid2, already_reply)
                             continue
                     except:
@@ -7234,18 +7265,23 @@ def _complaint_scheduler():
                         _dcur = _dc.cursor()
                         if ono2:
                             _dcur.execute("""
-                                SELECT 1 FROM withdrawal_records w
+                                SELECT w.status FROM withdrawal_records w
                                 WHERE w.user_phone=%s AND w.status IN (0,1,2)
                                   AND EXISTS (SELECT 1 FROM orders o WHERE o.order_no=%s
                                               AND (w.order_id=o.id OR POSITION(('"' || o.id::text || '"') IN COALESCE(w.order_ids,''))>0))
                                 LIMIT 1
                             """, (phone2, ono2))
                         else:
-                            _dcur.execute("SELECT 1 FROM withdrawal_records WHERE user_phone=%s AND status IN (0,1,2) LIMIT 1", (phone2,))
+                            _dcur.execute("SELECT status FROM withdrawal_records WHERE user_phone=%s AND status IN (0,1,2) LIMIT 1", (phone2,))
                         _dup = _dcur.fetchone()
                         _dc.close()
-                        if _dup:
-                            logger.info("[complaint_scheduler] order %s has active withdrawal, finish as received id=%s", ono2, cid2)
+                        _dup_status = str(_dup[0]) if _dup else ''
+                        if _dup_status == '2':
+                            logger.info("[complaint_scheduler] order %s withdrawal already approved, mark complaint done id=%s", ono2, cid2)
+                            _finish_nonwechat(cid2, already_reply)
+                            continue
+                        if _dup_status == '1':
+                            logger.info("[complaint_scheduler] order %s withdrawal refunding, finish as received id=%s", ono2, cid2)
                             _finish_nonwechat(cid2, received_reply)
                             continue
                     except:
@@ -7268,6 +7304,16 @@ def _complaint_scheduler():
                             _finish_nonwechat(cid2, received_reply)
                         else:
                             _finish_nonwechat(cid2, '已自动原路退款')
+                        if _dup_status == '0':
+                            try:
+                                _wa_conn = get_db()
+                                _wa_cur = _wa_conn.cursor()
+                                _wa_cur.execute("""UPDATE withdrawal_records SET status=2, approver='投诉自动退款', approve_time=CURRENT_TIMESTAMP WHERE order_id=(SELECT id FROM orders WHERE order_no=%s LIMIT 1) AND status='0'""", (ono2,))
+                                _wa_conn.commit()
+                                _wa_conn.close()
+                                logger.info("[complaint_scheduler] pending withdrawal auto-approved order=%s id=%s", ono2, cid2)
+                            except Exception as _we:
+                                logger.error("[complaint_scheduler] auto approve withdrawal error: %s", _we)
                         logger.info("[complaint_scheduler] non-wechat refund ok id=%s order=%s msg=%s", cid2, ono2, refund_msg2)
                         continue
 

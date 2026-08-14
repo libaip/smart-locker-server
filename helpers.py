@@ -2044,31 +2044,126 @@ def mark_user_withdraw(openid=None, phone=None, user_id=0):
 # ?????????order_id????????
 _last_open_lock_time = {}
 # ====== ????????????????????? ======
-def check_whitelist(openid):
+def _resolve_unionid(openid='', phone=''):
+    """按 openid/手机号解析 unionid，白名单统一按 UN 认人"""
     try:
         from database import get_db
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("SELECT openid, source, remain_count FROM withdrawal_whitelist WHERE openid = %s", (openid,))
-        row = cur.fetchone()
+        if openid:
+            cur.execute("SELECT unionid FROM phone_openids WHERE openid = %s AND unionid IS NOT NULL AND unionid != '' ORDER BY id DESC LIMIT 1", (openid,))
+            row = cur.fetchone()
+            if row and row.get('unionid'):
+                conn.close()
+                return row['unionid']
+            cur.execute("SELECT unionid FROM user_balances WHERE openid = %s AND unionid IS NOT NULL AND unionid != '' ORDER BY id DESC LIMIT 1", (openid,))
+            row = cur.fetchone()
+            if row and row.get('unionid'):
+                conn.close()
+                return row['unionid']
+        if phone:
+            cur.execute("SELECT unionid FROM phone_openids WHERE phone = %s AND unionid IS NOT NULL AND unionid != '' ORDER BY id DESC LIMIT 1", (phone,))
+            row = cur.fetchone()
+            if row and row.get('unionid'):
+                conn.close()
+                return row['unionid']
+            cur.execute("SELECT unionid FROM user_balances WHERE phone = %s AND unionid IS NOT NULL AND unionid != '' ORDER BY id DESC LIMIT 1", (phone,))
+            row = cur.fetchone()
+            if row and row.get('unionid'):
+                conn.close()
+                return row['unionid']
         conn.close()
-        return row
+    except Exception as e:
+        logger.error("[resolve_unionid] " + str(e))
+    return ''
+
+
+def check_whitelist(openid='', unionid=''):
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        if unionid:
+            cur.execute("SELECT openid, source, remain_count, unionid, created_at FROM withdrawal_whitelist WHERE unionid = %s LIMIT 1", (unionid,))
+            row = cur.fetchone()
+            if row:
+                conn.close()
+                return row
+        if openid:
+            cur.execute("SELECT openid, source, remain_count, unionid, created_at FROM withdrawal_whitelist WHERE openid = %s LIMIT 1", (openid,))
+            row = cur.fetchone()
+            if row and unionid and not (row.get('unionid') or ''):
+                try:
+                    cur.execute("UPDATE withdrawal_whitelist SET unionid = %s WHERE openid = %s", (unionid, openid))
+                    conn.commit()
+                except Exception:
+                    pass
+            conn.close()
+            return row
+        conn.close()
+        return None
     except Exception as e:
         logger.error("[check_whitelist] " + str(e))
         return None
-def add_whitelist(openid, source, remain_count=-1):
+
+
+def add_whitelist(openid, source, remain_count=-1, unionid=''):
     try:
         from database import get_db
         conn = get_db()
         cur = conn.cursor()
-        sql = "INSERT INTO withdrawal_whitelist (openid, source, remain_count, created_at) VALUES (%s, %s, %s, NOW()) ON CONFLICT (openid) DO UPDATE SET source = EXCLUDED.source, remain_count = CASE WHEN withdrawal_whitelist.remain_count = -1 THEN -1 ELSE EXCLUDED.remain_count END, created_at = NOW()"
-        cur.execute(sql, (openid, source, remain_count))
+        if not unionid:
+            unionid = _resolve_unionid(openid=openid)
+        if unionid:
+            cur.execute("SELECT openid FROM withdrawal_whitelist WHERE unionid = %s LIMIT 1", (unionid,))
+            exist = cur.fetchone()
+            if exist:
+                cur.execute("UPDATE withdrawal_whitelist SET openid = %s, source = %s, remain_count = CASE WHEN withdrawal_whitelist.remain_count = -1 THEN -1 ELSE %s END, created_at = NOW() WHERE unionid = %s",
+                            (openid, source, remain_count, unionid))
+                conn.commit()
+                conn.close()
+                return True
+        sql = "INSERT INTO withdrawal_whitelist (openid, source, remain_count, unionid, created_at) VALUES (%s, %s, %s, %s, NOW()) ON CONFLICT (openid) DO UPDATE SET source = EXCLUDED.source, remain_count = CASE WHEN withdrawal_whitelist.remain_count = -1 THEN -1 ELSE EXCLUDED.remain_count END, unionid = COALESCE(NULLIF(EXCLUDED.unionid, ''), withdrawal_whitelist.unionid), created_at = NOW()"
+        cur.execute(sql, (openid, source, remain_count, unionid))
         conn.commit()
         conn.close()
         return True
     except Exception as e:
         logger.error("[add_whitelist] " + str(e))
         return False
+
+
+def check_whitelist_today(openid='', unionid=''):
+    """当天投诉白名单：source=complaint 且白名单创建于今天（北京时间）"""
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        conds = ["source = 'complaint'"]
+        params = []
+        if unionid:
+            conds.append("unionid = %s")
+            params.append(unionid)
+        elif openid:
+            conds.append("(unionid IS NULL OR unionid = '') AND openid = %s")
+            params.append(openid)
+        else:
+            conn.close()
+            return None
+        cur.execute("SELECT current_setting('TimeZone') AS db_tz")
+        db_tz_row = cur.fetchone()
+        db_tz = (db_tz_row.get('db_tz') or 'UTC') if db_tz_row else 'UTC'
+        if db_tz in ('UTC', 'Etc/UTC', 'GMT', 'Etc/GMT', 'Universal', 'UCT'):
+            conds.append("(created_at + INTERVAL '8 hours')::date = (NOW() + INTERVAL '8 hours')::date")
+        else:
+            conds.append("created_at::date = CURRENT_DATE")
+        cur.execute("SELECT openid, source, remain_count, unionid, created_at FROM withdrawal_whitelist WHERE " + " AND ".join(conds) + " LIMIT 1", params)
+        row = cur.fetchone()
+        conn.close()
+        return row
+    except Exception as e:
+        logger.error("[check_whitelist_today] " + str(e))
+        return None
 def consume_whitelist(openid):
     try:
         from database import get_db
@@ -2121,7 +2216,8 @@ def add_whitelist_by_phone(phone, source, remain_count=-1):
     if not openid:
         logger.warning("[add_whitelist_by_phone] phone=" + str(phone) + " no openid")
         return False
-    return add_whitelist(openid, source, remain_count)
+    unionid = _resolve_unionid(openid=openid, phone=phone)
+    return add_whitelist(openid, source, remain_count, unionid)
 
 
 def get_online_device_ids():

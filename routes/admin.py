@@ -733,6 +733,32 @@ def get_cabinet_by_mainboard(mainboard_id):
             result['rules_title'] = result.get('location_rules_title', '') or ''
         if result.get('reopen_times') in (None, '', 0):
             result['reopen_times'] = result.get('location_reopen_times')
+        # 预付款模式：寄存规则自动追加标准收费规则（APK/设备屏幕显示）
+        if (result.get('charge_mode') or '') == 'deposit':
+            _fee_rules_txt = result.get('usage_rules') or ''
+            _fee_rules_txt = _fee_rules_txt.replace('保证金', '预付款').replace('押金', '预付款')
+            _fmt_amt = lambda n: str(int(n)) if float(n).is_integer() else ('%.2f' % float(n)).rstrip('0').rstrip('.')
+            _fd = float(result.get('daily_fee') or 0)
+            _fdays = int(result.get('free_days') or 1)
+            _dep = float(result.get('deposit_amount') or 0)
+            _mn = result.get('deposit_min')
+            _mx = result.get('deposit_max')
+            if _mn is not None and _mx is not None and float(_mx) > float(_mn):
+                _dep_txt = _fmt_amt(_mn) + '~' + _fmt_amt(_mx)
+                _cap_txt = _fmt_amt(_mx)
+            else:
+                _dep_txt = _fmt_amt(_dep)
+                _cap_txt = _fmt_amt(_dep)
+            _fee_lines = [
+                '收费{}元/天'.format(_fmt_amt(_fd)),
+                '预付费{}元，封顶{}元'.format(_dep_txt, _cap_txt),
+                '存放时间截止到当日23:00，请提前取走物品',
+                '限时免费使用{}天'.format(_fdays),
+                '请务必确认锁好柜门',
+            ]
+            if _fee_rules_txt:
+                _fee_rules_txt += '\n'
+            result['usage_rules'] = _fee_rules_txt + '\n'.join(_fee_lines)
         cursor.execute("SELECT cs.*, m.board_index, m.slot_count FROM cabinet_slots cs LEFT JOIN mainboards m ON cs.mainboard_id = m.id WHERE cs.cabinet_id = %s AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) ORDER BY cs.slot_number", (cabinet['id'],))
         slots = [dict(s) for s in cursor.fetchall()]
         # 精简：不返回64格全量slots（APK轮询只需可用柜格列表，省流量）

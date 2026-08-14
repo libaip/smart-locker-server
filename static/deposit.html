@@ -155,7 +155,7 @@
         .pay-agreement input[type="checkbox"] { width: 16px; height: 16px; accent-color: #FFC107; }
         .pay-agreement a { color: #4CAF50; text-decoration: none; font-weight: 500; }
 
-        /* ===== 押金协议弹窗 ===== */
+        /* ===== 预付款协议弹窗 ===== */
         .agreement-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 300; align-items: flex-end; justify-content: center; }
         .agreement-overlay.show { display: flex; }
         .agreement-box { background: #fff; border-radius: 16px 16px 0 0; width: 100%; max-width: 500px; max-height: 75vh; display: flex; flex-direction: column; }
@@ -400,9 +400,9 @@
         <div id="helpContent" class="help-detail">
             1. 点击「存」按钮，选择柜格大小<br>
             2. 输入手机号和4位取件码<br>
-            3. 支付押金后柜门自动打开<br>
+            3. 支付预付款后柜门自动打开<br>
             4. 取包时点击「取」，输入手机号+取件码<br>
-            5. 取出物品关好柜门，押金原路退回
+            5. 取出物品关好柜门，预付款原路退回
         </div>
         <div class="action-cards">
             <div class="action-card action-card-store" onclick="goToStoreStep1()">
@@ -449,7 +449,7 @@
             </div>
             <div class="info-row">
                 <span class="info-label">收费规则</span>
-                <span class="info-price"><span id="s1PriceLabel">保证金：</span><span id="s1Price">20</span></span>
+                <span class="info-price"><span id="s1PriceLabel">预付款：</span><span id="s1Price">20</span></span>
             </div>
             <div class="size-bar">
                 <div class="size-btn" data-size="S" onclick="selectSize('S')">小柜 ¥<span id="priceS">10</span></div>
@@ -457,10 +457,12 @@
                 <div class="size-btn" data-size="L" onclick="selectSize('L')">大柜 ¥<span id="priceL">30</span></div>
             </div>
             <div class="notes">
-                <div class="notes-title">注意事项</div>
+                <div class="notes-title">收费规则</div>
+                <div class="note-item">收费<span id="ruleDailyFee">0.5</span>元/天</div>
+                <div class="note-item">预付费<span id="ruleDeposit">20</span>元，封顶<span id="ruleCap">20</span>元</div>
                 <div class="note-item">存放时间截止到当日23:00，请提前取走物品</div>
-                <div class="note-item" id="s1Note2">为避免柜门无效占用，需支付押金¥<span id="s1DepositNote">20</span></div>
-                <div class="note-item">寄存结束后押金即可退回，请务必关好柜门</div>
+                <div class="note-item">限时免费使用<span id="ruleFreeDays">1</span>天</div>
+                <div class="note-item">请务必确认锁好柜门</div>
             </div>
             <div class="info-row door-row" style="display:none">
                 <span class="info-label">柜门号</span>
@@ -509,9 +511,9 @@
         </div>
         <div class="pay-countdown">支付剩余时间 <span id="payCountdown">05:00</span></div>
         <div class="pay-amount-card">
-            <div class="pay-amount-label">保证金</div>
+            <div class="pay-amount-label">预付款</div>
             <div class="pay-amount-value"><small>¥</small><span id="payAmount">20</span></div>
-            <div class="pay-amount-sub">保证金</div>
+            <div class="pay-amount-sub">预付款</div>
         </div>
         <div class="pay-detail-card">
             <div class="pay-detail-row">
@@ -520,11 +522,7 @@
             </div>
             <div class="pay-detail-row">
                 <span class="pay-detail-label">计费规则</span>
-                <span class="pay-detail-value" id="payRule">保证金：20</span>
-            </div>
-            <div class="pay-detail-row" id="orderIdRow" style="display:none">
-                <span class="pay-detail-label">订单号</span>
-                <span class="pay-detail-value" id="orderIdDisplay"></span>
+                <span class="pay-detail-value" id="payRule">预付款：20</span>
             </div>
             <div class="pay-detail-row">
                 <span class="pay-detail-label">柜门号</span>
@@ -533,13 +531,13 @@
         </div>
         <div class="pay-warning">
             <span class="pay-warning-icon">⚠️</span>
-            <span>请支付后使用设备，结束使用后押金可申请原路退回。</span>
+            <span>请支付后使用设备，结束使用后预付款可申请原路退回。</span>
         </div>
         <div class="pay-action-area">
             <button class="pay-open-btn" id="payBtn" onclick="payDeposit()">支付开门</button>
             <div class="pay-agreement">
                 <input type="checkbox" id="agreementCheck" checked>
-                <span>请仔细阅读<a href="javascript:void(0)" onclick="showAgreement()">《用户押金协议》</a>，勾选即同意协议。</span>
+                <span>请仔细阅读<a href="javascript:void(0)" onclick="showAgreement()">《用户预付款协议》</a>，勾选即同意协议。</span>
             </div>
         </div>
     </div>
@@ -595,7 +593,7 @@
         <div class="rc-card">
             <div class="rc-row"><span class="rc-label">柜格号</span><span class="rc-value" id="rcCompartment">-</span></div>
             <div class="rc-row"><span class="rc-label">存入时间</span><span class="rc-value" id="rcTime">-</span></div>
-            <div class="rc-row"><span class="rc-label">押金</span><span class="rc-value" id="rcDeposit">-</span></div>
+            <div class="rc-row"><span class="rc-label">预付款</span><span class="rc-value" id="rcDeposit">-</span></div>
         </div>
         <div class="rc-actions">
             <button class="rc-btn-mid" onclick="midOpen()">中途开柜</button>
@@ -671,7 +669,7 @@
             <span class="refunding-bar-icon">⏳</span>
             <span class="refunding-bar-text">有退款正在处理中，请耐心等待</span>
         </div>
-        <div class="balance-tip">余额来源：寄存订单完成后，押金将退回到余额中</div>
+        <div class="balance-tip">余额来源：寄存订单完成后，预付款将退回到余额中</div>
     </div>
 
     <!-- ========== 右侧浮标 ========== -->
@@ -726,26 +724,26 @@
         </div>
     </div>
 
-    <!-- ========== 押金协议弹窗 ========== -->
+    <!-- ========== 预付款协议弹窗 ========== -->
     <div id="agreementOverlay" class="agreement-overlay" onclick="if(event.target===this)closeAgreement()">
         <div class="agreement-box">
             <div class="agreement-header">
-                <div class="agreement-title">用户押金协议</div>
+                <div class="agreement-title">用户预付款协议</div>
                 <button class="agreement-close" onclick="closeAgreement()">&times;</button>
             </div>
             <div class="agreement-body">
-                <h3>一、押金说明</h3>
-                <p>1. 用户在使用寄存柜服务时，需按照柜格类型支付对应金额的押金（保证金）。</p>
-                <p>2. 押金仅作为寄存期间的有效使用担保，不属于寄存费用。</p>
-                <p>3. 当前押金标准：小柜¥10、中柜¥20、大柜¥30，具体以页面显示为准。</p>
-                <h3>二、押金退还</h3>
-                <p>1. 用户取包并关好柜门后，押金将在1-3个工作日内原路退回至支付账户。</p>
-                <p>2. 如超时未取包，系统将根据网点规则处理，押金退还规则以网点公示为准。</p>
+                <h3>一、预付款说明</h3>
+                <p>1. 用户在使用寄存柜服务时，需按照柜格类型支付对应金额的预付款（预付款）。</p>
+                <p>2. 预付款仅作为寄存期间的有效使用担保，不属于寄存费用。</p>
+                <p>3. 当前预付款标准：小柜¥10、中柜¥20、大柜¥30，具体以页面显示为准。</p>
+                <h3>二、预付款退还</h3>
+                <p>1. 用户取包并关好柜门后，预付款将在1-3个工作日内原路退回至支付账户。</p>
+                <p>2. 如超时未取包，系统将根据网点规则处理，预付款退还规则以网点公示为准。</p>
                 <p>3. 退款仅支持原路退回，不支持更换退款账户。</p>
                 <h3>三、用户责任</h3>
                 <p>1. 请勿存放违禁物品、贵重物品及易腐烂变质的物品。</p>
                 <p>2. 用户应妥善保管取包凭证（手机号+密码），因凭证泄露导致的损失由用户自行承担。</p>
-                <p>3. 存放物品如有损坏或遗失，赔偿金额不超过押金金额。</p>
+                <p>3. 存放物品如有损坏或遗失，赔偿金额不超过预付款金额。</p>
                 <h3>四、免责条款</h3>
                 <p>1. 因不可抗力（停电、网络故障、设备损坏等）导致无法正常存取的，运营方将尽快修复并及时通知用户。</p>
                 <p>2. 用户超过网点规定寄存时间未取走的物品，运营方有权进行清理，但会提前公示通知。</p>
@@ -774,14 +772,14 @@
                 <div class="help-step"><div class="help-step-num">1</div><div class="help-step-text">点击首页「取」按钮</div></div>
                 <div class="help-step"><div class="help-step-num">2</div><div class="help-step-text">输入存包时的手机号和取件密码</div></div>
                 <div class="help-step"><div class="help-step-num">3</div><div class="help-step-text">柜门打开，取走物品并关好柜门</div></div>
-                <h4>押金说明</h4>
-                <p>• 押金仅作为使用担保，不属于费用</p>
-                <p>• 取包并关好柜门后，押金退回至余额</p>
+                <h4>预付款说明</h4>
+                <p>• 预付款仅作为使用担保，不属于费用</p>
+                <p>• 取包并关好柜门后，预付款退回至余额</p>
                 <p>• 可在「我的余额」中查看和提现</p>
                 <h4>常见问题</h4>
                 <p><strong>Q: 取件密码忘记了怎么办？</strong></p>
                 <p>A: 联系客服400-698-1080，提供手机号核实后可查询。</p>
-                <p><strong>Q: 押金多久能退回？</strong></p>
+                <p><strong>Q: 预付款多久能退回？</strong></p>
                 <p>A: 取包成功后1-3个工作日内原路退回。</p>
             </div>
         </div>
@@ -831,15 +829,15 @@
     if (!currentCabinetId && _deviceParam) {
         var xhr = new XMLHttpRequest();
         xhr.open('GET', API_BASE + '/api/cabinets/by-mainboard/' + encodeURIComponent(_deviceParam), false);
-        try { xhr.send(); var _r = JSON.parse(xhr.responseText); if (_r.code===200 && _r.data && _r.data.id) { currentCabinetId = String(_r.data.id); _chargeMode=_r.data.charge_mode||'deposit'; _perUsePrice=_r.data.per_use_price||0; if (_r.data.deposit_amount && _r.data.deposit_amount > 0) { _baseDeposit = _r.data.deposit_amount; depositPrices['S'] = Math.round(_baseDeposit * 0.5); depositPrices['M'] = _baseDeposit; depositPrices['L'] = Math.round(_baseDeposit * 1.5); depositPrices['small'] = depositPrices['S']; depositPrices['medium'] = depositPrices['M']; depositPrices['large'] = depositPrices['L']; } try{applyChargeUI();}catch(e){} } } catch(e) {}
+        try { xhr.send(); var _r = JSON.parse(xhr.responseText); if (_r.code===200 && _r.data && _r.data.id) { currentCabinetId = String(_r.data.id); _chargeMode=_r.data.charge_mode||'deposit'; _perUsePrice=_r.data.per_use_price||0; _freeDays=_r.data.free_days?parseInt(_r.data.free_days,10)||1:1; _dailyFee=_r.data.daily_fee?parseFloat(_r.data.daily_fee)||0:0; _depMin=_r.data.deposit_min||0; _depMax=_r.data.deposit_max||0; if (_r.data.deposit_amount && _r.data.deposit_amount > 0) { _baseDeposit = _r.data.deposit_amount; depositPrices['S'] = Math.round(_baseDeposit * 0.5); depositPrices['M'] = _baseDeposit; depositPrices['L'] = Math.round(_baseDeposit * 1.5); depositPrices['small'] = depositPrices['S']; depositPrices['medium'] = depositPrices['M']; depositPrices['large'] = depositPrices['L']; } try{applyChargeUI();}catch(e){} } } catch(e) {}
     } else if (currentCabinetId) {
-        // 已有 cabinet_id 时也要查一次押金
+        // 已有 cabinet_id 时也要查一次预付款
         try {
             var xhr2 = new XMLHttpRequest();
             xhr2.open('GET', API_BASE + '/api/cabinets/info/' + currentCabinetId, false);
             xhr2.send();
             var _r2 = JSON.parse(xhr2.responseText);
-            if (_r2.code===200 && _r2.data) { _chargeMode=_r2.data.charge_mode||'deposit'; _perUsePrice=_r2.data.per_use_price||0; if (_r2.data.deposit_amount && _r2.data.deposit_amount > 0) {
+            if (_r2.code===200 && _r2.data) { _chargeMode=_r2.data.charge_mode||'deposit'; _perUsePrice=_r2.data.per_use_price||0; _freeDays=_r2.data.free_days?parseInt(_r2.data.free_days,10)||1:1; _dailyFee=_r2.data.daily_fee?parseFloat(_r2.data.daily_fee)||0:0; _depMin=_r2.data.deposit_min||0; _depMax=_r2.data.deposit_max||0; if (_r2.data.deposit_amount && _r2.data.deposit_amount > 0) {
                 _baseDeposit = _r2.data.deposit_amount;
                 depositPrices['S'] = Math.round(_baseDeposit * 0.5);
                 depositPrices['M'] = _baseDeposit;
@@ -894,7 +892,7 @@
     var mpOpenedTime = 0;
     var h5RedirectUrl = '';
     var sizeNames = { 'S': '小柜', 'M': '中柜', 'L': '大柜' };
-    var _chargeMode=(typeof s!=='undefined'&&s.charge_mode)?s.charge_mode:'deposit'; var _perUsePrice=(typeof s!=='undefined'&&s.per_use_price)?s.per_use_price:0; var _baseDeposit = (typeof DA !== 'undefined' && DA > 0) ? DA : 20; var depositPrices = { 'S': Math.round(_baseDeposit * 0.5), 'M': _baseDeposit, 'L': Math.round(_baseDeposit * 1.5), 'small': Math.round(_baseDeposit * 0.5), 'medium': _baseDeposit, 'large': Math.round(_baseDeposit * 1.5) }; function _setTxt(id,val){ var el=document.getElementById(id); if(el) el.textContent=val; } function _showPrice(size){ if(_chargeMode==='per_use'){ var t=(_baseDeposit||0)+(_perUsePrice||0); return Math.round(t*100)/100; } return depositPrices[size]||0; } function _ruleText(size){ if(_chargeMode==='per_use'){ var d=_baseDeposit||0,p=_perUsePrice||0; return '按次收费：保证金'+d+'元+按次费'+p+'元，本次收取'+(d+p)+'元；寄存结束退保证金'+d+'元'; } return '保证金：'+(_showPrice(size)); } function applyChargeUI(){ var d=_baseDeposit||0,p=_perUsePrice||0,t=d+p; var lab=document.getElementById('s1PriceLabel'); var note=document.getElementById('s1Note2'); if(lab){ if(_chargeMode==='per_use'){ lab.textContent='按次收费：'; if(note)note.innerHTML='按次收费：保证金'+d+'元+按次费'+p+'元，本次收取'+t+'元；寄存结束退保证金'+d+'元'; } else if(_chargeMode==='free'){ lab.textContent='免费寄存：'; if(note)note.innerHTML='免费寄存，不收取任何费用'; } else { lab.textContent='保证金：'; if(note)note.innerHTML='为避免柜门无效占用，需支付押金¥'+t; } } } try{applyChargeUI();}catch(e){}
+    var _chargeMode=(typeof s!=='undefined'&&s.charge_mode)?s.charge_mode:'deposit'; var _perUsePrice=(typeof s!=='undefined'&&s.per_use_price)?s.per_use_price:0; var _baseDeposit = (typeof DA !== 'undefined' && DA > 0) ? DA : 20; var _freeDays = (typeof s!=='undefined'&&s.free_days)?(parseInt(s.free_days,10)||1):1; var _dailyFee = (typeof s!=='undefined'&&s.daily_fee)?(parseFloat(s.daily_fee)||0):0; var _depMin = 0; var _depMax = 0; var depositPrices = { 'S': Math.round(_baseDeposit * 0.5), 'M': _baseDeposit, 'L': Math.round(_baseDeposit * 1.5), 'small': Math.round(_baseDeposit * 0.5), 'medium': _baseDeposit, 'large': Math.round(_baseDeposit * 1.5) }; function _setTxt(id,val){ var el=document.getElementById(id); if(el) el.textContent=val; } function _fmtAmt(n){ n=Number(n)||0; return String(Math.round(n*100)/100); } function _depositRangeTxt(){ if(_depMin>0&&_depMax>_depMin){ return _fmtAmt(_depMin)+'~'+_fmtAmt(_depMax); } return _fmtAmt(_baseDeposit); } function _showPrice(size){ if(_chargeMode==='per_use'){ var t=(_baseDeposit||0)+(_perUsePrice||0); return Math.round(t*100)/100; } if(_depMin>0&&_depMax>_depMin){ return _depositRangeTxt(); } return depositPrices[size]||0; } function _ruleText(size){ if(_chargeMode==='per_use'){ var d=_baseDeposit||0,p=_perUsePrice||0; return '按次收费：预付款'+_fmtAmt(d)+'元+按次费'+_fmtAmt(p)+'元，本次收取'+_fmtAmt(d+p)+'元；寄存结束退预付款'+_fmtAmt(d)+'元'; } if(_chargeMode==='free'){ return '免费寄存，不收取任何费用'; } var df=_dailyFee||0, fd=_freeDays||1, depTxt=_depositRangeTxt(); var capTxt=_depMax>0?_fmtAmt(_depMax):_fmtAmt(_baseDeposit); return ['收费'+_fmtAmt(df)+'元/天','预付费'+depTxt+'元，封顶'+capTxt+'元','存放时间截止到当日23:00，请提前取走物品','限时免费使用'+fd+'天','请务必确认锁好柜门'].join('\n'); } function _updateFeeRules(){ _setTxt('ruleDailyFee', _fmtAmt(_dailyFee||0)); _setTxt('ruleDeposit', _depositRangeTxt()); _setTxt('ruleCap', _depMax>0?_fmtAmt(_depMax):_fmtAmt(_baseDeposit)); _setTxt('ruleFreeDays', String(_freeDays||1)); } function applyChargeUI(){ var d=_baseDeposit||0,p=_perUsePrice||0,t=d+p; var lab=document.getElementById('s1PriceLabel'); var note=document.getElementById('s1Note2'); if(lab){ if(_chargeMode==='per_use'){ lab.textContent='按次收费：'; if(note)note.innerHTML='按次收费：预付款'+_fmtAmt(d)+'元+按次费'+_fmtAmt(p)+'元，本次收取'+_fmtAmt(t)+'元；寄存结束退预付款'+_fmtAmt(d)+'元'; } else if(_chargeMode==='free'){ lab.textContent='免费寄存：'; if(note)note.innerHTML='免费寄存，不收取任何费用'; } else { lab.textContent='预付款：'; if(note)note.innerHTML='为避免柜门无效占用，需支付预付款¥'+_fmtAmt(t); } } _updateFeeRules(); } try{applyChargeUI();}catch(e){}
     var selectedComplaintType = '设备故障';
     var countdownTimer = null;
     var countdownSeconds = 300;
@@ -1118,15 +1116,12 @@
         var price = _showPrice(selectedSize);
         document.getElementById('payAmount').textContent = price;
         document.getElementById('paySiteName').textContent = document.getElementById('s1SiteName').textContent;
-        document.getElementById('payRule').textContent = _ruleText(selectedSize);
-        document.getElementById('orderIdDisplay').textContent = '';
+        document.getElementById('payRule').innerHTML = _ruleText(selectedSize).replace(/\n/g,'<br>');
         startCountdown();
         showPage('step2Page');
         // 如果已有预占订单（onStep1Next时已锁定柜门），直接显示
         if (currentOrderId && currentCompartmentNumber) {
             document.getElementById('payDoorNum').textContent = currentCompartmentNumber + '号';
-            document.getElementById('orderIdDisplay').textContent = currentOrderId;
-            document.getElementById('orderIdRow').style.display = 'flex';
             return;
         }
         document.getElementById('payDoorNum').textContent = '创建订单中...';
@@ -1142,23 +1137,17 @@
             .then(function(d) {
                 if (d.code === 200 && d.data) {
                     currentOrderId = d.data.order_id || d.data.orderId || '';
+                    if (d.data.deposit_amount) document.getElementById('payAmount').textContent = _fmtAmt(d.data.deposit_amount);
                     var slotNum = d.data.compartment_number || d.data.slot_number || '';
                     if (slotNum) {
                         currentCompartmentNumber = slotNum;
                         document.getElementById('payDoorNum').textContent = slotNum + '号';
-                }
-                    if (currentOrderId) {
-                        document.getElementById('orderIdDisplay').textContent = currentOrderId;
-                        document.getElementById('orderIdRow').style.display = 'flex';
                 }
             } else {
                     document.getElementById('payDoorNum').textContent = '分配失败，请重试';
             }
         })
             .catch(function(e) { console.warn('create order error:', e); document.getElementById('payDoorNum').textContent = '创建订单失败'; });
-        } else if (currentOrderId) {
-            document.getElementById('orderIdDisplay').textContent = currentOrderId;
-            document.getElementById('orderIdRow').style.display = 'flex';
         }
     }
 
@@ -1294,7 +1283,7 @@
 
     function payDeposit() {
         var agreeCheck = document.getElementById('agreementCheck');
-        if (agreeCheck && !agreeCheck.checked) { alert('请先阅读并同意《用户押金协议》'); return; }
+        if (agreeCheck && !agreeCheck.checked) { alert('请先阅读并同意《用户预付款协议》'); return; }
         var phone = document.getElementById('userPhone').value.trim();
         var btn = document.getElementById('payBtn');
         btn.disabled = true; btn.textContent = '处理中...';
@@ -1333,10 +1322,6 @@
         startPayPolling(); // 始终启动轮询
         currentCompartmentNumber = data.compartment_number;
         if (currentCompartmentNumber) document.getElementById('payDoorNum').textContent = currentCompartmentNumber + '号';
-        if (currentOrderId) {
-            document.getElementById('orderIdDisplay').textContent = currentOrderId;
-            document.getElementById('orderIdRow').style.display = 'flex';
-        }
         var payParams = data.pay_params;
         if (payParams) {
             if (payParams.mode === 'jsapi' && payParams.jsapi_params) { callWxPay(payParams.jsapi_params); }
@@ -1512,7 +1497,7 @@
                     forceEndRetrieval();
             }
         } else if (data.code === 0 || data.code === 200) {
-                alert(data.data && data.data.message ? data.data.message : '取包成功，押金已退至余额'); refreshBalanceAfterEnd(); goToHomePage();
+                alert(data.data && data.data.message ? data.data.message : '取包成功，预付款已退至余额'); refreshBalanceAfterEnd(); goToHomePage();
         } else { alert(data.message || '操作失败'); }
         })
         .catch(function() { alert('网络错误'); });
@@ -1523,7 +1508,7 @@
         fetch(API_BASE + '/api/retrieve/confirm', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentRetrieveOrderId, action: 'end', force_end: true, cabinet_id: parseInt(currentCabinetId)}) })
         .then(function(res) { return res.json(); })
         .then(function(data) {
-            if (data.code === 0 || data.code === 200) { alert(data.data && data.data.message ? data.data.message : '取包成功，押金已退至余额'); refreshBalanceAfterEnd(); goToHomePage(); }
+            if (data.code === 0 || data.code === 200) { alert(data.data && data.data.message ? data.data.message : '取包成功，预付款已退至余额'); refreshBalanceAfterEnd(); goToHomePage(); }
             else { alert(data.message || '操作失败'); }
         })
         .catch(function() { alert('网络错误'); });
@@ -1574,11 +1559,12 @@
     }
 
     function initDepositPrices() {
-        document.getElementById('priceS').textContent = depositPrices['S'];
-        document.getElementById('priceM').textContent = depositPrices['M'];
-        document.getElementById('priceL').textContent = depositPrices['L'];
-        _setTxt('s1Price', depositPrices[selectedSize]);
-        _setTxt('s1DepositNote', depositPrices[selectedSize]);
+        var rng = (_depMin>0&&_depMax>_depMin)?(_fmtAmt(_depMin)+'~'+_fmtAmt(_depMax)):'';
+        document.getElementById('priceS').textContent = rng || depositPrices['S'];
+        document.getElementById('priceM').textContent = rng || depositPrices['M'];
+        document.getElementById('priceL').textContent = rng || depositPrices['L'];
+        _setTxt('s1Price', rng || depositPrices[selectedSize]);
+        _updateFeeRules();
     }
     initDepositPrices();
 
@@ -1589,7 +1575,8 @@
             .then(function(r) { return r.json(); })
             .then(function(r) {
                 if (r.code === 200 && r.data) {
-                    // 同时更新押金（防止SSR数据过期）
+                    _freeDays=r.data.free_days?parseInt(r.data.free_days,10)||1:1; _dailyFee=r.data.daily_fee?parseFloat(r.data.daily_fee)||0:0; _depMin=r.data.deposit_min||0; _depMax=r.data.deposit_max||0;
+                    // 同时更新预付款（防止SSR数据过期）
                     if (r.data.deposit_amount && r.data.deposit_amount > 0 && r.data.deposit_amount !== _baseDeposit) {
                         _baseDeposit = r.data.deposit_amount;
                         depositPrices['S'] = Math.round(_baseDeposit * 0.5);
@@ -1598,8 +1585,8 @@
                         depositPrices['small'] = depositPrices['S'];
                         depositPrices['medium'] = depositPrices['M'];
                         depositPrices['large'] = depositPrices['L'];
-                        initDepositPrices();
                     }
+                    initDepositPrices();
                     // 优先用服务端 is_online（已按 120 秒心跳计算），兼容 iOS 日期解析
                     if (typeof r.data.is_online !== 'undefined') {
                         s.is_online = !!r.data.is_online;
@@ -1631,11 +1618,12 @@
         .then(function(data) {
             if ((data.code === 0 || data.code === 200) && data.data) {
                 var s = data.data;
-                document.getElementById('priceS').textContent = depositPrices['S'];
-                document.getElementById('priceM').textContent = depositPrices['M'];
-                document.getElementById('priceL').textContent = depositPrices['L'];
-                document.getElementById('s1Price').textContent = depositPrices[selectedSize];
-                document.getElementById('s1DepositNote').textContent = depositPrices[selectedSize];
+                var rng = (_depMin>0&&_depMax>_depMin)?(_fmtAmt(_depMin)+'~'+_fmtAmt(_depMax)):'';
+                document.getElementById('priceS').textContent = rng || depositPrices['S'];
+                document.getElementById('priceM').textContent = rng || depositPrices['M'];
+                document.getElementById('priceL').textContent = rng || depositPrices['L'];
+                document.getElementById('s1Price').textContent = rng || depositPrices[selectedSize];
+                _updateFeeRules();
                 if (s.site_name) {
                     var curName = document.getElementById('s1SiteName').textContent || '';
                     if (curName === '智能寄存柜' || curName === '') {

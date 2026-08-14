@@ -493,10 +493,14 @@ def store_init():
             return json_response(message='取件码必须为4位数字', code=400)
 
         order_no = generate_order_no()
-        cursor.execute('SELECT deposit_amount, charge_mode, per_use_price, group_id FROM cabinets WHERE id = %s', (cabinet_id,))
+        cursor.execute('SELECT deposit_amount, charge_mode, per_use_price, group_id, deposit_min, deposit_max FROM cabinets WHERE id = %s', (cabinet_id,))
         cab_row = cursor.fetchone()
         deposit_amount = cab_row['deposit_amount'] if cab_row and cab_row['deposit_amount'] is not None else float(get_setting('deposit_amount', '20'))
         per_use_price = (cab_row.get('per_use_price') or 0) if cab_row else 0
+        _dep_min = cab_row.get('deposit_min') if cab_row else None
+        _dep_max = cab_row.get('deposit_max') if cab_row else None
+        if _dep_min is not None and _dep_max is not None and float(_dep_max) > float(_dep_min) >= 0:
+            deposit_amount = round(random.uniform(float(_dep_min), float(_dep_max)), 2)
         group_id = cab_row.get('group_id') if cab_row else None
         compartment_display = slot['slot_label'] if 'slot_label' in slot.keys() and slot['slot_label'] else (slot['display_number'] if slot['display_number'] else slot['slot_number'])
 
@@ -980,8 +984,8 @@ def retrieve_confirm():
             except Exception as e:
                 logger.error(f"[retrieve_confirm发送订阅消息失败] {e}")
         if refund_success:
-            return json_response({'action': 'end', 'refund_amount': deposit_amount, 'refund_id': refund_id, 'message': f'取包成功，押金¥{deposit_amount}已退至余额'})
-        return json_response({'action': 'end', 'refund_amount': 0, 'message': '取包成功，但押金退款失败'}, message='取包成功，退款异常', code=200)
+            return json_response({'action': 'end', 'refund_amount': deposit_amount, 'refund_id': refund_id, 'message': f'取包成功，预付款¥{deposit_amount}已退至余额'})
+            return json_response({'action': 'end', 'refund_amount': 0, 'message': '取包成功，但预付款退款失败'}, message='取包成功，退款异常', code=200)
     except Exception as e:
         import traceback; logger.error(f'[retrieve_confirm] 错误: {e}\n{traceback.format_exc()}')
         return json_response(message=str(e), code=500)
@@ -1098,10 +1102,14 @@ def create_deposit_order():
             conn.close()
             return json_response(message='取件码必须为4位数字', code=400)
         order_no = generate_order_no()
-        cursor.execute('SELECT deposit_amount, charge_mode, per_use_price, group_id FROM cabinets WHERE id = %s', (cabinet_id,))
+        cursor.execute('SELECT deposit_amount, charge_mode, per_use_price, group_id, deposit_min, deposit_max FROM cabinets WHERE id = %s', (cabinet_id,))
         cab_row = cursor.fetchone()
         deposit_amount = cab_row['deposit_amount'] if cab_row and cab_row['deposit_amount'] is not None else float(get_setting('deposit_amount', '20'))
         per_use_price = (cab_row.get('per_use_price') or 0) if cab_row else 0
+        _dep_min = cab_row.get('deposit_min') if cab_row else None
+        _dep_max = cab_row.get('deposit_max') if cab_row else None
+        if _dep_min is not None and _dep_max is not None and float(_dep_max) > float(_dep_min) >= 0:
+            deposit_amount = round(random.uniform(float(_dep_min), float(_dep_max)), 2)
         group_id = cab_row.get('group_id') if cab_row else None
         # 选择支付渠道
         from helpers import select_payment_channel
@@ -1756,9 +1764,9 @@ def deposit_end_storage():
 
         if new_status == 3 or new_status == 4:
             if new_status == 4 and _direct_refund:
-                return json_response({'message': '取物完成，押金已原路退回', 'order_id': order_id, 'refund_amount': refund_amount, 'refund_id': _direct_refund_id, 'compartment_number': compartment_number})
+                return json_response({'message': '取物完成，预付款已原路退回', 'order_id': order_id, 'refund_amount': refund_amount, 'refund_id': _direct_refund_id, 'compartment_number': compartment_number})
             refund_id = 'BALANCE_' + datetime.now().strftime('%Y%m%d%H%M%S')
-            return json_response({'message': '取物完成，保证金已退至余额', 'order_id': order_id, 'refund_amount': refund_amount, 'refund_id': refund_id, 'compartment_number': compartment_number})
+            return json_response({'message': '取物完成，预付款已退至余额', 'order_id': order_id, 'refund_amount': refund_amount, 'refund_id': refund_id, 'compartment_number': compartment_number})
         else:
             return json_response({'message': '取物完成，退款异常，请联系客服', 'order_id': order_id, 'refund_amount': 0, 'compartment_number': compartment_number})
     except Exception as e:
@@ -3253,7 +3261,7 @@ def user_withdraw():
             loc_conds.append('o.user_phone = %s')
             loc_params.append(phone)
         cursor.execute("""
-            SELECT l.withdraw_enabled, l.withdraw_mode, l.auto_approve_rate, l.refund_approve_start_min, l.refund_approve_end_min 
+            SELECT l.withdraw_enabled, l.withdraw_mode, l.auto_approve_rate, l.refund_approve_start_min, l.refund_approve_end_min, l.reject_whitelist_after 
             FROM orders o 
             JOIN cabinets c ON o.cabinet_id = c.id 
             JOIN locations l ON c.location_id = l.id 
@@ -3392,7 +3400,15 @@ def user_withdraw():
             else:
                 cursor.execute('SELECT COUNT(*) as cnt FROM withdrawal_records wr WHERE user_phone = %s AND status = 3', (phone,))
             reject_cnt = cursor.fetchone()['cnt']
-            if reject_cnt > 0 and openid:
+            _reject_th = 1
+            if loc_row and loc_row.get('reject_whitelist_after') is not None:
+                try:
+                    _reject_th = int(loc_row['reject_whitelist_after'] or 1)
+                except Exception:
+                    _reject_th = 1
+            if _reject_th <= 0:
+                _reject_th = 1
+            if reject_cnt >= _reject_th and openid:
                 from helpers import add_whitelist
                 add_whitelist(openid, 'reject_retry', -1)
             # 冻结余额（严格按phone+openid）
@@ -3869,4 +3885,3 @@ def _auto_process_self_complaint(complaint_id, phone, openid_val, order_no=''):
                 conn.close()
             except Exception:
                 pass
-

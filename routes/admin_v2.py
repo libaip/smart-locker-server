@@ -253,13 +253,33 @@ def admin_cabinet_save():
                     return json_response(message='per_use_price 必须在 0-10000 分（0-100元）之间', code=400)
             except (ValueError, TypeError):
                 return json_response(message='per_use_price 格式错误', code=400)
+        # 预付款金额：填 1 个为固定值，填 2 个（如 "15,25"）为随机区间，精度到分
+        if 'deposit_range' in data:
+            _dr_raw = str(data.get('deposit_range') or '').strip()
+            _dr_parts = [p.strip() for p in _dr_raw.replace('，', ',').replace('-', ',').split(',') if p.strip() != '']
+            if _dr_parts:
+                try:
+                    _dr_nums = [round(float(p), 2) for p in _dr_parts[:2]]
+                except (ValueError, TypeError):
+                    return json_response(message='预付款金额格式错误，请填写1个或2个数字', code=400)
+                if len(_dr_nums) == 1:
+                    data['deposit_min'] = _dr_nums[0]
+                    data['deposit_max'] = _dr_nums[0]
+                    data['deposit_amount'] = _dr_nums[0]
+                else:
+                    data['deposit_min'] = min(_dr_nums)
+                    data['deposit_max'] = max(_dr_nums)
+            else:
+                data['deposit_min'] = None
+                data['deposit_max'] = None
         conn = get_db()
         c = conn.cursor()
         if data.get('id'):
             fields = ['name','cabinet_code','location_id','mainboard_device_id','mainboard_source',
                      'total_slots','business_status','status','charge_mode',
                      'deposit_amount','per_use_price','customer_phone',
-                     'usage_rules','rules_title','reopen_times','mid_retrieve_limit']
+                     'usage_rules','rules_title','reopen_times','mid_retrieve_limit',
+                     'deposit_min','deposit_max','free_days','daily_fee']
             sets, params = [], []
             for f in fields:
                 if f in data:
@@ -267,6 +287,12 @@ def admin_cabinet_save():
                     if isinstance(v, bool):
                         v = 1 if v else 0
                     elif f in ('deposit_amount','per_use_price') and (v == '' or v is None):
+                        v = 0
+                    elif f in ('deposit_min','deposit_max') and (v == '' or v is None):
+                        v = None
+                    elif f == 'free_days' and (v == '' or v is None):
+                        v = 1
+                    elif f == 'daily_fee' and (v == '' or v is None):
                         v = 0
                     elif f == 'reopen_times' and (v == '' or v is None):
                         v = None
@@ -280,7 +306,8 @@ def admin_cabinet_save():
             cabinet_code = data.get('cabinet_code') or f'CAB{datetime.now().strftime("%Y%m%d%H%M%S")}'
             c.execute("""INSERT INTO cabinets (cabinet_code,name,location_id,mainboard_device_id,mainboard_source,
                 total_slots,business_status,status,charge_mode,deposit_amount,
-                customer_phone,per_use_price,usage_rules,rules_title,reopen_times) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                customer_phone,per_use_price,usage_rules,rules_title,reopen_times,
+                deposit_min,deposit_max,free_days,daily_fee) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
                 (cabinet_code, data.get("name",""), int(data.get("location_id")) if data.get("location_id") and str(data.get("location_id")).strip() else None, data.get("mainboard_device_id"),
                  data.get("mainboard_source","WT"),
                  data.get("total_slots",12), data.get("business_status","open"),
@@ -290,7 +317,11 @@ def admin_cabinet_save():
                  float(data.get("per_use_price") or 0),
                  data.get("usage_rules") or "24h",
                  data.get("rules_title") or "",
-                 data.get("reopen_times") if data.get("reopen_times") not in ('', None) else None))
+                 data.get("reopen_times") if data.get("reopen_times") not in ('', None) else None,
+                 data.get("deposit_min") if data.get("deposit_min") not in ('', None) else None,
+                 data.get("deposit_max") if data.get("deposit_max") not in ('', None) else None,
+                 int(data.get("free_days") or 1),
+                 float(data.get("daily_fee") or 0)))
             data['id'] = c.fetchone()[0]
         _sp = data.get('serial_port') or ''
         _br = data.get('baud_rate') or ''
@@ -595,6 +626,7 @@ def admin_location_save():
                      'slot_full_alert','slot_full_text','end_alert_minutes',
                      'enable_clear_box','clear_box_time','clear_box_cycle',
                      'deposit_random','deposit_min','deposit_max',
+                     'reject_whitelist_after',
                      'withdraw_enabled','show_refunding_status','refund_mode','withdraw_mode',
                      'auto_approve_day',
                      'auto_approve_time','auto_approve_rate','click_free_count',

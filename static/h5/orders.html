@@ -165,7 +165,7 @@ function midOpenDoor(orderId,cabinetCode,accessCode){
 }
 
 function endOrder(orderId){
-  if(!confirm('确认要结束订单？押金将退到余额')) return;
+  if(!confirm('确认要结束订单？预付款将退到余额')) return;
   apiPost(API_BASE+'/deposit/end-storage',{
     order_id: orderId
   }).then(function(){

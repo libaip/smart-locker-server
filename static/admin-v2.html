@@ -1667,7 +1667,7 @@ Vue.component('page-payment-channels',{template:`
 <div class="page-box">
 <div class="box-header"><h3>支付渠道</h3><button class="btn btn-sm btn-blue" style="float:right" @click="$parent.showChannelModal()">+ 添加渠道</button></div>
 <table class="data-table">
-<thead><tr><th>ID</th><th>名称</th><th>类型</th><th>商户号</th><th>AppID</th><th>证书</th><th>累计金额</th><th>累计笔数</th><th>累计退款金额</th><th>退款笔数</th><th>轮转序号</th><th>操作</th></tr></thead>
+<thead><tr><th>ID</th><th>名称</th><th>类型</th><th>商户号</th><th>AppID</th><th>证书</th><th>累计金额</th><th>累计笔数</th><th>累计退款金额</th><th>退款笔数</th><th>退款比例</th><th>轮转序号</th><th>操作</th></tr></thead>
 <tbody>
 <tr v-for="ch in $parent.channels" :key="ch.id">
 <td>{{ch.id}}</td>
@@ -1680,6 +1680,7 @@ Vue.component('page-payment-channels',{template:`
 <td>{{ch.total_count||0}}</td>
 <td>{{ch.refund_total_amount||0}}</td>
 <td>{{ch.refund_total_count||0}}</td>
+<td>{{(ch.paid_total_amount>0?((ch.refund_total_amount||0)/ch.paid_total_amount*100):0).toFixed(1)}}%</td>
 <td>{{ch.rotation_index||0}}</td>
 <td style="white-space:nowrap">
 <button class="btn-text" @click="$parent.showChannelModal(ch)">编辑</button>

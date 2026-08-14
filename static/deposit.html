@@ -456,7 +456,7 @@
                 <div class="size-btn active" data-size="M" onclick="selectSize('M')">中柜 ¥<span id="priceM">20</span></div>
                 <div class="size-btn" data-size="L" onclick="selectSize('L')">大柜 ¥<span id="priceL">30</span></div>
             </div>
-            <div class="notes">
+            <div class="notes" id="feeNotes">
                 <div class="notes-title">收费规则</div>
                 <div class="note-item">收费<span id="ruleDailyFee">0.5</span>元/天</div>
                 <div class="note-item">预付费<span id="ruleDeposit">20</span>元，封顶<span id="ruleCap">20</span>元</div>
@@ -884,6 +884,7 @@
     var selectedSize = 'M';
     var cabinetSizes = [];
     var currentOrderId = null;
+    var currentDepositAmount = null;
     var currentOrderNo = null;
     var currentAccessCode = null;
     var currentCompartmentNumber = null;
@@ -892,7 +893,7 @@
     var mpOpenedTime = 0;
     var h5RedirectUrl = '';
     var sizeNames = { 'S': '小柜', 'M': '中柜', 'L': '大柜' };
-    var _chargeMode=(typeof s!=='undefined'&&s.charge_mode)?s.charge_mode:'deposit'; var _perUsePrice=(typeof s!=='undefined'&&s.per_use_price)?s.per_use_price:0; var _baseDeposit = (typeof DA !== 'undefined' && DA > 0) ? DA : 20; var _freeDays = (typeof s!=='undefined'&&s.free_days)?(parseInt(s.free_days,10)||1):1; var _dailyFee = (typeof s!=='undefined'&&s.daily_fee)?(parseFloat(s.daily_fee)||0):0; var _depMin = 0; var _depMax = 0; var depositPrices = { 'S': Math.round(_baseDeposit * 0.5), 'M': _baseDeposit, 'L': Math.round(_baseDeposit * 1.5), 'small': Math.round(_baseDeposit * 0.5), 'medium': _baseDeposit, 'large': Math.round(_baseDeposit * 1.5) }; function _setTxt(id,val){ var el=document.getElementById(id); if(el) el.textContent=val; } function _fmtAmt(n){ n=Number(n)||0; return String(Math.round(n*100)/100); } function _depositRangeTxt(){ if(_depMin>0&&_depMax>_depMin){ return _fmtAmt(_depMin)+'~'+_fmtAmt(_depMax); } return _fmtAmt(_baseDeposit); } function _showPrice(size){ if(_chargeMode==='per_use'){ var t=(_baseDeposit||0)+(_perUsePrice||0); return Math.round(t*100)/100; } if(_depMin>0&&_depMax>_depMin){ return _depositRangeTxt(); } return depositPrices[size]||0; } function _ruleText(size){ if(_chargeMode==='per_use'){ var d=_baseDeposit||0,p=_perUsePrice||0; return '按次收费：预付款'+_fmtAmt(d)+'元+按次费'+_fmtAmt(p)+'元，本次收取'+_fmtAmt(d+p)+'元；寄存结束退预付款'+_fmtAmt(d)+'元'; } if(_chargeMode==='free'){ return '免费寄存，不收取任何费用'; } var df=_dailyFee||0, fd=_freeDays||1, depTxt=_depositRangeTxt(); var capTxt=_depMax>0?_fmtAmt(_depMax):_fmtAmt(_baseDeposit); return ['收费'+_fmtAmt(df)+'元/天','预付费'+depTxt+'元，封顶'+capTxt+'元','存放时间截止到当日23:00，请提前取走物品','限时免费使用'+fd+'天','请务必确认锁好柜门'].join('\n'); } function _updateFeeRules(){ _setTxt('ruleDailyFee', _fmtAmt(_dailyFee||0)); _setTxt('ruleDeposit', _depositRangeTxt()); _setTxt('ruleCap', _depMax>0?_fmtAmt(_depMax):_fmtAmt(_baseDeposit)); _setTxt('ruleFreeDays', String(_freeDays||1)); } function applyChargeUI(){ var d=_baseDeposit||0,p=_perUsePrice||0,t=d+p; var lab=document.getElementById('s1PriceLabel'); var note=document.getElementById('s1Note2'); if(lab){ if(_chargeMode==='per_use'){ lab.textContent='按次收费：'; if(note)note.innerHTML='按次收费：预付款'+_fmtAmt(d)+'元+按次费'+_fmtAmt(p)+'元，本次收取'+_fmtAmt(t)+'元；寄存结束退预付款'+_fmtAmt(d)+'元'; } else if(_chargeMode==='free'){ lab.textContent='免费寄存：'; if(note)note.innerHTML='免费寄存，不收取任何费用'; } else { lab.textContent='预付款：'; if(note)note.innerHTML='为避免柜门无效占用，需支付预付款¥'+_fmtAmt(t); } } _updateFeeRules(); } try{applyChargeUI();}catch(e){}
+    var _chargeMode=(typeof s!=='undefined'&&s.charge_mode)?s.charge_mode:'deposit'; var _perUsePrice=(typeof s!=='undefined'&&s.per_use_price)?s.per_use_price:0; var _baseDeposit = (typeof DA !== 'undefined' && DA > 0) ? DA : 20; var _freeDays = (typeof s!=='undefined'&&s.free_days)?(parseInt(s.free_days,10)||1):1; var _dailyFee = (typeof s!=='undefined'&&s.daily_fee)?(parseFloat(s.daily_fee)||0):0; var _depMin = 0; var _depMax = 0; var depositPrices = { 'S': Math.round(_baseDeposit * 0.5), 'M': _baseDeposit, 'L': Math.round(_baseDeposit * 1.5), 'small': Math.round(_baseDeposit * 0.5), 'medium': _baseDeposit, 'large': Math.round(_baseDeposit * 1.5) }; function _setTxt(id,val){ var el=document.getElementById(id); if(el) el.textContent=val; } function _fmtAmt(n){ n=Number(n)||0; return String(Math.round(n*100)/100); } function _depositRangeTxt(){ if(_depMin>0&&_depMax>_depMin){ return _fmtAmt(_depMin)+'~'+_fmtAmt(_depMax); } return _fmtAmt(_baseDeposit); } function _showPrice(size){ if(_chargeMode==='per_use'){ var t=(_baseDeposit||0)+(_perUsePrice||0); return Math.round(t*100)/100; } if(_depMin>0&&_depMax>_depMin){ return _depositRangeTxt(); } return depositPrices[size]||0; } function _ruleText(size){ if(_chargeMode==='per_use'){ var d=_baseDeposit||0,p=_perUsePrice||0; return '按次收费：预付款'+_fmtAmt(d)+'元+按次费'+_fmtAmt(p)+'元，本次收取'+_fmtAmt(d+p)+'元；寄存结束退预付款'+_fmtAmt(d)+'元'; } if(_chargeMode==='free'){ return '免费寄存，不收取任何费用'; } var df=_dailyFee||0, fd=_freeDays||1, depTxt=_depositRangeTxt(); var capTxt=_depMax>0?_fmtAmt(_depMax):_fmtAmt(_baseDeposit); return ['收费'+_fmtAmt(df)+'元/天','预付费'+depTxt+'元，封顶'+capTxt+'元','存放时间截止到当日23:00，请提前取走物品','限时免费使用'+fd+'天','请务必确认锁好柜门'].join('\n'); } function _updateFeeRules(){ var el=document.getElementById('feeNotes'); if(!el) return; var d=_baseDeposit||0,p=_perUsePrice||0,t=d+p; var html=''; if(_chargeMode==='per_use'){ html='<div class="note-item">按次收费：预付款'+_fmtAmt(d)+'元+按次费'+_fmtAmt(p)+'元，本次收取'+_fmtAmt(t)+'元；寄存结束退预付款'+_fmtAmt(d)+'元</div>'; } else if(_chargeMode==='free'){ html='<div class="note-item">免费寄存，不收取任何费用</div>'; } else { var depTxt=_depositRangeTxt(); var capTxt=_depMax>0?_fmtAmt(_depMax):_fmtAmt(_baseDeposit); html='<div class="note-item">收费'+_fmtAmt(_dailyFee||0)+'元/天</div><div class="note-item">预付费'+depTxt+'元，封顶'+capTxt+'元</div><div class="note-item">存放时间截止到当日23:00，请提前取走物品</div><div class="note-item">限时免费使用'+(_freeDays||1)+'天</div><div class="note-item">请务必确认锁好柜门</div>'; } el.innerHTML=html; } function applyChargeUI(){ var d=_baseDeposit||0,p=_perUsePrice||0,t=d+p; var lab=document.getElementById('s1PriceLabel'); var note=document.getElementById('s1Note2'); if(lab){ if(_chargeMode==='per_use'){ lab.textContent='按次收费：'; if(note)note.innerHTML='按次收费：预付款'+_fmtAmt(d)+'元+按次费'+_fmtAmt(p)+'元，本次收取'+_fmtAmt(t)+'元；寄存结束退预付款'+_fmtAmt(d)+'元'; } else if(_chargeMode==='free'){ lab.textContent='免费寄存：'; if(note)note.innerHTML='免费寄存，不收取任何费用'; } else { lab.textContent='预付款：'; if(note)note.innerHTML='为避免柜门无效占用，需支付预付款¥'+_fmtAmt(t); } } _updateFeeRules(); } try{applyChargeUI();}catch(e){}
     var selectedComplaintType = '设备故障';
     var countdownTimer = null;
     var countdownSeconds = 300;
@@ -1037,6 +1038,7 @@
             if (btn) { btn.disabled = false; btn.textContent = '下一步'; }
             if (d.code === 200 && d.data) {
                 currentOrderId = d.data.order_id;
+                currentDepositAmount = d.data.deposit_amount || null;
                 currentOrderNo = d.data.order_no;
                 currentCompartmentNumber = d.data.compartment_number;
                 currentAccessCode = d.data.access_code || code;
@@ -1115,6 +1117,7 @@
     function goToStep2Direct() {
         var price = _showPrice(selectedSize);
         document.getElementById('payAmount').textContent = price;
+        if (currentDepositAmount) document.getElementById('payAmount').textContent = _fmtAmt(currentDepositAmount);
         document.getElementById('paySiteName').textContent = document.getElementById('s1SiteName').textContent;
         document.getElementById('payRule').innerHTML = _ruleText(selectedSize).replace(/\n/g,'<br>');
         startCountdown();
@@ -1137,6 +1140,7 @@
             .then(function(d) {
                 if (d.code === 200 && d.data) {
                     currentOrderId = d.data.order_id || d.data.orderId || '';
+                    currentDepositAmount = d.data.deposit_amount || null;
                     if (d.data.deposit_amount) document.getElementById('payAmount').textContent = _fmtAmt(d.data.deposit_amount);
                     var slotNum = d.data.compartment_number || d.data.slot_number || '';
                     if (slotNum) {

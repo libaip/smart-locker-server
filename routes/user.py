@@ -3271,6 +3271,7 @@ def user_withdraw():
                     break
                 refund_this = min(remaining, refundable)
                 order_openid = br.get('order_openid') or openid
+                cursor.execute("UPDATE withdrawal_records SET dedup_key=NULL WHERE order_id=%s AND status IN (3,4,5) AND dedup_key IS NOT NULL", (oid,))
                 cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, auto_approve_time, dedup_key, approver, order_ids) VALUES (%s, %s, %s, 0, 1, %s, NOW(), %s, '自动', %s) RETURNING id",
                                (oid, phone, refund_this, order_openid, 'A:%s:%s' % (phone, oid), _json_auto.dumps([str(oid)])))
                 row = cursor.fetchone()
@@ -3365,6 +3366,7 @@ def user_withdraw():
                     break
                 refund_this = min(remaining, refundable)
                 order_openid = br.get('order_openid') or openid
+                cursor.execute("UPDATE withdrawal_records SET dedup_key=NULL WHERE order_id=%s AND status IN (3,4,5) AND dedup_key IS NOT NULL", (oid,))
                 cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, auto_approve_time, dedup_key) VALUES (%s, %s, %s, 0, 1, %s, %s, %s) RETURNING id',
                                (oid, phone, refund_this, order_openid, _auto_time, 'P:%s:%s' % (phone, oid)))
                 row = cursor.fetchone()
@@ -3394,7 +3396,10 @@ def user_withdraw():
             })
     except Exception as e:
         logger.error(f'[user/withdraw] {e}')
-        return json_response(message=str(e), code=500)
+        msg = str(e)
+        if 'uq_withdrawal_pending_order' in msg or 'duplicate key' in msg:
+            return json_response(message='订单已有待处理提现，请勿重复提交', code=400)
+        return json_response(message=msg, code=500)
 
 
 

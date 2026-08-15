@@ -825,6 +825,13 @@ def merchant_business_stats():
         location_id = request.args.get('location_id', type=int)
         conn = get_db()
         cursor = conn.cursor()
+        filter_merchant_id = request.args.get('merchant_id', type=int)
+        if filter_merchant_id and session.get('is_agent'):
+            cursor.execute('SELECT id FROM merchants WHERE id=%s AND agent_id=%s', (filter_merchant_id, session.get('agent_id')))
+            if cursor.fetchone():
+                mfilter = 'l.merchant_id = %s'
+                mparams = [filter_merchant_id]
+                merchant_id = filter_merchant_id
         # 构建条件
         where_parts = [mfilter]
         params = list(mparams)

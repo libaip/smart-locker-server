@@ -2566,6 +2566,7 @@ def admin_employees():
         data = request.get_json() if request.method == 'POST' else {}
         keyword = (data or {}).get('keyword', '') or request.args.get('keyword', '')
         merchant_id = (data or {}).get('merchant_id', '') or request.args.get('merchant_id', '')
+        agent_id = (data or {}).get('agent_id', '') or request.args.get('agent_id', '')
         page = int(request.args.get("page", (data or {}).get("page", 1)))
         page_size = int(request.args.get("limit", (data or {}).get("limit", 20)))
         conn = get_db()
@@ -2577,10 +2578,13 @@ def admin_employees():
         if merchant_id:
             where += ' AND e.merchant_id=%s'
             params.append(merchant_id)
+        if agent_id:
+            where += ' AND e.agent_id=%s'
+            params.append(agent_id)
         c.execute(f'SELECT COUNT(*) FROM employees e WHERE {where}', params)
         total = c.fetchone()[0]
-        c.execute(f'''SELECT e.*, e.is_locked, m.name as merchant_name
-            FROM employees e LEFT JOIN merchants m ON e.merchant_id=m.id
+        c.execute(f'''SELECT e.*, e.is_locked, m.name as merchant_name, a.name as agent_name
+            FROM employees e LEFT JOIN merchants m ON e.merchant_id=m.id LEFT JOIN agents a ON e.agent_id=a.id
             WHERE {where} ORDER BY e.created_at DESC LIMIT %s OFFSET %s''',
                   params + [page_size, (page-1)*page_size])
         employees = [dict(r) for r in c.fetchall()]
@@ -2599,12 +2603,12 @@ def admin_employee_save():
         conn = get_db()
         c = conn.cursor()
         if data.get('id'):
-            fields = ['name','phone','role','merchant_id','status','permissions']
+            fields = ['name','phone','role','merchant_id','agent_id','status','permissions']
             sets, params = [], []
             for f in fields:
                 if f in data:
                     sets.append(f'{f}=%s')
-                    val = data[f]; params.append(None if val == "" and f in ("merchant_id",) else val)
+                    val = data[f]; params.append(None if val == "" and f in ("merchant_id", "agent_id") else val)
             if data.get('password'):
                 sets.append('password_hash=%s')
                 params.append(generate_password_hash(data['password']))
@@ -2617,8 +2621,8 @@ def admin_employee_save():
                 conn.close()
                 return json_response(message='参数不完整', code=400)
             pwd = data.get('password') or 'Emp@' + ''.join(__import__('random').choices(__import__('string').ascii_letters + __import__('string').digits, k=2))
-            c.execute('INSERT INTO employees (merchant_id, name, phone, password_hash, role, permissions, plain_password) VALUES (%s,%s,%s,%s,%s,%s,%s)',
-                      (data.get("merchant_id") or None, data["name"], data['phone'], generate_password_hash(pwd), data.get('role','staff'), data.get('permissions','[]'), pwd))
+            c.execute('INSERT INTO employees (merchant_id, agent_id, name, phone, password_hash, role, permissions, plain_password) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)',
+                      (data.get("merchant_id") or None, data.get("agent_id") or None, data["name"], data['phone'], generate_password_hash(pwd), data.get('role','staff'), data.get('permissions','[]'), pwd))
         conn.commit()
         conn.close()
         resp_data = None
@@ -4440,7 +4444,7 @@ def admin_employee_detail():
             return json_response(message='missing id', code=400)
         conn = get_db()
         c = conn.cursor()
-        c.execute('SELECT e.*, m.name as merchant_name FROM employees e LEFT JOIN merchants m ON e.merchant_id=m.id WHERE e.id=%s', (emp_id,))
+        c.execute('SELECT e.*, m.name as merchant_name, a.name as agent_name FROM employees e LEFT JOIN merchants m ON e.merchant_id=m.id LEFT JOIN agents a ON e.agent_id=a.id WHERE e.id=%s', (emp_id,))
         employee = dict(c.fetchone() or {})
         if not employee:
             conn.close()

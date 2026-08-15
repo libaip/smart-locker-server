@@ -69,7 +69,7 @@ def merchant_login():
         merchant = cursor.fetchone()
         if not merchant or not check_password_hash(merchant['password_hash'], password):
             # Try employee login
-            cursor.execute('SELECT e.*, m.name as mname FROM employees e JOIN merchants m ON e.merchant_id=m.id WHERE e.phone=%s AND e.status=1', (phone,))
+            cursor.execute('SELECT e.*, m.name as mname, a.name as aname FROM employees e LEFT JOIN merchants m ON e.merchant_id=m.id LEFT JOIN agents a ON e.agent_id=a.id WHERE e.phone=%s AND e.status = %s', (phone, '1'))
             employee = cursor.fetchone()
             if employee and check_password_hash(employee['password_hash'], password):
                 token = secrets.token_hex(16)
@@ -78,11 +78,21 @@ def merchant_login():
                 cursor.execute("DELETE FROM user_tokens WHERE user_type='employee' AND user_id=%s AND id NOT IN (SELECT id FROM (SELECT id FROM user_tokens WHERE user_type='employee' AND user_id=%s ORDER BY created_at DESC LIMIT 9) AS k)", (employee['id'], employee['id']))
                 cursor.execute("INSERT INTO user_tokens (user_type, user_id, token) VALUES ('employee', %s, %s)", (employee['id'], token))
                 conn.commit()
-                session['merchant_id'] = employee['merchant_id']
+                employee_perms = json.loads(employee['permissions'] or '[]')
+                if employee.get('agent_id'):
+                    session['agent_id'] = employee['agent_id']
+                    session['agent_name'] = employee['aname'] or employee['name']
+                    session['is_agent'] = True
+                else:
+                    session['merchant_id'] = employee['merchant_id']
+                    session['merchant_name'] = employee['mname'] or employee['name']
+                session['employee_id'] = employee['id']
                 session['is_employee'] = True
+                session['permissions'] = employee_perms
                 conn.close()
-                return json_response({'id': employee['merchant_id'], 'name': employee['name'],
+                return json_response({'id': employee.get('agent_id') or employee['merchant_id'], 'name': employee['name'],
                                       'contact_phone': employee['phone'], 'token': token, 'is_employee': True,
+                                      'is_agent': bool(employee.get('agent_id')),
                                       'permissions': employee['permissions'] or '[]'})
             conn.close()
             return json_response(message='手机号或密码错误', code=400)
@@ -161,6 +171,13 @@ def merchant_dashboard():
         today = datetime.now().strftime('%Y-%m-%d')
         conn = get_db()
         cursor = conn.cursor()
+        filter_merchant_id = request.args.get('merchant_id', type=int)
+        if filter_merchant_id and session.get('is_agent'):
+            cursor.execute('SELECT id FROM merchants WHERE id=%s AND agent_id=%s', (filter_merchant_id, session.get('agent_id')))
+            if cursor.fetchone():
+                mfilter = 'l.merchant_id = %s'
+                mparams = [filter_merchant_id]
+                merchant_id = filter_merchant_id
         cursor.execute(f'SELECT COUNT(*) as count FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND DATE(o.created_at) = %s AND o.status NOT IN (1, 5)  {hide_filter}', (*mparams, today))
         today_orders = cursor.fetchone()['count']
         cursor.execute(f'SELECT COUNT(*) as count FROM cabinet_slots cs JOIN cabinets c ON cs.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND cs.status = 2', mparams)
@@ -384,8 +401,8 @@ def merchant_orders():
         cursor = conn.cursor()
         where_clauses = [mfilter]
         params = list(mparams)
-        # Only show completed/refunded orders (status 2=已取物, 3=已结算)
-        where_clauses.append('o.status NOT IN (1, 5)')
+        # 只显示成功订单：使用中(2)和已结束(4)
+        where_clauses.append('o.status IN (2, 4)')
         if status:
             where_clauses.append('o.status = %s')
             params.append(status)
@@ -433,7 +450,7 @@ def merchant_orders():
             is_auto_hidden = o.get('logic_mark') != 'N' and bool(o.get('auto_hidden'))
             is_hidden = is_logic_hidden or is_auto_hidden
             # 手机号搜索时允许显示隐藏订单，但标记_hidden
-            if phone and session.get('is_agent'):
+            if phone:
                 o['_hidden'] = is_hidden
                 filtered.append(o)
             else:
@@ -466,15 +483,9 @@ def merchant_orders():
 def merchant_order_detail(order_id):
     try:
         merchant_id, mfilter, mparams = _get_merchant_filter()
-        permissions = session.get('permissions') or []
-        show_hidden = session.get('is_agent') and 'show_hidden' in permissions
-        hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
         conn = get_db()
         cursor = conn.cursor()
-        if merchant_id:
-            cursor.execute(f'SELECT o.*, c.cabinet_code, c.name as cabinet_name, l.name as location_name FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE o.id = %s AND {mfilter}{hide_filter}', (order_id, *mparams))
-        else:
-            cursor.execute(f'SELECT o.*, c.cabinet_code, c.name as cabinet_name, l.name as location_name FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE o.id = %s AND {mfilter}{hide_filter}', (order_id, *mparams))
+        cursor.execute(f'SELECT o.*, c.cabinet_code, c.name as cabinet_name, l.name as location_name FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE o.id = %s AND {mfilter}', (order_id, *mparams))
         order = cursor.fetchone()
         if not order:
             conn.close()
@@ -861,26 +872,24 @@ def merchant_business_stats():
         # 商家广告费
         cursor.execute(f"SELECT COALESCE(SUM(m.ad_fee_per_order),0) as ad_fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id JOIN merchants m ON l.merchant_id = m.id WHERE {where_sql} AND o.status NOT IN (1, 5)  {hide_filter}", params)
         ad_fee_row = cursor.fetchone()
-        # 每日趋势图
+        # 每日趋势图（一次 GROUP BY 取完，避免逐日循环查库）
         from datetime import datetime as _dt, timedelta as _td
         chart = []
         if start_date and end_date:
+            cursor.execute(f"SELECT DATE(o.created_at)::text as d, COUNT(*) as c FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql} AND o.status NOT IN (1, 5)  {hide_filter} GROUP BY DATE(o.created_at)", params)
+            count_map = {r['d']: r['c'] for r in cursor.fetchall()}
             d1 = _dt.strptime(start_date, '%Y-%m-%d')
             d2 = _dt.strptime(end_date.split()[0], '%Y-%m-%d')
             day_count = (d2 - d1).days + 1
             for i in range(day_count):
                 d = (d1 + _td(days=i)).strftime('%Y-%m-%d')
-                dp = params + [d]
-                dw = where_sql + " AND DATE(o.created_at) = %s"
-                cursor.execute(f"SELECT COUNT(*) as c FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {dw} AND o.status NOT IN (1, 5)  {hide_filter}", dp)
-                chart.append({"date": d, "orders": cursor.fetchone()[0] or 0})
+                chart.append({"date": d, "orders": count_map.get(d, 0) or 0})
         else:
+            cursor.execute(f"SELECT DATE(o.created_at)::text as d, COUNT(*) as c FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND DATE(o.created_at) >= %s AND o.status NOT IN (1, 5)  {hide_filter} GROUP BY DATE(o.created_at)", mparams + [(_dt.now() - _td(days=29)).strftime('%Y-%m-%d')])
+            count_map = {r['d']: r['c'] for r in cursor.fetchall()}
             for i in range(29, -1, -1):
                 d = (_dt.now() - _td(days=i)).strftime('%Y-%m-%d')
-                dp = params + [d]
-                dw = where_sql + " AND DATE(o.created_at) = %s"
-                cursor.execute(f"SELECT COUNT(*) as c FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {dw} AND o.status NOT IN (1, 5)  {hide_filter}", dp)
-                chart.append({"date": d, "orders": cursor.fetchone()[0] or 0})
+                chart.append({"date": d, "orders": count_map.get(d, 0) or 0})
         # 收益金额（收费模式下的手续费，不含保证金）
         cursor.execute(f"SELECT COALESCE(SUM(GREATEST(o.deposit_amount - COALESCE(o.refund_amount,0), 0)), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql} AND o.status = 4 AND (l.charge_mode IS NOT NULL AND l.charge_mode != '' AND l.charge_mode != 'free')  {hide_filter}", params)
         fee_row = cursor.fetchone()
@@ -917,8 +926,8 @@ def merchant_business_stats():
             'has_charge_location': has_charge,
             'chart': chart,
             'is_agent': is_agent,
-            'total_recharge': 0,
-            'total_withdraw': 0,
+            'total_recharge': round(float(income_stats['total_income'] or 0), 2),
+            'total_withdraw': round(float(deposit_stats['deposit_refunded'] or 0), 2),
             'show_deposit_fields': 'show_deposit_fields' in permissions
         }
         if is_agent:
@@ -1173,12 +1182,24 @@ def merchant_my_merchants():
         agent_id = session['agent_id']
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT m.*, (SELECT COUNT(*) FROM locations WHERE merchant_id=m.id) as location_count FROM merchants m WHERE m.agent_id=%s ORDER BY m.created_at DESC', (agent_id,))
+        cursor.execute('SELECT m.* FROM merchants m WHERE m.agent_id=%s ORDER BY m.created_at DESC', (agent_id,))
         rows = cursor.fetchall()
+        hide_filter = " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
+        merchants = [dict(r) for r in rows]
+        for m in merchants:
+            cursor.execute(f'''SELECT l.id, l.name, l.contact_phone,
+                (SELECT COUNT(*) FROM orders o JOIN cabinets c ON o.cabinet_id=c.id
+                  WHERE c.location_id=l.id AND o.status IN (2,4) {hide_filter}) as order_count,
+                (SELECT COUNT(*) FROM orders o JOIN cabinets c ON o.cabinet_id=c.id
+                  WHERE c.location_id=l.id AND o.status IN (2,4)) as total_order_count
+                FROM locations l WHERE l.merchant_id=%s ORDER BY l.created_at DESC''', (m['id'],))
+            m['locations'] = [dict(r) for r in cursor.fetchall()]
+            m['location_count'] = len(m['locations'])
         conn.close()
-        return json_response({'list': [dict(r) for r in rows]})
+        return json_response({'list': merchants})
     except Exception as e:
         logger.error(f'[merchant_my_merchants] {e}')
+        return json_response({'list': []})
 
 
 

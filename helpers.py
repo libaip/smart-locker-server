@@ -212,9 +212,12 @@ def require_merchant_auth(f):
                                     session['permissions'] = json.loads(ag['permissions'] or '[]')
                                     db.close(); return f(*args, **kwargs)
                             elif utype == 'employee':
-                                emp = cursor.execute('SELECT e.id, e.merchant_id, e.name, e.permissions, m.name as merchant_name FROM employees e LEFT JOIN merchants m ON e.merchant_id=m.id WHERE e.id=%s', (uid,)).fetchone()
+                                emp = cursor.execute('SELECT e.id, e.merchant_id, e.agent_id, e.name, e.permissions, m.name as merchant_name, a.name as agent_name FROM employees e LEFT JOIN merchants m ON e.merchant_id=m.id LEFT JOIN agents a ON e.agent_id=a.id WHERE e.id=%s', (uid,)).fetchone()
                                 if emp:
-                                    session['merchant_id'] = emp['merchant_id']; session['merchant_name'] = emp['merchant_name'] or emp['name']
+                                    if emp['agent_id']:
+                                        session['agent_id'] = emp['agent_id']; session['agent_name'] = emp['agent_name'] or emp['name']; session['is_agent'] = True
+                                    else:
+                                        session['merchant_id'] = emp['merchant_id']; session['merchant_name'] = emp['merchant_name'] or emp['name']
                                     session['employee_id'] = emp['id']; session['is_employee'] = True
                                     session['permissions'] = json.loads(emp['permissions'] or '[]')
                                     db.close(); return f(*args, **kwargs)
@@ -244,10 +247,13 @@ def require_merchant_auth(f):
                         return f(*args, **kwargs)
                     # Check employee table (before db.close())
                     try:
-                        row = cursor.execute("SELECT e.id, e.merchant_id, e.name, e.permissions, m.name as merchant_name FROM employees e LEFT JOIN merchants m ON e.merchant_id = m.id WHERE e.auth_token=%s", (token,)).fetchone()
+                        row = cursor.execute("SELECT e.id, e.merchant_id, e.agent_id, e.name, e.permissions, m.name as merchant_name, a.name as agent_name FROM employees e LEFT JOIN merchants m ON e.merchant_id = m.id LEFT JOIN agents a ON e.agent_id = a.id WHERE e.auth_token=%s", (token,)).fetchone()
                         if row:
-                            session['merchant_id'] = row['merchant_id']
-                            session['merchant_name'] = row['merchant_name'] or row['name']
+                            if row['agent_id']:
+                                session['agent_id'] = row['agent_id']; session['agent_name'] = row['agent_name'] or row['name']; session['is_agent'] = True
+                            else:
+                                session['merchant_id'] = row['merchant_id']
+                                session['merchant_name'] = row['merchant_name'] or row['name']
                             session['employee_id'] = row['id']
                             session['is_employee'] = True
                             session['permissions'] = json.loads(row['permissions'] or '[]')

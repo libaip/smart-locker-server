@@ -4010,6 +4010,8 @@ def get_settings():
 def save_settings():
     try:
         data = request.get_json() or {}
+        if isinstance(data.get('settings'), list):
+            data = {item.get('setting_key'): item.get('setting_value') for item in data['settings'] if item and item.get('setting_key')}
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         for key, value in data.items():

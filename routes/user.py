@@ -385,6 +385,11 @@ def store_init():
             openid, unionid, mp_openid = _resolve_order_identity(_cur_mp, user_phone, openid, unionid, mp_openid)
             _conn_mp.close()
 
+        from helpers import check_use_limits
+        _limit_msg = check_use_limits(user_phone, unionid or '', openid or '')
+        if _limit_msg:
+            return json_response(message=_limit_msg, code=403)
+
         if not all([cabinet_id, user_phone]):
             return json_response(message='参数不完整', code=400)
         # 检查设备营业状态
@@ -953,8 +958,12 @@ def retrieve_confirm():
         _direct_refund = False
         _direct_refund_id = ''
         try:
-            from helpers import check_whitelist_today, do_real_refund
+            from helpers import check_whitelist_today, do_real_refund, get_setting_int, count_today_whitelist_uses
             _wl_today = check_whitelist_today(_openid, _unionid) if (_openid or _unionid) else None
+            if _wl_today:
+                _daily = get_setting_int('whitelist_daily_use_limit', 3)
+                if _daily > 0 and count_today_whitelist_uses(order['user_phone'], _openid) >= _daily:
+                    _wl_today = None
             if _wl_today:
                 _r_ok, _r_id, _r_msg = do_real_refund(order_id=order_id, order_no=order['order_no'], amount=deposit_amount, payment_channel_id=order.get('payment_channel_id'))
                 if _r_ok:
@@ -1043,6 +1052,10 @@ def create_deposit_order():
         unionid = data.get('unionid', '')
         mp_openid = data.get('mp_openid', '')
         wechat_name = data.get('wechat_name', '')
+        from helpers import check_use_limits
+        _limit_msg = check_use_limits(user_phone, unionid or '', openid or '')
+        if _limit_msg:
+            return json_response(message=_limit_msg, code=403)
         if not all([cabinet_id, user_phone]):
             return json_response(message='参数不完整', code=400)
         sms_enabled = get_setting('sms_enabled', 'false').lower() == 'true'
@@ -1330,6 +1343,12 @@ def h5_store():
             return json_response(message='请输入正确的手机号', code=400)
         if not pwd or len(pwd) < 4:
             return json_response(message='请输入至少4位密码', code=400)
+        openid = str(data.get('openid', '') or '')
+        unionid = str(data.get('unionid', '') or '')
+        from helpers import check_use_limits
+        _limit_msg = check_use_limits(phone, unionid, openid)
+        if _limit_msg:
+            return json_response(message=_limit_msg, code=403)
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute('SELECT id, mainboard_device_id, mainboard_source, deposit_amount, group_id, cabinet_code, name, last_heartbeat FROM cabinets WHERE mainboard_device_id = %s', (device,))
@@ -1698,8 +1717,12 @@ def deposit_end_storage():
         _direct_refund = False
         _direct_refund_id = ''
         try:
-            from helpers import check_whitelist_today, do_real_refund
+            from helpers import check_whitelist_today, do_real_refund, get_setting_int, count_today_whitelist_uses
             _wl_today = check_whitelist_today(_openid, _unionid) if (_openid or _unionid) else None
+            if _wl_today:
+                _daily = get_setting_int('whitelist_daily_use_limit', 3)
+                if _daily > 0 and count_today_whitelist_uses(order['user_phone'], _openid) >= _daily:
+                    _wl_today = None
             if _wl_today:
                 _r_ok, _r_id, _r_msg = do_real_refund(order_id=order_id, order_no=order['order_no'], amount=refund_amount, payment_channel_id=order.get('payment_channel_id'))
                 if _r_ok:

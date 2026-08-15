@@ -2174,7 +2174,7 @@ def get_setting_int(key, default=0):
 
 
 def count_user_complaints(phone='', unionid='', openid=''):
-    """按 unionid/手机号/openid 统计用户累计投诉次数"""
+    """按 unionid/手机号/openid 统计微信投诉次数（自有投诉不计入黑名单）"""
     try:
         from database import get_db
         conn = get_db()
@@ -2192,7 +2192,7 @@ def count_user_complaints(phone='', unionid='', openid=''):
             for r in cur.fetchall():
                 if r[0]:
                     phones.add(str(r[0]))
-        conds, params = [], []
+        conds, params = ["(type = 'wechat' OR complaint_type = 'wechat')"], []
         if phones:
             conds.append("user_phone IN (%s)" % ','.join(['%s'] * len(phones)))
             params.extend(list(phones))
@@ -2202,7 +2202,7 @@ def count_user_complaints(phone='', unionid='', openid=''):
         if not conds:
             conn.close()
             return 0
-        cur.execute("SELECT COUNT(*) FROM complaints WHERE " + ' OR '.join(conds), params)
+        cur.execute("SELECT COUNT(*) FROM complaints WHERE " + ' AND '.join(conds), params)
         cnt = cur.fetchone()[0]
         conn.close()
         return int(cnt)

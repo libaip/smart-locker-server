@@ -1150,7 +1150,7 @@
                         document.getElementById('payDoorNum').textContent = slotNum + '号';
                 }
             } else {
-                    document.getElementById('payDoorNum').textContent = '分配失败，请重试';
+                    document.getElementById('payDoorNum').textContent = (d && d.message) || '分配失败，请重试';
             }
         })
             .catch(function(e) { console.warn('create order error:', e); document.getElementById('payDoorNum').textContent = '创建订单失败'; });

@@ -707,7 +707,7 @@ def get_cabinet_by_mainboard(mainboard_id):
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("SELECT c.*, g.name as group_name, l.name as location_name, l.address as location_address, l.usage_rules, l.rules_title as location_rules_title, l.reopen_times as location_reopen_times, l.show_slot_count, '' as business_hours, '' as customer_phone, c.business_status, c.usage_rules, l.usage_rules as location_usage_rules FROM cabinets c LEFT JOIN cabinet_groups g ON c.group_id = g.id LEFT JOIN locations l ON c.location_id = l.id WHERE c.mainboard_device_id = %s", (mainboard_id,))
+        cursor.execute("SELECT c.*, g.name as group_name, l.name as location_name, l.address as location_address, l.rules_title as location_rules_title, l.reopen_times as location_reopen_times, l.show_slot_count, '' as business_hours, '' as customer_phone, c.business_status, c.usage_rules as cabinet_usage_rules, l.usage_rules as location_usage_rules FROM cabinets c LEFT JOIN cabinet_groups g ON c.group_id = g.id LEFT JOIN locations l ON c.location_id = l.id WHERE c.mainboard_device_id = %s", (mainboard_id,))
         cabinet = cursor.fetchone()
         # 如果柜体没有自己的寄存规则，则用网点的
         if not cabinet:
@@ -726,8 +726,15 @@ def get_cabinet_by_mainboard(mainboard_id):
         except Exception as e:
             logger.error(f"[心跳刷新] 失败: {e}")
         result['biz_status'] = biz_status
-        # 寄存规则优先用设备自己的，设备没配就用网点的
-        if not result.get('usage_rules'):
+        # 寄存规则优先用设备自己的；设备明确清空(空白)时不回落网点规则；
+        # 设备从未配置(NULL)时才用网点规则兜底
+        _cab_rules_raw = result.get('cabinet_usage_rules')
+        _cab_rules_stripped = str(_cab_rules_raw or '').strip()
+        if _cab_rules_stripped:
+            result['usage_rules'] = result['cabinet_usage_rules']
+        elif _cab_rules_raw is not None:
+            result['usage_rules'] = ''
+        else:
             result['usage_rules'] = result.get('location_usage_rules', '')
         if not result.get('rules_title'):
             result['rules_title'] = result.get('location_rules_title', '') or ''
@@ -735,7 +742,7 @@ def get_cabinet_by_mainboard(mainboard_id):
             result['reopen_times'] = result.get('location_reopen_times')
         # 预付款模式：寄存规则自动追加标准收费规则（APK/设备屏幕显示）
         if (result.get('charge_mode') or '') == 'deposit':
-            _fee_rules_txt = result.get('usage_rules') or ''
+            _fee_rules_txt = (result.get('usage_rules') or '').strip()
             _fee_rules_txt = _fee_rules_txt.replace('保证金', '预付款').replace('押金', '预付款')
             _fmt_amt = lambda n: str(int(n)) if float(n).is_integer() else ('%.2f' % float(n)).rstrip('0').rstrip('.')
             _fd = float(result.get('daily_fee') or 0)
@@ -743,12 +750,8 @@ def get_cabinet_by_mainboard(mainboard_id):
             _dep = float(result.get('deposit_amount') or 0)
             _mn = result.get('deposit_min')
             _mx = result.get('deposit_max')
-            _random = _mn is not None and _mx is not None and float(_mx) > float(_mn)
-            if _random:
-                _dep_line = '预付费随机金额，封顶随机金额'
-            else:
-                _dep_txt = _fmt_amt(_dep)
-                _dep_line = '预付费{}元，封顶{}元'.format(_dep_txt, _dep_txt)
+            _dep_txt = _fmt_amt(_dep)
+            _dep_line = '预付费{}元，封顶{}元'.format(_dep_txt, _dep_txt)
             _fee_lines = [
                 '收费{}元/天'.format(_fmt_amt(_fd)),
                 _dep_line,

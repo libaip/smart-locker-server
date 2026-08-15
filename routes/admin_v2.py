@@ -3166,6 +3166,41 @@ def admin_biz_stats():
 
 # ============ Channels ============
 
+def _query_mch_balance(mch_id, cert_serial_no, private_key_path):
+    """查询微信支付商户基本账户实时余额（只读，单位转元）"""
+    import requests
+    import base64 as _b64
+    import time as _t
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+    url_path = '/v3/merchant/fund/balance/BASIC'
+    timestamp = str(int(_t.time()))
+    nonce_str = os.urandom(16).hex()
+    sign_str = 'GET\n' + url_path + '\n' + timestamp + '\n' + nonce_str + '\n\n'
+    with open(private_key_path, 'r') as f:
+        private_key = f.read()
+    key_obj = serialization.load_pem_private_key(private_key.encode(), password=None)
+    signature = key_obj.sign(sign_str.encode('utf-8'), padding.PKCS1v15(), hashes.SHA256())
+    sign_b64 = _b64.b64encode(signature).decode('utf-8')
+    authorization = 'WECHATPAY2-SHA256-RSA2048 mchid="%s",nonce_str="%s",timestamp="%s",serial_no="%s",signature="%s"' % (
+        mch_id, nonce_str, timestamp, cert_serial_no, sign_b64)
+    resp = requests.get('https://api.mch.weixin.qq.com' + url_path, headers={
+        'Accept': 'application/json',
+        'Authorization': authorization,
+    }, timeout=10)
+    if resp.status_code == 200:
+        d = resp.json()
+        return {
+            'balance': round((d.get('available_amount') or 0) / 100.0, 2),
+            'available_amount': d.get('available_amount'),
+            'pending_amount': d.get('pending_amount'),
+            'currency': d.get('currency'),
+            'query_time': datetime.now().strftime('%m-%d %H:%M'),
+            'error': None,
+        }
+    return {'balance': None, 'query_time': None, 'error': 'HTTP %s: %s' % (resp.status_code, resp.text[:160])}
+
+
 @bp.route('/admin/channels', methods=['GET', 'POST'])
 @require_auth
 def admin_channels():
@@ -3193,6 +3228,28 @@ def admin_channels():
             ch['total_amount'] = ch.get('paid_total_amount', 0)
             ch['refund_total_count'] = ch.get('refund_total_count', 0)
             ch['refund_total_amount'] = ch.get('refund_total_amount', 0)
+        if request.method == 'GET':
+            # 每次加载页面实时查询各微信商户基本账户余额（只读）
+            for ch in channels:
+                ch['balance'] = None
+                ch['balance_time'] = None
+                ch['balance_error'] = None
+                if str(ch.get('channel_type') or '') != 'wechat' or not ch.get('mch_id'):
+                    continue
+                _mch = str(ch['mch_id'])
+                _cert = ch.get('cert_serial_no')
+                _key = os.path.join(os.path.dirname(WX_KEY_PATH), _mch + '_key.pem')
+                if not _cert or not os.path.exists(_key):
+                    ch['balance_error'] = '未配置证书'
+                    continue
+                try:
+                    _bal = _query_mch_balance(_mch, _cert, _key)
+                    ch['balance'] = _bal.get('balance')
+                    ch['balance_time'] = _bal.get('query_time')
+                    ch['balance_error'] = _bal.get('error')
+                except Exception as e:
+                    ch['balance_error'] = str(e)[:160]
+            logger.info('[channels] balance query done, channels=%s', len(channels))
         conn.close()
         return json_response(data=channels)
     except Exception as e:
@@ -4565,7 +4622,7 @@ def _release_auto_claim(wid):
         logger.error('[auto_withdraw] 释放认领失败 id=%s: %s', wid, e)
 
 
-def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid=''):
+def _send_withdraw_subscribe(phone, amount, thing3, thing2):
     try:
         from helpers import send_wx_subscribe_message
         wd_data = {
@@ -4574,7 +4631,7 @@ def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid=''):
             'thing3': {'value': thing3},
             'thing2': {'value': thing2}
         }
-        send_wx_subscribe_message(openid or '', _AUTO_WITHDRAW_TEMPLATE_ID, wd_data, phone=phone, page='pages/mine/mine')
+        send_wx_subscribe_message('', _AUTO_WITHDRAW_TEMPLATE_ID, wd_data, phone=phone, page='pages/mine/mine')
     except Exception as e:
         logger.error('[auto_withdraw] 订阅通知失败 phone=%s: %s', phone, e)
 
@@ -4590,7 +4647,7 @@ def _process_auto_withdrawal_record(wid):
         conn = get_db()
         c = conn.cursor()
         c.execute("""
-            SELECT w.user_phone, w.amount, w.order_id, w.order_ids, w.openid AS w_openid
+            SELECT w.user_phone, w.amount, w.order_id, w.order_ids
             FROM withdrawal_records w
             WHERE w.id=%s
         """, (wid,))
@@ -4653,7 +4710,7 @@ def _process_auto_withdrawal_record(wid):
         if not failed:
             c2.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), error_msg=NULL, retry_count=0, next_attempt_at=NULL WHERE id=%s", (wid,))
             conn2.commit()
-            _send_withdraw_subscribe(phone, amount, '????', '??0-3??????', row.get('w_openid') or '')
+            _send_withdraw_subscribe(phone, amount, '????', '??0-3??????')
             logger.info('[auto_withdraw] ???? id=%s orders=%s', wid, order_ids)
             done = True
         else:

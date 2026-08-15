@@ -251,37 +251,37 @@ def merchant_dashboard():
         has_charge = cursor.fetchone()['cnt'] > 0
         is_agent = bool(session.get('is_agent'))
         conn.close()
-        return json_response({'today_orders': today_orders, 'occupied_slots': occupied_slots, 'today_income': today_income,
+        return json_response({'today_orders': today_orders, 'occupied_slots': occupied_slots, 'today_income': round(float(today_income or 0), 2),
                               'online_devices': online_devices, 'total_devices': total_devices, 'location_count': location_count,
-                              'yesterday_orders': yesterday_orders, 'yesterday_income': yesterday_income,
-                              'month_orders': month_orders, 'month_income': month_income,
-                              'today_storage_income': float(today_storage_income or 0),
-                              'yesterday_storage_income': float(yesterday_storage_income or 0),
-                              'month_storage_income': float(month_storage_income or 0),
+                              'yesterday_orders': yesterday_orders, 'yesterday_income': round(float(yesterday_income or 0), 2),
+                              'month_orders': month_orders, 'month_income': round(float(month_income or 0), 2),
+                              'today_storage_income': round(float(today_storage_income or 0), 2),
+                              'yesterday_storage_income': round(float(yesterday_storage_income or 0), 2),
+                              'month_storage_income': round(float(month_storage_income or 0), 2),
                               'today_refund_orders': today_refund_orders,
-                              'today_refund_amount': float(today_refund_amount or 0),
+                              'today_refund_amount': round(float(today_refund_amount or 0), 2),
                               'yesterday_refund_orders': yesterday_refund_orders,
-                              'yesterday_refund_amount': float(yesterday_refund_amount or 0),
+                              'yesterday_refund_amount': round(float(yesterday_refund_amount or 0), 2),
                               'last_month_refund_orders': last_month_refund_orders,
-                              'last_month_refund_amount': float(last_month_refund_amount or 0),
+                              'last_month_refund_amount': round(float(last_month_refund_amount or 0), 2),
                               'prev_month_refund_orders': prev_month_refund_orders,
-                              'prev_month_refund_amount': float(prev_month_refund_amount or 0),
+                              'prev_month_refund_amount': round(float(prev_month_refund_amount or 0), 2),
                               'total_refund_orders': total_refund_orders,
-                              'total_refund_amount': float(total_refund_amount or 0),
+                              'total_refund_amount': round(float(total_refund_amount or 0), 2),
                               'total_all_refund_orders': total_all_refund_orders,
-                              'total_all_refund_amount': float(total_all_refund_amount or 0),
-                              'today_deposit_refunded': float(today_refund_amount or 0),
-                              'yesterday_deposit_refunded': float(yesterday_refund_amount or 0),
-                              'month_deposit_refunded': float(last_month_refund_amount or 0),
+                              'total_all_refund_amount': round(float(total_all_refund_amount or 0), 2),
+                              'today_deposit_refunded': round(float(today_refund_amount or 0), 2),
+                              'yesterday_deposit_refunded': round(float(yesterday_refund_amount or 0), 2),
+                              'month_deposit_refunded': round(float(last_month_refund_amount or 0), 2),
                               'prev_month_orders': prev_month_orders,
-                              'prev_month_income': float(prev_month_income or 0),
-                              'prev_month_storage_income': float(prev_month_storage_income or 0),
-                              'prev_month_deposit_refunded': float(prev_month_refund_amount or 0),
+                              'prev_month_income': round(float(prev_month_income or 0), 2),
+                              'prev_month_storage_income': round(float(prev_month_storage_income or 0), 2),
+                              'prev_month_deposit_refunded': round(float(prev_month_refund_amount or 0), 2),
                               'total_all_orders': total_all_orders,
-                              'total_all_income': float(total_all_income or 0),
-                              'total_all_storage_income': float(total_all_storage_income or 0),
-                              'total_all_deposit_refunded': float(total_all_refund_amount or 0),
-                              'deposit_held': deposit_row['deposit_held'] or 0, 'deposit_refunded': deposit_row['deposit_refunded'] or 0,
+                              'total_all_income': round(float(total_all_income or 0), 2),
+                              'total_all_storage_income': round(float(total_all_storage_income or 0), 2),
+                              'total_all_deposit_refunded': round(float(total_all_refund_amount or 0), 2),
+                              'deposit_held': round(float(deposit_row['deposit_held'] or 0), 2), 'deposit_refunded': round(float(deposit_row['deposit_refunded'] or 0), 2),
                               'has_charge_location': has_charge or is_agent, 'is_agent': is_agent,
                               'show_deposit_fields': 'show_deposit_fields' in permissions})
     except Exception as e:
@@ -910,10 +910,10 @@ def merchant_business_stats():
             'total_orders': total_orders,
             'active_orders': order_stats['active_orders'] or 0,
             'completed_orders': order_stats['completed_orders'] or 0,
-            'total_income': float(fee_row['fee'] or 0),
+            'total_income': round(float(fee_row['fee'] or 0), 2),
             'total_refund_orders': rfs['refund_orders'] or 0,
-            'total_refund_amount': float(rfs['refund_amount'] or 0),
-            'merchant_ad_fee': float(ad_fee_row['ad_fee'] or 0),
+            'total_refund_amount': round(float(rfs['refund_amount'] or 0), 2),
+            'merchant_ad_fee': round(float(ad_fee_row['ad_fee'] or 0), 2),
             'has_charge_location': has_charge,
             'chart': chart,
             'is_agent': is_agent,
@@ -922,8 +922,8 @@ def merchant_business_stats():
             'show_deposit_fields': 'show_deposit_fields' in permissions
         }
         if is_agent:
-            result['deposit_collected'] = deposit_stats['deposit_collected'] or 0
-            result['deposit_refunded'] = deposit_stats['deposit_refunded'] or 0
+            result['deposit_collected'] = round(float(deposit_stats['deposit_collected'] or 0), 2)
+            result['deposit_refunded'] = round(float(deposit_stats['deposit_refunded'] or 0), 2)
             result['total_slots'] = slot_stats['total_slots'] or 0
             result['used_slots'] = slot_stats['used_slots'] or 0
             result['free_slots'] = slot_stats['free_slots'] or 0
@@ -1058,18 +1058,18 @@ def merchant_balance():
         is_agent = bool(session.get('is_agent'))
         is_employee = bool(session.get('is_employee'))
         return json_response({
-            'total_income': total_income or 0,
-            'deposit_held': deposit_held or 0,
-            'deposit_refunded': deposit_refunded or 0,
-            'available': (total_income or 0),  # 可提现金额 = 使用费收入
+            'total_income': round(float(total_income or 0), 2),
+            'deposit_held': round(float(deposit_held or 0), 2),
+            'deposit_refunded': round(float(deposit_refunded or 0), 2),
+            'available': round(float(total_income or 0), 2),  # 可提现金额 = 使用费收入
             'is_agent': is_agent,
             'is_employee': is_employee,
             'total_recharge': 0,
-            'total_withdraw': float(withdrawn or 0),
+            'total_withdraw': round(float(withdrawn or 0), 2),
             # 商户小程序"我的"页面卡片数据
             'withdrawn': 0.00,      # 已提现（暂不展示实际数据）
             'reserve': 0,     # 储备金（暂不显示实际数据）
-            'cashback': float(cashback or 0) if not is_employee else 0,  # 上月广告收入（雇员不显示）
+            'cashback': round(float(cashback or 0), 2) if not is_employee else 0,  # 上月广告收入（雇员不显示）
             'text_labels': {
                 'cashback': '广告收入'
             }

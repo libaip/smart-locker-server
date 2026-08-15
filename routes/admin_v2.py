@@ -4565,7 +4565,7 @@ def _release_auto_claim(wid):
         logger.error('[auto_withdraw] 释放认领失败 id=%s: %s', wid, e)
 
 
-def _send_withdraw_subscribe(phone, amount, thing3, thing2):
+def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid=''):
     try:
         from helpers import send_wx_subscribe_message
         wd_data = {
@@ -4574,7 +4574,7 @@ def _send_withdraw_subscribe(phone, amount, thing3, thing2):
             'thing3': {'value': thing3},
             'thing2': {'value': thing2}
         }
-        send_wx_subscribe_message('', _AUTO_WITHDRAW_TEMPLATE_ID, wd_data, phone=phone, page='pages/mine/mine')
+        send_wx_subscribe_message(openid or '', _AUTO_WITHDRAW_TEMPLATE_ID, wd_data, phone=phone, page='pages/mine/mine')
     except Exception as e:
         logger.error('[auto_withdraw] 订阅通知失败 phone=%s: %s', phone, e)
 
@@ -4590,7 +4590,7 @@ def _process_auto_withdrawal_record(wid):
         conn = get_db()
         c = conn.cursor()
         c.execute("""
-            SELECT w.user_phone, w.amount, w.order_id, w.order_ids
+            SELECT w.user_phone, w.amount, w.order_id, w.order_ids, w.openid AS w_openid
             FROM withdrawal_records w
             WHERE w.id=%s
         """, (wid,))
@@ -4653,7 +4653,7 @@ def _process_auto_withdrawal_record(wid):
         if not failed:
             c2.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), error_msg=NULL, retry_count=0, next_attempt_at=NULL WHERE id=%s", (wid,))
             conn2.commit()
-            _send_withdraw_subscribe(phone, amount, '????', '??0-3??????')
+            _send_withdraw_subscribe(phone, amount, '????', '??0-3??????', row.get('w_openid') or '')
             logger.info('[auto_withdraw] ???? id=%s orders=%s', wid, order_ids)
             done = True
         else:

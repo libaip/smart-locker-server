@@ -2391,6 +2391,23 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
                         openid = _po_rows[0]['mp_openid']
                     elif len(_po_rows) > 1 and not unionid:
                         logger.warning(f'[subscribe_msg] ????????????unionid????: phone={phone}')
+
+                if not openid:
+                    _cur.execute("""
+                        SELECT mp_openid, unionid FROM phone_openids
+                        WHERE phone = %s AND NULLIF(mp_openid,'') IS NOT NULL
+                          AND mp_openid NOT LIKE 'oLhbm2%%'
+                        ORDER BY id ASC
+                    """, (phone,))
+                    _po2 = _cur.fetchall()
+                    if _po2:
+                        _uniqs = {r['unionid'] for r in _po2 if r['unionid']}
+                        if unionid and any(r['unionid'] == unionid for r in _po2):
+                            _po2 = [r for r in _po2 if r['unionid'] == unionid]
+                        elif len(_uniqs) == 1:
+                            _po2 = _po2[:1]
+                        if len(_po2) == 1 and _po2[0].get('mp_openid'):
+                            openid = _po2[0]['mp_openid']
                 _conn.close()
             except Exception as _e:
                 logger.warning(f'[subscribe_msg] ??phone_openids??: {_e}')

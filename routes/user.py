@@ -745,7 +745,7 @@ def retrieve():
                         "thing7": {"value": "已退还至小程序用户钱包"},
                         "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}
                     }
-                    send_wx_subscribe_message("", "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
+                    send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
                 except Exception as e:
                     logger.error(f"[retrieve发送订阅消息失败] {e}")
             conn.commit()
@@ -980,7 +980,7 @@ def retrieve_confirm():
                     "thing7": {"value": "已退还至小程序用户钱包"},
                     "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}
                 }
-                send_wx_subscribe_message('', "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page='pages/mine/mine')
+                send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page='pages/mine/mine')
             except Exception as e:
                 logger.error(f"[retrieve_confirm发送订阅消息失败] {e}")
         if refund_success:
@@ -1522,7 +1522,7 @@ def deposit_retrieve():
                             'thing7': {'value': '已退还至小程序用户钱包'},
                             'thing2': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                         }
-                        send_wx_subscribe_message('', '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', _nsd, phone=_n_phone, page='pages/mine/mine')
+                        send_wx_subscribe_message(_noid, '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', _nsd, phone=_n_phone, page='pages/mine/mine')
                     except Exception as _ne:
                         logger.error('[deposit_retrieve_notify1] '+ str(_ne))
                 else:
@@ -1756,9 +1756,11 @@ def deposit_end_storage():
                 _thing7 = "已原路退回支付账户" if _direct_refund else "已退还至小程序用户钱包"
                 _thing2 = "无需提现，请留意微信到账" if _direct_refund else "请自行点击此通知消息跳转“我的钱包”提现"
                 subscribe_data = {"amount6": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))}, "time4": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}, "thing7": {"value": _thing7}, "thing2": {"value": _thing2}}
-                send_wx_subscribe_message('', "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
-
-                logger.info(f"[deposit_end_storage] 订阅消息已发送: order={order_id}")
+                _sent = send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
+                if _sent:
+                    logger.info(f"[deposit_end_storage] 订阅消息已发送: order={order_id}")
+                else:
+                    logger.warning(f"[deposit_end_storage] 订阅消息发送失败: order={order_id}")
             except Exception as e:
                 logger.error(f"[deposit_end_storage发送订阅消息失败] {e}")
 
@@ -2708,6 +2710,8 @@ def wx_login():
                     _auc = get_db()
                     _aucur = _auc.cursor()
                     _merged_uid = _resolve_user(_aucur, mp_openid=openid_val, phone=_phone, unionid=_unionid)
+                    if _merged_uid and openid_val:
+                        _aucur.execute("UPDATE users SET mp_openid = %s WHERE id = %s AND (mp_openid IS NULL OR mp_openid = '')", (openid_val, _merged_uid))
                     _auc.commit()
                     _aucur.close()
                     _auc.close()
@@ -3546,6 +3550,8 @@ def link_mp_openid_from_mini():
         cursor = conn.cursor()
 
         _mp_uid = _resolve_user(cursor, openid=gzh_openid, mp_openid=mp_openid, phone=phone, unionid=unionid)
+        if _mp_uid and mp_openid:
+            cursor.execute("UPDATE users SET mp_openid = %s WHERE id = %s AND (mp_openid IS NULL OR mp_openid = '')", (mp_openid, _mp_uid))
         # 更新 phone_openids 的 mp_openid（按手机号匹配）
         if phone:
             upsert_phone_openid_row(cursor, phone=phone, openid=gzh_openid, mp_openid=mp_openid,

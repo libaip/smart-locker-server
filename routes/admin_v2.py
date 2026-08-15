@@ -3187,7 +3187,7 @@ def _query_mch_balance(mch_id, cert_serial_no, private_key_path):
     resp = requests.get('https://api.mch.weixin.qq.com' + url_path, headers={
         'Accept': 'application/json',
         'Authorization': authorization,
-    }, timeout=10)
+    }, timeout=8)
     if resp.status_code == 200:
         d = resp.json()
         return {
@@ -3199,6 +3199,41 @@ def _query_mch_balance(mch_id, cert_serial_no, private_key_path):
             'error': None,
         }
     return {'balance': None, 'query_time': None, 'error': 'HTTP %s: %s' % (resp.status_code, resp.text[:160])}
+
+
+@bp.route('/admin/channels/balance', methods=['GET'])
+@require_auth
+def admin_channels_balance():
+    """异步查询各微信商户实时余额（只读，页面不阻塞）"""
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT mch_id, cert_serial_no FROM payment_channels WHERE channel_type='wechat' AND mch_id IS NOT NULL AND mch_id != '' AND is_active=1 ORDER BY id")
+        rows = c.fetchall()
+        conn.close()
+        result = []
+        for r in rows:
+            _mch = str(r['mch_id'])
+            _cert = r.get('cert_serial_no')
+            _key = os.path.join(os.path.dirname(WX_KEY_PATH), _mch + '_key.pem')
+            item = {'mch_id': _mch, 'balance': None, 'balance_time': None, 'balance_error': None}
+            if not _cert or not os.path.exists(_key):
+                item['balance_error'] = '未配置证书'
+                result.append(item)
+                continue
+            try:
+                _bal = _query_mch_balance(_mch, _cert, _key)
+                item['balance'] = _bal.get('balance')
+                item['balance_time'] = _bal.get('query_time')
+                item['balance_error'] = _bal.get('error')
+            except Exception as e:
+                item['balance_error'] = str(e)[:160]
+            result.append(item)
+        logger.info('[channels_balance] done, channels=%s', len(result))
+        return json_response(data=result)
+    except Exception as e:
+        logger.error(f'[channels_balance] {e}')
+        return json_response(data=[], code=500)
 
 
 @bp.route('/admin/channels', methods=['GET', 'POST'])
@@ -3228,28 +3263,6 @@ def admin_channels():
             ch['total_amount'] = ch.get('paid_total_amount', 0)
             ch['refund_total_count'] = ch.get('refund_total_count', 0)
             ch['refund_total_amount'] = ch.get('refund_total_amount', 0)
-        if request.method == 'GET':
-            # 每次加载页面实时查询各微信商户基本账户余额（只读）
-            for ch in channels:
-                ch['balance'] = None
-                ch['balance_time'] = None
-                ch['balance_error'] = None
-                if str(ch.get('channel_type') or '') != 'wechat' or not ch.get('mch_id'):
-                    continue
-                _mch = str(ch['mch_id'])
-                _cert = ch.get('cert_serial_no')
-                _key = os.path.join(os.path.dirname(WX_KEY_PATH), _mch + '_key.pem')
-                if not _cert or not os.path.exists(_key):
-                    ch['balance_error'] = '未配置证书'
-                    continue
-                try:
-                    _bal = _query_mch_balance(_mch, _cert, _key)
-                    ch['balance'] = _bal.get('balance')
-                    ch['balance_time'] = _bal.get('query_time')
-                    ch['balance_error'] = _bal.get('error')
-                except Exception as e:
-                    ch['balance_error'] = str(e)[:160]
-            logger.info('[channels] balance query done, channels=%s', len(channels))
         conn.close()
         return json_response(data=channels)
     except Exception as e:
@@ -4622,7 +4635,7 @@ def _release_auto_claim(wid):
         logger.error('[auto_withdraw] 释放认领失败 id=%s: %s', wid, e)
 
 
-def _send_withdraw_subscribe(phone, amount, thing3, thing2):
+def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid=''):
     try:
         from helpers import send_wx_subscribe_message
         wd_data = {
@@ -4631,7 +4644,7 @@ def _send_withdraw_subscribe(phone, amount, thing3, thing2):
             'thing3': {'value': thing3},
             'thing2': {'value': thing2}
         }
-        send_wx_subscribe_message('', _AUTO_WITHDRAW_TEMPLATE_ID, wd_data, phone=phone, page='pages/mine/mine')
+        send_wx_subscribe_message(openid or '', _AUTO_WITHDRAW_TEMPLATE_ID, wd_data, phone=phone, page='pages/mine/mine')
     except Exception as e:
         logger.error('[auto_withdraw] 订阅通知失败 phone=%s: %s', phone, e)
 
@@ -4647,7 +4660,7 @@ def _process_auto_withdrawal_record(wid):
         conn = get_db()
         c = conn.cursor()
         c.execute("""
-            SELECT w.user_phone, w.amount, w.order_id, w.order_ids
+            SELECT w.user_phone, w.amount, w.order_id, w.order_ids, w.openid AS w_openid
             FROM withdrawal_records w
             WHERE w.id=%s
         """, (wid,))
@@ -4710,7 +4723,7 @@ def _process_auto_withdrawal_record(wid):
         if not failed:
             c2.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), error_msg=NULL, retry_count=0, next_attempt_at=NULL WHERE id=%s", (wid,))
             conn2.commit()
-            _send_withdraw_subscribe(phone, amount, '????', '??0-3??????')
+            _send_withdraw_subscribe(phone, amount, '????', '??0-3??????', row.get('w_openid') or '')
             logger.info('[auto_withdraw] ???? id=%s orders=%s', wid, order_ids)
             done = True
         else:

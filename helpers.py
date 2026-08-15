@@ -1569,7 +1569,7 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
             err_msg = result.get('err_code_des') or result.get('err_code') or result.get('return_msg') or 'Refund failed'
             logger.error('[do_real_refund] Failed: order=%s, msg=%s, result=%s' % (order_no, err_msg, str(result)))
             # ???????????/???????????????????????????
-            _already_refunded = ('???' in str(err_msg)) or ('????' in str(err_msg))
+            _already_refunded = ('退款金额非法' in str(err_msg)) or ('订单已全额退款' in str(err_msg)) or ('该订单已全额退款' in str(err_msg))
             if _already_refunded:
                 _rid = result.get('refund_id') or result.get('out_refund_no') or ('ALREADY_' + str(order_id or order_no))
                 logger.info('[do_real_refund] Already refunded: order=%s, refund_id=%s, msg=%s' % (order_no, _rid, err_msg))

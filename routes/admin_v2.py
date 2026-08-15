@@ -3166,69 +3166,37 @@ def admin_biz_stats():
 
 # ============ Channels ============
 
-def _query_mch_balance(mch_id, cert_serial_no, private_key_path):
-    """查询微信支付商户基本账户实时余额（只读，单位转元）"""
-    import requests
-    import base64 as _b64
-    import time as _t
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import padding
-    url_path = '/v3/merchant/fund/balance/BASIC'
-    timestamp = str(int(_t.time()))
-    nonce_str = os.urandom(16).hex()
-    sign_str = 'GET\n' + url_path + '\n' + timestamp + '\n' + nonce_str + '\n\n'
-    with open(private_key_path, 'r') as f:
-        private_key = f.read()
-    key_obj = serialization.load_pem_private_key(private_key.encode(), password=None)
-    signature = key_obj.sign(sign_str.encode('utf-8'), padding.PKCS1v15(), hashes.SHA256())
-    sign_b64 = _b64.b64encode(signature).decode('utf-8')
-    authorization = 'WECHATPAY2-SHA256-RSA2048 mchid="%s",nonce_str="%s",timestamp="%s",serial_no="%s",signature="%s"' % (
-        mch_id, nonce_str, timestamp, cert_serial_no, sign_b64)
-    resp = requests.get('https://api.mch.weixin.qq.com' + url_path, headers={
-        'Accept': 'application/json',
-        'Authorization': authorization,
-    }, timeout=8)
-    if resp.status_code == 200:
-        d = resp.json()
-        return {
-            'balance': round((d.get('available_amount') or 0) / 100.0, 2),
-            'available_amount': d.get('available_amount'),
-            'pending_amount': d.get('pending_amount'),
-            'currency': d.get('currency'),
-            'query_time': datetime.now().strftime('%m-%d %H:%M'),
-            'error': None,
-        }
-    return {'balance': None, 'query_time': None, 'error': 'HTTP %s: %s' % (resp.status_code, resp.text[:160])}
-
-
 @bp.route('/admin/channels/balance', methods=['GET'])
 @require_auth
 def admin_channels_balance():
-    """异步查询各微信商户实时余额（只读，页面不阻塞）"""
+    """返回各微信商户号最近一次资金账单日终余额（昨日余额，只读）"""
     try:
         conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT mch_id, cert_serial_no FROM payment_channels WHERE channel_type='wechat' AND mch_id IS NOT NULL AND mch_id != '' AND is_active=1 ORDER BY id")
-        rows = c.fetchall()
-        conn.close()
+        c.execute("""
+            SELECT pc.mch_id,
+                   b.balance,
+                   b.balance_date
+            FROM payment_channels pc
+            LEFT JOIN LATERAL (
+                SELECT pcb.balance, pcb.balance_date
+                FROM payment_channel_balance pcb
+                WHERE pcb.mch_id = pc.mch_id
+                ORDER BY pcb.balance_date DESC, pcb.id DESC
+                LIMIT 1
+            ) b ON true
+            WHERE pc.channel_type='wechat' AND pc.mch_id IS NOT NULL AND pc.mch_id != ''
+            ORDER BY pc.id
+        """)
         result = []
-        for r in rows:
-            _mch = str(r['mch_id'])
-            _cert = r.get('cert_serial_no')
-            _key = os.path.join(os.path.dirname(WX_KEY_PATH), _mch + '_key.pem')
-            item = {'mch_id': _mch, 'balance': None, 'balance_time': None, 'balance_error': None}
-            if not _cert or not os.path.exists(_key):
-                item['balance_error'] = '未配置证书'
-                result.append(item)
-                continue
-            try:
-                _bal = _query_mch_balance(_mch, _cert, _key)
-                item['balance'] = _bal.get('balance')
-                item['balance_time'] = _bal.get('query_time')
-                item['balance_error'] = _bal.get('error')
-            except Exception as e:
-                item['balance_error'] = str(e)[:160]
-            result.append(item)
+        for r in c.fetchall():
+            result.append({
+                'mch_id': str(r['mch_id']),
+                'balance': float(r['balance']) if r['balance'] is not None else None,
+                'balance_time': str(r['balance_date']) if r['balance_date'] else None,
+                'balance_error': None if r['balance'] is not None else '暂无账单',
+            })
+        conn.close()
         logger.info('[channels_balance] done, channels=%s', len(result))
         return json_response(data=result)
     except Exception as e:

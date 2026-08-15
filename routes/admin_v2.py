@@ -139,7 +139,7 @@ def admin_daily_trend():
                 FROM orders WHERE date(created_at)=%s AND status NOT IN (0, 1, 5)
             ''', (date,))
             row = c.fetchone()
-            result.insert(0, {'date': date, 'count': row['cnt'] if row else 0, 'amount': float(row['amt'] if row else 0)})
+            result.insert(0, {'date': date, 'count': row['cnt'] if row else 0, 'amount': round(float(row['amt'] if row else 0), 2)})
         conn.close()
         return json_response(data=result)
     except Exception as e:
@@ -2998,9 +2998,9 @@ def admin_biz_stats():
             'total': row[0] if row else 0,
             'visible_count': row[1] if row else 0,
             'active_count': row[2] if row else 0,
-            'deposit_total': float(row[3] if row and row[3] else 0),
-            'refund_total': float(row[4] if row and row[4] else 0),
-            'net_income': float(row[3] if row and row[3] else 0) - float(row[4] if row and row[4] else 0)
+            'deposit_total': round(float(row[3] if row and row[3] else 0), 2),
+            'refund_total': round(float(row[4] if row and row[4] else 0), 2),
+            'net_income': round(float(row[3] if row and row[3] else 0) - float(row[4] if row and row[4] else 0), 2)
         }
         
 
@@ -3102,18 +3102,18 @@ def admin_biz_stats():
                     'stat_date': stat_date,
                     'order_count': data['order_count'],
                     'visible_count': data['visible_count'],
-                    'deposit_total': data['deposit_total'],
-                    'refund_total': data['refund_total'],
-                    'balance': data['deposit_total'] - data['refund_total']
+                    'deposit_total': round(data['deposit_total'], 2),
+                    'refund_total': round(data['refund_total'], 2),
+                    'balance': round(data['deposit_total'] - data['refund_total'], 2)
                 })
             else:
                 location_details.append({
                     'stat_date': stat_date,
                     'order_count': data['order_count'],
                     'visible_count': data['visible_count'],
-                    'deposit_total': data['deposit_total'],
-                    'refund_total': data['refund_total'],
-                    'balance': data['deposit_total'] - data['refund_total']
+                    'deposit_total': round(data['deposit_total'], 2),
+                    'refund_total': round(data['refund_total'], 2),
+                    'balance': round(data['deposit_total'] - data['refund_total'], 2)
                 })
         
         # 按天聚合趋势
@@ -3132,8 +3132,8 @@ def admin_biz_stats():
                 daily.append({
                 'date': date,
                 'order_count': row[0] if row else 0,
-                'deposit_total': float(row[1] if row and row[1] else 0),
-                'refund_total': float(row[2] if row and row[2] else 0)
+                'deposit_total': round(float(row[1] if row and row[1] else 0), 2),
+                'refund_total': round(float(row[2] if row and row[2] else 0), 2)
                 })
         else:
             day_count = 30
@@ -3149,8 +3149,8 @@ def admin_biz_stats():
                 daily.append({
                 'date': date,
                 'order_count': row[0] if row else 0,
-                'deposit_total': float(row[1] if row and row[1] else 0),
-                'refund_total': float(row[2] if row and row[2] else 0)
+                'deposit_total': round(float(row[1] if row and row[1] else 0), 2),
+                'refund_total': round(float(row[2] if row and row[2] else 0), 2)
                 })
         
         conn.close()
@@ -3165,6 +3165,76 @@ def admin_biz_stats():
 
 
 # ============ Channels ============
+
+def _query_mch_balance(mch_id, cert_serial_no, private_key_path):
+    """查询微信支付商户基本账户实时余额（只读，单位转元）"""
+    import requests
+    import base64 as _b64
+    import time as _t
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+    url_path = '/v3/merchant/fund/balance/BASIC'
+    timestamp = str(int(_t.time()))
+    nonce_str = os.urandom(16).hex()
+    sign_str = 'GET\n' + url_path + '\n' + timestamp + '\n' + nonce_str + '\n\n'
+    with open(private_key_path, 'r') as f:
+        private_key = f.read()
+    key_obj = serialization.load_pem_private_key(private_key.encode(), password=None)
+    signature = key_obj.sign(sign_str.encode('utf-8'), padding.PKCS1v15(), hashes.SHA256())
+    sign_b64 = _b64.b64encode(signature).decode('utf-8')
+    authorization = 'WECHATPAY2-SHA256-RSA2048 mchid="%s",nonce_str="%s",timestamp="%s",serial_no="%s",signature="%s"' % (
+        mch_id, nonce_str, timestamp, cert_serial_no, sign_b64)
+    resp = requests.get('https://api.mch.weixin.qq.com' + url_path, headers={
+        'Accept': 'application/json',
+        'Authorization': authorization,
+    }, timeout=8)
+    if resp.status_code == 200:
+        d = resp.json()
+        return {
+            'balance': round((d.get('available_amount') or 0) / 100.0, 2),
+            'available_amount': d.get('available_amount'),
+            'pending_amount': d.get('pending_amount'),
+            'currency': d.get('currency'),
+            'query_time': datetime.now().strftime('%m-%d %H:%M'),
+            'error': None,
+        }
+    return {'balance': None, 'query_time': None, 'error': 'HTTP %s: %s' % (resp.status_code, resp.text[:160])}
+
+
+@bp.route('/admin/channels/balance', methods=['GET'])
+@require_auth
+def admin_channels_balance():
+    """异步查询各微信商户实时余额（只读，页面不阻塞）"""
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT mch_id, cert_serial_no FROM payment_channels WHERE channel_type='wechat' AND mch_id IS NOT NULL AND mch_id != '' AND is_active=1 ORDER BY id")
+        rows = c.fetchall()
+        conn.close()
+        result = []
+        for r in rows:
+            _mch = str(r['mch_id'])
+            _cert = r.get('cert_serial_no')
+            _key = os.path.join(os.path.dirname(WX_KEY_PATH), _mch + '_key.pem')
+            item = {'mch_id': _mch, 'balance': None, 'balance_time': None, 'balance_error': None}
+            if not _cert or not os.path.exists(_key):
+                item['balance_error'] = '未配置证书'
+                result.append(item)
+                continue
+            try:
+                _bal = _query_mch_balance(_mch, _cert, _key)
+                item['balance'] = _bal.get('balance')
+                item['balance_time'] = _bal.get('query_time')
+                item['balance_error'] = _bal.get('error')
+            except Exception as e:
+                item['balance_error'] = str(e)[:160]
+            result.append(item)
+        logger.info('[channels_balance] done, channels=%s', len(result))
+        return json_response(data=result)
+    except Exception as e:
+        logger.error(f'[channels_balance] {e}')
+        return json_response(data=[], code=500)
+
 
 @bp.route('/admin/channels', methods=['GET', 'POST'])
 @require_auth
@@ -3478,7 +3548,7 @@ def settlement_stats():
         conn.close()
         return json_response(data={
             'total_orders': row['total_orders'],
-            'total_deposit': row['total_deposit'],
+            'total_deposit': round(float(row['total_deposit']), 2),
             'active_orders': active,
             'completed': completed,
             'refunded': refunded

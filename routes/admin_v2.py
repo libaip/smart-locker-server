@@ -139,7 +139,7 @@ def admin_daily_trend():
                 FROM orders WHERE date(created_at)=%s AND status NOT IN (0, 1, 5)
             ''', (date,))
             row = c.fetchone()
-            result.insert(0, {'date': date, 'count': row['cnt'] if row else 0, 'amount': float(row['amt'] if row else 0)})
+            result.insert(0, {'date': date, 'count': row['cnt'] if row else 0, 'amount': round(float(row['amt'] if row else 0), 2)})
         conn.close()
         return json_response(data=result)
     except Exception as e:
@@ -2998,9 +2998,9 @@ def admin_biz_stats():
             'total': row[0] if row else 0,
             'visible_count': row[1] if row else 0,
             'active_count': row[2] if row else 0,
-            'deposit_total': float(row[3] if row and row[3] else 0),
-            'refund_total': float(row[4] if row and row[4] else 0),
-            'net_income': float(row[3] if row and row[3] else 0) - float(row[4] if row and row[4] else 0)
+            'deposit_total': round(float(row[3] if row and row[3] else 0), 2),
+            'refund_total': round(float(row[4] if row and row[4] else 0), 2),
+            'net_income': round(float(row[3] if row and row[3] else 0) - float(row[4] if row and row[4] else 0), 2)
         }
         
 
@@ -3102,18 +3102,18 @@ def admin_biz_stats():
                     'stat_date': stat_date,
                     'order_count': data['order_count'],
                     'visible_count': data['visible_count'],
-                    'deposit_total': data['deposit_total'],
-                    'refund_total': data['refund_total'],
-                    'balance': data['deposit_total'] - data['refund_total']
+                    'deposit_total': round(data['deposit_total'], 2),
+                    'refund_total': round(data['refund_total'], 2),
+                    'balance': round(data['deposit_total'] - data['refund_total'], 2)
                 })
             else:
                 location_details.append({
                     'stat_date': stat_date,
                     'order_count': data['order_count'],
                     'visible_count': data['visible_count'],
-                    'deposit_total': data['deposit_total'],
-                    'refund_total': data['refund_total'],
-                    'balance': data['deposit_total'] - data['refund_total']
+                    'deposit_total': round(data['deposit_total'], 2),
+                    'refund_total': round(data['refund_total'], 2),
+                    'balance': round(data['deposit_total'] - data['refund_total'], 2)
                 })
         
         # 按天聚合趋势
@@ -3132,8 +3132,8 @@ def admin_biz_stats():
                 daily.append({
                 'date': date,
                 'order_count': row[0] if row else 0,
-                'deposit_total': float(row[1] if row and row[1] else 0),
-                'refund_total': float(row[2] if row and row[2] else 0)
+                'deposit_total': round(float(row[1] if row and row[1] else 0), 2),
+                'refund_total': round(float(row[2] if row and row[2] else 0), 2)
                 })
         else:
             day_count = 30
@@ -3149,8 +3149,8 @@ def admin_biz_stats():
                 daily.append({
                 'date': date,
                 'order_count': row[0] if row else 0,
-                'deposit_total': float(row[1] if row and row[1] else 0),
-                'refund_total': float(row[2] if row and row[2] else 0)
+                'deposit_total': round(float(row[1] if row and row[1] else 0), 2),
+                'refund_total': round(float(row[2] if row and row[2] else 0), 2)
                 })
         
         conn.close()
@@ -3548,7 +3548,7 @@ def settlement_stats():
         conn.close()
         return json_response(data={
             'total_orders': row['total_orders'],
-            'total_deposit': row['total_deposit'],
+            'total_deposit': round(float(row['total_deposit']), 2),
             'active_orders': active,
             'completed': completed,
             'refunded': refunded

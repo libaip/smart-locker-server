@@ -943,14 +943,42 @@ def retrieve_confirm():
         cursor.execute('UPDATE orders SET status = 3, retrieve_time = NOW(), refund_mark = 1 WHERE id = %s', 
                        (order_id,))
         cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (order['slot_id'],))
-        # 结束订单，保证金退到用户余额（不直接退微信）
+        # 兜底：按手机号补全订单身份
+        _openid = order.get('openid', '') or ''
+        _unionid = order.get('unionid', '') or ''
+        _mp_openid = order.get('mp_openid', '') or _openid
+        if order.get('user_phone'):
+            _openid, _unionid, _mp_openid = _resolve_order_identity(cursor, order['user_phone'], _openid, _unionid, _mp_openid)
+        # 当天投诉白名单：取包结束直接原路退款，避免用户再次投诉
+        _direct_refund = False
+        _direct_refund_id = ''
+        try:
+            from helpers import check_whitelist_today, do_real_refund
+            _wl_today = check_whitelist_today(_openid, _unionid) if (_openid or _unionid) else None
+            if _wl_today:
+                _r_ok, _r_id, _r_msg = do_real_refund(order_id=order_id, order_no=order['order_no'], amount=deposit_amount, payment_channel_id=order.get('payment_channel_id'))
+                if _r_ok:
+                    _direct_refund = True
+                    _direct_refund_id = _r_id or ''
+                    cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_mark=1, logical_mark=%s WHERE id=%s', (_direct_refund_id, 'end', order_id))
+                    cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, approver, auto_approve_time, dedup_key) VALUES (%s, %s, %s, 2, 1, %s, 'whitelist_auto', NOW(), %s) ON CONFLICT DO NOTHING",
+                                   (order_id, order['user_phone'], deposit_amount, _openid or order.get('openid') or '', 'E:%s:%s' % (order['user_phone'], order_id)))
+                    cursor.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s, %s, %s, 'withdrawn') ON CONFLICT (order_id) DO NOTHING",
+                                   (order['user_phone'], order_id, deposit_amount))
+                else:
+                    logger.error(f'[retrieve_confirm] 当天投诉白名单直接退款失败 order={order_id}: {_r_msg}')
+                    try:
+                        cursor.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('end_refund_failed', NULL, %s, '0', NOW())", (('取包直接退款失败: ' + str(_r_msg))[:500],))
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.error(f'[retrieve_confirm] 白名单直接退款异常 order={order_id}: {e}')
+        # 结束订单，预付款退到用户余额（不直接退微信）
         # 防重复：如果订单原状态不是status=2(使用中)，说明已被其他路径处理过，跳过余额更新
-        if orig_status == 2:
-            _openid = order.get('openid', '') or ''
-            _mp_openid = order.get('mp_openid', '') or _openid
-            # 统一用 mp_openid 查找用户余额
+        if orig_status == 2 and not _direct_refund:
             if not _mp_openid:
                 _mp_openid = _resolve_mp_openid(cursor, mp_openid='', openid=_openid, phone=order['user_phone'])
+            # 统一用 mp_openid 查找用户余额
             upsert_user_balance_row(cursor, phone=order['user_phone'], openid=_openid,
                                     unionid=order.get('unionid', '') or '', mp_openid=_mp_openid,
                                     balance=deposit_amount, total_deposited=deposit_amount,
@@ -963,7 +991,7 @@ def retrieve_confirm():
         conn.commit()
         conn.close()
         # 发送寄存结束订阅消息
-        _openid = order.get("openid")
+        _openid = _openid or order.get("openid")
         if not _openid:
             try:
                 _po_rows = phone_openid_rows(cursor, phone=order.get('user_phone'), unionid=order.get('unionid', ''))
@@ -974,15 +1002,19 @@ def retrieve_confirm():
         if order.get("user_phone"):
             try:
                 from helpers import send_wx_subscribe_message
+                _thing7 = "已原路退回支付账户" if _direct_refund else "已退还至小程序用户钱包"
+                _thing2 = "无需提现，请留意微信到账" if _direct_refund else "请自行点击此通知消息跳转“我的钱包”提现"
                 subscribe_data = {
                     "amount6": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))},
                     "time4": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
-                    "thing7": {"value": "已退还至小程序用户钱包"},
-                    "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}
+                    "thing7": {"value": _thing7},
+                    "thing2": {"value": _thing2}
                 }
                 send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page='pages/mine/mine')
             except Exception as e:
                 logger.error(f"[retrieve_confirm发送订阅消息失败] {e}")
+        if _direct_refund:
+            return json_response({'action': 'end', 'refund_amount': deposit_amount, 'refund_id': _direct_refund_id, 'message': '取包成功，预付款已原路退回'})
         if refund_success:
             return json_response({'action': 'end', 'refund_amount': deposit_amount, 'refund_id': refund_id, 'message': f'取包成功，预付款¥{deposit_amount}已退至余额'})
             return json_response({'action': 'end', 'refund_amount': 0, 'message': '取包成功，但预付款退款失败'}, message='取包成功，退款异常', code=200)

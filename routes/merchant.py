@@ -865,7 +865,7 @@ def merchant_business_stats():
         pay_where = ' AND '.join(where_parts)
         pay_params = list(params)
         pay_where += ' AND p.type = 1 AND p.status = 1'
-        cursor.execute(f'SELECT COALESCE(SUM(p.amount), 0) as total_income FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {pay_where}', pay_params)
+        cursor.execute(f'SELECT COALESCE(SUM(p.amount), 0) as total_income FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {pay_where} {hide_filter}', pay_params)
         income_stats = cursor.fetchone()
         # 押金统计
         deposit_params = list(params)

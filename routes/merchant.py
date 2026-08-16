@@ -213,12 +213,12 @@ def merchant_dashboard():
         cursor.execute(f'SELECT COALESCE(SUM(COALESCE(p.amount, 0)), 0) as total FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND p.type = 1 AND p.status = 1 AND p.amount < 100000 AND o.status NOT IN (0, 1, 5)  {hide_filter} AND DATE(o.created_at) >= %s', (*mparams, month_start))
         month_income = cursor.fetchone()['total']
 
-        # 寄存收益（收费模式完成订单）
-        cursor.execute(f"SELECT COALESCE(SUM(GREATEST(o.deposit_amount - COALESCE(o.refund_amount,0), 0)), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND o.status = 4 AND o.deposit_amount < 100000 AND (l.charge_mode IS NOT NULL AND l.charge_mode != '' AND l.charge_mode != 'free')  {hide_filter} AND DATE(o.created_at) = %s", (*mparams, today))
+        # 寄存收益（按次收费总和，扣按次实际退款）
+        cursor.execute(f"SELECT COALESCE(SUM(o.per_use_price), 0) - COALESCE(SUM(CASE WHEN o.refund_amount > o.deposit_amount THEN o.refund_amount - o.deposit_amount ELSE 0 END), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND o.per_use_price > 0 AND o.status IN (2, 4)  {hide_filter} AND DATE(o.created_at) = %s", (*mparams, today))
         today_storage_income = cursor.fetchone()['fee']
-        cursor.execute(f"SELECT COALESCE(SUM(GREATEST(o.deposit_amount - COALESCE(o.refund_amount,0), 0)), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND o.status = 4 AND o.deposit_amount < 100000 AND (l.charge_mode IS NOT NULL AND l.charge_mode != '' AND l.charge_mode != 'free')  {hide_filter} AND DATE(o.created_at) = %s", (*mparams, yesterday))
+        cursor.execute(f"SELECT COALESCE(SUM(o.per_use_price), 0) - COALESCE(SUM(CASE WHEN o.refund_amount > o.deposit_amount THEN o.refund_amount - o.deposit_amount ELSE 0 END), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND o.per_use_price > 0 AND o.status IN (2, 4)  {hide_filter} AND DATE(o.created_at) = %s", (*mparams, yesterday))
         yesterday_storage_income = cursor.fetchone()['fee']
-        cursor.execute(f"SELECT COALESCE(SUM(GREATEST(o.deposit_amount - COALESCE(o.refund_amount,0), 0)), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND o.status = 4 AND o.deposit_amount < 100000 AND (l.charge_mode IS NOT NULL AND l.charge_mode != '' AND l.charge_mode != 'free')  {hide_filter} AND DATE(o.created_at) >= %s", (*mparams, month_start))
+        cursor.execute(f"SELECT COALESCE(SUM(o.per_use_price), 0) - COALESCE(SUM(CASE WHEN o.refund_amount > o.deposit_amount THEN o.refund_amount - o.deposit_amount ELSE 0 END), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND o.per_use_price > 0 AND o.status IN (2, 4)  {hide_filter} AND DATE(o.created_at) >= %s", (*mparams, month_start))
         month_storage_income = cursor.fetchone()['fee']
         # 上月时间范围
         prev_month_end = (datetime.now().replace(day=1) - timedelta(days=1)).strftime('%Y-%m-%d')
@@ -228,30 +228,32 @@ def merchant_dashboard():
         total_all_orders = cursor.fetchone()['count']
         cursor.execute(f'SELECT COALESCE(SUM(COALESCE(p.amount, 0)), 0) as total FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND p.type = 1 AND p.status = 1 AND p.amount < 100000 AND o.status NOT IN (0, 1, 5)  {hide_filter}', mparams)
         total_all_income = cursor.fetchone()['total']
-        cursor.execute(f"SELECT COALESCE(SUM(GREATEST(o.deposit_amount - COALESCE(o.refund_amount,0), 0)), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND o.status = 4 AND o.deposit_amount < 100000 AND (l.charge_mode IS NOT NULL AND l.charge_mode != '' AND l.charge_mode != 'free')  {hide_filter}", mparams)
+        cursor.execute(f"SELECT COALESCE(SUM(o.per_use_price), 0) - COALESCE(SUM(CASE WHEN o.refund_amount > o.deposit_amount THEN o.refund_amount - o.deposit_amount ELSE 0 END), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND o.per_use_price > 0 AND o.status IN (2, 4)  {hide_filter}", mparams)
         total_all_storage_income = cursor.fetchone()['fee']
         # 上月
         cursor.execute(f'SELECT COUNT(*) as count FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND DATE(o.created_at) BETWEEN %s AND %s AND o.status NOT IN (1, 5)  {hide_filter}', (*mparams, prev_month_start, prev_month_end))
         prev_month_orders = cursor.fetchone()['count']
         cursor.execute(f'SELECT COALESCE(SUM(COALESCE(p.amount, 0)), 0) as total FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND p.type = 1 AND p.status = 1 AND p.amount < 100000 AND o.status NOT IN (0, 1, 5)  {hide_filter} AND DATE(o.created_at) BETWEEN %s AND %s', (*mparams, prev_month_start, prev_month_end))
         prev_month_income = cursor.fetchone()['total']
-        cursor.execute(f"SELECT COALESCE(SUM(GREATEST(o.deposit_amount - COALESCE(o.refund_amount,0), 0)), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND o.status = 4 AND o.deposit_amount < 100000 AND (l.charge_mode IS NOT NULL AND l.charge_mode != '' AND l.charge_mode != 'free')  {hide_filter} AND DATE(o.created_at) BETWEEN %s AND %s", (*mparams, prev_month_start, prev_month_end))
+        cursor.execute(f"SELECT COALESCE(SUM(o.per_use_price), 0) - COALESCE(SUM(CASE WHEN o.refund_amount > o.deposit_amount THEN o.refund_amount - o.deposit_amount ELSE 0 END), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND o.per_use_price > 0 AND o.status IN (2, 4)  {hide_filter} AND DATE(o.created_at) BETWEEN %s AND %s", (*mparams, prev_month_start, prev_month_end))
         prev_month_storage_income = cursor.fetchone()['fee']
         # 押金统计
-        cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN p.status=1 THEN p.amount ELSE 0 END),0) as deposit_held, COALESCE(SUM(CASE WHEN p.status=2 THEN p.amount ELSE 0 END),0) as deposit_refunded FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000', mparams)
+        cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN p.status=1 THEN p.amount ELSE 0 END),0) as deposit_held, COALESCE(SUM(CASE WHEN p.status=1 THEN p.amount ELSE 0 END),0) as deposit_refunded FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000', mparams)
         deposit_row = cursor.fetchone()
         # 各时间段押金退还（提现金额）
-        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=2 AND DATE(p.created_at)=%s', (*mparams, today))
+        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1 AND DATE(p.created_at)=%s', (*mparams, today))
         today_deposit_refunded = cursor.fetchone()['total']
-        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=2 AND DATE(p.created_at)=%s', (*mparams, yesterday))
+        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1 AND DATE(p.created_at)=%s', (*mparams, yesterday))
         yesterday_deposit_refunded = cursor.fetchone()['total']
-        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=2 AND DATE(p.created_at) >= %s', (*mparams, month_start))
+        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1 AND DATE(p.created_at) >= %s', (*mparams, month_start))
         month_deposit_refunded = cursor.fetchone()['total']
-        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=2 AND DATE(p.created_at) BETWEEN %s AND %s', (*mparams, prev_month_start, prev_month_end))
+        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1 AND DATE(p.created_at) BETWEEN %s AND %s', (*mparams, prev_month_start, prev_month_end))
         prev_month_deposit_refunded = cursor.fetchone()['total']
-        # 退款统计（退款订单数/退款金额，范围与收入统计对齐）
+        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1', mparams)
+        total_all_deposit_refunded = cursor.fetchone()['total']
+        # 退款统计（按次收益订单被退的数量/按次实际退款金额）
         def _fee_refund(extra_sql='', extra_params=()):
-            cursor.execute(f"SELECT COUNT(*) as refund_orders, COALESCE(SUM(o.refund_amount),0) as refund_amount FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND o.status = 4 AND o.refund_amount > 0 {hide_filter} {extra_sql}", (*mparams, *extra_params))
+            cursor.execute(f"SELECT COUNT(*) as refund_orders, COALESCE(SUM(CASE WHEN o.refund_amount > o.deposit_amount THEN o.refund_amount - o.deposit_amount ELSE 0 END),0) as refund_amount FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND o.per_use_price > 0 AND o.status = 4 AND o.refund_amount > o.deposit_amount {hide_filter} {extra_sql}", (*mparams, *extra_params))
             r = cursor.fetchone()
             return r['refund_orders'] or 0, float(r['refund_amount'] or 0)
         today_refund_orders, today_refund_amount = _fee_refund('AND DATE(o.created_at) = %s', (today,))
@@ -290,17 +292,17 @@ def merchant_dashboard():
             'total_refund_amount': round(float(total_refund_amount or 0), 2),
             'total_all_refund_orders': total_all_refund_orders,
             'total_all_refund_amount': round(float(total_all_refund_amount or 0), 2),
-            'today_deposit_refunded': round(float(today_refund_amount or 0), 2),
-            'yesterday_deposit_refunded': round(float(yesterday_refund_amount or 0), 2),
-            'month_deposit_refunded': round(float(last_month_refund_amount or 0), 2),
+            'today_deposit_refunded': round(float(today_deposit_refunded or 0), 2),
+            'yesterday_deposit_refunded': round(float(yesterday_deposit_refunded or 0), 2),
+            'month_deposit_refunded': round(float(month_deposit_refunded or 0), 2),
             'prev_month_orders': prev_month_orders,
             'prev_month_income': round(float(prev_month_income or 0), 2),
             'prev_month_storage_income': round(float(prev_month_storage_income or 0), 2),
-            'prev_month_deposit_refunded': round(float(prev_month_refund_amount or 0), 2),
+            'prev_month_deposit_refunded': round(float(prev_month_deposit_refunded or 0), 2),
             'total_all_orders': total_all_orders,
             'total_all_income': round(float(total_all_income or 0), 2),
             'total_all_storage_income': round(float(total_all_storage_income or 0), 2),
-            'total_all_deposit_refunded': round(float(total_all_refund_amount or 0), 2),
+            'total_all_deposit_refunded': round(float(total_all_deposit_refunded or 0), 2),
             'deposit_held': round(float(deposit_row['deposit_held'] or 0), 2),
             'deposit_refunded': round(float(deposit_row['deposit_refunded'] or 0), 2),
             'has_charge_location': has_charge or is_agent, 'is_agent': is_agent,
@@ -309,13 +311,7 @@ def merchant_dashboard():
         if not can_show_deposit:
             for _k in ('today_income', 'yesterday_income', 'month_income', 'prev_month_income', 'total_all_income',
                        'today_deposit_refunded', 'yesterday_deposit_refunded', 'month_deposit_refunded',
-                       'prev_month_deposit_refunded', 'total_all_deposit_refunded',
-                       'today_refund_orders', 'today_refund_amount',
-                       'yesterday_refund_orders', 'yesterday_refund_amount',
-                       'last_month_refund_orders', 'last_month_refund_amount',
-                       'prev_month_refund_orders', 'prev_month_refund_amount',
-                       'total_refund_orders', 'total_refund_amount',
-                       'total_all_refund_orders', 'total_all_refund_amount'):
+                       'prev_month_deposit_refunded', 'total_all_deposit_refunded'):
                 payload[_k] = 0
         return json_response(payload)
     except Exception as e:
@@ -875,7 +871,7 @@ def merchant_business_stats():
         deposit_params = list(params)
         deposit_where = ' AND '.join(where_parts)
         deposit_where += ' AND p.type = 2'
-        cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN p.status = 1 THEN p.amount ELSE 0 END), 0) as deposit_collected, COALESCE(SUM(CASE WHEN p.status = 2 THEN p.amount ELSE 0 END), 0) as deposit_refunded FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {deposit_where}', deposit_params)
+        cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN p.status = 1 THEN p.amount ELSE 0 END), 0) as deposit_collected, COALESCE(SUM(CASE WHEN p.status = 1 THEN p.amount ELSE 0 END), 0) as deposit_refunded FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {deposit_where}', deposit_params)
         deposit_stats = cursor.fetchone()
         # 柜门使用率
         slot_where = [mfilter]
@@ -888,7 +884,7 @@ def merchant_business_stats():
         slot_stats = cursor.fetchone()
         # ===== 新增统计字段 =====
         # 退款统计
-        cursor.execute(f"SELECT COUNT(*) as refund_orders, COALESCE(SUM(o.refund_amount),0) as refund_amount FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql} AND o.status = 4  {hide_filter}", params)
+        cursor.execute(f"SELECT COUNT(*) as refund_orders, COALESCE(SUM(CASE WHEN o.refund_amount > o.deposit_amount THEN o.refund_amount - o.deposit_amount ELSE 0 END),0) as refund_amount FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql} AND o.per_use_price > 0 AND o.status = 4 AND o.refund_amount > o.deposit_amount {hide_filter}", params)
         rfs = cursor.fetchone()
         # 有无收费网点
         cursor.execute(f"SELECT COUNT(*) as cnt FROM locations l WHERE {mfilter} AND (l.charge_mode IS NOT NULL AND l.charge_mode != '' AND l.charge_mode != 'free')", mparams)
@@ -914,8 +910,8 @@ def merchant_business_stats():
             for i in range(29, -1, -1):
                 d = (_dt.now() - _td(days=i)).strftime('%Y-%m-%d')
                 chart.append({"date": d, "orders": count_map.get(d, 0) or 0})
-        # 收益金额（收费模式下的手续费，不含保证金）
-        cursor.execute(f"SELECT COALESCE(SUM(GREATEST(o.deposit_amount - COALESCE(o.refund_amount,0), 0)), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql} AND o.status = 4 AND (l.charge_mode IS NOT NULL AND l.charge_mode != '' AND l.charge_mode != 'free')  {hide_filter}", params)
+        # 寄存收益（按次收费总和，扣按次实际退款）
+        cursor.execute(f"SELECT COALESCE(SUM(o.per_use_price), 0) - COALESCE(SUM(CASE WHEN o.refund_amount > o.deposit_amount THEN o.refund_amount - o.deposit_amount ELSE 0 END), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql} AND o.per_use_price > 0 AND o.status IN (2, 4) {hide_filter}", params)
         fee_row = cursor.fetchone()
         conn.close()
         total_orders = order_stats['total_orders'] or 0

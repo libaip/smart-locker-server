@@ -969,7 +969,7 @@ def retrieve_confirm():
                 if _r_ok:
                     _direct_refund = True
                     _direct_refund_id = _r_id or ''
-                    cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_mark=1, logical_mark=%s WHERE id=%s', (_direct_refund_id, 'end', order_id))
+                    cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_mark=1, refund_amount=%s, logical_mark=%s WHERE id=%s', (_direct_refund_id, deposit_amount, 'end', order_id))
                     cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, approver, auto_approve_time, dedup_key) VALUES (%s, %s, %s, 2, 1, %s, 'whitelist_auto', NOW(), %s) ON CONFLICT DO NOTHING",
                                    (order_id, order['user_phone'], deposit_amount, _openid or order.get('openid') or '', 'E:%s:%s' % (order['user_phone'], order_id)))
                     cursor.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s, %s, %s, 'withdrawn') ON CONFLICT (order_id) DO NOTHING",
@@ -1729,7 +1729,7 @@ def deposit_end_storage():
                     _direct_refund = True
                     _direct_refund_id = _r_id or ''
                     new_status = 4
-                    cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_mark=1, logical_mark=%s WHERE id=%s', (_direct_refund_id, 'end', order_id))
+                    cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_mark=1, refund_amount=%s, logical_mark=%s WHERE id=%s', (_direct_refund_id, refund_amount, 'end', order_id))
                     cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, approver, auto_approve_time, dedup_key) VALUES (%s, %s, %s, 2, 1, %s, 'whitelist_auto', NOW(), %s) ON CONFLICT DO NOTHING",
                                    (order_id, order['user_phone'], refund_amount, _openid or order.get('openid') or '', 'E:%s:%s' % (order['user_phone'], order_id)))
                     cursor.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s, %s, %s, 'withdrawn') ON CONFLICT (order_id) DO NOTHING",

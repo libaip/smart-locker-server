@@ -1560,7 +1560,7 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
                 try:
                     conn_bal = get_db()
                     c_bal = conn_bal.cursor()
-                    c_bal.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=%s WHERE id=%s", (refund_id, order_id))
+                    c_bal.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=%s, refund_amount=COALESCE(%s, refund_amount), refund_time=NOW(), refund_mark=1 WHERE id=%s", (refund_id, amount, order_id))
                     if c_bal.rowcount > 0:
                         logger.info("[do_real_refund] Orders updated: order_id=%s" % order_id)
                     c_bal.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order_id,))
@@ -1576,9 +1576,6 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
             logger.error('[do_real_refund] Failed: order=%s, msg=%s, result=%s' % (order_no, err_msg, str(result)))
             # ???????????/???????????????????????????
             _already_refunded = ('订单已全额退款' in str(err_msg)) or ('该订单已全额退款' in str(err_msg))
-            if not _already_refunded and ('退款金额非法' in str(err_msg)):
-                # 只有按整单金额退款被拒时才视为已退款；金额超过整单说明是金额错误，不标记已退款
-                _already_refunded = refund_fee >= total_fee
             if _already_refunded:
                 _rid = result.get('refund_id') or result.get('out_refund_no') or ('ALREADY_' + str(order_id or order_no))
                 logger.info('[do_real_refund] Already refunded: order=%s, refund_id=%s, msg=%s' % (order_no, _rid, err_msg))
@@ -1586,7 +1583,7 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
                     try:
                         _bal = get_db()
                         _balc = _bal.cursor()
-                        _balc.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=%s WHERE id=%s", (_rid, order_id))
+                        _balc.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=%s, refund_amount=COALESCE(%s, refund_amount), refund_time=NOW(), refund_mark=1 WHERE id=%s", (_rid, amount, order_id))
                         _balc.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order_id,))
                         _bal.commit()
                         _bal.close()

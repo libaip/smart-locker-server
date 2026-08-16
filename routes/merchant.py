@@ -226,6 +226,12 @@ def merchant_dashboard():
         # 全景（全部时间）
         cursor.execute(f'SELECT COUNT(*) as count FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND o.status NOT IN (1, 5)  {hide_filter}', mparams)
         total_all_orders = cursor.fetchone()['count']
+        # 全景合并历史导入数据（与 business-stats 同口径）
+        try:
+            cursor.execute(f'SELECT COALESCE(SUM(visible_count),0) as h FROM historical_order_counts h JOIN locations l ON h.location_id = l.id WHERE {mfilter}', mparams)
+            total_all_orders = (total_all_orders or 0) + (cursor.fetchone()['h'] or 0)
+        except Exception:
+            pass
         cursor.execute(f'SELECT COALESCE(SUM(COALESCE(p.amount, 0)), 0) as total FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND p.type = 1 AND p.status = 1 AND p.amount < 100000 AND o.status NOT IN (0, 1, 5)  {hide_filter}', mparams)
         total_all_income = cursor.fetchone()['total']
         cursor.execute(f"SELECT COALESCE(SUM(o.per_use_price), 0) - COALESCE(SUM(CASE WHEN o.refund_amount > o.deposit_amount THEN o.refund_amount - o.deposit_amount ELSE 0 END), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND o.per_use_price > 0 AND o.status IN (2, 4)  {hide_filter}", mparams)

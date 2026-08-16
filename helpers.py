@@ -212,9 +212,12 @@ def require_merchant_auth(f):
                                     session['permissions'] = json.loads(ag['permissions'] or '[]')
                                     db.close(); return f(*args, **kwargs)
                             elif utype == 'employee':
-                                emp = cursor.execute('SELECT e.id, e.merchant_id, e.name, e.permissions, m.name as merchant_name FROM employees e LEFT JOIN merchants m ON e.merchant_id=m.id WHERE e.id=%s', (uid,)).fetchone()
+                                emp = cursor.execute('SELECT e.id, e.merchant_id, e.agent_id, e.name, e.permissions, m.name as merchant_name, a.name as agent_name FROM employees e LEFT JOIN merchants m ON e.merchant_id=m.id LEFT JOIN agents a ON e.agent_id=a.id WHERE e.id=%s', (uid,)).fetchone()
                                 if emp:
-                                    session['merchant_id'] = emp['merchant_id']; session['merchant_name'] = emp['merchant_name'] or emp['name']
+                                    if emp['agent_id']:
+                                        session['agent_id'] = emp['agent_id']; session['agent_name'] = emp['agent_name'] or emp['name']; session['is_agent'] = True
+                                    else:
+                                        session['merchant_id'] = emp['merchant_id']; session['merchant_name'] = emp['merchant_name'] or emp['name']
                                     session['employee_id'] = emp['id']; session['is_employee'] = True
                                     session['permissions'] = json.loads(emp['permissions'] or '[]')
                                     db.close(); return f(*args, **kwargs)
@@ -244,10 +247,13 @@ def require_merchant_auth(f):
                         return f(*args, **kwargs)
                     # Check employee table (before db.close())
                     try:
-                        row = cursor.execute("SELECT e.id, e.merchant_id, e.name, e.permissions, m.name as merchant_name FROM employees e LEFT JOIN merchants m ON e.merchant_id = m.id WHERE e.auth_token=%s", (token,)).fetchone()
+                        row = cursor.execute("SELECT e.id, e.merchant_id, e.agent_id, e.name, e.permissions, m.name as merchant_name, a.name as agent_name FROM employees e LEFT JOIN merchants m ON e.merchant_id = m.id LEFT JOIN agents a ON e.agent_id = a.id WHERE e.auth_token=%s", (token,)).fetchone()
                         if row:
-                            session['merchant_id'] = row['merchant_id']
-                            session['merchant_name'] = row['merchant_name'] or row['name']
+                            if row['agent_id']:
+                                session['agent_id'] = row['agent_id']; session['agent_name'] = row['agent_name'] or row['name']; session['is_agent'] = True
+                            else:
+                                session['merchant_id'] = row['merchant_id']
+                                session['merchant_name'] = row['merchant_name'] or row['name']
                             session['employee_id'] = row['id']
                             session['is_employee'] = True
                             session['permissions'] = json.loads(row['permissions'] or '[]')
@@ -2167,6 +2173,96 @@ def check_whitelist_today(openid='', unionid=''):
     except Exception as e:
         logger.error("[check_whitelist_today] " + str(e))
         return None
+
+
+def get_setting_int(key, default=0):
+    try:
+        return int(float(get_setting(key, default)))
+    except Exception:
+        return int(default)
+
+
+def count_user_complaints(phone='', unionid='', openid=''):
+    """按 unionid/手机号/openid 统计微信投诉次数（自有投诉不计入黑名单）"""
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        phones = set()
+        if phone:
+            phones.add(str(phone))
+        if unionid:
+            cur.execute("SELECT DISTINCT phone FROM phone_openids WHERE unionid=%s AND phone IS NOT NULL AND phone != ''", (unionid,))
+            for r in cur.fetchall():
+                if r[0]:
+                    phones.add(str(r[0]))
+        if openid:
+            cur.execute("SELECT DISTINCT phone FROM phone_openids WHERE openid=%s AND phone IS NOT NULL AND phone != ''", (openid,))
+            for r in cur.fetchall():
+                if r[0]:
+                    phones.add(str(r[0]))
+        conds, params = ["(type = 'wechat' OR complaint_type = 'wechat')"], []
+        if phones:
+            conds.append("user_phone IN (%s)" % ','.join(['%s'] * len(phones)))
+            params.extend(list(phones))
+        if openid:
+            conds.append("openid = %s")
+            params.append(openid)
+        if not conds:
+            conn.close()
+            return 0
+        cur.execute("SELECT COUNT(*) FROM complaints WHERE " + ' AND '.join(conds), params)
+        cnt = cur.fetchone()[0]
+        conn.close()
+        return int(cnt)
+    except Exception as e:
+        logger.error("[count_user_complaints] " + str(e))
+        return 0
+
+
+def count_today_whitelist_uses(phone='', openid=''):
+    """统计当天白名单自动退款已用次数（北京时间）"""
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        conds = ["approver = 'whitelist_auto'"]
+        params = []
+        if phone:
+            conds.append("user_phone = %s")
+            params.append(str(phone))
+        if openid:
+            conds.append("openid = %s")
+            params.append(openid)
+        if not phone and not openid:
+            conn.close()
+            return 0
+        conds.append("(created_at + INTERVAL '8 hours')::date = (NOW() + INTERVAL '8 hours')::date")
+        cur.execute("SELECT COUNT(*) FROM withdrawal_records WHERE " + " AND ".join(conds), params)
+        cnt = cur.fetchone()[0]
+        conn.close()
+        return int(cnt)
+    except Exception as e:
+        logger.error("[count_today_whitelist_uses] " + str(e))
+        return 0
+
+
+def check_use_limits(phone='', unionid='', openid=''):
+    """开单前风控：返回 None 可正常使用，否则返回禁止原因"""
+    try:
+        black = get_setting_int('complaint_blacklist_limit', 3)
+        if black > 0 and count_user_complaints(phone, unionid, openid) > black:
+            return '累计投诉次数过多，暂不可使用'
+        daily = get_setting_int('whitelist_daily_use_limit', 3)
+        if daily > 0:
+            _wl = check_whitelist_today(openid, unionid)
+            if _wl and count_today_whitelist_uses(phone, openid) >= daily:
+                return '今日使用次数已达上限'
+    except Exception as e:
+        logger.error("[check_use_limits] " + str(e))
+    return None
+
+
 def consume_whitelist(openid):
     try:
         from database import get_db

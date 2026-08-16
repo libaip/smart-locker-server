@@ -3215,11 +3215,52 @@ def admin_channels():
         conn = get_db()
         c = conn.cursor()
         c.execute("""
+            CREATE TABLE IF NOT EXISTS wechat_trade_bills (
+                id BIGSERIAL PRIMARY KEY,
+                mch_id VARCHAR(32) NOT NULL,
+                bill_date DATE NOT NULL,
+                trade_time VARCHAR(32),
+                app_id VARCHAR(64),
+                wx_order_no VARCHAR(64),
+                out_trade_no VARCHAR(64),
+                user_id VARCHAR(64),
+                trade_type VARCHAR(32),
+                trade_state VARCHAR(32),
+                bank_type VARCHAR(32),
+                currency VARCHAR(16),
+                settled_amount NUMERIC(12,2) DEFAULT 0,
+                coupon_amount NUMERIC(12,2) DEFAULT 0,
+                wx_refund_no VARCHAR(64),
+                out_refund_no VARCHAR(64),
+                refund_amount NUMERIC(12,2) DEFAULT 0,
+                recharge_refund_amount NUMERIC(12,2) DEFAULT 0,
+                refund_type VARCHAR(32),
+                refund_state VARCHAR(32),
+                product_name TEXT,
+                merchant_data TEXT,
+                fee NUMERIC(12,4) DEFAULT 0,
+                fee_rate VARCHAR(16),
+                order_amount NUMERIC(12,2) DEFAULT 0,
+                apply_refund_amount NUMERIC(12,2) DEFAULT 0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """)
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_wechat_trade_bills
+                ON wechat_trade_bills (mch_id, bill_date, out_trade_no, COALESCE(out_refund_no, ''))
+        """)
+        c.execute("""
             SELECT pc.*,
                    COALESCE(oi.paid_count, 0) as paid_total_count,
                    COALESCE(oi.paid_amount, 0) as paid_total_amount,
                    COALESCE(ri.refund_count, 0) as refund_total_count,
-                   COALESCE(ri.refund_amount, 0) as refund_total_amount
+                   COALESCE(ri.refund_amount, 0) as refund_total_amount,
+                   COALESCE(bi.bill_paid_count, 0) as bill_paid_count,
+                   COALESCE(bi.bill_paid_amount, 0) as bill_paid_amount,
+                   COALESCE(bi.bill_refund_count, 0) as bill_refund_count,
+                   COALESCE(bi.bill_refund_amount, 0) as bill_refund_amount,
+                   bi.bill_synced_until
             FROM payment_channels pc
             LEFT JOIN (SELECT payment_channel_id, COUNT(*) as paid_count, COALESCE(SUM(deposit_amount), 0) as paid_amount
                        FROM orders WHERE status IN (2,3,4) GROUP BY payment_channel_id) oi
@@ -3227,10 +3268,24 @@ def admin_channels():
             LEFT JOIN (SELECT payment_channel_id, COUNT(*) as refund_count, COALESCE(SUM(refund_amount), 0) as refund_amount
                        FROM orders WHERE refund_time IS NOT NULL AND COALESCE(refund_amount,0) > 0 GROUP BY payment_channel_id) ri
                    ON pc.id = ri.payment_channel_id
+            LEFT JOIN (
+                SELECT mch_id,
+                       COUNT(*) FILTER (WHERE trade_state='SUCCESS') as bill_paid_count,
+                       COALESCE(SUM(settled_amount) FILTER (WHERE trade_state='SUCCESS'),0) as bill_paid_amount,
+                       COUNT(*) FILTER (WHERE out_refund_no IS NOT NULL AND out_refund_no != '' AND out_refund_no != '0' AND refund_state='SUCCESS') as bill_refund_count,
+                       COALESCE(SUM(refund_amount) FILTER (WHERE out_refund_no IS NOT NULL AND out_refund_no != '' AND out_refund_no != '0' AND refund_state='SUCCESS'),0) as bill_refund_amount,
+                       MAX(bill_date) as bill_synced_until
+                FROM wechat_trade_bills GROUP BY mch_id
+            ) bi ON bi.mch_id = pc.mch_id
             ORDER BY pc.created_at DESC
         """)
         channels = [dict(r) for r in c.fetchall()]
         for ch in channels:
+            if ch.get('bill_synced_until') is not None:
+                ch['paid_total_count'] = ch['bill_paid_count']
+                ch['paid_total_amount'] = ch['bill_paid_amount']
+                ch['refund_total_count'] = ch['bill_refund_count']
+                ch['refund_total_amount'] = ch['bill_refund_amount']
             ch['total_count'] = ch.get('paid_total_count', 0)
             ch['total_amount'] = ch.get('paid_total_amount', 0)
             ch['refund_total_count'] = ch.get('refund_total_count', 0)
@@ -3240,6 +3295,33 @@ def admin_channels():
     except Exception as e:
         logger.error(f'[channels] {e}')
         return json_response(data=[])
+
+
+@bp.route('/admin/channels/sync-bills', methods=['POST'])
+@require_auth
+def admin_channels_sync_bills():
+    try:
+        data = request.get_json() or {}
+        mch_id = str(data.get('mch_id') or '')
+        days = int(data.get('days') or 3)
+        import pull_trade_bills as _tb
+        conn = _tb._connect()
+        with conn.cursor() as cur:
+            cur.execute(_tb.CREATE_TABLE_SQL)
+        conn.commit()
+        channels = _tb.channels_with_cert(conn)
+        if mch_id:
+            channels = [ch for ch in channels if ch['mch_id'] == mch_id]
+        end_date = datetime.now().date()
+        start_date = end_date - timedelta(days=days)
+        results = []
+        for ch in channels:
+            results.append(_tb.sync_mch(conn, ch['mch_id'], ch['cert_serial_no'], ch['cert_name'], start_date, end_date))
+        conn.close()
+        return json_response(data={'results': results, 'message': '同步完成'})
+    except Exception as e:
+        logger.error(f'[channels_sync_bills] {e}')
+        return json_response(message=str(e), code=500)
 
 
 @bp.route('/admin/channel/save', methods=['POST'])
@@ -7695,3 +7777,54 @@ def historical_setting():
     except Exception as e:
         logger.error(f'[historical setting] {e}')
         return json_response(message=str(e), code=500)
+
+
+# ==================== 微信交易对账单自动同步 ====================
+_TRADE_BILL_SYNC_LOCK_FILE = "/tmp/trade_bill_sync.lock"
+_TRADE_BILL_SYNC_INTERVAL = 6 * 3600
+
+
+def _trade_bill_sync_scheduler():
+    time.sleep(600)
+    while True:
+        lock_fd = None
+        try:
+            import fcntl
+            lock_fd = open(_TRADE_BILL_SYNC_LOCK_FILE, "w")
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except Exception:
+                lock_fd.close()
+                lock_fd = None
+            if lock_fd is not None:
+                try:
+                    import pull_trade_bills as _tb
+                    conn = _tb._connect()
+                    with conn.cursor() as cur:
+                        cur.execute(_tb.CREATE_TABLE_SQL)
+                    conn.commit()
+                    channels = _tb.channels_with_cert(conn)
+                    end_date = datetime.now().date() - timedelta(days=1)
+                    start_date = end_date - timedelta(days=2)
+                    for ch in channels:
+                        _tb.sync_mch(conn, ch['mch_id'], ch['cert_serial_no'], ch['cert_name'], start_date, end_date)
+                    conn.close()
+                    logger.info('[trade_bill_sync] done channels=%s', len(channels))
+                except Exception as e:
+                    logger.error('[trade_bill_sync] %s', e)
+        except Exception as e:
+            logger.error('[trade_bill_sync] lock error %s', e)
+        finally:
+            if lock_fd is not None:
+                try:
+                    import fcntl
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    lock_fd.close()
+                except Exception:
+                    pass
+        time.sleep(_TRADE_BILL_SYNC_INTERVAL)
+
+
+if os.path.isdir('/tmp'):
+    _trade_bill_sync_thread = threading.Thread(target=_trade_bill_sync_scheduler, daemon=True)
+    _trade_bill_sync_thread.start()

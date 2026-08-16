@@ -330,7 +330,7 @@ def device_local_open():
                           FROM orders o
                           JOIN cabinets c ON o.cabinet_id = c.id
                           LEFT JOIN locations l ON c.location_id = l.id
-                          WHERE o.id = %s FOR UPDATE""", (order_id,))
+                          WHERE o.id = %s FOR UPDATE OF o, c""", (order_id,))
         order = cursor.fetchone()
         if not order:
             db.close()

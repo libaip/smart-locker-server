@@ -3874,6 +3874,7 @@ def get_user_withdrawals():
             wd_params.append(ident['mp_openid'])
         wd_sub.append("(w.order_id IS NULL OR NOT EXISTS (SELECT 1 FROM orders o WHERE o.id = w.order_id AND (o.user_id > 0 OR NULLIF(o.unionid,'') IS NOT NULL OR NULLIF(o.mp_openid,'') IS NOT NULL OR NULLIF(o.openid,'') IS NOT NULL)))")
         wd_conds.append('(' + ' OR '.join(wd_sub) + ')')
+        wd_conds.append("w.status != 3")  # 被拒绝(自动拒绝)的记录不在提现记录中展示
         cur.execute('''
             SELECT w.id, w.amount, w.status, w.apply_time, w.approve_time, w.error_msg
             FROM withdrawal_records w

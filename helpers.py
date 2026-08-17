@@ -331,11 +331,12 @@ def apply_order_auto_hide(cursor, order_id, cabinet_id, user_phone=None):
         if user_phone in whitelist:
             return
     if loc['hide_start_orders'] > 0:
+        # 2026-08-18 需求：当天前 N 单不隐藏，第 N+1 单起按比例隐藏（原来按网点累计，偃师等累计远超 N 导致每天第1单就开始隐藏）
         cursor.execute("""
             SELECT COUNT(*) AS cnt
             FROM orders o
             JOIN cabinets cb ON o.cabinet_id = cb.id
-            WHERE cb.location_id = %s
+            WHERE cb.location_id = %s AND o.created_at >= CURRENT_DATE
         """, (loc['location_id'],))
         if cursor.fetchone()['cnt'] <= loc['hide_start_orders']:
             return

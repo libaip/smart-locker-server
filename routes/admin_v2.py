@@ -7643,7 +7643,11 @@ def historical_import():
         fn = file.filename.lower()
         if fn.endswith('.csv'):
             import csv, io
-            content = file.read().decode('gbk')
+            _raw = file.read()
+            try:
+                content = _raw.decode('utf-8')
+            except UnicodeDecodeError:
+                content = _raw.decode('gbk')
             reader = csv.reader(io.StringIO(content))
             rows = []
             for i, row in enumerate(reader):

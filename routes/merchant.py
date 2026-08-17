@@ -867,10 +867,10 @@ def merchant_business_stats():
         # 订单统计
         cursor.execute(f'SELECT COUNT(*) as total_orders, SUM(CASE WHEN o.status = 1 THEN 1 ELSE 0 END) as active_orders, SUM(CASE WHEN o.status = 2 THEN 1 ELSE 0 END) as completed_orders FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql} AND o.status NOT IN (1, 5)  {hide_filter}', params)
         order_stats = cursor.fetchone()
-        # 收入统计
+        # 收入统计（2026-08-17 加 amount<100000 与 o.status 过滤，与 dashboard 一致，避免异常大额脏数据计入充值金额）
         pay_where = ' AND '.join(where_parts)
         pay_params = list(params)
-        pay_where += ' AND p.type = 1 AND p.status = 1'
+        pay_where += ' AND p.type = 1 AND p.status = 1 AND p.amount < 100000 AND o.status NOT IN (0, 1, 5)'
         cursor.execute(f'SELECT COALESCE(SUM(p.amount), 0) as total_income FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {pay_where} {hide_filter}', pay_params)
         income_stats = cursor.fetchone()
         # 押金统计
@@ -1217,7 +1217,15 @@ def merchant_my_merchants():
                 (SELECT COUNT(*) FROM orders o JOIN cabinets c ON o.cabinet_id=c.id
                   WHERE c.location_id=l.id AND o.status IN (2,4) {hide_filter}) as order_count,
                 (SELECT COUNT(*) FROM orders o JOIN cabinets c ON o.cabinet_id=c.id
-                  WHERE c.location_id=l.id AND o.status IN (2,4)) as total_order_count
+                  WHERE c.location_id=l.id AND o.status IN (2,4)) as total_order_count,
+                (SELECT COUNT(*) FROM orders o JOIN cabinets c ON o.cabinet_id=c.id
+                  WHERE c.location_id=l.id AND o.status IN (2,4) {hide_filter} AND DATE(o.created_at) >= DATE_TRUNC('month', NOW())) as month_order_count,
+                (SELECT COUNT(*) FROM orders o JOIN cabinets c ON o.cabinet_id=c.id
+                  WHERE c.location_id=l.id AND o.status IN (2,4) AND DATE(o.created_at) >= DATE_TRUNC('month', NOW())) as month_total_order_count,
+                (SELECT COUNT(*) FROM orders o JOIN cabinets c ON o.cabinet_id=c.id
+                  WHERE c.location_id=l.id AND o.status IN (2,4) {hide_filter} AND DATE(o.created_at) >= DATE_TRUNC('month', NOW()) - INTERVAL '1 month' AND DATE(o.created_at) < DATE_TRUNC('month', NOW())) as last_month_order_count,
+                (SELECT COUNT(*) FROM orders o JOIN cabinets c ON o.cabinet_id=c.id
+                  WHERE c.location_id=l.id AND o.status IN (2,4) AND DATE(o.created_at) >= DATE_TRUNC('month', NOW()) - INTERVAL '1 month' AND DATE(o.created_at) < DATE_TRUNC('month', NOW())) as last_month_total_order_count
                 FROM locations l WHERE l.merchant_id=%s ORDER BY l.created_at DESC''', (m['id'],))
             m['locations'] = [dict(r) for r in cursor.fetchall()]
             m['location_count'] = len(m['locations'])

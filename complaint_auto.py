@@ -10,7 +10,7 @@ from cryptography.hazmat.backends import default_backend
 DB_CFG = {"host":"127.0.0.1","port":6432,"user":"locker_admin","password":"locker_pass_2024","dbname":"smart_locker"}
 SRC = "/home/ubuntu/smart-locker"
 V3_KEY = "lichengju0904LICHENGJU0904libaip"
-REPLY_MSG = "您好，您的押金已全额退款，请注意查收。如有疑问请拨打客服电话4006981080。"
+REPLY_MSG = "您好，您的预付款已退款，请注意查收。如有疑问请拨打客服电话4006981080。"
 
 def sign_req(method, url_path, body_str, mch_id, key_path, cert_path):
     with open(key_path) as f:

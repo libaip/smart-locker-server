@@ -279,7 +279,7 @@ def admin_cabinet_save():
                      'total_slots','business_status','status','charge_mode',
                      'deposit_amount','per_use_price','customer_phone',
                      'usage_rules','rules_title','reopen_times','mid_retrieve_limit',
-                     'deposit_min','deposit_max','free_days','daily_fee']
+                     'deposit_min','deposit_max','free_days','daily_fee','slot_columns']
             sets, params = [], []
             for f in fields:
                 if f in data:
@@ -307,7 +307,7 @@ def admin_cabinet_save():
             c.execute("""INSERT INTO cabinets (cabinet_code,name,location_id,mainboard_device_id,mainboard_source,
                 total_slots,business_status,status,charge_mode,deposit_amount,
                 customer_phone,per_use_price,usage_rules,rules_title,reopen_times,
-                deposit_min,deposit_max,free_days,daily_fee) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                deposit_min,deposit_max,free_days,daily_fee,slot_columns) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
                 (cabinet_code, data.get("name",""), int(data.get("location_id")) if data.get("location_id") and str(data.get("location_id")).strip() else None, data.get("mainboard_device_id"),
                  data.get("mainboard_source","WT"),
                  data.get("total_slots",12), data.get("business_status","open"),
@@ -321,7 +321,8 @@ def admin_cabinet_save():
                  data.get("deposit_min") if data.get("deposit_min") not in ('', None) else None,
                  data.get("deposit_max") if data.get("deposit_max") not in ('', None) else None,
                  int(data.get("free_days") or 1),
-                 float(data.get("daily_fee") or 0)))
+                 float(data.get("daily_fee") or 0),
+                 int(data.get("slot_columns") or 8)))
             data['id'] = c.fetchone()[0]
         _sp = data.get('serial_port') or ''
         _br = data.get('baud_rate') or ''

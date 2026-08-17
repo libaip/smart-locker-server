@@ -663,6 +663,7 @@ def _migrate_schema(cursor):
     _add_column_if_not_exists(cursor, 'cabinets', 'app_version', 'TEXT')
     _add_column_if_not_exists(cursor, 'cabinets', 'app_version_code', 'INTEGER DEFAULT 0')
     _add_column_if_not_exists(cursor, 'cabinets', 'status', 'INTEGER DEFAULT 1')
+    _add_column_if_not_exists(cursor, 'cabinets', 'slot_columns', 'INTEGER DEFAULT 8')
 
     _add_column_if_not_exists(cursor, 'mainboards', 'serial_port', 'TEXT DEFAULT \'ttyS2\'')
     _add_column_if_not_exists(cursor, 'mainboards', 'baud_rate', 'INTEGER DEFAULT 9600')
@@ -713,8 +714,13 @@ def _migrate_schema(cursor):
 def _add_column_if_not_exists(cursor, table, column, col_type):
     """安全添加字段（如果不存在）"""
     try:
-        cursor.execute(f"PRAGMA table_info({table})")
-        columns = [row[1] for row in cursor.fetchall()]
+        try:
+            cursor.execute(f"PRAGMA table_info({table})")
+            columns = [row[1] for row in cursor.fetchall()]
+        except Exception:
+            # PostgreSQL：从 information_schema 查列
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name=%s", (table,))
+            columns = [row[0] for row in cursor.fetchall()]
         if column not in columns:
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
             logger.info(f'[迁移] {table} 表添加 {column} 字段')

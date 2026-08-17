@@ -228,17 +228,27 @@ def _resolve_order_identity(cursor, phone, openid='', unionid='', mp_openid=''):
             if not unionid and row.get('unionid'):
                 unionid = row['unionid']
         if phone and (openid or mp_openid or unionid):
-            _sp_name = 'sp_upsert_phone_openid'
             try:
-                cursor.execute('SAVEPOINT %s' % _sp_name)
-                upsert_phone_openid_row(cursor, phone=phone, openid=openid, mp_openid=mp_openid, unionid=unionid)
-                cursor.execute('RELEASE SAVEPOINT %s' % _sp_name)
+                # 连接池连接是 autocommit=True（无事务块），SAVEPOINT 会报
+                # "can only be used in transaction blocks"；且在事务内 RELEASE 后
+                # 若调用方不 COMMIT，连接会带着未提交事务回池导致锁死。
+                # 防御：autocommit 模式下不搞 SAVEPOINT，直接 upsert（每语句独立提交）。
+                if getattr(cursor.connection, 'autocommit', True):
+                    upsert_phone_openid_row(cursor, phone=phone, openid=openid, mp_openid=mp_openid, unionid=unionid)
+                else:
+                    _sp_name = 'sp_upsert_phone_openid'
+                    try:
+                        cursor.execute('SAVEPOINT %s' % _sp_name)
+                        upsert_phone_openid_row(cursor, phone=phone, openid=openid, mp_openid=mp_openid, unionid=unionid)
+                        cursor.execute('RELEASE SAVEPOINT %s' % _sp_name)
+                    except Exception as _ue:
+                        try:
+                            cursor.execute('ROLLBACK TO SAVEPOINT %s' % _sp_name)
+                        except Exception:
+                            pass
+                        logger.warning(f'[_resolve_order_identity] upsert_phone_openid_row failed: {_ue}')
             except Exception as _ue:
-                try:
-                    cursor.execute('ROLLBACK TO SAVEPOINT %s' % _sp_name)
-                except Exception:
-                    pass
-                logger.warning(f'[_resolve_order_identity] upsert_phone_openid_row failed: {_ue}')
+                logger.warning(f'[_resolve_order_identity] upsert failed: {_ue}')
     except Exception:
         pass
     return openid or '', unionid or '', mp_openid or ''

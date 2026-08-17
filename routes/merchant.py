@@ -925,6 +925,54 @@ def merchant_business_stats():
         # 寄存收益（按次收费总和，扣按次实际退款）
         cursor.execute(f"SELECT COALESCE(SUM(o.per_use_price), 0) - COALESCE(SUM(CASE WHEN o.refund_amount > o.deposit_amount THEN o.refund_amount - o.deposit_amount ELSE 0 END), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql} AND o.per_use_price > 0 AND o.status IN (2, 4) {hide_filter}", params)
         fee_row = cursor.fetchone()
+        # ===== 月视图：最近12个月每月订单数（实时+历史合并）与上月订单数 =====
+        month_chart = []
+        prev_month_orders = None
+        if request.args.get('month_view') == '1':
+            try:
+                from datetime import datetime as _mdt, timedelta as _mtd
+                today = _mdt.now().date()
+                # 最近12个月（含本月）
+                y, m = today.year, today.month
+                months = []
+                for i in range(12):
+                    mm = m - 11 + i
+                    yy = y
+                    while mm <= 0:
+                        mm += 12
+                        yy -= 1
+                    months.append('%04d-%02d' % (yy, mm))
+                start12 = months[0] + '-01'
+                # 月视图过滤（merchant 范围 + 可选 location）
+                mc_parts = [mfilter]
+                mc_params = list(mparams)
+                if location_id:
+                    mc_parts.append('l.id = %s')
+                    mc_params.append(location_id)
+                mc_where = ' AND '.join(mc_parts)
+                # 实时部分（按月聚合）
+                cursor.execute(f"SELECT TO_CHAR(DATE_TRUNC('month', o.created_at), 'YYYY-MM') as m, COUNT(*) as c FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mc_where} AND DATE(o.created_at) >= %s AND o.status NOT IN (1, 5) {hide_filter} GROUP BY 1", mc_params + [start12])
+                live_map = {r['m']: r['c'] for r in cursor.fetchall()}
+                # 历史部分（按月聚合）
+                hist_map = {}
+                try:
+                    cursor.execute(f"SELECT TO_CHAR(DATE_TRUNC('month', h.date), 'YYYY-MM') as m, SUM(visible_count) as c FROM historical_order_counts h JOIN locations l ON h.location_id = l.id WHERE {mc_where} AND h.date >= %s GROUP BY 1", mc_params + [start12])
+                    hist_map = {r['m']: r['c'] for r in cursor.fetchall()}
+                except Exception:
+                    pass
+                month_chart = [{'month': mm, 'orders': (live_map.get(mm, 0) or 0) + (hist_map.get(mm, 0) or 0)} for mm in months]
+                # 上月完整月订单数（实时+历史合并）
+                pm_end = today.replace(day=1) - _mtd(days=1)
+                pm_start = pm_end.replace(day=1)
+                cursor.execute(f'SELECT COUNT(*) as c FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mc_where} AND DATE(o.created_at) BETWEEN %s AND %s AND o.status NOT IN (1, 5) {hide_filter}', mc_params + [pm_start.strftime('%Y-%m-%d'), pm_end.strftime('%Y-%m-%d')])
+                prev_month_orders = cursor.fetchone()['c'] or 0
+                try:
+                    cursor.execute(f'SELECT COALESCE(SUM(visible_count),0) as h FROM historical_order_counts h JOIN locations l ON h.location_id = l.id WHERE {mc_where} AND h.date >= %s AND h.date <= %s', mc_params + [pm_start.strftime('%Y-%m-%d'), pm_end.strftime('%Y-%m-%d')])
+                    prev_month_orders = (prev_month_orders or 0) + (cursor.fetchone()['h'] or 0)
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.error(f'[merchant_business_stats month_view] {e}')
         conn.close()
         total_orders = order_stats['total_orders'] or 0
         # merge historical data
@@ -960,7 +1008,9 @@ def merchant_business_stats():
             'is_agent': is_agent,
             'total_recharge': round(float(income_stats['total_income'] or 0), 2),
             'total_withdraw': round(float(deposit_stats['deposit_refunded'] or 0), 2),
-            'show_deposit_fields': 'show_deposit_fields' in permissions
+            'show_deposit_fields': 'show_deposit_fields' in permissions,
+            'month_chart': month_chart,
+            'prev_month_orders': prev_month_orders
         }
         if is_agent:
             result['deposit_collected'] = round(float(deposit_stats['deposit_collected'] or 0), 2)

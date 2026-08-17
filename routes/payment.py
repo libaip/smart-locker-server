@@ -345,17 +345,23 @@ def pay_notify():
         # 发送寄存成功订阅消息
         if we_updated and (trade_state == 'SUCCESS' or result.get('result_code') == 'SUCCESS'):
             try:
-                openid = order.get('openid')
-                if not openid:
+                openid = order.get('mp_openid') or ''
+                if not (openid and openid.startswith('oWrA8')):
+                    openid = order.get('openid') or ''
+                if not (openid and openid.startswith('oWrA8')):
                     try:
                         cur = conn.cursor()
-                        cur.execute('SELECT COALESCE(mp_openid, openid) as openid FROM users WHERE phone = %s', (order['user_phone'],))
+                        cur.execute("SELECT mp_openid, unionid FROM users WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE 'oWrA8%%' LIMIT 1", (order['user_phone'],))
                         r = cur.fetchone()
                         if r:
-                            openid = r['openid']
+                            openid = r['mp_openid'] or ''
+                            _pay_unionid = r['unionid'] or ''
                     except:
-                        pass
-                if openid:
+                        openid = ''
+                        _pay_unionid = ''
+                else:
+                    _pay_unionid = order.get('unionid') or ''
+                if openid and openid.startswith('oWrA8'):
                     from helpers import send_wx_subscribe_message
                     location_name = _open_lock_info.get('location_name', '智能寄存柜') if _open_lock_info else '智能寄存柜'
                     cabinet_name = _open_lock_info.get('cabinet_name', '') if _open_lock_info else ''
@@ -367,7 +373,7 @@ def pay_notify():
                         'time4': {'value': datetime.now().strftime('%Y-%m-%d %H:%M')},
                         'time5': {'value': datetime.now().strftime('%Y-%m-%d %H:%M')}
                     }
-                    send_wx_subscribe_message('', 'aUc6gRRMUXKxy94Pd6kLWaLGwzcutYMW_cQT_Hks1fg', subscribe_data, phone=order.get('user_phone'), page='pages/mine/mine')
+                    send_wx_subscribe_message(openid, 'aUc6gRRMUXKxy94Pd6kLWaLGwzcutYMW_cQT_Hks1fg', subscribe_data, phone=order.get('user_phone'), page='pages/mine/mine', unionid=_pay_unionid)
             except Exception as e:
                 logger.error(f'[支付回调发送订阅消息失败] {e}')
         

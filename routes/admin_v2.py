@@ -1057,19 +1057,24 @@ def admin_order_close():
         conn.commit()
         
         # 发送寄存结束订阅消息
-        ntf_openid = order_dict.get('openid') or order_dict.get('mp_openid', '')
-        if not ntf_openid and order_dict.get('user_phone'):
+        # 只认小程序 mp_openid（oWrA8 前缀）；公众号 openid(oLhbm2) 发不了订阅消息
+        def _is_mp_openid(v):
+            return bool(v) and str(v).startswith('oWrA8')
+        ntf_openid = order_dict.get('mp_openid') or ''
+        if not _is_mp_openid(ntf_openid):
+            ntf_openid = order_dict.get('openid') or ''
+        if not _is_mp_openid(ntf_openid) and order_dict.get('user_phone'):
             try:
                 c2 = conn.cursor(cursor_factory=RealDictCursor)
-                c2.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' LIMIT 1", (order_dict['user_phone'],))
+                c2.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE 'oWrA8%%' LIMIT 1", (order_dict['user_phone'],))
                 _r = c2.fetchone()
                 if _r and _r['mp_openid']:
                     ntf_openid = _r['mp_openid']
                 if not ntf_openid:
-                    c2.execute("SELECT COALESCE(mp_openid, openid) as openid FROM users WHERE phone = %s AND (mp_openid IS NOT NULL AND mp_openid != '' OR openid IS NOT NULL AND openid != '') ORDER BY updated_at DESC LIMIT 1", (order_dict['user_phone'],))
+                    c2.execute("SELECT mp_openid FROM users WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE 'oWrA8%%' ORDER BY updated_at DESC LIMIT 1", (order_dict['user_phone'],))
                     _r = c2.fetchone()
-                    if _r and _r['openid']:
-                        ntf_openid = _r['openid']
+                    if _r and _r['mp_openid']:
+                        ntf_openid = _r['mp_openid']
             except Exception as _e:
                 logger.warning(f"[order_close] ?openid??: {_e}")
         if ntf_openid:
@@ -1081,7 +1086,7 @@ def admin_order_close():
                     'thing7': {'value': '已退还至小程序用户钱包'},
                     'thing2': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                 }
-                send_wx_subscribe_message('', '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data, phone=order_dict.get('user_phone'), page='pages/mine/mine')
+                send_wx_subscribe_message(ntf_openid, '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data, phone=order_dict.get('user_phone'), page='pages/mine/mine')
                 # 退款通知在用户提现时发送，不在结束寄存时发送
             except Exception as e:
                 logger.error(f"[order_close发送订阅消息失败] {e}") 
@@ -4692,7 +4697,7 @@ def _release_auto_claim(wid):
         logger.error('[auto_withdraw] 释放认领失败 id=%s: %s', wid, e)
 
 
-def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid=''):
+def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid='', unionid=''):
     try:
         from helpers import send_wx_subscribe_message
         wd_data = {
@@ -4701,7 +4706,11 @@ def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid=''):
             'thing3': {'value': thing3},
             'thing2': {'value': thing2}
         }
-        send_wx_subscribe_message(openid or '', _AUTO_WITHDRAW_TEMPLATE_ID, wd_data, phone=phone, page='pages/mine/mine')
+        # 只认小程序 mp_openid（oWrA8 前缀）；公众号 openid(oLhbm2) 发不了订阅消息
+        _ok = openid or ''
+        if not (str(_ok).startswith('oWrA8')):
+            _ok = ''
+        send_wx_subscribe_message(_ok, _AUTO_WITHDRAW_TEMPLATE_ID, wd_data, phone=phone, page='pages/mine/mine', unionid=unionid)
     except Exception as e:
         logger.error('[auto_withdraw] 订阅通知失败 phone=%s: %s', phone, e)
 
@@ -4717,7 +4726,8 @@ def _process_auto_withdrawal_record(wid):
         conn = get_db()
         c = conn.cursor()
         c.execute("""
-            SELECT w.user_phone, w.amount, w.order_id, w.order_ids, w.openid AS w_openid
+            SELECT w.user_phone, w.amount, w.order_id, w.order_ids, w.openid AS w_openid,
+                   (SELECT o.unionid FROM orders o WHERE o.id = COALESCE(w.order_id, NULL)) AS w_unionid
             FROM withdrawal_records w
             WHERE w.id=%s
         """, (wid,))
@@ -4783,7 +4793,7 @@ def _process_auto_withdrawal_record(wid):
         if not failed:
             c2.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), error_msg=NULL, retry_count=0, next_attempt_at=NULL WHERE id=%s", (wid,))
             conn2.commit()
-            _send_withdraw_subscribe(phone, amount, '????', '??0-3??????', row.get('w_openid') or '')
+            _send_withdraw_subscribe(phone, amount, '????', '??0-3??????', row.get('w_openid') or '', row.get('w_unionid') or '')
             logger.info('[auto_withdraw] ???? id=%s orders=%s', wid, order_ids)
             done = True
         else:
@@ -6082,7 +6092,7 @@ def admin_device_clear_all():
                             'thing7': {'value': '已退还至小程序用户钱包'},
                             'thing2': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                         }
-                        send_wx_subscribe_message(mp_openid or '', '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data, phone=o_dict.get('user_phone'), page='pages/mine/mine')
+                        send_wx_subscribe_message(mp_openid or '', '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data, phone=o_dict.get('user_phone'), page='pages/mine/mine', unionid=o_dict.get('unionid') or '')
                         notified += 1
                     except Exception as e:
                         logger.error(f'[clear_all] 发送订阅消息失败 order={o_dict["id"]}: {e}')

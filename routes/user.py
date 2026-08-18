@@ -1675,14 +1675,6 @@ def deposit_end_storage():
         if order['store_time'] and (datetime.now() - order['store_time']).total_seconds() < 120:
             conn.close()
             return json_response(message='订单刚创建，请稍后再试', code=400)
-        # 10分钟防重：设备本地开锁路径同一订单10分钟内不允许重复结束
-        if data.get('local_opened') and not data.get('force_end'):
-            _rep = conn.cursor()
-            _rep.execute("SELECT 1 FROM storage_records WHERE user_phone=%s AND cabinet_id=%s AND COALESCE(compartment_number,'')=COALESCE(%s,'') AND store_time=%s AND status='1' AND retrieve_time > NOW() - INTERVAL '10 minutes' LIMIT 1",
-                         (order['user_phone'], order['cabinet_id'], order['compartment_number'] or '', order['store_time']))
-            if _rep.fetchone():
-                conn.close()
-                return json_response(message='操作太频繁，请稍后再试', code=400)
         if not data.get('local_opened'):
             if not is_device_online(str(order['mainboard_device_id'] or ''), order.get('last_heartbeat')):
                 conn.close()
@@ -1949,15 +1941,6 @@ def deposit_mid_retrieve():
         if data.get('cabinet_code') and str(data.get('cabinet_code')) != str(order['cabinet_code'] or ''):
             conn.close()
             return json_response(message='订单不属于当前柜体', code=400)
-        # 10分钟防重：设备本地开锁路径同一订单10分钟内不允许重复中途取物
-        _cfg = get_mid_retrieve_config(cursor, order['cabinet_id'])
-        if data.get('local_opened') and not data.get('force_open') and _cfg['mid_retrieve_limit'] is None:
-            _rep = conn.cursor()
-            _rep.execute("SELECT 1 FROM storage_records WHERE user_phone=%s AND cabinet_id=%s AND COALESCE(compartment_number,'')=COALESCE(%s,'') AND store_time=%s AND status='2' AND retrieve_time > NOW() - INTERVAL '10 minutes' LIMIT 1",
-                         (order['user_phone'], order['cabinet_id'], order['compartment_number'] or '', order['store_time']))
-            if _rep.fetchone():
-                conn.close()
-                return json_response(message='操作太频繁，请稍后再试', code=400)
         if not data.get('local_opened'):
             if not is_device_online(str(order['mainboard_device_id'] or ''), order.get('last_heartbeat')):
                 conn.close()

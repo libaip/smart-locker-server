@@ -743,7 +743,7 @@ def retrieve():
                     cursor.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s, %s, %s, 'available') ON CONFLICT (order_id) DO NOTHING",
                                (order['user_phone'], order['id'], _deposit_amount))
                 cursor.execute('UPDATE orders SET refund_mark = 1 WHERE id = %s', (order["id"],))
-            _openid = order.get("openid")
+            _openid = order.get("mp_openid") or order.get("openid")
             if not _openid:
                 try:
                     _po_rows = phone_openid_rows(cursor, phone=order.get('user_phone'), unionid=order.get('unionid', ''))
@@ -959,7 +959,7 @@ def retrieve_confirm():
                        (order_id,))
         cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (order['slot_id'],))
         # 兜底：按手机号补全订单身份
-        _openid = order.get('openid', '') or ''
+        _openid = order.get('mp_openid', '') or order.get('openid', '') or ''
         _unionid = order.get('unionid', '') or ''
         _mp_openid = order.get('mp_openid', '') or _openid
         if order.get('user_phone'):
@@ -1713,7 +1713,7 @@ def deposit_end_storage():
         cursor.execute('UPDATE orders SET status = %s, retrieve_time = NOW(), refund_mark = 1 WHERE id = %s', 
                        (new_status, order_id))
         # 兜底：订单身份为空时按手机号补全，避免结束订单后余额表没有绑定
-        _openid = order.get('openid', '') or ''
+        _openid = order.get('mp_openid', '') or order.get('openid', '') or ''
         _unionid = order.get('unionid', '') or ''
         _mp_openid = order.get('mp_openid', '') or ''
         if order.get('user_phone'):
@@ -1790,7 +1790,7 @@ def deposit_end_storage():
             except Exception as we:
                 logger.error(f'[end_storage] send_open_lock失败: {we}')
         # 发送寄存结束订阅消息
-        _openid = order.get("openid")
+        _openid = order.get("mp_openid") or order.get("openid")
         if not _openid:
             _nconn = None
             try:

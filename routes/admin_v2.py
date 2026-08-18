@@ -7,6 +7,7 @@ import os
 包括：仪表盘统计、设备列表、订单管理、会员管理、提现管理等
 """
 import logging
+import time
 from datetime import datetime, timedelta
 from flask import Blueprint, request, session, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -4982,18 +4983,20 @@ _manual_approval_alert_thread.start()
 
 # ==================== P1: 批量自动提现 ====================
 
-@bp.route('/admin/withdrawal/batch-auto', methods=['POST'])
-def withdrawal_batch_auto():
-    """?????????????(???+??)?????(????)??????"""
+_BATCH_AUTO_LOCK_FILE = "/tmp/withdrawal_batch_auto.lock"
+
+def _run_withdrawal_batch_auto():
+    """批量自动退款核心逻辑（队列审批+人工审批+自动审批），供独立脚本调用"""
+    import random as _rnd
+    conn = None
     try:
         from database import get_db
-        import random as _rnd
         conn = get_db()
         c = conn.cursor()
         approved = 0
         rejected = 0
-        
-        # 1. ?????auto_approve_time ?????
+
+        # 1. 队列审批：到 auto_approve_time 的按通过率退款
         rows = c.execute("""
             SELECT w.id, w.user_phone, w.amount, w.order_id, w.order_ids, w.auto_approve_time,
                    l.refund_approve_rate,
@@ -5068,7 +5071,7 @@ def withdrawal_batch_auto():
                     except Exception:
                         pass
             else:
-                # ?????????????
+                # 通过率未达标：退余额并拒绝
                 c.execute("UPDATE user_balances SET balance = balance + %s, total_withdrawn = total_withdrawn - %s WHERE phone = %s ",
                           (r['amount'], r['amount'], r['user_phone']))
                 import json as _json_r
@@ -5083,8 +5086,8 @@ def withdrawal_batch_auto():
                 c.execute("UPDATE withdrawal_records SET status=3, error_msg='自动拒绝', dedup_key=NULL, approve_time=datetime('now'), approver='队列' WHERE id=%s", (r['id'],))
                 rejected += 1
         conn.commit()
-        
-        # 2. ?????????? >= 80% ?????????????
+
+        # 2. 人工审批：白名单或达到自动审批条件的按通过率退款
         rows2 = c.execute("""
             SELECT w.id, w.amount, w.user_phone, w.order_id, w.order_ids, w.openid, l.auto_approve_rate,
                    ww.openid as wl_openid
@@ -5106,6 +5109,7 @@ def withdrawal_batch_auto():
         """).fetchall()
         conn.commit()
         conn.close()
+        conn = None
         for r in rows2:
             local_conn = None
             try:
@@ -5199,8 +5203,53 @@ def withdrawal_batch_auto():
                     except Exception:
                         pass
         _process_auto_withdrawal_batch(50)
-        return jsonify({'code': 200, 'message': f'人工审批完成: 通过{approved}笔, 拒绝{rejected}笔', 'data': {'approved': approved, 'rejected': rejected}})
+        return approved, rejected
     except Exception as e:
+        logger.error(f'[withdrawal_batch_auto] 批处理异常: {e}')
+        return 0, 0
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+@bp.route('/admin/withdrawal/batch-auto', methods=['POST'])
+def withdrawal_batch_auto():
+    """队列+人工审批自动退款 - 转独立进程执行，避免阻塞gunicorn worker"""
+    try:
+        # 文件锁防并发
+        lock_fd = None
+        try:
+            import fcntl
+            lock_fd = open(_BATCH_AUTO_LOCK_FILE, "w")
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return jsonify({'code': 200, 'message': '退款任务已在执行中，跳过本次触发', 'data': {'skipped': True}})
+        except Exception:
+            lock_fd = None
+        # 后台线程执行，接口立即返回
+        import threading as _th_batch
+        def _batch_worker():
+            try:
+                approved, rejected = _run_withdrawal_batch_auto()
+                logger.info(f'[withdrawal_batch_auto] 后台执行完成: 通过{approved}笔, 拒绝{rejected}笔')
+            except Exception as _e:
+                logger.error(f'[withdrawal_batch_auto] 后台执行异常: {_e}')
+            finally:
+                if lock_fd is not None:
+                    try:
+                        import fcntl
+                        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                        lock_fd.close()
+                    except Exception:
+                        pass
+        t = _th_batch.Thread(target=_batch_worker, daemon=True)
+        t.start()
+        return jsonify({'code': 200, 'message': '退款任务已转入后台执行', 'data': {'approved': 0, 'rejected': 0}})
+    except Exception as e:
+        logger.error(f'[withdrawal_batch_auto] 触发失败: {e}')
         return jsonify({'code': 500, 'message': str(e)})
 
 

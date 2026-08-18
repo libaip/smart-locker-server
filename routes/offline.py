@@ -396,7 +396,7 @@ def mid_retrieve():
                         continue
                     _inc = try_increment_mid_retrieve(cursor, row['id'], row['cabinet_id'])
                     if not _inc['allowed']:
-                        errors.append('mid retrieve limit reached for order %s' % (rid or rno))
+                        # 取物次数超限：跳过不补录也不报错，让APK收到200后清除本地记录，避免无限重试(2026-08-18)
                         continue
                     rtime = rec.get('retrieve_time') or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     compartment = row.get('compartment_number') or row.get('slot_number')

@@ -23,11 +23,26 @@ def add_no_cache(response):
         response.headers['Expires'] = '0'
     return response
 
+def _is_global_agent():
+    """后台管理(agent 10)全局权限判断：仅真正的 agent 账号，排除员工挂靠"""
+    if not session.get('is_agent'):
+        return False
+    if session.get('is_employee'):
+        return False
+    try:
+        return int(session.get('agent_id')) == 10
+    except (TypeError, ValueError):
+        return False
+
+
 def _get_merchant_filter():
     """Get merchant_id and SQL filter based on session (merchant or agent)"""
     if session.get('is_agent'):
         agent_id = session['agent_id']
-        # Agent sees data for all merchants under them
+        # 后台管理(agent 10)：看全部商家数据（全局后台）
+        if _is_global_agent():
+            return None, '1=1', []
+        # 其他 agent：只看自己名下商家
         return None, f'l.merchant_id IN (SELECT id FROM merchants WHERE agent_id = %s)', [agent_id]
     else:
         mid = session['merchant_id']
@@ -173,7 +188,10 @@ def merchant_dashboard():
         cursor = conn.cursor()
         filter_merchant_id = request.args.get('merchant_id', type=int)
         if filter_merchant_id and session.get('is_agent'):
-            cursor.execute('SELECT id FROM merchants WHERE id=%s AND agent_id=%s', (filter_merchant_id, session.get('agent_id')))
+            if _is_global_agent():
+                cursor.execute('SELECT id FROM merchants WHERE id=%s', (filter_merchant_id,))
+            else:
+                cursor.execute('SELECT id FROM merchants WHERE id=%s AND agent_id=%s', (filter_merchant_id, session.get('agent_id')))
             if cursor.fetchone():
                 mfilter = 'l.merchant_id = %s'
                 mparams = [filter_merchant_id]
@@ -190,6 +208,11 @@ def merchant_dashboard():
         total_devices = cursor.fetchone()['count']
         if merchant_id:
             cursor.execute('SELECT COUNT(*) as count FROM locations WHERE merchant_id = %s', (merchant_id,))
+        elif session.get('is_agent'):
+            if _is_global_agent():
+                cursor.execute('SELECT COUNT(*) as count FROM locations')
+            else:
+                cursor.execute('SELECT COUNT(*) as count FROM locations WHERE merchant_id IN (SELECT id FROM merchants WHERE agent_id = %s)', mparams)
         else:
             cursor.execute('SELECT COUNT(*) as count FROM locations WHERE merchant_id IN (SELECT id FROM merchants WHERE agent_id = %s)', mparams)
         location_count = cursor.fetchone()['count']
@@ -202,10 +225,8 @@ def merchant_dashboard():
         month_start = datetime.now().strftime('%Y-%m-01')
         cursor.execute(f'SELECT COUNT(*) as count FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND DATE(o.created_at) >= %s AND o.status NOT IN (1, 5)  {hide_filter}', (*mparams, month_start))
         month_orders = cursor.fetchone()['count']
-        # merge this month's historical data
-        cursor.execute(f'SELECT COALESCE(SUM(visible_count),0) FROM historical_order_counts h JOIN locations l ON h.location_id=l.id WHERE l.merchant_id={mparams[0]} AND date>=%s', (month_start,))
-        # merge this month's historical data
-        cursor.execute(f'SELECT COALESCE(SUM(visible_count),0) FROM historical_order_counts h JOIN locations l ON h.location_id=l.id WHERE l.merchant_id={mparams[0]} AND date>=%s', (month_start,))
+        # merge this month's historical data（用 mfilter，兼容全局 agent）
+        cursor.execute(f'SELECT COALESCE(SUM(visible_count),0) FROM historical_order_counts h JOIN locations l ON h.location_id=l.id WHERE {mfilter} AND date>=%s', (*mparams, month_start))
         h_val = cursor.fetchone()[0] or 0
         month_orders = (month_orders or 0) + h_val
 
@@ -361,6 +382,11 @@ def merchant_cabinets():
         if location_id:
             if merchant_id:
                 cursor.execute('SELECT id FROM locations WHERE id = %s AND merchant_id = %s', (location_id, merchant_id))
+            elif session.get('is_agent'):
+                if _is_global_agent():
+                    cursor.execute('SELECT id FROM locations WHERE id = %s', (location_id,))
+                else:
+                    cursor.execute('SELECT id FROM locations WHERE id = %s AND merchant_id IN (SELECT id FROM merchants WHERE agent_id = %s)', (location_id, *mparams))
             else:
                 cursor.execute('SELECT id FROM locations WHERE id = %s AND merchant_id IN (SELECT id FROM merchants WHERE agent_id = %s)', (location_id, *mparams))
             if not cursor.fetchone():
@@ -852,7 +878,10 @@ def merchant_business_stats():
         cursor = conn.cursor()
         filter_merchant_id = request.args.get('merchant_id', type=int)
         if filter_merchant_id and session.get('is_agent'):
-            cursor.execute('SELECT id FROM merchants WHERE id=%s AND agent_id=%s', (filter_merchant_id, session.get('agent_id')))
+            if _is_global_agent():
+                cursor.execute('SELECT id FROM merchants WHERE id=%s', (filter_merchant_id,))
+            else:
+                cursor.execute('SELECT id FROM merchants WHERE id=%s AND agent_id=%s', (filter_merchant_id, session.get('agent_id')))
             if cursor.fetchone():
                 mfilter = 'l.merchant_id = %s'
                 mparams = [filter_merchant_id]
@@ -1130,6 +1159,8 @@ def merchant_balance():
         # 已提现总额
         if merchant_id:
             cursor.execute('SELECT COALESCE(SUM(amount), 0) as withdrawn FROM withdrawal_records WHERE user_phone = (SELECT contact_phone FROM merchants WHERE id=%s)', (merchant_id,))
+        elif session.get('is_agent') and _is_global_agent():
+            cursor.execute('SELECT COALESCE(SUM(amount), 0) as withdrawn FROM withdrawal_records')
         else:
             cursor.execute('SELECT COALESCE(SUM(wr.amount), 0) as withdrawn FROM withdrawal_records wr WHERE wr.user_phone IN (SELECT m.contact_phone FROM merchants m WHERE m.agent_id=%s)', mparams)
         withdrawn = cursor.fetchone()['withdrawn']
@@ -1182,6 +1213,8 @@ def merchant_withdrawals():
         cursor = conn.cursor()
         if merchant_id:
             cursor.execute('SELECT * FROM withdrawal_records WHERE user_phone = (SELECT contact_phone FROM merchants WHERE id=%s) ORDER BY created_at DESC LIMIT 50', (merchant_id,))
+        elif session.get('is_agent') and _is_global_agent():
+            cursor.execute('SELECT * FROM withdrawal_records ORDER BY created_at DESC LIMIT 50')
         else:
             cursor.execute('SELECT * FROM withdrawal_records WHERE user_phone IN (SELECT contact_phone FROM merchants WHERE agent_id=%s) ORDER BY created_at DESC LIMIT 50', mparams)
         rows = cursor.fetchall()
@@ -1264,7 +1297,10 @@ def merchant_my_merchants():
         agent_id = session['agent_id']
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT m.* FROM merchants m WHERE m.agent_id=%s ORDER BY m.created_at DESC', (agent_id,))
+        if _is_global_agent():
+            cursor.execute('SELECT m.* FROM merchants m ORDER BY m.created_at DESC')
+        else:
+            cursor.execute('SELECT m.* FROM merchants m WHERE m.agent_id=%s ORDER BY m.created_at DESC', (agent_id,))
         rows = cursor.fetchall()
         hide_filter = " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
         merchants = [dict(r) for r in rows]

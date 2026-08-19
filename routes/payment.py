@@ -373,7 +373,8 @@ def pay_notify():
                         'time4': {'value': datetime.now().strftime('%Y-%m-%d %H:%M')},
                         'time5': {'value': datetime.now().strftime('%Y-%m-%d %H:%M')}
                     }
-                    send_wx_subscribe_message(openid, 'aUc6gRRMUXKxy94Pd6kLWaLGwzcutYMW_cQT_Hks1fg', subscribe_data, phone=order.get('user_phone'), page='pages/mine/mine', unionid=_pay_unionid)
+                    # 停发支付成功订阅 aUc6gRR：用户端未请求授权该模板，99.8%被43101拒收(2026-08-19)；强制订阅方案上线后再启用
+                    # send_wx_subscribe_message(openid, 'aUc6gRRMUXKxy94Pd6kLWaLGwzcutYMW_cQT_Hks1fg', subscribe_data, phone=order.get('user_phone'), page='pages/mine/mine', unionid=_pay_unionid)
             except Exception as e:
                 logger.error(f'[支付回调发送订阅消息失败] {e}')
         

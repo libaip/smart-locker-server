@@ -7596,7 +7596,7 @@ def _complaint_scheduler():
                         try:
                             c3_conn = get_db()
                             c3 = c3_conn.cursor()
-                            c3.execute('SELECT cert_serial_no, cert_name FROM payment_channels WHERE mch_id=%s AND is_active=1', (cmch,))
+                            c3.execute('SELECT cert_serial_no, cert_name FROM payment_channels WHERE mch_id=%s', (cmch,))
                             pc = c3.fetchone()
                             if pc:
                                 ccert = pc[0]

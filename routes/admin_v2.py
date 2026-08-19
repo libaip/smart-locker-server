@@ -16,6 +16,12 @@ import threading, uuid
 from helpers import json_response, manage_user_tokens, require_auth, logger, connected_devices, supersede_force_update_cmds, \
     upsert_user_balance_row, find_user_balance_row
 from config import WX_API_V3_KEY, WX_MCH_ID, WX_CERT_SERIAL_NO, WX_KEY_PATH, WX_CERT_PATH, WX_APP_ID, WX_APP_SECRET, WX_MP_APP_ID, WX_MP_APP_SECRET
+
+# ===== 微信投诉自动处理话术（2026-08-19 定版，全部投诉统一话术）=====
+WECHAT_FIRST_REPLY = '您好，您的投诉已收到，我们正在为您核实处理。您的预付款将在30分钟内原路退回，请注意查收。如有疑问请拨打客服电话4006981080。'
+WECHAT_ARRIVAL_NOTICE = '您好，您的退款¥{amount}已原路退回，请注意查收。如未退款请联系人工客服帮您处理，客服电话4006981080。'
+WECHAT_MANUAL_REPLY = '您好，您的退款遇到异常，请联系人工客服帮您处理，客服电话4006981080。'
+WECHAT_NO_REFUND = '您好，经核实您的订单已退款或无需退款，如有疑问请拨打客服电话4006981080。'
 def _fmt_time(t):
     """格式化时间: YYYY-MM-DD HH:MM:SS"""
     if not t:
@@ -6558,6 +6564,126 @@ def admin_mainboards_generate_slots():
         logger.error(f'[mainboards_generate_slots] {e}')
         return json_response(message=str(e), code=500)
 
+# ============ 微信投诉通知验签/解密辅助 ============
+_wx_dec_key_cache = {}
+_wx_platform_cert_cache = {}
+
+def _verify_wechatpay_signature(headers, raw_body):
+    """验证微信支付回调签名（平台证书公钥 RSA-SHA256）"""
+    import base64 as _b64
+    ts = headers.get('Wechatpay-Timestamp', '')
+    nonce = headers.get('Wechatpay-Nonce', '')
+    sig = headers.get('Wechatpay-Signature', '')
+    serial = headers.get('Wechatpay-Serial', '')
+    if not (ts and nonce and sig and serial):
+        return False, '缺少验签请求头'
+    cert_pem, err = _load_platform_cert(serial)
+    if not cert_pem:
+        return False, err
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+        cert_obj = x509.load_pem_x509_certificate(cert_pem.encode())
+        message = (ts + '\n' + nonce + '\n' + raw_body.decode('utf-8') + '\n').encode('utf-8')
+        cert_obj.public_key().verify(_b64.b64decode(sig), message, padding.PKCS1v15(), hashes.SHA256())
+        return True, ''
+    except Exception as e:
+        return False, '验签失败: %s' % e
+
+
+def _load_platform_cert(serial_no):
+    """加载微信支付平台证书：磁盘缓存 → 首次自动下载（用商户证书签名 GET /v3/certificates，APIv3密钥解密）"""
+    import os as _os, time as _t, base64 as _b64
+    if serial_no in _wx_platform_cert_cache:
+        return _wx_platform_cert_cache[serial_no], ''
+    cert_path = _os.path.join(_os.path.dirname(WX_KEY_PATH), 'wechatpay_platform_%s.pem' % serial_no)
+    if _os.path.exists(cert_path):
+        with open(cert_path, 'r') as f:
+            pem = f.read()
+        _wx_platform_cert_cache[serial_no] = pem
+        return pem, ''
+    try:
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding
+        key_path = WX_KEY_PATH
+        cert_serial = WX_CERT_SERIAL_NO
+        mch_id = WX_MCH_ID
+        if not _os.path.exists(key_path):
+            _pc = get_db()
+            _pc_cur = _pc.cursor()
+            _pc_cur.execute("SELECT mch_id, cert_serial_no, cert_name FROM payment_channels WHERE cert_name IS NOT NULL AND cert_name != '' AND is_active=1 LIMIT 1")
+            _pc_row = _pc_cur.fetchone()
+            _pc.close()
+            if _pc_row:
+                mch_id = _pc_row[0]
+                cert_serial = _pc_row[1]
+                key_path = '/home/ubuntu/smart-locker/cert/%s_key.pem' % _pc_row[2]
+        with open(key_path, 'r') as f:
+            pk = serialization.load_pem_private_key(f.read().encode(), password=None)
+        ts = str(int(_t.time()))
+        nonce = _os.urandom(16).hex()
+        url_path = '/v3/certificates'
+        sign_str = 'GET\n' + url_path + '\n' + ts + '\n' + nonce + '\n\n'
+        sig = _b64.b64encode(pk.sign(sign_str.encode('utf-8'), padding.PKCS1v15(), hashes.SHA256())).decode()
+        auth = 'WECHATPAY2-SHA256-RSA2048 mchid="%s",nonce_str="%s",timestamp="%s",serial_no="%s",signature="%s"' % (mch_id, nonce, ts, cert_serial, sig)
+        import requests as _req
+        r = _req.get('https://api.mch.weixin.qq.com' + url_path, headers={'Authorization': auth, 'Accept': 'application/json'}, timeout=10)
+        if r.status_code != 200:
+            return None, '下载平台证书失败 %s %s' % (r.status_code, r.text[:200])
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        for item in r.json().get('data', []):
+            if item.get('serial_no') == serial_no:
+                enc = item['encrypt_certificate']
+                aesgcm = AESGCM(WX_API_V3_KEY.encode('utf-8'))
+                pem = aesgcm.decrypt(enc['nonce'].encode('utf-8'), _b64.b64decode(enc['ciphertext']), enc['associated_data'].encode('utf-8')).decode('utf-8')
+                with open(cert_path, 'w') as f:
+                    f.write(pem)
+                _wx_platform_cert_cache[serial_no] = pem
+                return pem, ''
+        return None, '平台证书序列号不匹配: %s' % serial_no
+    except Exception as e:
+        return None, '加载平台证书异常: %s' % e
+
+
+def _decrypt_complaint_resource(resource):
+    """解密投诉通知 resource：先主商户密钥，失败则遍历各渠道 APIv3 密钥（按 complained_mchid 对应）"""
+    import base64 as _b64
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    ciphertext_b64 = resource.get('ciphertext', '')
+    nonce = resource.get('nonce', '')
+    associated_data = resource.get('associated_data', '')
+    if not ciphertext_b64:
+        return None, '无ciphertext'
+    ciphertext = _b64.b64decode(ciphertext_b64)
+    keys = [WX_API_V3_KEY]
+    try:
+        _kc = get_db()
+        _kcur = _kc.cursor()
+        _kcur.execute("SELECT mch_id, api_v3_key FROM payment_channels WHERE api_v3_key IS NOT NULL AND api_v3_key != ''")
+        rows = _kcur.fetchall()
+        _kc.close()
+        for r in rows:
+            if r[1] and r[1] not in keys:
+                keys.append(r[1])
+    except:
+        pass
+    last_err = '未知错误'
+    for key in keys:
+        try:
+            aesgcm = AESGCM(key.encode('utf-8'))
+            plaintext = aesgcm.decrypt(nonce.encode('utf-8'), ciphertext, associated_data.encode('utf-8'))
+            data = json.loads(plaintext.decode('utf-8'))
+            mch = data.get('complainted_mchid', '')
+            if mch:
+                _wx_dec_key_cache[mch] = key
+            return data, ''
+        except Exception as e:
+            last_err = str(e)
+            continue
+    return None, '解密失败: %s' % last_err
+
+
 # ============ 微信投诉通知API (骨架) ============
 # 注意：此API需要用户在微信支付后台配置投诉通知URL才能实际接收投诉
 # 微信支付投诉通知URL格式: https://your-domain.com/api/admin_v2/wechat-complaint/notify
@@ -6568,26 +6694,20 @@ def wechat_complaint_notify():
     """微信支付投诉通知接收 - 自动解密+回复"""
     import hashlib, base64
     try:
+        raw_body = request.get_data()
+        _vok, _verr = _verify_wechatpay_signature(request.headers, raw_body)
+        if not _vok:
+            logger.warning('[wechat_complaint_notify] 验签失败: %s', _verr)
+            return jsonify({'code': 'FAIL', 'message': 'verify fail'}), 401
         data = request.get_json() or {}
         logger.info('[wechat_complaint_notify] 收到通知: %s', json.dumps(data, ensure_ascii=False)[:500])
         
-        # 解密通知内容 (AEAD_AES_256_GCM)
+        # 解密通知内容 (AEAD_AES_256_GCM，自动匹配商户 APIv3 密钥)
         resource = data.get('resource', {})
-        ciphertext_b64 = resource.get('ciphertext', '')
-        nonce = resource.get('nonce', '')
-        associated_data = resource.get('associated_data', '')
-        api_v3_key = WX_API_V3_KEY.encode('utf-8')
-        
-        if not ciphertext_b64:
-            logger.warning('[wechat_complaint_notify] 无ciphertext, 跳过解密')
-            return jsonify({'code': 'SUCCESS', 'message': 'ok'})
-        
-        # AES-256-GCM解密
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-        ciphertext = base64.b64decode(ciphertext_b64)
-        aesgcm = AESGCM(api_v3_key)
-        plaintext = aesgcm.decrypt(nonce.encode('utf-8'), ciphertext, associated_data.encode('utf-8'))
-        complaint_data = json.loads(plaintext.decode('utf-8'))
+        complaint_data, _derr = _decrypt_complaint_resource(resource)
+        if complaint_data is None:
+            logger.warning('[wechat_complaint_notify] %s', _derr)
+            return jsonify({'code': 'FAIL', 'message': 'decrypt fail'}), 400
         logger.info('[wechat_complaint_notify] 解密内容: %s', json.dumps(complaint_data, ensure_ascii=False)[:1000])
         
         # 提取投诉信息
@@ -6644,12 +6764,9 @@ def wechat_complaint_notify():
         if complaint_order_info:
             transaction_id = complaint_order_info[0].get('transaction_id', '')
         
-        # 自动处理投诉：退款 + 回复 + 结案
-        if order_no or transaction_id or payer_phone:
+        # 自动处理投诉（v2：只回复首响，不退款不结案；退款由调度器在5分钟后执行，失败3次转人工）
+        if complaint_id:
             _search_no = order_no or transaction_id or ''
-            _refund_ok, _refund_msg = _auto_refund_complaint_order(_search_no, transaction_id, complaint_id, payer_phone)
-            if not _refund_ok:
-                logger.warning('[wechat_complaint_notify] 退款失败: %s', _refund_msg)
             # 查找正确的商户凭证
             _mch_id = complained_mchid
             if not _mch_id:
@@ -6665,9 +6782,6 @@ def wechat_complaint_notify():
                     _cc_conn.close()
                 except:
                     pass
-            if not _mch_id:
-                logger.error('[投诉处理] 无可用商户号')
-                return
             _cert_serial = WX_CERT_SERIAL_NO
             _key_path = WX_KEY_PATH
             if complained_mchid:
@@ -6683,9 +6797,10 @@ def wechat_complaint_notify():
                     conn5.close()
                 except:
                     pass
-            if _refund_ok:
-                _auto_reply_complaint(complaint_id, _search_no, transaction_id, mch_id=_mch_id, cert_serial=_cert_serial, private_key_path=_key_path)
-                _auto_complete_complaint(complaint_id, _mch_id, _cert_serial, _key_path)
+            if _mch_id:
+                _auto_reply_complaint(complaint_id, _search_no, transaction_id, mch_id=_mch_id, cert_serial=_cert_serial, private_key_path=_key_path, content=WECHAT_FIRST_REPLY, complete_now=False)
+            else:
+                logger.error('[投诉处理] 无可用商户号，投诉 %s 未回复', complaint_id)
         
         # 拉正拉取投诉详情调用详细并
         if complaint_id:
@@ -6829,7 +6944,7 @@ def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id="", p
         return False, str(e)
 
 
-def _auto_reply_complaint(complaint_id, order_no="", transaction_id="", mch_id="", cert_serial="", private_key_path=""):
+def _auto_reply_complaint(complaint_id, order_no="", transaction_id="", mch_id="", cert_serial="", private_key_path="", content=None, complete_now=True):
     """自动回复微信投诉"""
     import time, requests, base64
     try:
@@ -6889,7 +7004,9 @@ def _auto_reply_complaint(complaint_id, order_no="", transaction_id="", mch_id="
             _conn.close()
         except:
             pass
-        if _refunded:
+        if content is not None:
+            reply_content = content
+        elif _refunded:
             reply_content = '您好，您的订单已为您办理全额退款，款项将原路返回至您的微信零钱，请注意查收。如有疑问请联系客服，感谢您的理解与支持！'
         else:
             reply_content = '您好，我们已收到您的反馈，正在尽快为您处理。如有疑问请联系客服，感谢您的理解与支持！'
@@ -6944,24 +7061,27 @@ def _auto_reply_complaint(complaint_id, order_no="", transaction_id="", mch_id="
             conn.close()
             logger.info('[auto_reply] 投诉回复成功并已更新数据库 complaint_id=%s', complaint_id)
             
-            # 投诉完成后调用complete API标记已处理
-            try:
-                url_path2 = '/v3/merchant-service/complaints-v2/' + complaint_id + '/complete'
-                body2 = json.dumps({'complainted_mchid': mch_id}, ensure_ascii=False, separators=(',', ':'))
-                timestamp2 = str(int(time.time()))
-                nonce_str2 = os.urandom(16).hex()
-                sign_str2 = 'POST\n' + url_path2 + '\n' + timestamp2 + '\n' + nonce_str2 + '\n' + body2 + '\n'
-                signature2 = private_key_obj.sign(sign_str2.encode('utf-8'), padding.PKCS1v15(), hashes.SHA256())
-                sign_b642 = base64.b64encode(signature2).decode('utf-8')
-                authorization2 = 'WECHATPAY2-SHA256-RSA2048 mchid="' + mch_id + '",nonce_str="' + nonce_str2 + '",timestamp="' + timestamp2 + '",serial_no="' + cert_serial + '",signature="' + sign_b642 + '"'
-                headers2 = {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': authorization2}
-                resp2 = requests.post('https://api.mch.weixin.qq.com' + url_path2, data=body2.encode('utf-8'), headers=headers2, timeout=10)
-                if resp2.status_code in (200, 204):
-                    logger.info('[auto_reply] 投诉已完成处理 complaint_id=%s', complaint_id)
-                else:
-                    logger.warning('[auto_reply] 投诉完成处理失败 complaint_id=%s status=%s resp=%s', complaint_id, resp2.status_code, resp2.text[:300])
-            except Exception as complete_e:
-                logger.warning('[auto_reply] 投诉完成处理异常 complaint_id=%s err=%s', complaint_id, complete_e)
+            # 投诉完成后调用complete API标记已处理（complete_now=False 时暂不结案，由调度器在退款后处理）
+            if not complete_now:
+                logger.info('[auto_reply] complete_now=False，暂不结案 complaint_id=%s', complaint_id)
+            else:
+                try:
+                    url_path2 = '/v3/merchant-service/complaints-v2/' + complaint_id + '/complete'
+                    body2 = json.dumps({'complainted_mchid': mch_id}, ensure_ascii=False, separators=(',', ':'))
+                    timestamp2 = str(int(time.time()))
+                    nonce_str2 = os.urandom(16).hex()
+                    sign_str2 = 'POST\n' + url_path2 + '\n' + timestamp2 + '\n' + nonce_str2 + '\n' + body2 + '\n'
+                    signature2 = private_key_obj.sign(sign_str2.encode('utf-8'), padding.PKCS1v15(), hashes.SHA256())
+                    sign_b642 = base64.b64encode(signature2).decode('utf-8')
+                    authorization2 = 'WECHATPAY2-SHA256-RSA2048 mchid="' + mch_id + '",nonce_str="' + nonce_str2 + '",timestamp="' + timestamp2 + '",serial_no="' + cert_serial + '",signature="' + sign_b642 + '"'
+                    headers2 = {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': authorization2}
+                    resp2 = requests.post('https://api.mch.weixin.qq.com' + url_path2, data=body2.encode('utf-8'), headers=headers2, timeout=10)
+                    if resp2.status_code in (200, 204):
+                        logger.info('[auto_reply] 投诉已完成处理 complaint_id=%s', complaint_id)
+                    else:
+                        logger.warning('[auto_reply] 投诉完成处理失败 complaint_id=%s status=%s resp=%s', complaint_id, resp2.status_code, resp2.text[:300])
+                except Exception as complete_e:
+                    logger.warning('[auto_reply] 投诉完成处理异常 complaint_id=%s err=%s', complaint_id, complete_e)
         else:
             logger.error('[auto_reply] 投诉回复失败 complaint_id=%s http_status=%s resp=%s',
                         complaint_id, resp.status_code, resp.text[:500] if resp.text else '(empty)')
@@ -7424,6 +7544,7 @@ def _complaint_scheduler():
                 cstatus = comp.get("status", "0")
                 logger.info("[complaint_scheduler] 处理投诉 id=%s wx_id=%s status=%s", cid, wxid, cstatus)
                 if cstatus == "0":
+                    # 回复兜底：回调时已秒发首响，这里补发仍未回复的（只回复，不退款不结案）
                     _txn = ''; _up = comp.get('user_phone', '') or ''
                     if ono:
                         try:
@@ -7436,43 +7557,64 @@ def _complaint_scheduler():
                             _tc_conn.close()
                         except:
                             pass
-                    refund_ok, refund_msg = _auto_refund_complaint_order(ono, transaction_id=_txn, complaint_id=cid, payer_phone=_up)
-                    if refund_ok:
-                        cmch = comp.get('mch_id', '') or ''
-                        ccert = WX_CERT_SERIAL_NO
-                        ckey = WX_KEY_PATH
-                        if cmch:
-                            try:
-                                c3_conn = get_db()
-                                c3 = c3_conn.cursor()
-                                c3.execute('SELECT cert_serial_no, cert_name FROM payment_channels WHERE mch_id=%s ', (cmch,))
-                                pc = c3.fetchone()
-                                if pc:
-                                    ccert = pc[0]
-                                    ckey = f'/home/ubuntu/smart-locker/cert/{pc[1]}_key.pem'
-                                c3.close()
-                                c3_conn.close()
-                            except:
-                                pass
-                        _auto_reply_complaint(wxid, order_no=ono, transaction_id=_txn, mch_id=cmch, cert_serial=ccert, private_key_path=ckey)
-                    else:
-                        logger.warning("[complaint_scheduler] 退款失败 id=%s msg=%s", cid, refund_msg)
-                elif cstatus == "1":
-                    conn2 = get_db()
-                    c2 = conn2.cursor()
-                    # Use complaint's mch_id to get correct merchant cert
                     cmch = comp.get('mch_id', '') or ''
                     ccert = WX_CERT_SERIAL_NO
                     ckey = WX_KEY_PATH
                     if cmch:
                         try:
-                            c3 = conn2.cursor()
+                            c3_conn = get_db()
+                            c3 = c3_conn.cursor()
+                            c3.execute('SELECT cert_serial_no, cert_name FROM payment_channels WHERE mch_id=%s ', (cmch,))
+                            pc = c3.fetchone()
+                            if pc:
+                                ccert = pc[0]
+                                ckey = f'/home/ubuntu/smart-locker/cert/{pc[1]}_key.pem'
+                            c3.close()
+                            c3_conn.close()
+                        except:
+                            pass
+                    _auto_reply_complaint(wxid, order_no=ono, transaction_id=_txn, mch_id=cmch, cert_serial=ccert, private_key_path=ckey, content=WECHAT_FIRST_REPLY, complete_now=False)
+                elif cstatus == "1":
+                    # 已回复：满5分钟后执行退款 → 到账通知 → 结案；失败每5分钟重试，3次后转人工
+                    _age = 0.0
+                    try:
+                        _ag_conn = get_db()
+                        _ag = _ag_conn.cursor()
+                        _ag.execute("SELECT EXTRACT(EPOCH FROM (NOW()-created_at)) FROM complaints WHERE id=%s", (cid,))
+                        _ag_row = _ag.fetchone()
+                        _ag_conn.close()
+                        if _ag_row and _ag_row[0]:
+                            _age = float(_ag_row[0])
+                    except:
+                        pass
+                    if _age < 300:
+                        continue  # 未满5分钟，等下轮
+                    _txn = ''
+                    if ono:
+                        try:
+                            _tc_conn = get_db()
+                            _tc = _tc_conn.cursor()
+                            _tc.execute("SELECT transaction_id FROM orders WHERE order_no=%s LIMIT 1", (ono,))
+                            _tr = _tc.fetchone()
+                            if _tr and _tr[0]: _txn = _tr[0]
+                            _tc.close()
+                            _tc_conn.close()
+                        except:
+                            pass
+                    cmch = comp.get('mch_id', '') or ''
+                    ccert = WX_CERT_SERIAL_NO
+                    ckey = WX_KEY_PATH
+                    if cmch:
+                        try:
+                            c3_conn = get_db()
+                            c3 = c3_conn.cursor()
                             c3.execute('SELECT cert_serial_no, cert_name FROM payment_channels WHERE mch_id=%s AND is_active=1', (cmch,))
                             pc = c3.fetchone()
                             if pc:
                                 ccert = pc[0]
                                 ckey = f'/home/ubuntu/smart-locker/cert/{pc[1]}_key.pem'
                             c3.close()
+                            c3_conn.close()
                         except:
                             pass
                     _cmch = cmch
@@ -7488,13 +7630,58 @@ def _complaint_scheduler():
                             _fc_conn.close()
                         except:
                             pass
-                    if _cmch:
-                        _auto_complete_complaint(wxid, _cmch, ccert, ckey)
+                    refund_ok, refund_msg = _auto_refund_complaint_order(ono, transaction_id=_txn, complaint_id=cid, payer_phone=comp.get('user_phone', '') or '')
+                    if refund_ok:
+                        if refund_msg in ('订单已退款，无需重复退款', '无押金', '无可退金额'):
+                            # 无需退款，直接结案
+                            if _cmch:
+                                _auto_complete_complaint(wxid, _cmch, ccert, ckey)
+                            _u_conn = get_db()
+                            _u = _u_conn.cursor()
+                            _u.execute("UPDATE complaints SET status=3, refund_status='refunded', reply=%s, reply_time=CURRENT_TIMESTAMP WHERE id=%s", (WECHAT_NO_REFUND, cid))
+                            _u_conn.commit()
+                            _u_conn.close()
+                        else:
+                            # 退款成功：发到账通知 → 结案
+                            _amt = 0.0
+                            try:
+                                _am_conn = get_db()
+                                _am = _am_conn.cursor()
+                                _am.execute("SELECT deposit_amount FROM orders WHERE order_no=%s LIMIT 1", (ono,))
+                                _am_row = _am.fetchone()
+                                _am_conn.close()
+                                if _am_row and _am_row[0]:
+                                    _amt = float(_am_row[0])
+                            except:
+                                pass
+                            notice = WECHAT_ARRIVAL_NOTICE.format(amount='%.2f' % _amt)
+                            _auto_reply_complaint(wxid, order_no=ono, transaction_id=_txn, mch_id=cmch, cert_serial=ccert, private_key_path=ckey, content=notice, complete_now=False)
+                            if _cmch:
+                                _auto_complete_complaint(wxid, _cmch, ccert, ckey)
+                            _u_conn = get_db()
+                            _u = _u_conn.cursor()
+                            _u.execute("UPDATE complaints SET status=3, refund_status='refunded', reply=%s, reply_time=CURRENT_TIMESTAMP WHERE id=%s", (notice, cid))
+                            _u_conn.commit()
+                            _u_conn.close()
                     else:
-                        logger.error('[投诉自动处理] 无可用商户号')
-                    c2.execute("UPDATE complaints SET status=2 WHERE id=%s AND status='1'", (cid,))
-                    conn2.commit()
-                    conn2.close()
+                        # 退款失败：计数重试，3次后转人工（不再自动结案）
+                        _u_conn = get_db()
+                        _u = _u_conn.cursor()
+                        _u.execute("UPDATE complaints SET refund_status='refund_failed', refund_fail_reason=%s, refund_retry=COALESCE(refund_retry,0)+1 WHERE id=%s", (refund_msg[:300], cid))
+                        _u_conn.commit()
+                        _u.execute("SELECT refund_retry FROM complaints WHERE id=%s", (cid,))
+                        _rt = _u.fetchone()
+                        _u_conn.close()
+                        _retry_n = int(_rt[0]) if _rt and _rt[0] else 0
+                        logger.warning('[complaint_scheduler] 退款失败 id=%s msg=%s 第%s次', cid, refund_msg, _retry_n)
+                        if _retry_n >= 3:
+                            if _cmch:
+                                _auto_reply_complaint(wxid, order_no=ono, transaction_id=_txn, mch_id=cmch, cert_serial=ccert, private_key_path=ckey, content=WECHAT_MANUAL_REPLY, complete_now=False)
+                            _u_conn = get_db()
+                            _u = _u_conn.cursor()
+                            _u.execute("UPDATE complaints SET status=2, reply=%s, reply_time=CURRENT_TIMESTAMP WHERE id=%s", (WECHAT_MANUAL_REPLY, cid))
+                            _u_conn.commit()
+                            _u_conn.close()
 
             # non-wechat auto complaints (with refund if has order)
             try:

@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""微信支付投诉自动处理 - 服务器本地运行"""
+"""微信支付投诉兜底登记 - 服务器本地运行
+
+职责（2026-08-19 改造）：仅把微信侧 PENDING 且本地未登记的投诉补登记进 complaints 表（status=0）。
+回复/退款/结案统一由应用内调度器（_complaint_scheduler）按三段式处理：
+  回调秒回首响 → 5分钟后退款 → 到账通知 → 结案；失败重试3次转人工。
+本脚本不退款、不回复、不结案，防止与调度器抢跑。
+"""
 import sys, os, json, time, base64, subprocess
 sys.path.insert(0, "/home/ubuntu/smart-locker")
 import psycopg2, psycopg2.extras, requests, random
@@ -10,7 +16,6 @@ from cryptography.hazmat.backends import default_backend
 DB_CFG = {"host":"127.0.0.1","port":6432,"user":"locker_admin","password":"locker_pass_2024","dbname":"smart_locker"}
 SRC = "/home/ubuntu/smart-locker"
 V3_KEY = "lichengju0904LICHENGJU0904libaip"
-REPLY_MSG = "您好，您的预付款已退款，请注意查收。如有疑问请拨打客服电话4006981080。"
 
 def sign_req(method, url_path, body_str, mch_id, key_path, cert_path):
     with open(key_path) as f:
@@ -28,142 +33,27 @@ def v3_get(url_path, mch_id, key_path, cert_path):
     h = sign_req("GET", url_path, "", mch_id, key_path, cert_path)
     return requests.get(f"https://api.mch.weixin.qq.com{url_path}", headers=h, timeout=15)
 
-def v3_post(url_path, body, mch_id, key_path, cert_path):
-    bs = json.dumps(body, ensure_ascii=False)
-    h = sign_req("POST", url_path, bs, mch_id, key_path, cert_path)
-    return requests.post(f"https://api.mch.weixin.qq.com{url_path}", headers=h, data=bs.encode(), timeout=15)
-
-def get_wxpay(mch_id):
-    """通过helpers获取WxPay实例"""
-    os.environ["PGPASSWORD"] = DB_CFG["password"]
-    conn = psycopg2.connect(**DB_CFG)
-    c = conn.cursor()
-    c.execute("SELECT id, api_key, cert_name, api_v3_key FROM payment_channels WHERE mch_id=%s", (mch_id,))
-    ch = c.fetchone()
-    conn.close()
-    if not ch:
-        # fallback: try any active channel
-        conn = psycopg2.connect(**DB_CFG)
-        c = conn.cursor()
-        c.execute("SELECT id, api_key, cert_name, api_v3_key FROM payment_channels WHERE cert_name IS NOT NULL AND cert_name != '' ORDER BY id LIMIT 1")
-        ch = c.fetchone()
-        conn.close()
-    return ch
-
-def do_refund(order_no, total_fee, mch_id):
-    """执行退款"""
-    sys.path.insert(0, SRC)
-    from helpers import get_channel_wxpay
-    conn = psycopg2.connect(**DB_CFG)
-    c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    c.execute("SELECT id, order_no, deposit_amount, refund_status, payment_channel_id, user_phone FROM orders WHERE order_no=%s", (order_no,))
-    order = c.fetchone()
-    if not order:
-        conn.close()
-        return False, "订单不存在"
-    ch_id = order["payment_channel_id"]
-    ch_cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    ch_cur.execute("SELECT * FROM payment_channels WHERE id=%s", (ch_id,))
-    ch_row = ch_cur.fetchone()
-    if not ch_row:
-        conn.close()
-        return False, "支付渠道不存在"
-    wx, ch_type = get_channel_wxpay(ch_row)
-    if not wx:
-        conn.close()
-        return False, f"无法获取WxPay(channel={ch_id})"
-    amount = int(order["deposit_amount"] * 100) if order["deposit_amount"] else 0
-    if amount <= 0:
-        amount = total_fee
-    out_refund = f"RF-{order['order_no']}"
-    try:
-        result = wx.refund(order["order_no"], amount, amount, out_refund_no=out_refund, refund_desc="押金退款-投诉自动处理")
-    except Exception as e:
-        conn.close()
-        return False, f"退款异常: {e}"
-    if result and result.get("return_code") == "SUCCESS" and result.get("result_code") == "SUCCESS":
-        refund_id = result.get("refund_id", "")
-        c.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=%s, refund_time=CURRENT_TIMESTAMP, refund_amount=%s WHERE id=%s", (refund_id, order.get("deposit_amount", 0), order["id"]))
-        c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order["id"],))
-        c.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, approver, order_ids, approve_time) VALUES (%s, %s, %s, 2, '微信投诉自动退款', %s, NOW())", (order["id"], order.get("user_phone", "") or "", order.get("deposit_amount", 0), "[" + str(order["id"]) + "]"))
-        conn.commit()
-        conn.close()
-        return True, refund_id
-    else:
-        err = result.get("err_code_des", "") if result else "无响应"
-        conn.close()
-        return False, err
-
-def process_complaint(complaint, mch_id, key_path, cert_path):
-    cid = complaint.get("complaint_id","")
+def register_complaint(complaint, mch_id):
+    """把微信侧待处理投诉登记进本地 complaints 表（status=0），处理交给应用内调度器"""
+    cid = complaint.get("complaint_id", "")
     order_info = complaint.get("complaint_order_info", [])
-    order_no = complaint.get("out_trade_no","") or (order_info[0].get("out_trade_no","") if order_info else "")
-    if not order_no:
-        print(f"    跳过: 无订单号, wx_complaint_id={cid}")
-        return
-
-    txn_id = order_info[0].get("transaction_id","") if order_info else ""
-    amount = complaint.get("complaint_order_info",[{}])[0].get("total_pay_amount", 0) if order_info else 0
-    payer_phone = complaint.get("payer_phone","")
-    
-    print(f"  处理投诉 {cid} | 订单 {order_no}")
-    
-    # 预检查：订单是否已退款
-    _pre_conn = psycopg2.connect(**DB_CFG)
-    _pre_cur = _pre_conn.cursor()
-    _pre_cur.execute("SELECT refund_status FROM orders WHERE order_no=%s LIMIT 1", (order_no,))
-    _pre_row = _pre_cur.fetchone()
-    _pre_conn.close()
-    already_refunded = bool(_pre_row and _pre_row[0] in ('success','refunded'))
-    if already_refunded:
-        print(f"    订单已退款(refund_status={_pre_row[0]})，跳过退款，直接回复+结案")
-        ok = True
-        msg = "already_refunded"
-    else:
-        # 1. 退款
-        ok, msg = do_refund(order_no, amount, mch_id)
-        print(f"    退款: {'OK' if ok else 'FAIL'} - {msg}")
-    if not ok:
-        if "已全额退款" in msg or "订单已全额退款" in msg:
-            already_refunded = True
-            print(f"    订单已退款，直接回复+结案")
-        else:
-            print(f"    退款失败({msg})，标记但不结案")
-            _conn = psycopg2.connect(**DB_CFG)
-            _c = _conn.cursor()
-            _c.execute("SELECT id FROM complaints WHERE wx_complaint_id=%s", (cid,))
-            _ex = _c.fetchone()
-            if _ex:
-                try:
-                    _c.execute("UPDATE complaints SET refund_status='refund_failed', refund_fail_reason=%s WHERE wx_complaint_id=%s", (msg[:200], cid))
-                    _conn.commit()
-                except Exception:
-                    pass
-            _conn.close()
-            return
-    
-    # 2. 回复投诉
-    reply_body = {"complainted_mchid": mch_id, "response_content": REPLY_MSG}
-    rr = v3_post(f"/v3/merchant-service/complaints-v2/{cid}/response", reply_body, mch_id, key_path, cert_path)
-    print(f"    回复: HTTP {rr.status_code}")
-    
-    # 3. 结案
-    complete_body = {"complainted_mchid": mch_id}
-    cr = v3_post(f"/v3/merchant-service/complaints-v2/{cid}/complete", complete_body, mch_id, key_path, cert_path)
-    print(f"    结案: HTTP {cr.status_code}")
-    
-    # 4. 记录到complaints表
+    order_no = complaint.get("out_trade_no", "") or (order_info[0].get("out_trade_no", "") if order_info else "")
+    payer_phone = complaint.get("payer_phone", "")
+    detail = complaint.get("complaint_detail", "") or "微信投诉"
     conn = psycopg2.connect(**DB_CFG)
     c = conn.cursor()
     c.execute("SELECT id FROM complaints WHERE wx_complaint_id=%s", (cid,))
-    existing = c.fetchone()
-    if not existing:
-        c.execute("INSERT INTO complaints (wx_complaint_id, order_no, type, content, status, mch_id, user_phone, complaint_type, reply, reply_time) VALUES (%s,%s,'wechat',%s,3,%s,%s,'wechat','已自动原路退款',NOW())",
-                  (cid, order_no, complaint.get("complaint_detail","已处理"), mch_id, payer_phone))
-    else:
-        c.execute("UPDATE complaints SET status=3, reply='已自动原路退款', reply_time=NOW() WHERE wx_complaint_id=%s", (cid,))
+    if c.fetchone():
+        conn.close()
+        print(f"    已存在，跳过: {cid}")
+        return
+    c.execute(
+        "INSERT INTO complaints (wx_complaint_id, order_no, type, content, status, mch_id, user_phone, complaint_type) VALUES (%s,%s,'wechat',%s,0,%s,%s,'wechat')",
+        (cid, order_no, detail, mch_id, payer_phone)
+    )
     conn.commit()
     conn.close()
+    print(f"    已登记待处理: {cid} | 订单 {order_no or '(无订单号)'} | 商户 {mch_id}")
 
 def main():
     conn = psycopg2.connect(**DB_CFG)
@@ -172,7 +62,7 @@ def main():
     channels = c.fetchall()
     conn.close()
     
-    stats = {"checked": len(channels), "pending": 0, "refunded": 0, "replied": 0}
+    stats = {"checked": len(channels), "pending": 0, "registered": 0}
     
     for ch in channels:
         mch_id = ch["mch_id"]
@@ -213,11 +103,11 @@ def main():
         
         # 筛选PENDING
         pending = [x for x in complaints_list if x.get("complaint_state") == "PENDING"]
-        # 去重: 跳过complaints表已处理的
+        # 去重: 本地已存在（任何状态）则跳过，统一交给调度器处理
         conn2 = psycopg2.connect(**DB_CFG)
         c2 = conn2.cursor()
         for p in pending[:]:
-            c2.execute("SELECT id FROM complaints WHERE wx_complaint_id=%s AND status::int>=3", (p["complaint_id"],))
+            c2.execute("SELECT id FROM complaints WHERE wx_complaint_id=%s", (p["complaint_id"],))
             row = c2.fetchone()
             if row:
                 pending.remove(p)
@@ -226,19 +116,18 @@ def main():
         if not pending:
             continue
         
-        print(f"\n[{mch_id}] 发现 {len(pending)} 个待处理投诉")
+        print(f"\n[{mch_id}] 发现 {len(pending)} 个待登记投诉")
         stats["pending"] += len(pending)
         
         for complaint in pending:
             try:
-                process_complaint(complaint, mch_id, key_path, cert_path)
-                stats["refunded"] += 1
-                stats["replied"] += 1
+                register_complaint(complaint, mch_id)
+                stats["registered"] += 1
             except Exception as e:
-                print(f"  处理失败: {e}")
+                print(f"  登记失败: {e}")
     
     print(f"\n===== 巡检完成 =====")
-    print(f"检查商户: {stats['checked']} | 待处理: {stats['pending']} | 已退款: {stats['refunded']} | 已回复: {stats['replied']}")
+    print(f"检查商户: {stats['checked']} | 待登记: {stats['pending']} | 已登记: {stats['registered']}")
 
 if __name__ == "__main__":
     main()

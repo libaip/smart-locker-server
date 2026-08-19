@@ -15,7 +15,6 @@ from cryptography.hazmat.backends import default_backend
 
 DB_CFG = {"host":"127.0.0.1","port":6432,"user":"locker_admin","password":"locker_pass_2024","dbname":"smart_locker"}
 SRC = "/home/ubuntu/smart-locker"
-V3_KEY = "lichengju0904LICHENGJU0904libaip"
 
 def sign_req(method, url_path, body_str, mch_id, key_path, cert_path):
     with open(key_path) as f:

@@ -188,18 +188,59 @@ def _cleanup_expired_orders():
             threading.Event().wait(60)
             db = get_db()
             cur = db.cursor()
-            cur.execute("SELECT o.id, o.slot_id, o.order_no FROM orders o WHERE o.status IN (0,1) AND o.store_time < NOW() - INTERVAL '3 minutes'")
+            cur.execute("SELECT o.id, o.slot_id, o.order_no, o.payment_channel_id, o.deposit_amount FROM orders o WHERE o.status IN (0,1) AND o.store_time < NOW() - INTERVAL '3 minutes'")
             expired = cur.fetchall()
             released = 0
+            cleaned = 0
+            kept_paid = 0
             for order in expired:
+                oid = order['id']
+                # 修复1：清理前先查微信支付状态，已付款的订单绝不能取消（防止"付了钱被超时清理+晚到回调自动退款"白嫖）
+                paid = False
+                query_failed = False
+                if order.get('payment_channel_id'):
+                    try:
+                        from helpers import get_channel_wxpay as _gchw
+                        conn2 = get_db()
+                        cur2 = conn2.cursor()
+                        cur2.execute('SELECT * FROM payment_channels WHERE id = %s', (order['payment_channel_id'],))
+                        ch_row = cur2.fetchone()
+                        conn2.close()
+                        if ch_row:
+                            wxpay_inst, ch_type = _gchw(dict(ch_row))
+                            if wxpay_inst and ch_type == 'wechat':
+                                qr = wxpay_inst.order_query(out_trade_no=order['order_no'])
+                                if qr and qr.get('trade_state') == 'SUCCESS':
+                                    paid = True
+                                    txn_id = qr.get('transaction_id', '') or ''
+                                    # 已支付：更新订单为使用中，补记支付流水，不清理
+                                    cur.execute("UPDATE orders SET status = 2, transaction_id = COALESCE(NULLIF(%s, ''), transaction_id), pay_time = NOW() WHERE id = %s AND status IN (0,1)",
+                                                (txn_id, oid))
+                                    if cur.rowcount > 0:
+                                        cur.execute("SELECT 1 FROM payments WHERE order_id = %s AND type = 1 AND transaction_id = %s LIMIT 1", (oid, txn_id))
+                                        if not cur.fetchone():
+                                            cur.execute("INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)",
+                                                         (oid, order.get('deposit_amount') or 0, txn_id))
+                    except Exception as _e:
+                        query_failed = True
+                        logger.error(f'[超时清理] 查支付状态异常 order={oid}: {_e}')
+                if paid:
+                    kept_paid += 1
+                    continue
+                if query_failed:
+                    # 查询失败无法确认：保守保留，下轮再查，避免误杀已付款订单
+                    logger.warning(f'[超时清理] 查支付状态失败，暂不清理 order={oid}')
+                    continue
+                # 明确未支付（或无渠道）:按原逻辑清理
                 if order['slot_id']:
                     cur.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s AND status = 2', (order['slot_id'],))
                     if cur.rowcount > 0:
                         released += 1
-                cur.execute('UPDATE orders SET status = 5 WHERE id = %s', (order['id'],))
+                cur.execute('UPDATE orders SET status = 5 WHERE id = %s', (oid,))
+                cleaned += 1
             if expired:
                 db.commit()
-                logger.info(f'[超时清理] 清理{len(expired)}笔未付款订单,释放{released}个柜格')
+                logger.info(f'[超时清理] 清理{cleaned}笔未付款订单,释放{released}个柜格, 已付款保留{kept_paid}笔')
         except Exception as e:
             logger.error(f'[超时清理] 异常: {e}')
         finally:
@@ -213,6 +254,44 @@ import threading
 t = threading.Thread(target=_cleanup_expired_orders, daemon=True)
 t.start()
 logger.info('[启动] 超时订单清理任务已启动(每60秒,threading)')
+
+# ============================================
+# 自动巡逻：修复"幽灵占用"柜门（每10分钟）
+# 柜门 status=2(使用中) 但没有 status=2 的活跃订单 => 退款/异常路径漏释放，自动释放
+# ============================================
+def _patrol_ghost_slots():
+    import threading as _th
+    from database import get_db
+    while True:
+        _th.Event().wait(600)
+        db = None
+        try:
+            db = get_db()
+            cur = db.cursor()
+            cur.execute("""
+                UPDATE cabinet_slots cs SET status=1
+                WHERE cs.status = 2
+                  AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.slot_id = cs.id AND o.status = 2)
+                RETURNING cs.id, cs.cabinet_id, cs.slot_number
+            """)
+            fixed = cur.fetchall()
+            if fixed:
+                db.commit()
+                logger.info(f'[幽灵柜门巡逻] 自动释放 {len(fixed)} 个幽灵占用柜门: {[f["id"] for f in fixed]}')
+            else:
+                db.commit()
+        except Exception as e:
+            logger.error(f'[幽灵柜门巡逻] 异常: {e}')
+        finally:
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+
+t_patrol = threading.Thread(target=_patrol_ghost_slots, daemon=True)
+t_patrol.start()
+logger.info('[启动] 幽灵柜门巡逻任务已启动(每600秒,threading)')
 
 # ============================================
 # 全局异常处理

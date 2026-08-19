@@ -1565,6 +1565,13 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
                     if c_bal.rowcount > 0:
                         logger.info("[do_real_refund] Orders updated: order_id=%s" % order_id)
                     c_bal.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order_id,))
+                    # 退款成功=订单结束，释放柜门，防止"钱退了柜门还占着"的幽灵占用
+                    try:
+                        c_bal.execute("UPDATE cabinet_slots SET status=1 WHERE id=(SELECT slot_id FROM orders WHERE id=%s) AND status=2", (order_id,))
+                        if c_bal.rowcount > 0:
+                            logger.info("[do_real_refund] slot released: order_id=%s" % order_id)
+                    except Exception as _sl_e:
+                        logger.error('[do_real_refund] slot release err: %s' % _sl_e)
                     conn_bal.commit()
                     conn_bal.close()
                 except Exception as be:

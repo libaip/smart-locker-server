@@ -5123,7 +5123,7 @@ def _run_withdrawal_batch_auto():
                         OR w.created_at::date <= CURRENT_DATE - l.auto_approve_day::integer)
                        AND (l.auto_approve_time IS NULL OR l.auto_approve_time = ''
                             OR CURRENT_TIME >= l.auto_approve_time::time)))
-            LIMIT 200
+            LIMIT 1000
         """).fetchall()
         conn.commit()
         conn.close()

@@ -4802,7 +4802,25 @@ def _process_auto_withdrawal_record(wid):
             c2.execute("SELECT retry_count FROM withdrawal_records WHERE id=%s", (wid,))
             rcnt_row = c2.fetchone()
             rcnt = int(rcnt_row[0]) if rcnt_row else 3
-            if rcnt >= 3:
+            if ('余额不足' in str(first_msg) or 'NOTENOUGH' in str(first_msg).upper()):
+                # 商户号余额不足：直接拒绝不重试，避免队列积压 (2026-08-19)
+                if failed_amount > 0:
+                    c2.execute("UPDATE user_balances SET balance=balance+%s, total_withdrawn=GREATEST(total_withdrawn-%s,0) WHERE phone=%s ", (failed_amount, failed_amount, phone))
+                    if c2.rowcount == 0:
+                        c2.execute("INSERT INTO user_balances (phone, balance, total_withdrawn, first_use_time) VALUES (%s, %s, 0, NOW())", (phone, failed_amount))
+                    for foid in failed:
+                        c2.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (foid,))
+                _reject_msg = '商户号余额不足，已自动拒绝，请稍后重试'
+                c2.execute("UPDATE withdrawal_records SET status=3, error_msg=%s, dedup_key=NULL, next_attempt_at=NULL, approve_time=NOW(), approver='自动' WHERE id=%s", (_reject_msg, wid))
+                try:
+                    c2.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('withdraw_refund_failed', NULL, %s, '0', NOW())", (('余额不足自动拒绝: ' + _reject_msg)[:500],))
+                except Exception as _alarm_e:
+                    logger.error('[auto_withdraw] alarm insert fail: %s', _alarm_e)
+                conn2.commit()
+                _send_withdraw_subscribe(phone, amount, '提现被拒绝', '商户号余额不足，请稍后重试', row.get('w_openid') or '', row.get('w_unionid') or '')
+                logger.warning('[auto_withdraw] 余额不足直接拒绝 id=%s orders=%s msg=%s', wid, order_ids, first_msg)
+                done = True
+            elif rcnt >= 3:
                 if failed_amount > 0:
                     c2.execute("UPDATE user_balances SET balance=balance+%s, total_withdrawn=GREATEST(total_withdrawn-%s,0) WHERE phone=%s ", (failed_amount, failed_amount, phone))
                     if c2.rowcount == 0:

@@ -55,3 +55,15 @@ git commit -m "说明这次改了什么"
 - 服务器分支 peruse-fix，GitHub main = d1dabbe（已同步）。
 - 旧 main 备份标签：old-main-20260811 = cfd477c。
 - 隐藏订单改造方案已确认逻辑但暂缓，等用户明确开工指令。
+
+## 12. 微信投诉回调配置（2026-08-19 全量核配）
+- 每个商户号必须在微信侧配置投诉通知回调地址，否则投诉不会实时推送（只能靠 5 分钟 cron 兜底登记，延迟 0~5 分钟+）。
+- 回调地址统一：`https://locker.cqdyxl.com/api/admin_v2/wechat-complaint/notify`
+- 配置/校验 API（商户证书签名）：
+  - 查：`GET /v3/merchant-service/complaint-notifications`
+  - 配：`POST /v3/merchant-service/complaint-notifications`，body `{"url":"https://locker.cqdyxl.com/api/admin_v2/wechat-complaint/notify"}`
+  - 改：先 `DELETE /v3/merchant-service/complaint-notifications` 再 POST（已存在时直接 POST 会报 PARAM_ERROR 数据已存在）
+- **新增商户号后必须补配**，校验脚本：`python3 /home/ubuntu/smart-locker/scripts/check_complaint_notify_url.py`（69 个商户已全部配置，2026-08-19）
+- 常见坑：地址少写 /admin_v2/ 段（曾发生 1748250234）；商户号含 404 数字（如 1749404244）不是未配置，看返回体 `RESOURCE_NOT_EXISTS` 判断。
+- 实时链路（2026-08-19 三段式）：回调(验签+解密) → complaints 表 status=0 → 秒回首响 status=1 → 满 5 分钟调度器退款 → 到账通知 → 结案 status=3；退款失败重试 3 次转人工 status=2。话术常量在 routes/admin_v2.py 顶部 WECHAT_* 。
+- 验证命令：`sudo journalctl -u smart-locker -f | grep wechat_complaint_notify`；或 `./verify_complaint_flow.sh <订单号>`

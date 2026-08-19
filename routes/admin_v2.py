@@ -6647,7 +6647,9 @@ def _load_platform_cert(serial_no):
 
 
 def _decrypt_complaint_resource(resource):
-    """解密投诉通知 resource：先主商户密钥，失败则遍历各渠道 APIv3 密钥（按 complained_mchid 对应）"""
+    """解密投诉通知 resource：使用主商户 APIv3 密钥（WX_API_V3_KEY）。
+    注：payment_channels 表无 api_v3_key 列，各商户共用同一把 APIv3 密钥；
+    若将来个别商户启用独立密钥，需给表加列后在此按 complained_mchid 取密钥。"""
     import base64 as _b64
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     ciphertext_b64 = resource.get('ciphertext', '')
@@ -6657,26 +6659,12 @@ def _decrypt_complaint_resource(resource):
         return None, '无ciphertext'
     ciphertext = _b64.b64decode(ciphertext_b64)
     keys = [WX_API_V3_KEY]
-    try:
-        _kc = get_db()
-        _kcur = _kc.cursor()
-        _kcur.execute("SELECT mch_id, api_v3_key FROM payment_channels WHERE api_v3_key IS NOT NULL AND api_v3_key != ''")
-        rows = _kcur.fetchall()
-        _kc.close()
-        for r in rows:
-            if r[1] and r[1] not in keys:
-                keys.append(r[1])
-    except:
-        pass
     last_err = '未知错误'
     for key in keys:
         try:
             aesgcm = AESGCM(key.encode('utf-8'))
             plaintext = aesgcm.decrypt(nonce.encode('utf-8'), ciphertext, associated_data.encode('utf-8'))
             data = json.loads(plaintext.decode('utf-8'))
-            mch = data.get('complainted_mchid', '')
-            if mch:
-                _wx_dec_key_cache[mch] = key
             return data, ''
         except Exception as e:
             last_err = str(e)

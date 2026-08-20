@@ -81,8 +81,11 @@ def _format_datetimes(obj):
         return {k: _format_datetimes(v) for k, v in obj.items()}
     elif isinstance(obj, list):
         return [_format_datetimes(item) for item in obj]
-    elif hasattr(obj, 'strftime') and hasattr(obj, 'hour'):
-        return obj.strftime('%Y-%m-%d %H:%M:%S')
+    elif hasattr(obj, 'strftime'):
+        # datetime -> 'YYYY-MM-DD HH:MM:SS'; date(无hour) -> 'YYYY-MM-DD'，避免Flask序列化成HTTP日期
+        if hasattr(obj, 'hour'):
+            return obj.strftime('%Y-%m-%d %H:%M:%S')
+        return obj.strftime('%Y-%m-%d')
     return obj
 
 

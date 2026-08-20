@@ -69,3 +69,14 @@ git commit -m "说明这次改了什么"
   - **结案 SIGN_ERROR（401 证书序列号有误）**：调度器查证书时带 `AND is_active=1` 会把 is_active=0 的渠道（如 1749584092）漏掉，退回用 config 主商户序列号签名导致微信验签失败。**查证书一律不要加 is_active 过滤**（2026-08-19 已修）。存量补结案脚本：`/tmp/fix_complete_backlog.py` 思路（从 payment_channels 按 mch_id 取 cert_serial_no + cert_name，POST complete）。
 - 实时链路（2026-08-19 三段式）：回调(验签+解密) → complaints 表 status=0 → 秒回首响 status=1 → 满 5 分钟调度器退款 → 到账通知 → 结案 status=3；退款失败重试 3 次转人工 status=2。话术常量在 routes/admin_v2.py 顶部 WECHAT_* 。
 - 验证命令：`sudo journalctl -u smart-locker -f | grep wechat_complaint_notify`；或 `./verify_complaint_flow.sh <订单号>`
+
+## 13. 工作台协作协议（2026-08-20 起强制）
+
+多会话同时改代码会互相覆盖，**所有会话必须遵守**：
+
+1. **改任何文件前，先看 `.workbench/TASKS.md`**：目标文件被登记为「进行中」则不许碰，先协调。
+2. **开工必登记**：`bash .workbench/claim.sh "说明" "文件1,文件2"`（自动分配会话编号 S1/S2…并记录文件 md5 基线）。
+3. **部署前必校验**：`bash .workbench/deploy_check.sh <文件1> <文件2>`——文件开工后被别人动过会**拦截**；确认无冲突后加 `--force` 放行。**禁止跳过校验直接部署**。
+4. **提交带会话编号**：commit message 末尾加 `by S<n>`，可追溯。
+5. **收工必登记**：`bash .workbench/release.sh <任务ID>` 标记完成。
+6. 完整流程见 `.workbench/WORKFLOW.md`（开工→调研→备份→改→校验→部署→提交→收工）。

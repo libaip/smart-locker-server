@@ -964,32 +964,24 @@ def retrieve_confirm():
         _mp_openid = order.get('mp_openid', '') or _openid
         if order.get('user_phone'):
             _openid, _unionid, _mp_openid = _resolve_order_identity(cursor, order['user_phone'], _openid, _unionid, _mp_openid)
-        # 当天投诉白名单：取包结束直接原路退款，避免用户再次投诉
+        # 当天投诉白名单：结束订单后台原路退款（异步，避免微信退款阻塞锁柜格导致全站锁死）
         _direct_refund = False
         _direct_refund_id = ''
         try:
-            from helpers import check_whitelist_today, do_real_refund, get_setting_int, count_today_whitelist_uses
+            from helpers import check_whitelist_today, get_setting_int, count_today_whitelist_uses
             _wl_today = check_whitelist_today(_openid, _unionid) if (_openid or _unionid) else None
             if _wl_today:
                 _daily = get_setting_int('whitelist_daily_use_limit', 3)
                 if _daily > 0 and count_today_whitelist_uses(order['user_phone'], _openid) >= _daily:
                     _wl_today = None
             if _wl_today:
-                _r_ok, _r_id, _r_msg = do_real_refund(order_id=order_id, order_no=order['order_no'], amount=deposit_amount, payment_channel_id=order.get('payment_channel_id'))
-                if _r_ok:
-                    _direct_refund = True
-                    _direct_refund_id = _r_id or ''
-                    cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_mark=1, refund_amount=%s, logical_mark=%s WHERE id=%s', (_direct_refund_id, deposit_amount, 'end', order_id))
-                    cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, approver, auto_approve_time, dedup_key) VALUES (%s, %s, %s, 2, 1, %s, 'whitelist_auto', NOW(), %s) ON CONFLICT DO NOTHING",
-                                   (order_id, order['user_phone'], deposit_amount, _openid or order.get('openid') or '', 'E:%s:%s' % (order['user_phone'], order_id)))
-                    cursor.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s, %s, %s, 'withdrawn') ON CONFLICT (order_id) DO NOTHING",
-                                   (order['user_phone'], order_id, deposit_amount))
-                else:
-                    logger.error(f'[retrieve_confirm] 当天投诉白名单直接退款失败 order={order_id}: {_r_msg}')
-                    try:
-                        cursor.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('end_refund_failed', NULL, %s, '0', NOW())", (('取包直接退款失败: ' + str(_r_msg))[:500],))
-                    except Exception:
-                        pass
+                # 不再同步调微信退款(do_real_refund)——改为写后台队列，由 run_withdrawal_batch.py 异步处理
+                # 避免微信退款响应慢时事务挂起锁住 cabinet_slots，导致其他结束订单请求等锁连环锁死
+                _direct_refund = True
+                cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, approver, auto_approve_time, dedup_key, order_ids) VALUES (%s, %s, %s, 0, 1, %s, 'whitelist_auto', NOW(), %s, %s) ON CONFLICT DO NOTHING",
+                               (order_id, order['user_phone'], deposit_amount, _openid or order.get('openid') or '', 'W:%s:%s' % (order['user_phone'], order_id), '["%s"]' % order_id))
+                cursor.execute("UPDATE orders SET logical_mark='end' WHERE id=%s", (order_id,))
+                logger.info(f'[retrieve_confirm] 白名单退款入队(后台处理): order={order_id}, amount={deposit_amount}')
         except Exception as e:
             logger.error(f'[retrieve_confirm] 白名单直接退款异常 order={order_id}: {e}')
         # 结束订单，预付款退到用户余额（不直接退微信）
@@ -1715,38 +1707,24 @@ def deposit_end_storage():
                 cursor.execute("""
                     UPDATE orders SET openid=%s, unionid=%s, mp_openid=%s, user_id=%s WHERE id=%s
                 """, (_openid, _unionid, _mp_openid, _end_uid, order_id))
-        # 当天投诉白名单：结束订单直接原路退款，避免用户再次投诉
+        # 当天投诉白名单：结束订单后台原路退款（异步，避免微信退款阻塞锁柜格导致全站锁死）
         _direct_refund = False
         _direct_refund_id = ''
         try:
-            from helpers import check_whitelist_today, do_real_refund, get_setting_int, count_today_whitelist_uses
+            from helpers import check_whitelist_today, get_setting_int, count_today_whitelist_uses
             _wl_today = check_whitelist_today(_openid, _unionid) if (_openid or _unionid) else None
             if _wl_today:
                 _daily = get_setting_int('whitelist_daily_use_limit', 3)
                 if _daily > 0 and count_today_whitelist_uses(order['user_phone'], _openid) >= _daily:
                     _wl_today = None
             if _wl_today:
-                _r_ok, _r_id, _r_msg = do_real_refund(order_id=order_id, order_no=order['order_no'], amount=refund_amount, payment_channel_id=order.get('payment_channel_id'))
-                if _r_ok:
-                    _direct_refund = True
-                    _direct_refund_id = _r_id or ''
-                    new_status = 4
-                    cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW(), refund_mark=1, refund_amount=%s, logical_mark=%s WHERE id=%s', (_direct_refund_id, refund_amount, 'end', order_id))
-                    # 双保险：白名单直接退款成功也显式释放柜门（do_real_refund 内已释放，这里兜底）
-                    try:
-                        cursor.execute('UPDATE cabinet_slots SET status=1 WHERE id=%s AND status=2', (order['slot_id'],))
-                    except Exception as _sl2:
-                        logger.error(f'[end_storage] 白名单退款释放柜门失败 order={order_id}: {_sl2}')
-                    cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, approver, auto_approve_time, dedup_key) VALUES (%s, %s, %s, 2, 1, %s, 'whitelist_auto', NOW(), %s) ON CONFLICT DO NOTHING",
-                                   (order_id, order['user_phone'], refund_amount, _openid or order.get('openid') or '', 'E:%s:%s' % (order['user_phone'], order_id)))
-                    cursor.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s, %s, %s, 'withdrawn') ON CONFLICT (order_id) DO NOTHING",
-                                   (order['user_phone'], order_id, refund_amount))
-                else:
-                    logger.error(f'[end_storage] 当天投诉白名单直接退款失败 order={order_id}: {_r_msg}')
-                    try:
-                        cursor.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('end_refund_failed', NULL, %s, '0', NOW())", (('结束订单直接退款失败: ' + str(_r_msg))[:500],))
-                    except Exception as _ae:
-                        logger.error(f'[end_storage] 告警写入失败: {_ae}')
+                # 不再同步调微信退款(do_real_refund)——改为写后台队列，由 run_withdrawal_batch.py 异步处理
+                # 避免微信退款响应慢时事务挂起锁住 cabinet_slots，导致其他结束订单请求等锁连环锁死
+                _direct_refund = True
+                cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, approver, auto_approve_time, dedup_key, order_ids) VALUES (%s, %s, %s, 0, 1, %s, 'whitelist_auto', NOW(), %s, %s) ON CONFLICT DO NOTHING",
+                               (order_id, order['user_phone'], refund_amount, _openid or order.get('openid') or '', 'W:%s:%s' % (order['user_phone'], order_id), '["%s"]' % order_id))
+                cursor.execute("UPDATE orders SET logical_mark='end' WHERE id=%s", (order_id,))
+                logger.info(f'[end_storage] 白名单退款入队(后台处理): order={order_id}, amount={refund_amount}')
         except Exception as e:
             logger.error(f'[end_storage] 白名单直接退款异常 order={order_id}: {e}')
         if not _direct_refund:

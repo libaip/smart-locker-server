@@ -5020,6 +5020,75 @@ def _run_withdrawal_batch_auto():
         approved = 0
         rejected = 0
 
+        # 0. 白名单必退：当天投诉白名单用户结束订单时入队(approver='whitelist_auto', status=0)
+        #    必定原路退款，不走通过率/网点模式判断（避免微信退款阻塞结束订单事务锁柜格）
+        rows_wl = c.execute("""
+            SELECT w.id, w.user_phone, w.amount, w.order_id, w.order_ids
+            FROM withdrawal_records w
+            WHERE w.status = 0 AND w.approver = 'whitelist_auto'
+              AND (w.error_msg IS NULL OR w.error_msg <> 'PROCESSING')
+            LIMIT 200
+        """).fetchall()
+        for rw in rows_wl:
+            _wid = rw['id']
+            _w_phone = rw['user_phone'] or ''
+            _w_oids = []
+            import json as _json_wl
+            try:
+                _w_oids = [int(x) for x in _json_wl.loads(rw.get('order_ids') or '[]')]
+            except Exception:
+                _w_oids = []
+            if not _w_oids and rw.get('order_id'):
+                _w_oids = [int(rw['order_id'])]
+            if not _w_oids:
+                c.execute("UPDATE withdrawal_records SET status=4, error_msg='订单不存在', approve_time=NOW(), approver='白名单' WHERE id=%s", (_wid,))
+                rejected += 1
+                continue
+            _all_ok = True
+            _failed_oids = []
+            _failed_amt = 0.0
+            _first_msg = ''
+            for _oid in _w_oids:
+                c.execute("SELECT order_no, payment_channel_id, deposit_amount, COALESCE(refund_amount,0) AS refund_amount, refund_status FROM orders WHERE id=%s", (_oid,))
+                _ord = c.fetchone()
+                if not _ord:
+                    _all_ok = False
+                    _failed_oids.append(_oid)
+                    continue
+                if _ord.get('refund_status') == 'refunded':
+                    continue
+                _rthis = float(_ord.get('deposit_amount') or 0) - float(_ord.get('refund_amount') or 0)
+                if _rthis <= 0:
+                    continue
+                from helpers import do_real_refund
+                _suc, _rid, _msg = do_real_refund(order_id=_oid, order_no=_ord['order_no'], amount=_rthis, payment_channel_id=_ord['payment_channel_id'])
+                if _suc:
+                    c.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=COALESCE(%s, refund_id), refund_amount=GREATEST(COALESCE(refund_amount,0), %s), refund_time=NOW(), refund_mark=1 WHERE id=%s", (_rid, _rthis, _oid))
+                    c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (_oid,))
+                else:
+                    _all_ok = False
+                    _failed_oids.append(_oid)
+                    _failed_amt += _rthis
+                    if not _first_msg:
+                        _first_msg = str(_msg)
+            if _all_ok:
+                c.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), approver='白名单' WHERE id=%s", (_wid,))
+                approved += 1
+            else:
+                # 退款失败：退余额（用户可再提现），记录错误，后台下轮可重试
+                if _failed_amt > 0 and _w_phone:
+                    c.execute("UPDATE user_balances SET balance=balance+%s, total_withdrawn=GREATEST(COALESCE(total_withdrawn,0)-%s,0) WHERE phone=%s", (_failed_amt, _failed_amt, _w_phone))
+                    if c.rowcount == 0:
+                        c.execute("INSERT INTO user_balances (phone, balance, total_withdrawn, first_use_time) VALUES (%s, %s, 0, NOW())", (_w_phone, _failed_amt))
+                    for _foid in _failed_oids:
+                        c.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (_foid,))
+                c.execute("UPDATE withdrawal_records SET status=0, error_msg=%s, approve_time=NOW(), approver='白名单' WHERE id=%s", ((_first_msg or '退款失败')[:500], _wid))
+                try:
+                    c.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('whitelist_refund_failed', NULL, %s, '0', NOW())", (('白名单退款失败: ' + (_first_msg or '退款失败'))[:500],))
+                except Exception:
+                    pass
+        conn.commit()
+
         # 1. 队列审批：到 auto_approve_time 的按通过率退款
         rows = c.execute("""
             SELECT w.id, w.user_phone, w.amount, w.order_id, w.order_ids, w.auto_approve_time,

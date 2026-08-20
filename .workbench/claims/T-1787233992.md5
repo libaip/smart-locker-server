@@ -1,0 +1,5 @@
+TASK=T-1787233992
+SID=S2
+DESC=工作台自测
+FILES=routes/user.py
+MD5|routes/user.py|7e2b3232b8ef733e00f9f3e200ef22af

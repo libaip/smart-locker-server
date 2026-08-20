@@ -18,3 +18,4 @@ test
 test ok
 test ok
 test
+| T-1787234566 | S3 | routes/admin_v2.py,static/admin-v2.html | 进行中 | 08-20 22:02 | | 提现列表显示退款单号(refund_id): /admin/withdrawals接口带出o.refund_id + 前端两处提现表格加列 |

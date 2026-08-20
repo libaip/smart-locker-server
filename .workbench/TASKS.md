@@ -23,4 +23,4 @@ test
 | T-1787235322 | S5 | .workbench/deploy_check.sh | 进行中 | 08-20 22:15 | | 存量refund_id回填脚本(orders从payments补单号)+修复deploy_check.sh多文件md5比对bug |
 | T-1787236458 | S6 | routes/admin_v2.py | 已完成 | 08-20 22:34 | 08-20 22:35 | 支付渠道统计: 对账单无交易数据时回退订单表口径(修复8-16改对账单统计后数字变0) |
 | T-1787236891 | S7 | routes/admin_v2.py | 已完成 | 08-20 22:41 | 08-20 22:41 | 支付渠道统计回退条件补强: 对账单金额<订单金额90%也回退订单口径(修复1749620516等对账单仅2笔仍用对账单) |
-| T-1787237745 | S8 | /etc/nginx/sites-enabled/locker-cqdyxl,/etc/systemd/system/smart-locker-admin.service | 进行中 | 08-20 22:55 | | 后台管理独立通道: 新增5002 gunicorn(2worker)+nginx分流/api/admin*到5002 |
+| T-1787237745 | S8 | /etc/nginx/sites-enabled/locker-cqdyxl,/etc/systemd/system/smart-locker-admin.service | 已完成 | 08-20 22:55 | 08-20 22:59 | 后台管理独立通道: 新增5002 gunicorn(2worker)+nginx分流/api/admin*到5002 |

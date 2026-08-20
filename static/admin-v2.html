@@ -1018,7 +1018,7 @@ Vue.component('page-location-list',{template:'\
 <button class="btn-text blue" @click="$parent.showLocationModal(l)">编辑</button>\
 <button class="btn-text red" @click="$parent.deleteLocation(l)">删除</button>\
 </td></tr>\
-<tr v-if="!$parent.locations.length"><td colspan="10" class="empty-row">暂无数据</td></tr>\
+<tr v-if="!$parent.locations.length"><td colspan="11" class="empty-row">暂无数据</td></tr>\
 </table>\
 <div class="pagination"><span>共 {{$parent.locationTotal}} 条</span><div><button :disabled="$parent.locationPage<=1" @click="$parent.loadLocations($parent.locationPage-1)">上一页</button><span style="margin:0 8px">{{$parent.locationPage}} / {{$parent.pageCount($parent.locationTotal,10)||1}}</span><button :disabled="$parent.locationPage>=$parent.pageCount($parent.locationTotal,10)" @click="$parent.loadLocations($parent.locationPage+1)">下一页</button></div></div>\
 </div>\
@@ -1030,7 +1030,7 @@ Vue.component('page-offline-orders',{template:`<div>
 <div class="box-header"><h3>离线订单</h3></div>
 <table><tr><th>ID</th><th>订单号</th><th>设备</th><th>柜格</th><th>手机</th><th>金额</th><th>状态</th><th>创建时间</th></tr>
 <tr v-for="o in $parent.offlineOrders"><td>{{o.id}}</td><td>{{o.order_no||'-'}}</td><td>{{o.cabinet_code||'-'}}</td><td>{{o.compartment_number||o.slot_number||'-'}}</td><td>{{o.user_phone||'-'}}</td><td>¥{{Number(o.deposit_amount||0).toFixed(2)}}</td><td><span class="status-tag orange">{{o.status===6?'离线':'未知'}}</span></td><td>{{o.created_at||'-'}}</td></tr>
-<tr v-if="!$parent.offlineOrders.length"><td colspan="10" class="empty-row">暂无数据</td></tr>
+<tr v-if="!$parent.offlineOrders.length"><td colspan="11" class="empty-row">暂无数据</td></tr>
 </table>
 <div class="pagination"><span>共 {{$parent.offlineOrdersTotal}} 条</span><div><button :disabled="$parent.offlineOrdersPage<=1" @click="$parent.loadOfflineOrders($parent.offlineOrdersPage-1)">上一页</button><span style="margin:0 8px">{{$parent.offlineOrdersPage}}</span><button :disabled="$parent.offlineOrdersPage>=Math.ceil($parent.offlineOrdersTotal/10)" @click="$parent.loadOfflineOrders($parent.offlineOrdersPage+1)">下一页</button></div></div>
 </div>
@@ -1049,7 +1049,7 @@ Vue.component('page-remote-open-logs',{template:`
 </div>
 <table><tr><th>网点</th><th>柜门</th><th>柜格</th><th>规格</th><th>操作类型</th><th>操作人</th><th>结果</th><th>时间</th></tr>
 <tr v-for="l in $parent.remoteOpenLogs"><td>{{l.location_name||'-'}}</td><td>{{l.cabinet_name||l.device_id||'-'}}</td><td>{{l.slot_number||l.slot_id||'-'}}</td><td>{{({S:'小',M:'中',L:'大',medium:'中',small:'小',large:'大'})[l.slot_size]||l.slot_size||'-'}}</td><td>{{l.action_type||'-'}}</td><td>{{l.operator||'-'}}</td><td><span :class="'status-tag '+(l.success?'green':'red')">{{l.success?'成功':'失败'}}</span></td><td>{{l.created_at||'-'}}</td></tr>
-<tr v-if="!$parent.remoteOpenLogs.length"><td colspan="10" class="empty-row">暂无数据</td></tr>
+<tr v-if="!$parent.remoteOpenLogs.length"><td colspan="11" class="empty-row">暂无数据</td></tr>
 </table>
 <div class="pagination"><span>共 {{$parent.remoteOpenLogsTotal}} 条</span><div><button :disabled="$parent.remoteOpenLogsPage<=1" @click="$parent.loadRemoteOpenLogs($parent.remoteOpenLogsPage-1)">上一页</button><span style="margin:0 8px">{{$parent.remoteOpenLogsPage}} / {{$parent.pageCount($parent.remoteOpenLogsTotal,10)||1}}</span><button :disabled="$parent.remoteOpenLogsPage>=$parent.pageCount($parent.remoteOpenLogsTotal,10)" @click="$parent.loadRemoteOpenLogs($parent.remoteOpenLogsPage+1)">下一页</button></div></div>
 </div>
@@ -1119,9 +1119,9 @@ Vue.component('page-member-withdraw',{template:'\
 <div class="search-item"><label>结束日期</label><input type="date" v-model="$parent.withdrawalDateEnd" @change="$parent.loadWithdrawals(1)" style="width:140px"></div>\
 <div class="search-item"><label>&nbsp;</label><button class="btn btn-sm btn-blue" @click="$parent.loadWithdrawals(1)">搜索</button></div>\
 </div>\
-<table><tr><th>申请时间</th><th>用户手机</th><th>订单号</th><th>微信名</th><th>提现金额</th><th>状态</th><th>退款时间</th><th>审批人</th><th>操作</th></tr>\
-<tr v-for="w in $parent.withdrawals"><td>{{w.created_at}}</td><td>{{w.user_phone}}</td><td>{{w.order_no||\'-\'}}</td><td>{{w.wechat_name||\'-\'}}</td><td>¥{{Number(w.amount||0).toFixed(2)}}</td><td><span v-if="w.status===0" class="status-tag orange">待审核</span><span v-else-if="w.status===1" class="status-tag blue">退款中</span><span v-else-if="w.status===2" class="status-tag green">已退款</span><span v-else-if="w.status===3" class="status-tag red">已拒绝</span><span v-else-if="w.status===4" class="status-tag orange">已退回余额</span><span v-else-if="w.status===5" class="status-tag gray">已取消</span></td><td>{{w.approve_time||\'-\'}}</td><td>{{w.approver===\'system\'||w.approver===\'自动\'?\'自动\':w.approver===\'队列\'?\'队列\':w.approver===\'人工\'?\'人工\':w.approver===\'管理员\'||w.approver===\'admin\'?\'管理员\':(w.approver?\'管理员\':\'-\')}}</td><td><template v-if="w.status===0"><button class="btn-text green" @click="$parent.approveWithdrawal(w)">通过</button><button class="btn-text red" @click="$parent.showRejectModal(w)">拒绝</button></template><template v-else-if="w.status===1"><button class="btn-text green" @click="$parent.confirmRefund(w)">确认已退款</button></template><span v-else style="color:#999">-</span></td></tr>\
-<tr v-if="!$parent.withdrawals.length"><td colspan="10" class="empty-row">暂无数据</td></tr>\
+<table><tr><th>申请时间</th><th>用户手机</th><th>订单号</th><th>退款单号</th><th>微信名</th><th>提现金额</th><th>状态</th><th>退款时间</th><th>审批人</th><th>操作</th></tr>\
+<tr v-for="w in $parent.withdrawals"><td>{{w.created_at}}</td><td>{{w.user_phone}}</td><td>{{w.order_no||\'-\'}}</td><td>{{w.refund_id||\'-\'}}</td><td>{{w.wechat_name||\'-\'}}</td><td>¥{{Number(w.amount||0).toFixed(2)}}</td><td><span v-if="w.status===0" class="status-tag orange">待审核</span><span v-else-if="w.status===1" class="status-tag blue">退款中</span><span v-else-if="w.status===2" class="status-tag green">已退款</span><span v-else-if="w.status===3" class="status-tag red">已拒绝</span><span v-else-if="w.status===4" class="status-tag orange">已退回余额</span><span v-else-if="w.status===5" class="status-tag gray">已取消</span></td><td>{{w.approve_time||\'-\'}}</td><td>{{w.approver===\'system\'||w.approver===\'自动\'?\'自动\':w.approver===\'队列\'?\'队列\':w.approver===\'人工\'?\'人工\':w.approver===\'管理员\'||w.approver===\'admin\'?\'管理员\':(w.approver?\'管理员\':\'-\')}}</td><td><template v-if="w.status===0"><button class="btn-text green" @click="$parent.approveWithdrawal(w)">通过</button><button class="btn-text red" @click="$parent.showRejectModal(w)">拒绝</button></template><template v-else-if="w.status===1"><button class="btn-text green" @click="$parent.confirmRefund(w)">确认已退款</button></template><span v-else style="color:#999">-</span></td></tr>\
+<tr v-if="!$parent.withdrawals.length"><td colspan="11" class="empty-row">暂无数据</td></tr>\
 </table>\
 <div class="pagination"><span>共 {{$parent.withdrawalTotal}} 条</span><div><button :disabled="$parent.withdrawalPage<=1" @click="$parent.loadWithdrawals($parent.withdrawalPage-1)">上一页</button><span style="margin:0 8px">{{$parent.withdrawalPage}} / {{$parent.pageCount($parent.withdrawalTotal,10)||1}}</span><button :disabled="$parent.withdrawalPage>=$parent.pageCount($parent.withdrawalTotal,10)" @click="$parent.loadWithdrawals($parent.withdrawalPage+1)">下一页</button></div></div>\
 </div>\
@@ -1140,7 +1140,7 @@ Vue.component('page-complaint-self',{template:'\
 </div>\
 <table><tr><th>反馈时间</th><th>用户手机</th><th>微信昵称</th><th>来源</th><th>商户号</th><th>商户单号</th><th>微信交易号</th><th>状态</th><th>回复内容</th><th>回复时间</th><th>操作</th></tr>\
 <tr v-for="c in $parent.complaints"><td>{{$parent.formatTime(c.created_at)}}</td><td>{{c.user_phone}}</td><td>{{c.nickname||\"-\"}}</td><td>{{c.source||\'-\'}}</td><td>{{c.mch_id||\"-\"}}</td><td>{{c.order_no||\'-\'}}</td><td><span v-if="c.status===0" class="status-tag orange">待处理</span><span v-else-if="c.status===1" class="status-tag green">已处理</span><span v-else-if="c.status===2 && c.reply && c.reply.indexOf(\'自动退款失败\')>=0" class="status-tag red">退款失败</span><span v-else-if="c.status===2" class="status-tag green">已完成</span><span v-else class="status-tag blue">处理中</span></td><td>{{c.reply||\'-\'}}</td><td><button class="btn-text blue" @click="$parent.showComplaintDetail(c)">详情</button><button class="btn-text orange" @click="$parent.showComplaintReply(c)">回复</button><button class="btn-text green" @click="$parent.showWithdrawOrders(c)">提现</button></td></tr>\
-<tr v-if="!$parent.complaints.length"><td colspan="10" class="empty-row">暂无数据</td></tr>\
+<tr v-if="!$parent.complaints.length"><td colspan="11" class="empty-row">暂无数据</td></tr>\
 </table>\
 <div class="pagination"><span>共 {{$parent.complaintTotal}} 条</span><div><button :disabled="$parent.complaintPage<=1" @click="$parent.loadComplaints($parent.complaintPage-1)">上一页</button><span style="margin:0 8px">{{$parent.complaintPage}} / {{$parent.pageCount($parent.complaintTotal,10)||1}}</span><button :disabled="$parent.complaintPage>=$parent.pageCount($parent.complaintTotal,10)" @click="$parent.loadComplaints($parent.complaintPage+1)">下一页</button></div></div>\
 </div>\
@@ -1156,7 +1156,7 @@ Vue.component('page-complaint-wx',{template:'\
 </div>\
 <table><tr><th>反馈时间</th><th>用户手机</th><th>微信昵称</th><th>来源</th><th>商户号</th><th>商户单号</th><th>微信交易号</th><th>状态</th><th>回复内容</th><th>回复时间</th><th>操作</th></tr>\
 <tr v-for="c in $parent.complaints"><td>{{$parent.formatTime(c.created_at)}}</td><td>{{c.user_phone}}</td><td>{{c.nickname||\"-\"}}</td><td>{{c.source||\'-\'}}</td><td>{{c.mch_id||\"-\"}}</td><td>{{c.order_no||\'-\'}}</td><td>{{c.transaction_id||\'-\'}}</td><td><span v-if="c.status===0" class="status-tag orange">待回复</span><span v-else class="status-tag green">已回复</span></td><td>{{c.reply||\'-\'}}</td><td>{{$parent.formatTime(c.reply_time)||\'-\'}}</td><td><button class="btn-text blue" @click="$parent.showComplaintDetail(c)">详情</button><button class="btn-text orange" @click="$parent.showComplaintReply(c)">回复</button></td></tr>\
-<tr v-if="!$parent.complaints.length"><td colspan="10" class="empty-row">暂无数据</td></tr>\
+<tr v-if="!$parent.complaints.length"><td colspan="11" class="empty-row">暂无数据</td></tr>\
 </table>\
 <div class="pagination"><span>共 {{$parent.complaintTotal}} 条</span><div><button :disabled="$parent.complaintPage<=1" @click="$parent.loadComplaints($parent.complaintPage-1)">上一页</button><span style="margin:0 8px">{{$parent.complaintPage}} / {{$parent.pageCount($parent.complaintTotal,10)||1}}</span><button :disabled="$parent.complaintPage>=$parent.pageCount($parent.complaintTotal,10)" @click="$parent.loadComplaints($parent.complaintPage+1)">下一页</button></div></div>\
 </div>\
@@ -1471,9 +1471,9 @@ Vue.component('page-withdraw-manage',{template:`
 <div class="search-bar">
 <div class="search-item"><label>状态</label><select v-model="$parent.withdrawalStatusFilter" @change="$parent.loadWithdrawals(1)"><option value="">全部</option><option value="0">待审核</option><option value="1">退款中</option><option value="2">已退款</option><option value="3">已拒绝</option><option value="4">已退回余额</option><option value="5">已取消</option></select></div>
 </div>
-<table><tr><th>申请时间</th><th>用户手机</th><th>订单号</th><th>微信名</th><th>提现金额</th><th>状态</th><th>退款时间</th><th>审批人</th><th>操作</th></tr>
-<tr v-for="w in $parent.withdrawals"><td>{{$parent.formatTime(w.created_at)}}</td><td>{{w.user_phone}}</td><td>{{w.order_no||'-'}}</td><td>{{w.wechat_name||'-'}}</td><td>¥{{Number(w.amount||0).toFixed(2)}}</td><td><span v-if="w.status===0" class="status-tag orange">待审核</span><span v-else-if="w.status===1" class="status-tag blue">退款中</span><span v-else-if="w.status===2" class="status-tag green">已退款</span><span v-else-if="w.status===3" class="status-tag red">已拒绝</span><span v-else-if="w.status===4" class="status-tag orange">已退回余额</span><span v-else-if="w.status===5" class="status-tag gray">已取消</span></td><td>{{$parent.formatTime(w.approve_time)||'-'}}</td><td>{{w.approver==='system'||w.approver==='自动'?'自动':w.approver==='队列'?'队列':w.approver==='人工'?'人工':w.approver==='管理员'||w.approver==='admin'?'管理员':(w.approver?'管理员':'-')}}</td><td><template v-if="w.status===0"><button class="btn-text green" @click="$parent.approveWithdrawal(w)">通过</button><button class="btn-text red" @click="$parent.showRejectModal(w)">拒绝</button></template><template v-else-if="w.status===1"><button class="btn-text green" @click="$parent.confirmRefund(w)">确认已退款</button></template><span v-else style="color:#999">-</span></td></tr>
-<tr v-if="!$parent.withdrawals.length"><td colspan="10" class="empty-row">暂无数据</td></tr>
+<table><tr><th>申请时间</th><th>用户手机</th><th>订单号</th><th>退款单号</th><th>微信名</th><th>提现金额</th><th>状态</th><th>退款时间</th><th>审批人</th><th>操作</th></tr>
+<tr v-for="w in $parent.withdrawals"><td>{{$parent.formatTime(w.created_at)}}</td><td>{{w.user_phone}}</td><td>{{w.order_no||'-'}}</td><td>{{w.refund_id||'-'}}</td><td>{{w.wechat_name||'-'}}</td><td>¥{{Number(w.amount||0).toFixed(2)}}</td><td><span v-if="w.status===0" class="status-tag orange">待审核</span><span v-else-if="w.status===1" class="status-tag blue">退款中</span><span v-else-if="w.status===2" class="status-tag green">已退款</span><span v-else-if="w.status===3" class="status-tag red">已拒绝</span><span v-else-if="w.status===4" class="status-tag orange">已退回余额</span><span v-else-if="w.status===5" class="status-tag gray">已取消</span></td><td>{{$parent.formatTime(w.approve_time)||'-'}}</td><td>{{w.approver==='system'||w.approver==='自动'?'自动':w.approver==='队列'?'队列':w.approver==='人工'?'人工':w.approver==='管理员'||w.approver==='admin'?'管理员':(w.approver?'管理员':'-')}}</td><td><template v-if="w.status===0"><button class="btn-text green" @click="$parent.approveWithdrawal(w)">通过</button><button class="btn-text red" @click="$parent.showRejectModal(w)">拒绝</button></template><template v-else-if="w.status===1"><button class="btn-text green" @click="$parent.confirmRefund(w)">确认已退款</button></template><span v-else style="color:#999">-</span></td></tr>
+<tr v-if="!$parent.withdrawals.length"><td colspan="11" class="empty-row">暂无数据</td></tr>
 </table>
 <div class="pagination"><span>共 {{$parent.withdrawalTotal}} 条</span><div><button :disabled="$parent.withdrawalPage<=1" @click="$parent.loadWithdrawals($parent.withdrawalPage-1)">上一页</button><span style="margin:0 8px">{{$parent.withdrawalPage}} / {{$parent.pageCount($parent.withdrawalTotal,10)||1}}</span><button :disabled="$parent.withdrawalPage>=$parent.pageCount($parent.withdrawalTotal,10)" @click="$parent.loadWithdrawals($parent.withdrawalPage+1)">下一页</button></div></div>
 </div>
@@ -1531,7 +1531,7 @@ Vue.component('page-store-record',{template:'\
 <div class="box-header"><h3>售后工单</h3><div><select v-model="$parent.afterSalesStatusFilter" @change="$parent.loadAfterSales(1)" style="padding:6px;border:1px solid #d9d9d9;border-radius:4px"><option value="">全部</option><option value="pending">待处理</option><option value="processing">处理中</option><option value="resolved">已解决</option></select> <button class="btn btn-sm btn-blue" @click="$parent.showAfterSalesModal()">+ 新建工单</button></div></div>\
 <table><tr><th>工单号</th><th>类型</th><th>设备</th><th>网点</th><th>描述</th><th>状态</th><th>处理人</th><th>创建时间</th><th>操作</th></tr>\
 <tr v-for="a in $parent.afterSales"><td>{{a.ticket_no}}</td><td>{{a.fault_type}}</td><td>{{a.cabinet_code||\'-\'}}</td><td>{{a.location_name||\'-\'}}</td><td>{{a.description}}</td><td><span v-if="a.status===\'pending\'" class="status-tag orange">待处理</span><span v-else-if="a.status===\'processing\'" class="status-tag blue">处理中</span><span v-else class="status-tag green">已解决</span></td><td>{{a.handler||\'-\'}}</td><td>{{a.created_at}}</td><td><button class="btn-text" @click="$parent.handleAfterSales(a)">处理</button></td></tr>\
-<tr v-if="!$parent.afterSales.length"><td colspan="10" class="empty-row">暂无数据</td></tr>\
+<tr v-if="!$parent.afterSales.length"><td colspan="11" class="empty-row">暂无数据</td></tr>\
 </table>\
 <div class="pagination"><span>共 {{$parent.afterSalesTotal}} 条</span><div><button :disabled="$parent.afterSalesPage<=1" @click="$parent.loadAfterSales($parent.afterSalesPage-1)">上一页</button><span style="margin:0 8px">{{$parent.afterSalesPage}} / {{$parent.pageCount($parent.afterSalesTotal,10)||1}}</span><button :disabled="$parent.afterSalesPage>=$parent.pageCount($parent.afterSalesTotal,10)" @click="$parent.loadAfterSales($parent.afterSalesPage+1)">下一页</button></div></div>\
 </div>\
@@ -1635,7 +1635,7 @@ Vue.component('page-user-manage',{template:'\
 <div class="box-header"><h3>用户管理</h3><div><button class="btn btn-sm btn-blue" @click="$parent.showUserModal()">+ 新增用户</button></div></div>\
 <table><tr><th>ID</th><th>用户名</th><th>角色</th><th>创建时间</th><th>操作</th></tr>\
 <tr v-for="u in $parent.users"><td>{{u.id}}</td><td>{{u.username}}</td><td>{{u.role}}</td><td>{{u.created_at}}</td><td style="white-space:nowrap"><button class="btn-text" @click="$parent.showUserModal(u)">编辑</button><button class="btn-text red" @click="$parent.deleteUser(u)">删除</button></td></tr>\
-<tr v-if="!$parent.users.length"><td colspan="10" class="empty-row">暂无数据</td></tr>\
+<tr v-if="!$parent.users.length"><td colspan="11" class="empty-row">暂无数据</td></tr>\
 </table>\
 </div>\
 </div>'});

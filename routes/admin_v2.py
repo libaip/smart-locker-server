@@ -1451,7 +1451,7 @@ def admin_withdrawals():
             params.append(date_end + ' 23:59:59')
         c.execute(f'SELECT COUNT(*) FROM withdrawal_records wr LEFT JOIN orders o ON wr.order_id=o.id LEFT JOIN (SELECT phone, MAX(wechat_name) as wechat_name FROM user_balances GROUP BY phone) ub ON wr.user_phone=ub.phone LEFT JOIN (SELECT DISTINCT ON (phone) * FROM users ORDER BY phone, id DESC) po ON wr.user_phone=po.phone LEFT JOIN user_profiles up ON po.openid=up.openid WHERE {where}', params)
         total = c.fetchone()[0]
-        c.execute(f"SELECT wr.*, o.order_no, COALESCE(NULLIF(ub.wechat_name,''), NULLIF(po.wechat_name,''), up.wechat_name, '') as wechat_name FROM withdrawal_records wr LEFT JOIN orders o ON wr.order_id=o.id LEFT JOIN (SELECT phone, MAX(wechat_name) as wechat_name FROM user_balances GROUP BY phone) ub ON wr.user_phone=ub.phone LEFT JOIN (SELECT DISTINCT ON (phone) * FROM users ORDER BY phone, id DESC) po ON wr.user_phone=po.phone LEFT JOIN user_profiles up ON po.openid=up.openid WHERE {where} ORDER BY wr.created_at DESC LIMIT %s OFFSET %s",
+        c.execute(f"SELECT wr.*, o.order_no, o.refund_id, COALESCE(NULLIF(ub.wechat_name,''), NULLIF(po.wechat_name,''), up.wechat_name, '') as wechat_name FROM withdrawal_records wr LEFT JOIN orders o ON wr.order_id=o.id LEFT JOIN (SELECT phone, MAX(wechat_name) as wechat_name FROM user_balances GROUP BY phone) ub ON wr.user_phone=ub.phone LEFT JOIN (SELECT DISTINCT ON (phone) * FROM users ORDER BY phone, id DESC) po ON wr.user_phone=po.phone LEFT JOIN user_profiles up ON po.openid=up.openid WHERE {where} ORDER BY wr.created_at DESC LIMIT %s OFFSET %s",
                   params + [page_size, (page-1)*page_size])
         withdrawals = []
         orders = []

@@ -997,9 +997,17 @@ def admin_order_refund():
                 logger.warning(f'[order_refund] 微信退款异常 order={order_no} err={e}')
                 conn.close()
                 return json_response(message=f'微信退款异常: {str(e)}', code=400)
-        # 微信退款成功或无transaction_id(MOCK)，才更新本地状态
-        c.execute("UPDATE orders SET refund_mark=1, refund_status='refunded', status=4, refund_amount=%s, refund_time=CURRENT_TIMESTAMP WHERE id=%s",
-                  (amount, order_id))
+        # 微信退款成功或无transaction_id(MOCK)，才更新本地状态；refund_id 回填微信退款单号(无则用商户单号)
+        _rid_val = ''
+        try:
+            if refund_result and refund_result.get('refund_id'):
+                _rid_val = refund_result.get('refund_id')
+        except Exception:
+            pass
+        if not _rid_val:
+            _rid_val = refund_no
+        c.execute("UPDATE orders SET refund_mark=1, refund_status='refunded', status=4, refund_id=%s, refund_amount=%s, refund_time=CURRENT_TIMESTAMP WHERE id=%s",
+                  (_rid_val, amount, order_id))
         c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order_id,))
         # 联动更新待审核的提现记录：按 order_ids 匹配合并记录逐单扣减，避免重复记账/金额虚高 (2026-08-20)
         import json as _json_wd
@@ -1218,8 +1226,17 @@ def admin_member_refund():
             if not wx_refund_ok and order['transaction_id'] and order['transaction_id'] != 'MOCK':
                 conn.close()
                 return json_response(message=f'微信退款失败: {wx_err_msg}', code=400)
-            c.execute("UPDATE orders SET refund_mark=1, refund_status='refunded', status=4, refund_amount=%s, refund_time=CURRENT_TIMESTAMP WHERE id=%s",
-                      (order['deposit_amount'], order['id']))
+            # refund_id 回填微信退款单号(无则用商户单号)，避免订单表退款单号为空
+            _rid_val2 = ''
+            try:
+                if refund_result and refund_result.get('refund_id'):
+                    _rid_val2 = refund_result.get('refund_id')
+            except Exception:
+                pass
+            if not _rid_val2:
+                _rid_val2 = refund_no
+            c.execute("UPDATE orders SET refund_mark=1, refund_status='refunded', status=4, refund_id=%s, refund_amount=%s, refund_time=CURRENT_TIMESTAMP WHERE id=%s",
+                      (_rid_val2, order['deposit_amount'], order['id']))
             c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order['id'],))
             c.execute('INSERT INTO payments (order_id, type, amount, transaction_id, refund_transaction_id, status, created_at) VALUES (%s, 2, %s, %s, %s, 1, %s)',
                       (order['id'], refund_amount, order['transaction_id'], refund_no, datetime.now()))
@@ -1260,8 +1277,9 @@ def admin_member_batch_refund():
             order = c.fetchone()
             refund_no = 'RF_B' + datetime.now().strftime('%Y%m%d%H%M%S') + str(phone)[-4:]
             if order:
-                c.execute("UPDATE orders SET refund_mark=1, refund_status='refunded', status=4, refund_amount=%s, refund_time=CURRENT_TIMESTAMP WHERE id=%s",
-                          (order['deposit_amount'], order['id']))
+                # 批量退款不调微信(余额退款)，用商户单号回填 refund_id，避免订单表退款单号为空
+                c.execute("UPDATE orders SET refund_mark=1, refund_status='refunded', status=4, refund_id=%s, refund_amount=%s, refund_time=CURRENT_TIMESTAMP WHERE id=%s",
+                          (refund_no, order['deposit_amount'], order['id']))
                 c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order['id'],))
                 c.execute('INSERT INTO payments (order_id, type, amount, transaction_id, refund_transaction_id, status, created_at) VALUES (%s, 2, %s, %s, %s, 1, %s)',
                           (order['id'], refund_amount, order['transaction_id'], refund_no, datetime.now()))

@@ -3336,7 +3336,8 @@ def admin_channels():
         """)
         channels = [dict(r) for r in c.fetchall()]
         for ch in channels:
-            if ch.get('bill_synced_until') is not None:
+            # 仅当对账单确有交易数据时才用对账单口径，否则回退订单表统计(修复8-16对账单统计后数字变0)
+            if ch.get('bill_synced_until') is not None and (ch.get('bill_paid_count') or 0) > 0:
                 ch['paid_total_count'] = ch['bill_paid_count']
                 ch['paid_total_amount'] = ch['bill_paid_amount']
                 ch['refund_total_count'] = ch['bill_refund_count']

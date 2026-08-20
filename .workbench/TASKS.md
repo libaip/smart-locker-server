@@ -19,3 +19,5 @@ test ok
 test ok
 test
 | T-1787234566 | S3 | routes/admin_v2.py,static/admin-v2.html | 已完成 | 08-20 22:02 | 08-20 22:12 | 提现列表显示退款单号(refund_id): /admin/withdrawals接口带出o.refund_id + 前端两处提现表格加列 |
+| T-1787235233 | S4 | audit_reconcile.sh | 已完成 | 08-20 22:13 | 08-20 22:14 | 新增每日对账巡检脚本(提现记录/订单退款/余额一致性) |
+| T-1787235322 | S5 | .workbench/deploy_check.sh | 进行中 | 08-20 22:15 | | 存量refund_id回填脚本(orders从payments补单号)+修复deploy_check.sh多文件md5比对bug |

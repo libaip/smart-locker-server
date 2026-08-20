@@ -25,17 +25,18 @@ BLOCKED=0
 for f in "${FILES[@]}"; do
   if [ ! -f "$f" ]; then echo "⚠️  文件不存在: $f"; continue; fi
   NOW=$(md5sum "$f" | awk '{print $1}')
-  # 找对应 claim 记录
+  # 找对应 claim 记录：按 "^MD5|<文件>|" 精确前缀匹配，避免子串误命中其他任务的文件
   CLAIM=""
   for c in "$WB"/claims/*.md5; do
     [ -f "$c" ] || continue
-    if grep -q "|$f|" "$c" 2>/dev/null; then CLAIM="$c"; break; fi
+    if grep -q "^MD5|$f|" "$c" 2>/dev/null; then CLAIM="$c"; break; fi
   done
   if [ -z "$CLAIM" ]; then
     echo "ℹ️  $f 无开工登记记录（直接部署）"
     continue
   fi
-  BASELINE=$(awk -F'|' '/^MD5\|/{print $3}' "$CLAIM" | head -1)
+  # 只取当前文件 f 自己的基线 md5（不能用 head -1，多文件任务会串行取错行）
+  BASELINE=$(awk -F'|' -v ff="$f" '$1=="MD5" && $2==ff {print $3}' "$CLAIM" | head -1)
   if [ "$NOW" = "$BASELINE" ]; then
     echo "✅ $f 校验通过（未被他人修改）"
   else

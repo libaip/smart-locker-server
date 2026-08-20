@@ -935,6 +935,10 @@ def admin_order_refund():
             conn.close()
             return json_response(message='订单不存在或状态不允许退款', code=400)
         order_dict = dict(order)
+        # 重复退款保护：已退款订单禁止再次退款 (2026-08-20)
+        if order_dict.get('refund_status') == 'refunded' or float(order_dict.get('refund_amount') or 0) >= float(order_dict.get('deposit_amount') or 0) - 0.001:
+            conn.close()
+            return json_response(message='订单已退款，无需重复退款', code=400)
         amount = order_dict.get('deposit_amount', 0)
         # 原支付金额优先取微信支付流水，兜底用押金+按次费
         c.execute("SELECT amount FROM payments WHERE order_id=%s AND type=1 AND status=1 AND amount<=1000 ORDER BY id LIMIT 1", (order_id,))
@@ -997,9 +1001,29 @@ def admin_order_refund():
         c.execute("UPDATE orders SET refund_mark=1, refund_status='refunded', status=4, refund_amount=%s, refund_time=CURRENT_TIMESTAMP WHERE id=%s",
                   (amount, order_id))
         c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order_id,))
-        # 联动更新待审核的提现记录
-        c.execute("UPDATE withdrawal_records SET status=2, approver='管理员', approve_time=CURRENT_TIMESTAMP WHERE order_id=%s AND status=0", (order_id,))
-        if c.rowcount == 0:
+        # 联动更新待审核的提现记录：按 order_ids 匹配合并记录逐单扣减，避免重复记账/金额虚高 (2026-08-20)
+        import json as _json_wd
+        _wd_matched = False
+        c.execute("SELECT id, amount, order_ids FROM withdrawal_records WHERE status=0 AND (order_ids::jsonb @> %s OR order_id=%s) ORDER BY id",
+                  (_json_wd.dumps([order_id]), order_id))
+        for _wrow in c.fetchall():
+            _wd_matched = True
+            try:
+                _oids = _json_wd.loads(_wrow['order_ids'] or '[]')
+            except Exception:
+                _oids = []
+            if order_id in _oids:
+                _oids.remove(order_id)
+            _new_amt = max(0.0, float(_wrow['amount'] or 0) - float(amount))
+            if _oids:
+                # 还有其他未退订单：保持待处理，扣减金额和订单
+                c.execute("UPDATE withdrawal_records SET amount=%s, order_ids=%s, error_msg=NULL, retry_count=0 WHERE id=%s",
+                          (round(_new_amt, 2), _json_wd.dumps(_oids), _wrow['id']))
+            else:
+                # 全部订单退完：置成功
+                c.execute("UPDATE withdrawal_records SET status=2, amount=%s, order_ids=%s, approver='管理员', approve_time=CURRENT_TIMESTAMP WHERE id=%s",
+                          (round(_new_amt, 2), _json_wd.dumps(_oids), _wrow['id']))
+        if not _wd_matched:
             c.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, approver, order_ids, approve_time) VALUES (%s, %s, %s, 2, '管理员', %s, NOW())",
                       (order_id, order_dict.get('user_phone'), amount, f'[{order_id}]'))
         # 记录payments退款流水

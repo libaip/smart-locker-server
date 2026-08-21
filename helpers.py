@@ -554,21 +554,15 @@ def send_open_all(device_id, protocol=None):
     if device_id not in pending_lock_commands:
         pending_lock_commands[device_id] = []
     pending_lock_commands[device_id].append(command)
+    # 只推送一次（同步），避免设备收到重复全开指令
     try:
         import urllib.request as _req
         import json as _json
         _body = _json.dumps({'device_id': device_id, 'command': command}).encode()
         _req.urlopen('http://127.0.0.1:5004/send', data=_body, timeout=3)
+        logger.info("[WS-DAEMON] open_all sent via daemon: " + str(device_id))
     except Exception as e:
         logger.error(f'[send_open_all] {e}')
-
-    import threading as _th, urllib.request as _req, json as _json
-    try:
-        _body = _json.dumps({"device_id": device_id, "command": command}).encode()
-        _th.Thread(target=lambda: _req.urlopen("http://127.0.0.1:5004/send", data=_body, timeout=5), daemon=True).start()
-        logger.info("[WS-DAEMON] open_all sent via daemon: " + str(device_id))
-    except Exception as _e:
-        logger.warning("[WS-DAEMON] open_all send failed: " + str(_e))
 
     if device_id in connected_devices:
         ws = connected_devices[device_id]

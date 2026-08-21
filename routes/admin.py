@@ -1062,11 +1062,11 @@ def open_single_slot(cabinet_id, slot_id):
 @bp.route('/cabinets/<int:cabinet_id>/open-all', methods=['POST'])
 @require_auth
 def open_all_normal_slots(cabinet_id):
-    """一键开门 - 只开正常柜门（通过WS批量指令）"""
+    """一键开门 - 逐门发open_lock(带board/lock)，只开空闲(1)/占用(2)，故障/锁定跳过"""
     try:
         conn = get_db()
         c = conn.cursor()
-        c.execute('SELECT mainboard_device_id, last_heartbeat FROM cabinets WHERE id = %s', (cabinet_id,))
+        c.execute('SELECT mainboard_device_id, last_heartbeat, mainboard_source FROM cabinets WHERE id = %s', (cabinet_id,))
         cabinet = c.fetchone()
         if not cabinet or not cabinet['mainboard_device_id']:
             conn.close()
@@ -1076,14 +1076,22 @@ def open_all_normal_slots(cabinet_id):
         if not is_device_online(did, cabinet.get('last_heartbeat')):
             conn.close()
             return json_response(message='设备离线，无法发送开门指令', code=400)
-        c.execute('SELECT cs.slot_number FROM cabinet_slots cs WHERE cs.cabinet_id = %s AND cs.status IN (1, 2)', (cabinet_id,))
+        protocol = cabinet.get('mainboard_source') or 'YBM'
+        c.execute('SELECT cs.slot_number, cs.board_no, cs.lock_no FROM cabinet_slots cs WHERE cs.cabinet_id = %s AND cs.status IN (1, 2)', (cabinet_id,))
         slots = c.fetchall()
         conn.close()
         if not slots:
             return json_response(message='没有可开的正常柜门', code=400)
-        opened = [s['slot_number'] for s in slots]
-        send_open_all(did)
-        return json_response(message=f'已发送{len(opened)}个柜门开锁指令（批量）', data={'opened': opened})
+        opened = []
+        for s in slots:
+            board_no = s.get('board_no') or 1
+            lock_no = s.get('lock_no') or s.get('slot_number') or 1
+            try:
+                send_open_lock(did, board_no, lock_no, protocol, slot_number=s.get('slot_number'), require_online=True)
+                opened.append(s['slot_number'])
+            except Exception as e:
+                logger.warning(f'[open_all] 开门失败 slot={s.get("slot_number")}: {e}')
+        return json_response(message=f'已发送{len(opened)}个柜门开锁指令（逐门）', data={'opened': opened})
     except Exception as e:
         logger.error(f'[open_all] {e}')
         return json_response(message=str(e), code=500)

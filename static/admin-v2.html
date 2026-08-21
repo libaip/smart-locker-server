@@ -1940,13 +1940,14 @@ isMobileLayout:function(){return this.isMobile}
 },
 methods:{
 fmtDate:function(d){var y=d.getFullYear();var m=('0'+(d.getMonth()+1)).slice(-2);var day=('0'+d.getDate()).slice(-2);return y+'-'+m+'-'+day;},
-api:function(path,data,method){
+api:function(path,data,method,silent){
 var m=method||(data?'POST':'GET');
 var url='/api'+path;
 if(m==='GET'&&data){var p=[];Object.keys(data).forEach(function(k){if(data[k]!==undefined&&data[k]!==null)p.push(k+'='+encodeURIComponent(data[k]));});if(p.length)url+='?'+p.join('&');data=null;}
 var opts={method:m,headers:{'Content-Type':'application/json','Authorization':'Bearer '+localStorage.getItem('admin_token')}};
 if(data)opts.body=JSON.stringify(data);
-var self=this;self._apiLoadingCount=(self._apiLoadingCount||0)+1;self.pageLoading=true;
+var self=this;
+if(!silent){self._apiLoadingCount=(self._apiLoadingCount||0)+1;self.pageLoading=true;if(self._loadingForceTimer)clearTimeout(self._loadingForceTimer);self._loadingForceTimer=setTimeout(function(){self._apiLoadingCount=0;self.pageLoading=false;},8000);}
 var ctrl=(typeof AbortController!=='undefined')?new AbortController():null;
 if(ctrl)opts.signal=ctrl.signal;
 var timer=ctrl?setTimeout(function(){ctrl.abort();},30000):null;
@@ -1959,7 +1960,7 @@ return d;
 }).catch(function(e){
 if(e&&e.name==='AbortError')throw new Error('请求超时，请检查网络');
 throw e;
-}).finally(function(){if(timer)clearTimeout(timer);self._apiLoadingCount--;if(self._apiLoadingCount<=0){self._apiLoadingCount=0;self.pageLoading=false;}});
+}).finally(function(){if(timer)clearTimeout(timer);if(!silent){self._apiLoadingCount--;if(self._apiLoadingCount<=0){self._apiLoadingCount=0;self.pageLoading=false;if(self._loadingForceTimer){clearTimeout(self._loadingForceTimer);self._loadingForceTimer=null;}}}});
 },
 toast:function(msg,type){this.toastMsg=msg;this.toastType=type||'success';var self=this;clearTimeout(this.toastTimer);this.toastTimer=setTimeout(function(){self.toastMsg='';},2500);},
 confirm2:function(msg,cb){this.confirmMsg=msg;this.confirmCb=cb;this.confirmVisible=true;},
@@ -2017,7 +2018,7 @@ toggleSelectAll:function(){if(this.selectedSlotIds.length===this.slotGridData.le
 toggleSlotSelection:function($event,id){$event.stopPropagation();if($event.target.checked){this.selectedSlotIds=this.selectedSlotIds.concat([id]);}else{this.selectedSlotIds=this.selectedSlotIds.filter(function(x){return x!==id;});}},batchDeleteSlots:function(){var self=this;var ids=self.selectedSlotIds;if(ids.length===0){self.toast('请先选择柜门','warning');return;}if(!confirm('确定删除选中的 '+ids.length+' 个柜门？不可恢复！'))return;this.api('/admin/slots/batch-delete',{slot_ids:ids}).then(function(d){self.toast(d.message||'批量删除成功');self.selectedSlotIds=[];self.loadSlots(self.cabinetForm.id);}).catch(function(e){self.toast(e.message||'批量删除失败','error');});},
 
 // Locations
-loadLocations:function(p){var self=this;if(p)this.locationPage=p;this.api('/admin/locations',{keyword:this.locationSearch.keyword,page:this.locationPage},'GET').then(function(d){self.locations=d.data&&d.data.list||[];self.locationTotal=d.data&&d.data.total||0;}).catch(function(){});},
+loadLocations:function(p,silent){var self=this;if(p)this.locationPage=p;this.api('/admin/locations',{keyword:this.locationSearch.keyword,page:this.locationPage},'GET',!!silent).then(function(d){self.locations=d.data&&d.data.list||[];self.locationTotal=d.data&&d.data.total||0;}).catch(function(){});},
  showLocationModal:function(row){if(!this.merchants.length){this.loadMerchants();}this.locationForm=row?JSON.parse(JSON.stringify(row)):{};if(!this.locationForm.id){Object.assign(this.locationForm,{name:'',address:'',merchant_id:'',status:1,allow_open_after_end:1,withdraw_enabled:true,show_refunding_status:true,auto_approve_day:7,auto_approve_time:'12:00',auto_approve_rate:80,click_free_count:0,reject_whitelist_after:1,anti_test_minutes:0,anti_test_auto_refund:false,hide_ratio:0,hide_start_orders:50,whitelist_phones:'',wl_max_uses:3,duplicate_filter_enabled:false,duplicate_filter_days:30,duplicate_filter_limit:5,allow_slot_select:false,slot_assign_mode:'auto',allow_mid_retrieve:true,retrieve_mode:'both',allow_h5_to_mp:false,show_qr_follow:false,force_follow_mp:false,h5_url:'',show_slot_count:true,screen_show_title:true,screen_title:'',slot_full_alert:false,slot_full_text:'',end_alert_minutes:0,enable_clear_box:false,clear_box_time:'23:00',clear_box_cycle:1,deposit_random:false,deposit_min:0,deposit_max:0,contact_phone:'',rules_title:'',reopen_times:null});}this.locationFormTitle=row?'编辑网点':'新增网点';this.locationEditTab='basic';this.locationModal=true;},
 saveLocation:function(){var self=this;this.api('/admin/location/save',this.locationForm).then(function(){self.toast('保存成功');self.locationModal=false;self.loadLocations();}).catch(function(e){self.toast(e.message||'保存失败','error');});},
 deleteLocation:function(row){var self=this;this.confirm2('确定删除网点 '+row.name+'?',function(){self.api('/admin/location/delete',{id:row.id}).then(function(){self.toast('删除成功');self.loadLocations();}).catch(function(e){self.toast(e.message||'删除失败','error');});});},
@@ -2153,7 +2154,7 @@ activeMenu:function(v){
 if(this.complaintRefreshTimer&&v!=='complaint-self'&&v!=='complaint-wx'){clearInterval(this.complaintRefreshTimer);this.complaintRefreshTimer=null;}
 if(v==='dashboard'){this.orders=[];this.stats={};this.loadDashboard();}
 else if(v==='machine-list'){this.machines=[];this.loadMachines();this.loadLocations();this.loadAgents();}
-else if(v==='location-list'){this.locations=[];this.loadLocations();var self=this;if(this.locationRefreshTimer)clearInterval(this.locationRefreshTimer);this.locationRefreshTimer=setInterval(function(){self.loadLocations();},30000);}
+else if(v==='location-list'){this.locations=[];this.loadLocations();var self=this;if(this.locationRefreshTimer)clearInterval(this.locationRefreshTimer);this.locationRefreshTimer=setInterval(function(){self.loadLocations(null,true);},30000);}
 else if(v==='online-order'){this.orders=[];this.loadLocations();this.loadOrderLocations();this.loadAgents();this.loadMachines(1);this.loadOrders();}else if(v==='alert-mgr')this.loadAlerts(1);
 else if(v==='member-list')this.loadMembers();
 else if(v==='member-withdraw'){var d=new Date();this.withdrawalDateEnd=d.toISOString().slice(0,10);d.setDate(d.getDate()-30);this.withdrawalDateStart=d.toISOString().slice(0,10);this.loadWithdrawals();}

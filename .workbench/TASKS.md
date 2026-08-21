@@ -1,6 +1,7 @@
 # ============================================
 # 工作台 - 任务登记表（所有会话必须遵守）
 # 铁律：改任何文件前，先看本表；目标文件被登记为「进行中」则不许碰！
+# 铁律2:给老板(用户)汇报/陈述一律用大白话(人话),说清改了什么、为什么改、影响什么、要老板定什么,禁止术语堆砌。
 # 用法：
 #   bash .workbench/claim.sh "说明" "文件1,文件2"   # 开工登记
 #   改完部署提交后：bash .workbench/release.sh      # 标记完成
@@ -67,3 +68,4 @@ n
 
 - 分析脚本都在本地 D:\.codex\workspace\2026-08-19\complaint_realtime\ 下(report_auto_vs_stuck.sql、report_329_breakdown.sql、check_rate0_released.sql、whitelist_fix_plan.md 等)
 - 多会话在生产活动(今天 git 有 S6/S7/S9 提交),改白名单代码前先 claim,别互相踩
+| T-1787299420 | S11 | .workbench/TASKS.md | 进行中 | 08-21 16:03 | | 工作台追加规则:向老板汇报一律大白话 |

@@ -7280,10 +7280,14 @@ def _auto_complete_complaint(complaint_id, mch_id, cert_serial, private_key_path
             # 兜底: 投诉对应订单已退款则补拉白(防 refund 分支漏拉)
             try:
                 from helpers import grant_complaint_whitelist
+                import re as _re
                 _gconn = get_db()
                 _gcur = _gconn.cursor()
-                _gcur.execute("SELECT order_no, user_phone FROM complaints WHERE wx_complaint_id=%s OR id=%s LIMIT 1", (complaint_id, complaint_id))
+                _gcur.execute("SELECT order_no, user_phone FROM complaints WHERE wx_complaint_id=%s LIMIT 1", (str(complaint_id),))
                 _cr = _gcur.fetchone()
+                if _cr is None and _re.fullmatch(r'\d{1,9}', str(complaint_id)):
+                    _gcur.execute("SELECT order_no, user_phone FROM complaints WHERE id=%s LIMIT 1", (int(complaint_id),))
+                    _cr = _gcur.fetchone()
                 if _cr and _cr['order_no']:
                     _gcur.execute("SELECT o.id, o.user_phone, cb.location_id FROM orders o JOIN cabinets cb ON cb.id = o.cabinet_id WHERE o.order_no=%s AND o.refund_status IN ('refunded','success') LIMIT 1", (_cr['order_no'],))
                     _or = _gcur.fetchone()

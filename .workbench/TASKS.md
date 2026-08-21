@@ -25,7 +25,7 @@ test
 | T-1787236891 | S7 | routes/admin_v2.py | 已完成 | 08-20 22:41 | 08-20 22:41 | 支付渠道统计回退条件补强: 对账单金额<订单金额90%也回退订单口径(修复1749620516等对账单仅2笔仍用对账单) |
 | T-1787237745 | S8 | /etc/nginx/sites-enabled/locker-cqdyxl,/etc/systemd/system/smart-locker-admin.service | 已完成 | 08-20 22:55 | 08-20 22:59 | 后台管理独立通道: 新增5002 gunicorn(2worker)+nginx分流/api/admin*到5002 |
 | T-1787238302 | S9 | helpers.py | 已完成 | 08-20 23:05 | 08-20 23:05 | 修复_date类型序列化成HTTP日期(Wed,19 Aug..GMT): _format_datetimes支持date输出YYYY-MM-DD |
-| T-1787299263 | S10 | .workbench/TASKS.md | 进行中 | 08-21 16:01 | | 白名单来源审计+三改方案记录,大白话存档 |
+| T-1787299263 | S10 | .workbench/TASKS.md | 已完成 | 08-21 16:01 | 08-21 16:02 | 白名单来源审计+三改方案记录,大白话存档 |
 n
 # 大白话记录（S10 追加于 08-21）
 

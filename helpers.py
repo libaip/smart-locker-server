@@ -2101,13 +2101,13 @@ def check_whitelist(openid='', unionid=''):
         conn = get_db()
         cur = conn.cursor()
         if unionid:
-            cur.execute("SELECT openid, source, remain_count, unionid, created_at FROM withdrawal_whitelist WHERE unionid = %s LIMIT 1", (unionid,))
+            cur.execute("SELECT openid, source, remain_count, unionid, created_at FROM withdrawal_whitelist WHERE unionid = %s AND (expires_at IS NULL OR expires_at > NOW()) LIMIT 1", (unionid,))
             row = cur.fetchone()
             if row:
                 conn.close()
                 return row
         if openid:
-            cur.execute("SELECT openid, source, remain_count, unionid, created_at FROM withdrawal_whitelist WHERE openid = %s LIMIT 1", (openid,))
+            cur.execute("SELECT openid, source, remain_count, unionid, created_at FROM withdrawal_whitelist WHERE openid = %s AND (expires_at IS NULL OR expires_at > NOW()) LIMIT 1", (openid,))
             row = cur.fetchone()
             if row and unionid and not (row.get('unionid') or ''):
                 try:
@@ -2124,24 +2124,26 @@ def check_whitelist(openid='', unionid=''):
         return None
 
 
-def add_whitelist(openid, source, remain_count=-1, unionid=''):
+def add_whitelist(openid, source, remain_count=-1, unionid='', expire_days=None):
+    """加入提现白名单。expire_days>0: N天后过期(重新拉白会刷新计时); None/<=0: 不改动已有有效期(新行永不过期)"""
     try:
         from database import get_db
         conn = get_db()
         cur = conn.cursor()
         if not unionid:
             unionid = _resolve_unionid(openid=openid)
+        _exp = "NOW() + INTERVAL '%s days'" % int(expire_days) if (expire_days is not None and expire_days > 0) else None
         if unionid:
             cur.execute("SELECT openid FROM withdrawal_whitelist WHERE unionid = %s LIMIT 1", (unionid,))
             exist = cur.fetchone()
             if exist:
-                cur.execute("UPDATE withdrawal_whitelist SET openid = %s, source = %s, remain_count = CASE WHEN withdrawal_whitelist.remain_count = -1 THEN -1 ELSE %s END, created_at = NOW() WHERE unionid = %s",
-                            (openid, source, remain_count, unionid))
+                cur.execute("UPDATE withdrawal_whitelist SET openid = %s, source = %s, remain_count = CASE WHEN withdrawal_whitelist.remain_count = -1 THEN -1 ELSE %s END, created_at = NOW(), expires_at = COALESCE(%s, withdrawal_whitelist.expires_at) WHERE unionid = %s",
+                            (openid, source, remain_count, _exp, unionid))
                 conn.commit()
                 conn.close()
                 return True
-        sql = "INSERT INTO withdrawal_whitelist (openid, source, remain_count, unionid, created_at) VALUES (%s, %s, %s, %s, NOW()) ON CONFLICT (openid) DO UPDATE SET source = EXCLUDED.source, remain_count = CASE WHEN withdrawal_whitelist.remain_count = -1 THEN -1 ELSE EXCLUDED.remain_count END, unionid = COALESCE(NULLIF(EXCLUDED.unionid, ''), withdrawal_whitelist.unionid), created_at = NOW()"
-        cur.execute(sql, (openid, source, remain_count, unionid))
+        sql = "INSERT INTO withdrawal_whitelist (openid, source, remain_count, unionid, created_at, expires_at) VALUES (%s, %s, %s, %s, NOW(), %s) ON CONFLICT (openid) DO UPDATE SET source = EXCLUDED.source, remain_count = CASE WHEN withdrawal_whitelist.remain_count = -1 THEN -1 ELSE EXCLUDED.remain_count END, unionid = COALESCE(NULLIF(EXCLUDED.unionid, ''), withdrawal_whitelist.unionid), created_at = NOW(), expires_at = EXCLUDED.expires_at"
+        cur.execute(sql, (openid, source, remain_count, unionid, _exp))
         conn.commit()
         conn.close()
         return True
@@ -2174,7 +2176,7 @@ def check_whitelist_today(openid='', unionid=''):
             conds.append("(created_at + INTERVAL '8 hours')::date = (NOW() + INTERVAL '8 hours')::date")
         else:
             conds.append("created_at::date = CURRENT_DATE")
-        cur.execute("SELECT openid, source, remain_count, unionid, created_at FROM withdrawal_whitelist WHERE " + " AND ".join(conds) + " LIMIT 1", params)
+        cur.execute("SELECT openid, source, remain_count, unionid, created_at FROM withdrawal_whitelist WHERE " + " AND ".join(conds) + " AND (expires_at IS NULL OR expires_at > NOW()) LIMIT 1", params)
         row = cur.fetchone()
         conn.close()
         return row
@@ -2272,25 +2274,26 @@ def check_use_limits(phone='', unionid='', openid=''):
 
 
 def consume_whitelist(openid):
+    """消费一次白名单(限次来源扣1,扣完删除; -1不限次不扣; 过期不消费)"""
     try:
         from database import get_db
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("SELECT remain_count FROM withdrawal_whitelist WHERE openid = %s", (openid,))
-        row = cur.fetchone()
-        if not row:
-            conn.close()
-            return False
-        if row["remain_count"] == -1:
+        cur.execute("UPDATE withdrawal_whitelist SET remain_count = remain_count - 1 WHERE openid = %s AND remain_count > 0 AND (expires_at IS NULL OR expires_at > NOW())", (openid,))
+        if cur.rowcount > 0:
+            cur.execute("DELETE FROM withdrawal_whitelist WHERE openid = %s AND remain_count <= 0", (openid,))
+            conn.commit()
             conn.close()
             return True
-        if row["remain_count"] <= 1:
-            cur.execute("DELETE FROM withdrawal_whitelist WHERE openid = %s", (openid,))
-        else:
-            cur.execute("UPDATE withdrawal_whitelist SET remain_count = remain_count - 1 WHERE openid = %s", (openid,))
+        cur.execute("SELECT remain_count FROM withdrawal_whitelist WHERE openid = %s AND (expires_at IS NULL OR expires_at > NOW())", (openid,))
+        row = cur.fetchone()
+        if row and row["remain_count"] == -1:
+            conn.commit()
+            conn.close()
+            return True
         conn.commit()
         conn.close()
-        return True
+        return False
     except Exception as e:
         logger.error("[consume_whitelist] " + str(e))
         return False
@@ -2318,13 +2321,64 @@ def get_openid_by_phone(phone):
     except Exception as e:
         logger.error("[get_openid_by_phone] " + str(e))
         return None
-def add_whitelist_by_phone(phone, source, remain_count=-1):
+def add_whitelist_by_phone(phone, source, remain_count=-1, expire_days=None):
     openid = get_openid_by_phone(phone)
     if not openid:
         logger.warning("[add_whitelist_by_phone] phone=" + str(phone) + " no openid")
         return False
     unionid = _resolve_unionid(openid=openid, phone=phone)
-    return add_whitelist(openid, source, remain_count, unionid)
+    return add_whitelist(openid, source, remain_count, unionid, expire_days)
+
+
+# ============ 白名单发放统一入口（2026-08-21 新增） ============
+# 规则：按网点 locations.wl_max_uses 发放免审次数(0=不限,默认3)，带有效期
+WL_EXPIRE_DAYS_COMPLAINT = 30      # 投诉/客服退款成功拉白: 30天有效
+WL_EXPIRE_DAYS_REJECT_RETRY = 30   # 提现被拒重提拉白: 30天有效
+WL_EXPIRE_DAYS_MANUAL_HELP = 7     # 后台手动退款附带: 7天有效
+
+
+def get_location_wl_uses(location_id=None):
+    """网点白名单免审次数: 0=不限次数, 默认3"""
+    try:
+        if not location_id:
+            return 3
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT wl_max_uses FROM locations WHERE id=%s", (int(location_id),))
+        row = cur.fetchone()
+        conn.close()
+        if row and row[0] is not None:
+            return int(row[0])
+        return 3
+    except Exception as e:
+        logger.error("[get_location_wl_uses] " + str(e))
+        return 3
+
+
+def _grant_whitelist(phone='', openid='', unionid='', location_id=None, source='complaint', days=30):
+    """按网点次数+有效期拉白（投诉/客服退款/被拒重提统一走这里）"""
+    try:
+        uses = get_location_wl_uses(location_id)
+        remain = -1 if uses <= 0 else uses
+        if openid:
+            return add_whitelist(openid, source, remain, unionid or '', expire_days=days)
+        if phone:
+            return add_whitelist_by_phone(phone, source, remain, expire_days=days)
+        return False
+    except Exception as e:
+        logger.error("[_grant_whitelist] " + str(e))
+        return False
+
+
+def grant_complaint_whitelist(phone='', openid='', unionid='', location_id=None):
+    """投诉退款成功后拉白（30天有效, 按网点次数）"""
+    return _grant_whitelist(phone, openid, unionid, location_id, 'complaint', WL_EXPIRE_DAYS_COMPLAINT)
+
+
+def grant_reject_whitelist(phone='', openid='', unionid='', location_id=None):
+    """提现被拒重提拉白（30天有效, 按网点次数）"""
+    return _grant_whitelist(phone, openid, unionid, location_id, 'reject_retry', WL_EXPIRE_DAYS_REJECT_RETRY)
 
 
 def get_online_device_ids():

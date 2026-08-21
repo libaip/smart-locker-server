@@ -981,6 +981,11 @@ def retrieve_confirm():
                 cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, approver, auto_approve_time, dedup_key, order_ids) VALUES (%s, %s, %s, 0, 1, %s, 'whitelist_auto', NOW(), %s, %s) ON CONFLICT DO NOTHING",
                                (order_id, order['user_phone'], deposit_amount, _openid or order.get('openid') or '', 'W:%s:%s' % (order['user_phone'], order_id), '["%s"]' % order_id))
                 cursor.execute("UPDATE orders SET logical_mark='end' WHERE id=%s", (order_id,))
+                try:
+                    from helpers import consume_whitelist
+                    consume_whitelist(_openid or order.get('openid') or '')
+                except Exception:
+                    pass
                 logger.info(f'[retrieve_confirm] 白名单退款入队(后台处理): order={order_id}, amount={deposit_amount}')
         except Exception as e:
             logger.error(f'[retrieve_confirm] 白名单直接退款异常 order={order_id}: {e}')
@@ -1724,6 +1729,11 @@ def deposit_end_storage():
                 cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, approver, auto_approve_time, dedup_key, order_ids) VALUES (%s, %s, %s, 0, 1, %s, 'whitelist_auto', NOW(), %s, %s) ON CONFLICT DO NOTHING",
                                (order_id, order['user_phone'], refund_amount, _openid or order.get('openid') or '', 'W:%s:%s' % (order['user_phone'], order_id), '["%s"]' % order_id))
                 cursor.execute("UPDATE orders SET logical_mark='end' WHERE id=%s", (order_id,))
+                try:
+                    from helpers import consume_whitelist
+                    consume_whitelist(_openid or order.get('openid') or '')
+                except Exception:
+                    pass
                 logger.info(f'[end_storage] 白名单退款入队(后台处理): order={order_id}, amount={refund_amount}')
         except Exception as e:
             logger.error(f'[end_storage] 白名单直接退款异常 order={order_id}: {e}')
@@ -2450,13 +2460,7 @@ def create_complaint():
             row = cursor.fetchone()
             complaint_id = row["id"]
             conn.commit()
-        # 投诉成功后自动加入提现白名单
-        if openid:
-            from helpers import add_whitelist
-            add_whitelist(openid, 'complaint', -1)
-        elif user_phone:
-            from helpers import add_whitelist_by_phone
-            add_whitelist_by_phone(user_phone, 'complaint', -1)
+        # 投诉不再即时拉白：改为"退款成功后才拉白"(见 admin_v2 投诉调度器)
         # auto process self complaint
         if complaint_type == 'self':
             _auto_process_self_complaint(complaint_id, user_phone, openid, order_no)
@@ -3296,7 +3300,7 @@ def user_withdraw():
             loc_conds.append('o.user_phone = %s')
             loc_params.append(phone)
         cursor.execute("""
-            SELECT l.withdraw_enabled, l.withdraw_mode, l.auto_approve_rate, l.refund_approve_start_min, l.refund_approve_end_min, l.reject_whitelist_after 
+            SELECT l.id, l.withdraw_enabled, l.withdraw_mode, l.auto_approve_rate, l.refund_approve_start_min, l.refund_approve_end_min, l.reject_whitelist_after 
             FROM orders o 
             JOIN cabinets c ON o.cabinet_id = c.id 
             JOIN locations l ON c.location_id = l.id 
@@ -3443,9 +3447,10 @@ def user_withdraw():
                     _reject_th = 1
             if _reject_th <= 0:
                 _reject_th = 1
-            if reject_cnt >= _reject_th and openid:
-                from helpers import add_whitelist
-                add_whitelist(openid, 'reject_retry', -1)
+            if reject_cnt >= _reject_th:
+                from helpers import grant_reject_whitelist
+                grant_reject_whitelist(phone=phone, openid=openid, unionid=ident.get('unionid') or '',
+                                       location_id=loc_row.get('id') if loc_row else None)
             # 冻结余额（严格按phone+openid）
             from helpers import check_whitelist
             wl_record = check_whitelist(openid, ident.get('unionid') or '') if (openid or ident.get('unionid')) else None

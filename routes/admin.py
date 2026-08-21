@@ -1285,16 +1285,16 @@ def refund_order(order_id):
         # 同步更新余额明细状态
         cursor.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status='available'", (order_id,))
         conn.commit()
-        # 手动退款成功后加入提现白名单（仅一次有效）
+        # 手动退款成功后加入提现白名单（仅一次有效，7天过期）
         try:
             user_phone = order.get('user_phone', '')
             openid = order.get('openid', '')
             if openid:
                 from helpers import add_whitelist
-                add_whitelist(openid, 'manual_help', 1)
+                add_whitelist(openid, 'manual_help', 1, expire_days=7)
             elif user_phone:
                 from helpers import add_whitelist_by_phone
-                add_whitelist_by_phone(user_phone, 'manual_help', 1)
+                add_whitelist_by_phone(user_phone, 'manual_help', 1, expire_days=7)
         except Exception as e:
             logger.error(f'[refund_order] whitelist error: {e}')
         conn.close()
@@ -1521,8 +1521,11 @@ def withdrawal_apply():
                         cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, openid) VALUES (%s, %s, %s, 2, 1, %s, %s)", (order_id, user_phone, amount, 'whitelist_auto', user_openid))
                         conn.commit()
                         conn.close()
-                        if wl_record['source'] == 'manual_help':
+                        # 白名单免审成功: 消费次数(限次来源扣1, -1不限不扣)
+                        try:
                             consume_whitelist(openid_for_wl)
+                        except Exception:
+                            pass
                         return json_response({'withdrawal_id': 0, 'order_id': order_id, 'amount': amount, 'status': 'auto_approved', 'message': '白名单免审，已自动退款'})
                     else:
                         cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, error_msg, openid) VALUES (%s, %s, %s, 0, 1, %s, %s)', (order_id, user_phone, amount, msg, user_openid))
@@ -1533,8 +1536,10 @@ def withdrawal_apply():
                 # 检查是否被拒绝后重提
                 cursor.execute('SELECT COUNT(*) as cnt FROM withdrawal_records wr WHERE user_phone = %s AND status = 3', (user_phone,))  # noqa
                 reject_cnt = cursor.fetchone()['cnt']
-                if reject_cnt > 0 and openid_for_wl:
-                    add_whitelist(openid_for_wl, 'reject_retry', -1)
+                if reject_cnt > 0:
+                    # 被拒重提拉白: 按网点次数+30天有效(老接口无网点上下文, 用默认3次/30天)
+                    from helpers import grant_reject_whitelist
+                    grant_reject_whitelist(phone=user_phone, openid=openid_for_wl)
                     success, refund_id, msg = do_real_refund(order_id=order_id, order_no=eligible['order_no'], amount=amount, payment_channel_id=eligible['payment_channel_id'])
                     if success:
                         cursor.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=NOW() WHERE id=%s', (refund_id, order_id))
@@ -1605,9 +1610,11 @@ def withdrawal_apply():
                 cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, openid) VALUES (%s, %s, %s, 2, 1, %s, %s)', (order['id'], user_phone, amount, 'whitelist_auto', user_openid))
                 conn.commit()
                 conn.close()
-                # 如果是 manual_help 类型，消费次数
-                if wl_record['source'] == 'manual_help':
+                # 白名单免审成功: 消费次数(限次来源扣1, -1不限不扣)
+                try:
                     consume_whitelist(openid_for_wl)
+                except Exception:
+                    pass
                 return json_response({'withdrawal_id': 0, 'status': 'auto_approved', 'amount': amount, 'message': '白名单免审，已自动退款'})
             else:
                 # 微信退款失败，转为待审核
@@ -1619,9 +1626,10 @@ def withdrawal_apply():
         # 不在白名单中，检查是否是被拒绝后重提
         cursor.execute('SELECT COUNT(*) as cnt FROM withdrawal_records wr WHERE user_phone = %s AND status = 3', (user_phone,))
         reject_cnt = cursor.fetchone()['cnt']
-        if reject_cnt > 0 and openid_for_wl:
-            # 之前被拒绝过，自动加入白名单并放行
-            add_whitelist(openid_for_wl, 'reject_retry', -1)
+        if reject_cnt > 0:
+            # 之前被拒绝过，按网点次数+30天有效拉白并放行(此路径取不到网点ID, 用默认3次/30天)
+            from helpers import grant_reject_whitelist
+            grant_reject_whitelist(phone=user_phone, openid=openid_for_wl)
             from helpers import do_real_refund
             success, refund_id, msg = do_real_refund(order_id=order['id'], order_no=order['order_no'], amount=amount, payment_channel_id=order.get('payment_channel_id'))
             if success:

@@ -81,4 +81,4 @@ n
 | T-1787318234 | S20 | routes/admin_v2.py | 已完成 | 08-21 21:17 | 08-21 21:17 | 自有投诉卡单修复:调度器non-wechat段纳入status=1半截单+claim兼容 |
 | T-1787318601 | S21 | static/admin-v2.html | 已完成 | 08-21 21:23 | 08-21 21:23 | 在线订单: 选网点后设备下拉联动加载该网点设备 |
 | T-1787322116 | S22 | static/admin-v2.html | 已完成 | 08-21 22:21 | 08-21 22:21 | 微信投诉页状态显示补全(退款失败标红)+加提现手动退款按钮 |
-| T-1787323006 | S23 | .workbench/TASKS.md | 进行中 | 08-21 22:36 | | 铁律3:改动后端admin_v2.py等需同时重启smart-locker与smart-locker-admin(5002后台通道) |
+| T-1787323006 | S23 | .workbench/TASKS.md | 已完成 | 08-21 22:36 | 08-21 22:36 | 铁律3:改动后端admin_v2.py等需同时重启smart-locker与smart-locker-admin(5002后台通道) |

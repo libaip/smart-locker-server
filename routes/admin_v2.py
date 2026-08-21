@@ -1704,6 +1704,8 @@ def admin_complaints():
                 where += ' AND c.status IN (\'2\', \'3\')'
             elif status == 'error':
                 where += ' AND c.status IN (\'4\', \'99\')'
+            elif status == 'refund_failed':
+                where += " AND c.refund_status = 'refund_failed'"
             else:
                 try:
                     where += ' AND c.status=%s'
@@ -7704,7 +7706,7 @@ def _complaint_scheduler():
                 logger.error("[complaint_scheduler] clear stale red error: %s", _ce)
             conn = get_db()
             c = conn.cursor()
-            c.execute("SELECT * FROM complaints WHERE status IN ('0','1') AND type IN ('wechat') AND created_at < NOW() - INTERVAL '2 minutes' AND created_at > NOW() - INTERVAL '7 days' ORDER By created_at LIMIT 100")
+            c.execute("SELECT * FROM complaints WHERE status IN ('0','1','2') AND type IN ('wechat') AND created_at < NOW() - INTERVAL '2 minutes' AND created_at > NOW() - INTERVAL '7 days' ORDER By created_at LIMIT 100")
             rows = c.fetchall()
             conn.close()
             conn = None
@@ -7746,8 +7748,9 @@ def _complaint_scheduler():
                         except:
                             pass
                     _auto_reply_complaint(wxid, order_no=ono, transaction_id=_txn, mch_id=cmch, cert_serial=ccert, private_key_path=ckey, content=WECHAT_FIRST_REPLY, complete_now=False)
-                elif cstatus == "1":
-                    # 已回复：满5分钟后执行退款 → 到账通知 → 结案；失败每5分钟重试，3次后转人工
+                elif cstatus in ("1", "2"):
+                    # 已回复(1)或转人工(2): 满5分钟后执行退款 → 到账通知 → 结案；失败每5分钟重试，3次后转人工
+                    # status=2(转人工)也继续自动重试: 商户充值后自动退掉, 无需人工盯
                     _age = 0.0
                     try:
                         _ag_conn = get_db()

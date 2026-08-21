@@ -783,7 +783,7 @@ def merchant_cabinet_status(cabinet_id):
 @bp.route('/merchant/query-door-status', methods=['POST'])
 @require_merchant_auth
 def merchant_query_door_status():
-    """查询柜门物理状态（前端兼容接口）"""
+    """查询柜门物理状态 - 走DB共享表方案(跨worker可靠, 返回真实开/关)"""
     try:
         data = request.get_json() or {}
         cabinet_id = data.get('cabinet_id')
@@ -793,37 +793,18 @@ def merchant_query_door_status():
             return json_response(message='参数缺失', code=400)
         conn = get_db()
         c = conn.cursor()
-        import urllib.request as _req
-        import json as _json
-        import uuid
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("SELECT mainboard_device_id FROM cabinets WHERE id = %s", (cabinet_id,))
+        c.execute("SELECT mainboard_device_id, mainboard_source FROM cabinets WHERE id = %s", (cabinet_id,))
         row = c.fetchone()
         conn.close()
         if not row:
             return json_response(message='柜体不存在', code=404)
-        did = str(row[0])
-        request_id = str(uuid.uuid4())[:8]
-        query_cmd = {
-            'type': 'query_door_status',
-            'request_id': request_id,
-            'device_id': did,
-            'board_no': board_no,
-            'lock_no': lock_no,
-            'protocol': 'YBM'
-        }
-        try:
-            _body = _json.dumps({'device_id': did, 'command': query_cmd}).encode()
-            _req.urlopen('http://127.0.0.1:5004/send', data=_body, timeout=3)
-        except Exception as e:
-            from helpers import logger
-            logger.error('[query_door_status] %s', str(e))
-            return json_response(message='设备可能离线，无法查询物理状态', code=502)
-        return json_response(message='查询指令已发送至设备，请稍后查看结果', data={
-            'device_id': did, 'board_no': board_no, 'lock_no': lock_no,
-            'request_id': request_id, 'query_sent': True
-        })
+        did = str(row['mainboard_device_id'])
+        protocol = row.get('mainboard_source') or 'YBM'
+        from routes.admin_v2 import _query_door_status
+        result = _query_door_status(did, int(board_no), int(lock_no), protocol)
+        if result:
+            return json_response(data=result)
+        return json_response(message='查询超时或设备无响应', code=504)
     except Exception as e:
         from helpers import logger
         logger.error('[query_door_status] %s', str(e))
@@ -1423,36 +1404,23 @@ def merchant_query_physical_lock_status(cabinet_id, slot_id):
         board_no = row.get('board_no') or 1
         lock_no = row.get('lock_no') or row['slot_number']
         
-        # 通过WS代理发送状态查询指令到设备
-        from helpers import send_open_lock
-        import urllib.request as _req
-        import json as _json
-        import uuid
-        
-        request_id = str(uuid.uuid4())[:8]
-        query_cmd = {
-            'type': 'query_door_status',
-            'request_id': request_id,
-            'device_id': did,
-            'board_no': board_no,
-            'lock_no': lock_no,
-            'protocol': 'YBM'
-        }
-        
+        # 协议从柜体配置取
+        protocol = 'YBM'
         try:
-            _body = _json.dumps({'device_id': did, 'command': query_cmd}).encode()
-            _req.urlopen('http://127.0.0.1:5004/send', data=_body, timeout=3)
-        except Exception as e:
-            logger.error(f'[physical_status] WS proxy send failed: {e}')
-            return json_response(message='设备可能离线，无法查询物理状态', code=502)
-        
-        return json_response(message='状态查询指令已发送至设备，请稍后查看结果', data={
-            'device_id': did,
-            'board_no': board_no,
-            'lock_no': lock_no,
-            'request_id': request_id,
-            'query_sent': True
-        })
+            conn2 = get_db()
+            c2 = conn2.cursor()
+            c2.execute('SELECT mainboard_source FROM cabinets WHERE id=%s', (cabinet_id,))
+            r2 = c2.fetchone()
+            conn2.close()
+            if r2 and r2.get('mainboard_source'):
+                protocol = r2['mainboard_source']
+        except Exception:
+            pass
+        from routes.admin_v2 import _query_door_status
+        result = _query_door_status(did, int(board_no), int(lock_no), protocol)
+        if result:
+            return json_response(data=result)
+        return json_response(message='查询超时或设备无响应', code=504)
     except Exception as e:
         logger.error(f'[physical_status] {e}')
         return json_response(message=str(e), code=500)

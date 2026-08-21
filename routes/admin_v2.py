@@ -598,7 +598,7 @@ def admin_slots_batch_label():
 @bp.route('/admin/slots/open-all', methods=['POST'])
 @require_auth
 def admin_slots_open_all():
-    """全开柜门"""
+    """一键开门 - 方案C列表开门(单命令带门列表,设备按序执行), 只开空闲(1)/占用(2), 故障/锁定跳过"""
     try:
         data = request.get_json()
         cabinet_id = data.get('cabinet_id')
@@ -606,16 +606,28 @@ def admin_slots_open_all():
             return json_response(message='缺少柜体ID', code=400)
         conn = get_db()
         c = conn.cursor()
-        c.execute('SELECT mainboard_device_id, last_heartbeat FROM cabinets WHERE id=%s', (cabinet_id,))
+        c.execute('SELECT mainboard_device_id, last_heartbeat, mainboard_source FROM cabinets WHERE id=%s', (cabinet_id,))
         row = c.fetchone()
         conn.close()
         if not row or not row['mainboard_device_id']:
             return json_response(message='未找到设备', code=400)
-        from helpers import is_device_online, connected_devices
+        from helpers import is_device_online, send_open_lock_list
         if not is_device_online(str(row['mainboard_device_id']), row.get('last_heartbeat')):
             return json_response(message='设备离线，无法发送开门指令', code=400)
-        send_open_all(str(row['mainboard_device_id']))
-        return json_response(message='已发送全开指令')
+        did = str(row['mainboard_device_id'])
+        protocol = row.get('mainboard_source') or 'YBM'
+        conn = get_db()
+        c = conn.cursor()
+        c.execute('SELECT cs.slot_number, cs.board_no, cs.lock_no FROM cabinet_slots cs WHERE cs.cabinet_id = %s AND cs.status IN (1, 2)', (cabinet_id,))
+        slots = c.fetchall()
+        conn.close()
+        if not slots:
+            return json_response(message='没有可开的正常柜门', code=400)
+        doors = [(s.get('board_no') or 1, s.get('lock_no') or s.get('slot_number') or 1) for s in slots]
+        ok = send_open_lock_list(did, doors, protocol=protocol)
+        if not ok:
+            return json_response(message='开门指令发送失败', code=500)
+        return json_response(message=f'已发送{len(doors)}个柜门开锁指令（列表开门）', data={'opened': [s['slot_number'] for s in slots]})
     except Exception as e:
         logger.error(f'[open_all] {e}')
         return json_response(message=str(e), code=500)

@@ -7859,7 +7859,7 @@ def _complaint_scheduler():
             try:
                 conn3 = get_db()
                 c3 = conn3.cursor()
-                c3.execute("SELECT * FROM complaints WHERE status=0 AND (type!='wechat' OR type IS NULL) AND created_at < NOW() - INTERVAL '2 minutes' AND NOT (POSITION('稍后自动重试' IN COALESCE(reply,'')) > 0 AND reply_time > NOW() - INTERVAL '30 minutes') ORDER BY id LIMIT 100")
+                c3.execute("SELECT * FROM complaints WHERE status IN ('0','1') AND (type!='wechat' OR type IS NULL) AND created_at < NOW() - INTERVAL '2 minutes' AND NOT (POSITION('稍后自动重试' IN COALESCE(reply,'')) > 0 AND reply_time > NOW() - INTERVAL '30 minutes') ORDER BY id LIMIT 100")
                 rows2 = c3.fetchall()
                 conn3.close()
                 for row2 in rows2:
@@ -7955,7 +7955,7 @@ def _complaint_scheduler():
 
                     _claim_conn = get_db()
                     _claim_cur = _claim_conn.cursor()
-                    _claim_cur.execute("UPDATE complaints SET status='1' WHERE id=%s AND status='0' RETURNING id", (cid2,))
+                    _claim_cur.execute("UPDATE complaints SET status='1' WHERE id=%s AND status IN ('0','1') RETURNING id", (cid2,))
                     _claimed = _claim_cur.fetchone()
                     _claim_conn.commit()
                     _claim_conn.close()

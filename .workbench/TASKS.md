@@ -74,5 +74,7 @@ n
 | T-1787302997 | S14 | routes/merchant.py,routes/admin.py,helpers.py | 已完成 | 08-21 17:03 | 08-21 17:07 | 一键开门改方案B: merchant/admin open_all改逐门send_open_lock(带board/lock); send_open_all去重复推送 |
 | T-1787303385 | S15 | ws_proxy.py | 进行中 | 08-21 17:09 | | 一键开门乱序修复: ws_proxy /send 改同步发送(去gevent.spawn), 指令按序到达设备 |
 | T-1787317199 | S16 | static/admin-v2.html | 已完成 | 08-21 20:59 | 08-21 20:59 | 后台转圈修复:所有fetch加30秒超时(AbortController),超时自动关loading并提示 |
-| T-1787317341 | S17 | static/admin-v2.html | 进行中 | 08-21 21:02 | | 后台网点编辑加余额隐藏配置(启用+天数), 默认15天 |
+| T-1787317341 | S17 | static/admin-v2.html | 已完成 | 08-21 21:02 | 08-21 21:04 | 后台网点编辑加余额隐藏配置(启用+天数), 默认15天 |
 | T-1787317376 | S18 | static/admin-v2.html | 已完成 | 08-21 21:02 | 08-21 21:02 | 后台转圈根治:轮询静默不参与转圈+转圈8秒硬上限 |
+| T-1787317845 | S19 | static/admin-v2.html | 已完成 | 08-21 21:10 | 08-21 21:13 | 网点管理加代理商筛选 |
+| T-1787318234 | S20 | routes/admin_v2.py | 进行中 | 08-21 21:17 | | 自有投诉卡单修复:调度器non-wechat段纳入status=1半截单+claim兼容 |

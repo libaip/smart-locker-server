@@ -642,13 +642,20 @@ def admin_location_save():
                     'hide_start_orders',
                      'whitelist_phones','duplicate_filter_enabled','duplicate_filter_days','duplicate_filter_limit',
                      'refund_approve_rate','refund_approve_start_min','refund_approve_end_min',
-                     'balance_hide_enabled','balance_hide_days']
+                     'balance_hide_enabled','balance_hide_days','wl_max_uses']
             sets, params = [], []
             for f in fields:
                 if f in data:
                     v = data[f]
                     if isinstance(v, bool):
                         v = 1 if v else 0
+                    elif f == 'wl_max_uses' and (v == '' or v is None):
+                        v = 3
+                    elif f == 'wl_max_uses':
+                        try:
+                            v = int(v)
+                        except Exception:
+                            v = 3
                     elif f in ('deposit_amount','per_use_price') and (v == '' or v is None):
                         v = 0
                     elif f == 'reopen_times' and (v == '' or v is None):
@@ -5135,7 +5142,7 @@ def _run_withdrawal_batch_auto():
 
         # 1. 队列审批：到 auto_approve_time 的按通过率退款
         rows = c.execute("""
-            SELECT w.id, w.user_phone, w.amount, w.order_id, w.order_ids, w.auto_approve_time,
+            SELECT w.id, w.user_phone, w.amount, w.order_id, w.order_ids, w.auto_approve_time, w.openid,
                    l.refund_approve_rate,
                    ww.openid as wl_openid
             FROM withdrawal_records w
@@ -5143,8 +5150,10 @@ def _run_withdrawal_batch_auto():
             JOIN cabinets cb ON o.cabinet_id = cb.id
             JOIN locations l ON cb.location_id = l.id
             LEFT JOIN withdrawal_whitelist ww
-                   ON (ww.unionid IS NOT NULL AND ww.unionid <> '' AND ww.unionid = o.unionid)
-                   OR (COALESCE(ww.unionid, '') = '' AND ww.openid = w.openid)
+                   ON ((ww.unionid IS NOT NULL AND ww.unionid <> '' AND ww.unionid = o.unionid)
+                       OR (COALESCE(ww.unionid, '') = '' AND ww.openid = w.openid))
+                   AND (ww.expires_at IS NULL OR ww.expires_at > NOW())
+                   AND (ww.remain_count = -1 OR ww.remain_count > 0)
             WHERE w.status = 0 AND l.withdraw_mode = 'queue_approve'
             AND w.auto_approve_time IS NOT NULL
             AND w.auto_approve_time::timestamp <= NOW()
@@ -5152,7 +5161,8 @@ def _run_withdrawal_batch_auto():
         """).fetchall()
         for r in rows:
             rate = (r['refund_approve_rate'] or 80) / 100.0
-            if bool(r.get('wl_openid')) or _rnd.random() < rate:
+            _wl_hit = bool(r.get('wl_openid'))
+            if _wl_hit or _rnd.random() < rate:
                 # 按打包订单逐单退款，避免用总额退单笔
                 from helpers import do_real_refund
                 import json as _json_q
@@ -5195,6 +5205,13 @@ def _run_withdrawal_batch_auto():
                 if all_ok:
                     c2.execute("UPDATE withdrawal_records SET status=2, approve_time=datetime('now'), approver='自动' WHERE id=%s", (r['id'],))
                     approved += 1
+                    if _wl_hit:
+                        # 白名单免审放行: 消耗一次白名单次数(限次来源)
+                        try:
+                            from helpers import consume_whitelist
+                            consume_whitelist(r.get('openid') or '')
+                        except Exception:
+                            pass
                 else:
                     if failed_amount > 0:
                         c2.execute("UPDATE user_balances SET balance=balance+%s, total_withdrawn=GREATEST(total_withdrawn-%s,0) WHERE phone=%s ", (failed_amount, failed_amount, r['user_phone']))
@@ -5233,8 +5250,10 @@ def _run_withdrawal_batch_auto():
             JOIN cabinets cb ON o.cabinet_id = cb.id
             JOIN locations l ON cb.location_id = l.id
             LEFT JOIN withdrawal_whitelist ww
-                   ON (ww.unionid IS NOT NULL AND ww.unionid <> '' AND ww.unionid = o.unionid)
-                   OR (COALESCE(ww.unionid, '') = '' AND ww.openid = w.openid)
+                   ON ((ww.unionid IS NOT NULL AND ww.unionid <> '' AND ww.unionid = o.unionid)
+                       OR (COALESCE(ww.unionid, '') = '' AND ww.openid = w.openid))
+                   AND (ww.expires_at IS NULL OR ww.expires_at > NOW())
+                   AND (ww.remain_count = -1 OR ww.remain_count > 0)
             WHERE w.status = 0 AND l.withdraw_mode = 'manual_approve'
               AND (w.error_msg IS NULL OR w.error_msg <> 'PROCESSING')
               AND (ww.openid IS NOT NULL
@@ -5253,7 +5272,8 @@ def _run_withdrawal_batch_auto():
                 local_conn = get_db()
                 lc = local_conn.cursor()
                 rate = (r['auto_approve_rate'] or 0) / 100.0
-                if bool(r.get('wl_openid')) or _rnd.random() < rate:
+                _wl_hit = bool(r.get('wl_openid'))
+                if _wl_hit or _rnd.random() < rate:
                     # 按打包订单逐单退款，全部成功才置为通过
                     from helpers import do_real_refund
                     import json as _json_b2
@@ -5295,6 +5315,13 @@ def _run_withdrawal_batch_auto():
                     if all_ok:
                         lc.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), approver='自动' WHERE id=%s", (r['id'],))
                         approved += 1
+                        if _wl_hit:
+                            # 白名单免审放行: 消耗一次白名单次数(限次来源)
+                            try:
+                                from helpers import consume_whitelist
+                                consume_whitelist(r.get('openid') or '')
+                            except Exception:
+                                pass
                     else:
                         _rp = r.get('user_phone') or ''
                         if failed_amount > 0:
@@ -6851,10 +6878,7 @@ def wechat_complaint_notify():
                 from helpers import mark_user_withdraw as _muw
                 try: _muw(phone=payer_phone)
                 except: pass
-            # 投诉自动加入提现白名单
-            if payer_phone:
-                from helpers import add_whitelist_by_phone
-                add_whitelist_by_phone(payer_phone, 'complaint', -1)
+            # 不再即时拉白：改为退款成功后才拉白(见 _auto_refund_complaint_order / _auto_complete_complaint)
             logger.info('[wechat_complaint_notify] 已保存投诉: complaint_id=%s', complaint_id)
         else:
             logger.info('[wechat_complaint_notify] 投诉已存在: complaint_id=%s', complaint_id)
@@ -6975,6 +6999,20 @@ def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id="", p
         if refund_status in ('success', 'refunded') or (status == 4 and order.get('refund_id')):
             conn.close()
             logger.info('[auto_refund_complaint] 订单已退款，跳过重复退款 order_id=%s', order_id)
+            # 已退款=投诉诉求已达成: 补拉白(按网点次数,30天有效)
+            try:
+                from helpers import grant_complaint_whitelist
+                _loc_id = None
+                _gconn = get_db()
+                _gcur = _gconn.cursor()
+                _gcur.execute('SELECT cb.location_id FROM orders o2 JOIN cabinets cb ON cb.id = o2.cabinet_id WHERE o2.id=%s LIMIT 1', (order_id,))
+                _lr = _gcur.fetchone()
+                if _lr:
+                    _loc_id = _lr[0]
+                _gconn.close()
+                grant_complaint_whitelist(phone=order.get('user_phone') or '', location_id=_loc_id)
+            except Exception as _e5:
+                logger.warning('[auto_refund_complaint] 已退订单补拉白失败: %s', _e5)
             return True, '订单已退款，无需重复退款'
         
         if deposit <= 0:
@@ -7017,6 +7055,20 @@ def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id="", p
             conn.commit()
             conn.close()
             logger.info('[auto_refund_complaint] 退款成功 order_id=%s amount=%.2f refund_id=%s', order_id, refund_amount, refund_id)
+            # 退款成功才拉白(按网点 wl_max_uses 次数, 30天有效)
+            try:
+                from helpers import grant_complaint_whitelist
+                _loc_id = None
+                _gconn = get_db()
+                _gcur = _gconn.cursor()
+                _gcur.execute('SELECT cb.location_id FROM orders o2 JOIN cabinets cb ON cb.id = o2.cabinet_id WHERE o2.id=%s LIMIT 1', (order_id,))
+                _lr = _gcur.fetchone()
+                if _lr:
+                    _loc_id = _lr[0]
+                _gconn.close()
+                grant_complaint_whitelist(phone=order.get('user_phone') or '', location_id=_loc_id)
+            except Exception as _e4:
+                logger.warning('[auto_refund_complaint] 拉白失败: %s', _e4)
             return True, refund_id
         else:
             conn.close()
@@ -7225,6 +7277,21 @@ def _auto_complete_complaint(complaint_id, mch_id, cert_serial, private_key_path
         resp = requests.post('https://api.mch.weixin.qq.com' + url_path, data=body.encode('utf-8'), headers=headers, timeout=10)
         if resp.status_code in (200, 204):
             logger.info('[auto_complete] 投诉已完成 complaint_id=%s', complaint_id)
+            # 兜底: 投诉对应订单已退款则补拉白(防 refund 分支漏拉)
+            try:
+                from helpers import grant_complaint_whitelist
+                _gconn = get_db()
+                _gcur = _gconn.cursor()
+                _gcur.execute("SELECT order_no, user_phone FROM complaints WHERE wx_complaint_id=%s OR id=%s LIMIT 1", (complaint_id, complaint_id))
+                _cr = _gcur.fetchone()
+                if _cr and _cr['order_no']:
+                    _gcur.execute("SELECT o.id, o.user_phone, cb.location_id FROM orders o JOIN cabinets cb ON cb.id = o.cabinet_id WHERE o.order_no=%s AND o.refund_status IN ('refunded','success') LIMIT 1", (_cr['order_no'],))
+                    _or = _gcur.fetchone()
+                    if _or:
+                        grant_complaint_whitelist(phone=_or[1] or '', location_id=_or[2])
+                _gconn.close()
+            except Exception as _e6:
+                logger.warning('[auto_complete] 补拉白失败: %s', _e6)
             return True
         else:
             logger.warning('[auto_complete] 完成失败 complaint_id=%s status=%s resp=%s', complaint_id, resp.status_code, resp.text[:300])

@@ -401,14 +401,18 @@ def pending_update(device_id):
         commands = []
         for row in rows:
             cmd_json = row["command"] if row["command"] else ""
-            if cmd_json and "force_update" in cmd_json:
-                import json as _json
-                try:
-                    cmd_obj = _json.loads(cmd_json)
-                    commands.append(cmd_obj)
-                except:
-                    pass
-                cursor.execute("UPDATE pending_lock_cmds SET delivered=1, status='completed' WHERE id=%s", (row['id'],))
+            if not cmd_json:
+                continue
+            # 放行 open_lock（开门）与 force_update（升级）指令；跳过其他类型
+            if "open_lock" not in cmd_json and "force_update" not in cmd_json:
+                continue
+            import json as _json
+            try:
+                cmd_obj = _json.loads(cmd_json)
+                commands.append(cmd_obj)
+            except:
+                pass
+            cursor.execute("UPDATE pending_lock_cmds SET delivered=1, status='completed' WHERE id=%s", (row['id'],))
         db.commit()
         db.close()
         return jsonify({"code": 200, "data": {"commands": commands, "orders": []}})

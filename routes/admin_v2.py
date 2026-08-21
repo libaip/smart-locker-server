@@ -70,6 +70,7 @@ def device_lock_status_report():
     try:
         data = request.get_json(force=True) or {}
         request_id = data.get('request_id', '')
+        logger.info('[lock-status-report] received req=%s full=%s', request_id, json.dumps(data)[:300])
         result_body = None
         if request_id:
             result_body = {
@@ -7384,22 +7385,24 @@ def _query_door_status(device_id, board_no, lock_no, protocol):
             logger.info('[door_status] ws_proxy sent: device=%s req=%s', device_id, request_id)
         except Exception as e:
             logger.warning('[door_status] ws_proxy send failed: %s, fallback to polling', e)
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute('SELECT id FROM cabinets WHERE mainboard_device_id=%s', (device_id,))
-        cab = cur.fetchone()
-        if cab:
-            poll_cmd = {'type': 'query_lock_status', 'request_id': request_id, 'board_no': board_no, 'lock_no': lock_no, 'protocol': protocol}
-            cur.execute("INSERT INTO pending_lock_cmds (device_id, cabinet_id, command, status, delivered) VALUES (%s,%s,%s,'pending',0)", (device_id, cab['id'], _j.dumps(poll_cmd)))
-            conn.commit()
-            logger.info('[door_status] poll cmd queued: device=%s req=%s', device_id, request_id)
-        conn.close()
-    except Exception as e:
-        logger.error('[door_status] poll fallback failed: %s', e)
-        with _door_status_lock:
-            _door_status_results.pop(request_id, None)
-        raise
+    # 仅当WS推送失败时才插poll兜底, 避免双通道导致设备重复执行/上报混乱
+    if not ws_sent:
+        try:
+            conn = get_db()
+            cur = conn.cursor()
+            cur.execute('SELECT id FROM cabinets WHERE mainboard_device_id=%s', (device_id,))
+            cab = cur.fetchone()
+            if cab:
+                poll_cmd = {'type': 'query_lock_status', 'request_id': request_id, 'board_no': board_no, 'lock_no': lock_no, 'protocol': protocol}
+                cur.execute("INSERT INTO pending_lock_cmds (device_id, cabinet_id, command, status, delivered) VALUES (%s,%s,%s,'pending',0)", (device_id, cab['id'], _j.dumps(poll_cmd)))
+                conn.commit()
+                logger.info('[door_status] poll cmd queued (WS失败兜底): device=%s req=%s', device_id, request_id)
+            conn.close()
+        except Exception as e:
+            logger.error('[door_status] poll fallback failed: %s', e)
+            with _door_status_lock:
+                _door_status_results.pop(request_id, None)
+            raise
     with _door_status_lock:
         evt = _door_status_results.get(request_id, {}).get('event')
     deadline = time.time() + (8 if direct_ws else 70)
@@ -7417,7 +7420,8 @@ def _query_door_status(device_id, board_no, lock_no, protocol):
             row = cur.fetchone()
             conn.close()
             if row and row['result']:
-                result = _j.loads(row['result'])
+                r = row['result']
+                result = r if isinstance(r, dict) else _j.loads(r)
                 break
         except Exception:
             pass

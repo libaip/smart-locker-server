@@ -42,23 +42,63 @@ _door_status_results = {}
 _door_status_lock = threading.Lock()
 
 
+def _ensure_door_status_table():
+    """门状态查询结果共享表(多worker跨进程可见)"""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS door_status_queries (
+                request_id text PRIMARY KEY,
+                result jsonb,
+                created_at timestamp DEFAULT CURRENT_TIMESTAMP,
+                updated_at timestamp DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+_ensure_door_status_table()
+
+
 
 @bp.route('/device/lock-status-report', methods=['POST'])
 def device_lock_status_report():
     try:
         data = request.get_json(force=True) or {}
         request_id = data.get('request_id', '')
+        result_body = None
+        if request_id:
+            result_body = {
+                'board_no': data.get('board_no'),
+                'lock_no': data.get('lock_no'),
+                'is_open': bool(data.get('is_open', False)),
+                'door_status': data.get('door_status', 'unknown'),
+                'query_success': bool(data.get('status') == 'ok' or data.get('query_success')),
+                'status': data.get('status', 'ok' if data.get('query_success') else 'read_failed')
+            }
+            # DB 共享写入(任意worker可见)
+            try:
+                conn = get_db()
+                cur = conn.cursor()
+                cur.execute('''
+                    INSERT INTO door_status_queries (request_id, result, updated_at)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP)
+                    ON CONFLICT (request_id) DO UPDATE
+                    SET result = EXCLUDED.result, updated_at = CURRENT_TIMESTAMP
+                ''', (request_id, json.dumps(result_body)))
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                logger.error('[lock-status-report] db write failed: %s', e)
         if request_id and request_id in _door_status_results:
             with _door_status_lock:
                 entry = _door_status_results.get(request_id)
                 if entry:
-                    entry['result'] = {
-                        'board_no': data.get('board_no'),
-                        'lock_no': data.get('lock_no'),
-                        'is_open': data.get('is_open', False),
-                        'door_status': data.get('door_status', 'unknown'),
-                        'query_success': data.get('status') == 'ok'
-                    }
+                    entry['result'] = result_body
                     entry['event'].set()
                     logger.info('[lock-status-report] result set for req=%s', request_id)
         return json_response(data={'received': True})
@@ -1705,7 +1745,7 @@ def admin_complaints():
             elif status == 'error':
                 where += ' AND c.status IN (\'4\', \'99\')'
             elif status == 'refund_failed':
-                where += " AND c.refund_status = 'refund_failed'"
+                where += " AND c.refund_status = 'refund_failed' AND (o.refund_status IS NULL OR o.refund_status NOT IN ('refunded','success'))"
             else:
                 try:
                     where += ' AND c.status=%s'
@@ -1732,7 +1772,7 @@ def admin_complaints():
             LEFT JOIN payment_channels pc ON o.payment_channel_id=pc.id
             WHERE {where}''', params)
         total = c.fetchone()[0]
-        c.execute(f'''SELECT c.*, CASE WHEN c.source IS NOT NULL AND c.source != '' THEN c.source WHEN c.type IN ('self','complaint') OR c.complaint_type IN ('self','complaint') THEN '自有投诉' WHEN c.type='wechat' OR c.complaint_type='wechat' THEN '微信投诉' WHEN c.type='kf' OR c.complaint_type='kf_auto' THEN '客服自动处理' ELSE COALESCE(c.type,'') END as source, COALESCE(NULLIF(po.wechat_name,''), NULLIF(up.wechat_name,''), o.wechat_name, c.nick_name) as nickname, CASE WHEN o.status IN (2,3) THEN o.order_no ELSE c.order_no END as order_no, CASE WHEN c.type = 'self' THEN c.user_phone ELSE COALESCE(o.user_phone, c.user_phone) END as user_phone, pc.mch_id, ca.cabinet_code, l.name as location_name
+        c.execute(f'''SELECT c.*, CASE WHEN c.source IS NOT NULL AND c.source != '' THEN c.source WHEN c.type IN ('self','complaint') OR c.complaint_type IN ('self','complaint') THEN '自有投诉' WHEN c.type='wechat' OR c.complaint_type='wechat' THEN '微信投诉' WHEN c.type='kf' OR c.complaint_type='kf_auto' THEN '客服自动处理' ELSE COALESCE(c.type,'') END as source, COALESCE(NULLIF(po.wechat_name,''), NULLIF(up.wechat_name,''), o.wechat_name, c.nick_name) as nickname, CASE WHEN o.status IN (2,3) THEN o.order_no ELSE c.order_no END as order_no, CASE WHEN c.type = 'self' THEN c.user_phone ELSE COALESCE(o.user_phone, c.user_phone) END as user_phone, pc.mch_id, ca.cabinet_code, l.name as location_name, o.refund_status as order_refund_status
             FROM complaints c LEFT JOIN orders o ON c.order_id=o.id OR (c.order_no IS NOT NULL AND c.order_no = o.order_no) LEFT JOIN (SELECT DISTINCT ON (phone) phone, openid, wechat_name FROM users ORDER BY phone, id DESC) po ON po.phone=COALESCE(NULLIF(o.user_phone,''), NULLIF(c.user_phone,'')) LEFT JOIN user_profiles up ON up.openid=COALESCE(c.openid, po.openid, o.openid) LEFT JOIN payment_channels pc ON o.payment_channel_id=pc.id LEFT JOIN cabinets ca ON o.cabinet_id=ca.id LEFT JOIN locations l ON ca.location_id=l.id
             WHERE {where} ORDER BY c.created_at DESC LIMIT %s OFFSET %s''',
                   params + [page_size, (page-1)*page_size])
@@ -1796,6 +1836,7 @@ def self_complaint_user_orders():
 @require_auth
 def admin_complaint_retry_refund():
     try:
+        from helpers import do_real_refund
         data = request.get_json()
         complaint_id = data.get('id')
         logger.info('[retry_refund] 管理员手动退款 complaint_id=%s admin=%s', complaint_id, session.get('admin_username', ''))
@@ -7314,6 +7355,15 @@ def _query_door_status(device_id, board_no, lock_no, protocol):
     request_id = str(uuid.uuid4())
     with _door_status_lock:
         _door_status_results[request_id] = {'result': None, 'event': threading.Event()}
+    # DB 注册(多worker共享)
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute('INSERT INTO door_status_queries (request_id, result) VALUES (%s, NULL) ON CONFLICT (request_id) DO NOTHING', (request_id,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning('[door_status] db register failed: %s', e)
     direct_ws = False
     ws_sent = False
     cmd = {'type': 'query_door_status', 'request_id': request_id, 'board_no': board_no, 'lock_no': lock_no, 'protocol': protocol}
@@ -7352,12 +7402,38 @@ def _query_door_status(device_id, board_no, lock_no, protocol):
         raise
     with _door_status_lock:
         evt = _door_status_results.get(request_id, {}).get('event')
-    if evt:
-        ok = evt.wait(timeout=(8 if direct_ws else 70))
-        with _door_status_lock:
-            result = _door_status_results.pop(request_id, {}).get('result')
-        return result
-    return None
+    deadline = time.time() + (8 if direct_ws else 70)
+    result = None
+    while time.time() < deadline:
+        if evt and evt.is_set():
+            with _door_status_lock:
+                result = _door_status_results.pop(request_id, {}).get('result')
+            break
+        # DB 轮询(跨worker结果共享)
+        try:
+            conn = get_db()
+            cur = conn.cursor()
+            cur.execute('SELECT result FROM door_status_queries WHERE request_id=%s AND result IS NOT NULL', (request_id,))
+            row = cur.fetchone()
+            conn.close()
+            if row and row['result']:
+                result = _j.loads(row['result'])
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
+    with _door_status_lock:
+        _door_status_results.pop(request_id, None)
+    # 清理DB残留
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute('DELETE FROM door_status_queries WHERE request_id=%s', (request_id,))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+    return result
 
 
 @bp.route('/admin/device/query-door-status', methods=['POST'])
@@ -7704,6 +7780,27 @@ def _complaint_scheduler():
                     logger.info("[complaint_scheduler] stale red cleared count=%s", _clean_rows)
             except Exception as _ce:
                 logger.error("[complaint_scheduler] clear stale red error: %s", _ce)
+            # 定期同步: 订单已退但投诉仍标退款失败/转人工的, 自动置完成(投诉状态与订单一致)
+            try:
+                _sync_conn = get_db()
+                _sync_cur = _sync_conn.cursor()
+                _sync_cur.execute("""
+                    UPDATE complaints c
+                    SET status='3', refund_status='refunded', reply=COALESCE(reply,'已退款'),
+                        reply_time=CURRENT_TIMESTAMP
+                    FROM orders o
+                    WHERE c.order_no = o.order_no
+                      AND c.type = 'wechat'
+                      AND c.status IN ('1','2')
+                      AND COALESCE(o.refund_status,'') IN ('refunded','success')
+                """)
+                _sync_rows = _sync_cur.rowcount
+                _sync_conn.commit()
+                _sync_conn.close()
+                if _sync_rows:
+                    logger.info("[complaint_scheduler] complaint synced with refunded order count=%s", _sync_rows)
+            except Exception as _se:
+                logger.error("[complaint_scheduler] sync complaint status error: %s", _se)
             conn = get_db()
             c = conn.cursor()
             c.execute("SELECT * FROM complaints WHERE status IN ('0','1','2') AND type IN ('wechat') AND created_at < NOW() - INTERVAL '2 minutes' AND created_at > NOW() - INTERVAL '7 days' ORDER By created_at LIMIT 100")

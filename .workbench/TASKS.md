@@ -70,4 +70,4 @@ n
 - 多会话在生产活动(今天 git 有 S6/S7/S9 提交),改白名单代码前先 claim,别互相踩
 | T-1787299420 | S11 | .workbench/TASKS.md | 已完成 | 08-21 16:03 | 08-21 16:03 | 工作台追加规则:向老板汇报一律大白话 |
 | T-1787300244 | S12 | helpers.py,routes/user.py,routes/admin_v2.py,routes/admin.py,.workbench/TASKS.md | 进行中 | 08-21 16:17 | | 白名单三改:有效期+网点次数(默认3)+退款成功才拉白,含存量补期补次 |
-| T-1787300657 | S13 | routes/admin_v2.py,routes/device.py | 进行中 | 08-21 16:24 | | 修复一键开门(批量): batch_open补device_id/board_no/lock_no+统一在线判断; pending_update放行open_lock指令 |
+| T-1787300657 | S13 | routes/admin_v2.py,routes/device.py | 已完成 | 08-21 16:24 | 08-21 16:28 | 修复一键开门(批量): batch_open补device_id/board_no/lock_no+统一在线判断; pending_update放行open_lock指令 |

@@ -1947,13 +1947,19 @@ if(m==='GET'&&data){var p=[];Object.keys(data).forEach(function(k){if(data[k]!==
 var opts={method:m,headers:{'Content-Type':'application/json','Authorization':'Bearer '+localStorage.getItem('admin_token')}};
 if(data)opts.body=JSON.stringify(data);
 var self=this;self._apiLoadingCount=(self._apiLoadingCount||0)+1;self.pageLoading=true;
+var ctrl=(typeof AbortController!=='undefined')?new AbortController():null;
+if(ctrl)opts.signal=ctrl.signal;
+var timer=ctrl?setTimeout(function(){ctrl.abort();},30000):null;
 return fetch(url,opts).then(function(r){
 if(r.status===401){app.showLogin=true;localStorage.removeItem('admin_token');throw new Error('未登录');}
 return r.json();
 }).then(function(d){
 if(d.code&&d.code!==0&&d.code!==200)throw new Error(d.message||'请求失败');
 return d;
-}).finally(function(){self._apiLoadingCount--;if(self._apiLoadingCount<=0){self._apiLoadingCount=0;self.pageLoading=false;}});
+}).catch(function(e){
+if(e&&e.name==='AbortError')throw new Error('请求超时，请检查网络');
+throw e;
+}).finally(function(){if(timer)clearTimeout(timer);self._apiLoadingCount--;if(self._apiLoadingCount<=0){self._apiLoadingCount=0;self.pageLoading=false;}});
 },
 toast:function(msg,type){this.toastMsg=msg;this.toastType=type||'success';var self=this;clearTimeout(this.toastTimer);this.toastTimer=setTimeout(function(){self.toastMsg='';},2500);},
 confirm2:function(msg,cb){this.confirmMsg=msg;this.confirmCb=cb;this.confirmVisible=true;},
@@ -1970,11 +1976,15 @@ if(!this.loginForm.username||!this.loginForm.password){this.loginError='请输�
 if(!this.loginForm.captcha){this.loginError='请输入验证码';return;}
 if(this.loginForm.captcha.toUpperCase()!==this.captchaCode){this.loginError='验证码错误';this.drawCaptcha();return;}
 this.loginLoading=true;this.loginError='';
-fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(this.loginForm)}).then(function(r){return r.json();}).then(function(d){
-self.loginLoading=false;
+var _lc=(typeof AbortController!=='undefined')?new AbortController():null;
+var _lt=_lc?setTimeout(function(){_lc.abort();},30000):null;
+var _lOpts={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(this.loginForm)};
+if(_lc)_lOpts.signal=_lc.signal;
+fetch('/api/admin/login',_lOpts).then(function(r){return r.json();}).then(function(d){
+self.loginLoading=false;if(_lt)clearTimeout(_lt);
 if(d.code===0||d.code===200){localStorage.setItem('admin_token',d.data&&d.data.token||'');self.adminUser=d.data&&d.data.username||'管理员';self.showLogin=false;self.loadDashboard();}
 else{self.loginError=d.message||'登录失败';self.drawCaptcha();}
-}).catch(function(e){self.loginLoading=false;self.loginError='网络错误';self.drawCaptcha();});
+}).catch(function(e){self.loginLoading=false;if(_lt)clearTimeout(_lt);self.loginError=(e&&e.name==='AbortError')?'请求超时，请检查网络':'网络错误';self.drawCaptcha();});
 },
 doLogout:function(){localStorage.removeItem('admin_token');localStorage.removeItem('admin_activeMenu');localStorage.removeItem('admin_activeTab');localStorage.removeItem('admin_tabs');this.showLogin=true;this.activeMenu='dashboard';},
 // Dashboard
@@ -2131,7 +2141,7 @@ renderStatsChart:function(trend){var el=document.getElementById('statsChart');if
  loadChannels:function(){var self=this;return this.api('/admin/channels').then(function(d){var rows=d.data||[];self.channels=rows;}).catch(function(){self.channels=[];});},
  syncChannelBills:function(mch_id){var self=this;var body={days:3};if(mch_id)body.mch_id=mch_id;if(!confirm('确认同步微信对账单？可能耗时较长'))return;self.toast('同步中，请稍候...');self.api('/admin/channels/sync-bills',body).then(function(d){self.toast(d.message||'同步完成');self.loadChannels();}).catch(function(e){self.toast(e.message||'同步失败','error');});},
 showChannelModal:function(row){this.channelForm=row?JSON.parse(JSON.stringify(row)):{name:'',channel_type:'wechat',app_id:'',mch_id:'',api_key:'',app_secret:'',cert_name:'',rotation_index:0,status:1};this.certUploadMsg='';this.certUploadOk=true;this.channelFormTitle=row?'编辑渠道':'添加渠道';this.channelModal=true;},
-uploadCert:function(e,field){var self=this;var file=e.target.files[0];if(!file)return;if(!this.channelForm.mch_id){this.toast('请先填写商户号','error');return;}if(!this.channelForm.cert_name){this.channelForm.cert_name=this.channelForm.mch_id;}var fd=new FormData();fd.append('mch_id',this.channelForm.mch_id);fd.append(field,file);fetch('/api/admin/channel/upload-cert',{method:'POST',body:fd,credentials:'same-origin'}).then(function(r){return r.json()}).then(function(d){if(d.code===0||d.code===200){self.certUploadOk=true;self.certUploadMsg='上传成功: '+(d.data.uploaded||[]).join(', ');}else{self.certUploadOk=false;self.certUploadMsg='失败: '+(d.message||'');}}).catch(function(e){self.certUploadOk=false;self.certUploadMsg='上传失败';});},
+uploadCert:function(e,field){var self=this;var file=e.target.files[0];if(!file)return;if(!this.channelForm.mch_id){this.toast('请先填写商户号','error');return;}if(!this.channelForm.cert_name){this.channelForm.cert_name=this.channelForm.mch_id;}var fd=new FormData();fd.append('mch_id',this.channelForm.mch_id);fd.append(field,file);var _uc=(typeof AbortController!=='undefined')?new AbortController():null;var _ut=_uc?setTimeout(function(){_uc.abort();},60000):null;var _uOpts={method:'POST',body:fd,credentials:'same-origin'};if(_uc)_uOpts.signal=_uc.signal;fetch('/api/admin/channel/upload-cert',_uOpts).then(function(r){return r.json()}).then(function(d){if(_ut)clearTimeout(_ut);if(d.code===0||d.code===200){self.certUploadOk=true;self.certUploadMsg='上传成功: '+(d.data.uploaded||[]).join(', ');}else{self.certUploadOk=false;self.certUploadMsg='失败: '+(d.message||'');}}).catch(function(e){if(_ut)clearTimeout(_ut);self.certUploadOk=false;self.certUploadMsg=(e&&e.name==='AbortError')?'上传超时，请检查网络':'上传失败';});},
 onCertFile:function(field,e){this.certFiles[field]=e.target.files[0];},saveChannel:function(){var self=this;this.api('/admin/channel/save',this.channelForm).then(function(){self.toast('保存成功');self.channelModal=false;self.loadChannels();}).catch(function(e){self.toast(e.message||'保存失败','error');});},
 toggleChannelStatus:function(row){var self=this;var newSt=row.is_active===1?0:1;this.api('/admin/channel/save',Object.assign({},row,{is_active:newSt})).then(function(){self.toast('操作成功');self.loadChannels();}).catch(function(e){self.toast(e.message||'操作失败','error');});},
 deleteChannel:function(row){var self=this;this.confirm2('确定删除此支付渠道?',function(){self.api('/admin/channel/delete',{id:row.id}).then(function(){self.toast('删除成功');self.loadChannels();}).catch(function(e){self.toast(e.message||'删除失败','error');});});},

@@ -72,3 +72,5 @@ n
 | T-1787300244 | S12 | helpers.py,routes/user.py,routes/admin_v2.py,routes/admin.py,.workbench/TASKS.md | 已完成 | 08-21 16:17 | 08-21 16:30 | 白名单三改:有效期+网点次数(默认3)+退款成功才拉白,含存量补期补次 |
 | T-1787300657 | S13 | routes/admin_v2.py,routes/device.py | 已完成 | 08-21 16:24 | 08-21 16:28 | 修复一键开门(批量): batch_open补device_id/board_no/lock_no+统一在线判断; pending_update放行open_lock指令 |
 | T-1787302997 | S14 | routes/merchant.py,routes/admin.py,helpers.py | 已完成 | 08-21 17:03 | 08-21 17:07 | 一键开门改方案B: merchant/admin open_all改逐门send_open_lock(带board/lock); send_open_all去重复推送 |
+| T-1787303385 | S15 | ws_proxy.py | 进行中 | 08-21 17:09 | | 一键开门乱序修复: ws_proxy /send 改同步发送(去gevent.spawn), 指令按序到达设备 |
+| T-1787317199 | S16 | static/admin-v2.html | 进行中 | 08-21 20:59 | | 后台转圈修复:所有fetch加30秒超时(AbortController),超时自动关loading并提示 |

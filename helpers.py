@@ -586,6 +586,74 @@ def send_open_all(device_id, protocol=None):
     return True
 
 
+def send_open_lock_list(device_id, doors, protocol=None, order_id='', require_online=False):
+    """方案C: 列表开门 - 单命令携带门列表, 设备按序逐门开锁, 避免逐条推送乱序/丢失
+    doors: [(board_no, lock_no), ...]
+    """
+    if not doors:
+        return False
+    if protocol is None:
+        try:
+            protocol = _get_device_protocol(device_id)
+        except Exception:
+            protocol = 'YBM'
+    if require_online:
+        try:
+            from database import get_db as _gdb
+            _c = _gdb(); _cur = _c.cursor()
+            _cur.execute("SELECT last_heartbeat FROM cabinets WHERE mainboard_device_id=%s", (device_id,))
+            _r = _cur.fetchone(); _c.close()
+            if _r and not is_device_online(device_id, _r['last_heartbeat']):
+                logger.info(f'[SEND_LOCK_LIST] 设备离线: device_id={device_id}')
+                return False
+        except Exception:
+            pass
+    import urllib.request as _req
+    import json as _json
+    cmd_id = f"list_{int(time.time()*1000000)}"
+    command = {
+        'type': 'open_lock_list',
+        'device_id': device_id,
+        'cmd_id': cmd_id,
+        'protocol': protocol,
+        'order_id': order_id or '',
+        'doors': [{'board_no': int(b), 'lock_no': int(l)} for b, l in doors],
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+    }
+    logger.info(f'[SEND_LOCK_LIST] device={device_id}, doors={len(doors)}, protocol={protocol}, cmd_id={cmd_id}')
+    # 1) ws_proxy 同步推送(首选)
+    _ws_sent = False
+    for _retry in range(3):
+        try:
+            _body = _json.dumps({'device_id': device_id, 'command': command}).encode()
+            _r = _req.urlopen('http://127.0.0.1:5004/send', data=_body, timeout=3)
+            if _json.loads(_r.read()).get('success'):
+                _ws_sent = True
+                logger.info(f'[SEND_LOCK_LIST] ws_proxy sent (retry={_retry}): device={device_id}')
+                break
+        except Exception:
+            pass
+        if _retry < 2:
+            time.sleep(0.5)
+    # 2) DB pending 兜底(设备轮询拾取)
+    if not _ws_sent:
+        try:
+            from database import get_db as _gdb
+            _c = _gdb(); _cur = _c.cursor()
+            _cur.execute('SELECT id FROM cabinets WHERE mainboard_device_id=%s', (device_id,))
+            _cab = _cur.fetchone()
+            if _cab:
+                _cur.execute("INSERT INTO pending_lock_cmds (device_id, cabinet_id, command, status, delivered) VALUES (%s,%s,%s,'pending',0)",
+                             (device_id, _cab['id'], _json.dumps(command)))
+                _c.commit()
+                logger.info(f'[SEND_LOCK_LIST] pending queued: device={device_id}')
+            _c.close()
+            _ws_sent = True
+        except Exception as e:
+            logger.error(f'[SEND_LOCK_LIST] pending fallback failed: {e}')
+    return _ws_sent
+
+
 # ============================================
 # ???? - ????????
 # ============================================

@@ -546,7 +546,7 @@ def merchant_order_detail(order_id):
         cursor.execute('SELECT * FROM payments WHERE order_id = %s ORDER BY created_at', (order_id,))
         payments = cursor.fetchall()
         # 开门记录
-        cursor.execute('SELECT dr.*, cs.slot_label FROM door_records dr LEFT JOIN cabinet_slots cs ON dr.device_id = (SELECT mainboard_device_id FROM cabinets WHERE id = %s) AND cs.slot_number = CAST(dr.lock_no AS integer) AND cs.cabinet_id = %s WHERE dr.order_id = %s ORDER BY dr.create_time', (order['cabinet_id'], order['cabinet_id'], str(order_id)))
+        cursor.execute('SELECT dr.*, cs.slot_label FROM door_records dr LEFT JOIN cabinet_slots cs ON dr.device_id = (SELECT mainboard_device_id FROM cabinets WHERE id = %s) AND cs.slot_number = CAST(dr.lock_no AS integer) AND cs.cabinet_id = %s WHERE dr.order_id IN (%s, %s) ORDER BY dr.create_time', (order['cabinet_id'], order['cabinet_id'], str(order_id), order.get('order_no') or ''))
         door_records = cursor.fetchall()
         conn.close()
         return json_response({'order': dict(order), 'payments': [dict(p) for p in payments], 'door_records': [dict(d) for d in door_records]})

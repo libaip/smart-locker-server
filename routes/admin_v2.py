@@ -618,7 +618,7 @@ def admin_slots_open_all():
         protocol = row.get('mainboard_source') or 'YBM'
         conn = get_db()
         c = conn.cursor()
-        c.execute('SELECT cs.slot_number, cs.board_no, cs.lock_no FROM cabinet_slots cs WHERE cs.cabinet_id = %s AND cs.status IN (1, 2)', (cabinet_id,))
+        c.execute('SELECT cs.slot_number, cs.board_no, cs.lock_no FROM cabinet_slots cs WHERE cs.cabinet_id = %s AND cs.status IN (1, 2) ORDER BY cs.slot_number', (cabinet_id,))
         slots = c.fetchall()
         conn.close()
         if not slots:

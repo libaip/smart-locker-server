@@ -22,8 +22,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from database import get_db
 from helpers import (json_response, require_auth, require_merchant_auth, require_agent_auth, require_employee_auth,
                      get_setting, is_mock_mode, send_open_lock, should_hide_order,
-                     filter_duplicate_users, logger, get_wxpay, get_channel_wxpay, send_open_all,
-                     select_payment_channel, connected_devices, send_open_lock_list,
+                     filter_duplicate_users, logger, get_wxpay, get_channel_wxpay, send_open_all, send_open_lock_list,
+                     select_payment_channel, connected_devices,
                      find_user_balance_row, upsert_user_balance_row)
 from models import ORDER_STATUS, BUSINESS_STATUS_MAP, BUSINESS_STATUS_ACTIVE
 
@@ -1077,7 +1077,7 @@ def open_all_normal_slots(cabinet_id):
             conn.close()
             return json_response(message='设备离线，无法发送开门指令', code=400)
         protocol = cabinet.get('mainboard_source') or 'YBM'
-        c.execute('SELECT cs.slot_number, cs.board_no, cs.lock_no FROM cabinet_slots cs WHERE cs.cabinet_id = %s AND cs.status IN (1, 2)', (cabinet_id,))
+        c.execute('SELECT cs.slot_number, cs.board_no, cs.lock_no FROM cabinet_slots cs WHERE cs.cabinet_id = %s AND cs.status IN (1, 2) ORDER BY cs.slot_number', (cabinet_id,))
         slots = c.fetchall()
         conn.close()
         if not slots:

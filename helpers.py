@@ -621,6 +621,7 @@ def send_open_lock_list(device_id, doors, protocol=None, order_id='', require_on
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
     }
     logger.info(f'[SEND_LOCK_LIST] device={device_id}, doors={len(doors)}, protocol={protocol}, cmd_id={cmd_id}')
+    logger.info(f'[SEND_LOCK_LIST] doors前12={doors[:12]}')
     # 1) ws_proxy 同步推送(首选)
     _ws_sent = False
     for _retry in range(3):

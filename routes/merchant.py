@@ -727,7 +727,7 @@ def merchant_open_all_slots(cabinet_id):
             conn.close()
             return json_response(message='设备离线，无法发送开门指令', code=400)
         protocol = cabinet.get('mainboard_source') or 'YBM'
-        c.execute('SELECT cs.slot_number, cs.board_no, cs.lock_no FROM cabinet_slots cs WHERE cs.cabinet_id = %s AND cs.status IN (1, 2)', (cabinet_id,))
+        c.execute('SELECT cs.slot_number, cs.board_no, cs.lock_no FROM cabinet_slots cs WHERE cs.cabinet_id = %s AND cs.status IN (1, 2) ORDER BY cs.slot_number', (cabinet_id,))
         slots = c.fetchall()
         conn.close()
         if not slots:

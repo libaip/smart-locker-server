@@ -545,11 +545,68 @@ def merchant_order_detail(order_id):
             return json_response(message='订单不存在或无权访问', code=404)
         cursor.execute('SELECT * FROM payments WHERE order_id = %s ORDER BY created_at', (order_id,))
         payments = cursor.fetchall()
-        # 开门记录
+        # 开门记录(存包记录存订单号, 取包/中途/重开存数字id, 两套都查)
         cursor.execute('SELECT dr.*, cs.slot_label FROM door_records dr LEFT JOIN cabinet_slots cs ON dr.device_id = (SELECT mainboard_device_id FROM cabinets WHERE id = %s) AND cs.slot_number = CAST(dr.lock_no AS integer) AND cs.cabinet_id = %s WHERE dr.order_id IN (%s, %s) ORDER BY dr.create_time', (order['cabinet_id'], order['cabinet_id'], str(order_id), order.get('order_no') or ''))
-        door_records = cursor.fetchall()
+        door_records = [dict(d) for d in cursor.fetchall()]
+        # 开门类型语义化: open_type存的是设备协议(YBM/WT等), 按时间归类
+        # 靠近存包时间 -> 存包开门(store_open); 靠近取包时间 -> 结束开门(end_storage); 其他 -> 中途开门(mid_offline)
+        _st = order.get('store_time') or order.get('created_at')
+        _st_ts = _st.timestamp() if hasattr(_st, 'timestamp') else None
+        _rt = order.get('retrieve_time')
+        _rt_ts = _rt.timestamp() if hasattr(_rt, 'timestamp') else None
+        _first_proto = True
+        for _dr in door_records:
+            _ct = _dr.get('create_time')
+            _ct_ts = _ct.timestamp() if hasattr(_ct, 'timestamp') else None
+            if _ct_ts is None:
+                continue
+            _ot = _dr.get('open_type')
+            if _ot in ('YBM', 'store', 'WT'):
+                # 靠近取包时间 -> 结束开门(取包远程开门也写YBM/WT)
+                if _rt_ts is not None and abs(_ct_ts - _rt_ts) <= 600:
+                    _dr['open_type'] = 'end_storage'
+                elif _first_proto:
+                    _first_proto = False
+                    _dr['open_type'] = 'store_open'
+                else:
+                    _dr['open_type'] = 'mid_offline'
+            elif _ot == 'local':
+                if _rt_ts is not None and abs(_ct_ts - _rt_ts) <= 300:
+                    _dr['open_type'] = 'end_storage'
+                else:
+                    _dr['open_type'] = 'mid_offline'
+        # 远程开门日志(谁开的门: 商家/代理商/平台), 按设备+柜格+订单时间范围匹配
+        _dev_id = None
+        _slot_id = order.get('slot_id')
+        try:
+            cursor.execute('SELECT mainboard_device_id FROM cabinets WHERE id = %s', (order['cabinet_id'],))
+            _row = cursor.fetchone()
+            if _row:
+                _dev_id = _row['mainboard_device_id']
+        except Exception:
+            pass
+        if _dev_id and _slot_id:
+            _st = order.get('store_time') or order.get('created_at')
+            _rt2 = order.get('retrieve_time')
+            # 只取人工远程开门记录(operator非空: 商家/代理商/平台), 系统自动开门(空operator)已有door_records, 不重复
+            cursor.execute('SELECT action_type, operator, created_at FROM remote_open_logs WHERE device_id = %s AND slot_id = %s AND COALESCE(operator, %s) <> %s AND created_at >= %s AND created_at <= COALESCE(%s, NOW()) ORDER BY created_at', (_dev_id, _slot_id, '', '', _st, _rt2))
+            _rlogs = cursor.fetchall()
+            for _rl in _rlogs:
+                _rl_ct = _rl['created_at']
+                _rl_ts = _rl_ct.timestamp() if hasattr(_rl_ct, 'timestamp') else None
+                _matched = False
+                for _dr in door_records:
+                    _dct = _dr.get('create_time')
+                    _dct_ts = _dct.timestamp() if hasattr(_dct, 'timestamp') else None
+                    if _dct_ts is not None and _rl_ts is not None and abs(_dct_ts - _rl_ts) <= 120 and _dr.get('open_type') in ('remote', 'local_reopen', 'remote_reopen'):
+                        _dr['operator'] = _rl['operator'] or ''
+                        _matched = True
+                        break
+                if not _matched:
+                    door_records.append({'id': -len(door_records) - 1, 'open_type': 'remote', 'operator': _rl['operator'] or '', 'create_time': _rl_ct, 'source': 'remote_log'})
+        door_records.sort(key=lambda d: d.get('create_time') or '')
         conn.close()
-        return json_response({'order': dict(order), 'payments': [dict(p) for p in payments], 'door_records': [dict(d) for d in door_records]})
+        return json_response({'order': dict(order), 'payments': [dict(p) for p in payments], 'door_records': door_records})
     except Exception as e:
         logger.error(f'[merchant_order_detail] {e}')
         return json_response(message=str(e), code=500)

@@ -202,6 +202,9 @@ def admin_devices():
         data = request.get_json() if request.method == 'POST' else {}
         keyword = (data or {}).get('keyword', '') or request.args.get('keyword', '')
         status = (data or {}).get('status', '') or request.args.get('status', '')
+        location_id = (data or {}).get('location_id', '') or request.args.get('location_id', '')
+        agent_id = (data or {}).get('agent_id', '') or request.args.get('agent_id', '')
+        device_id = (data or {}).get('device_id', '') or request.args.get('device_id', '')
         page = int(request.args.get("page", (data or {}).get("page", 1)))
         page_size = int(request.args.get("limit", (data or {}).get("limit", 20)))
         conn = get_db()
@@ -210,11 +213,20 @@ def admin_devices():
         if keyword:
             where += ' AND (cabinet_code LIKE %s OR name LIKE %s OR mainboard_device_id LIKE %s)'
             params.extend([f'%{keyword}%', f'%{keyword}%', f'%{keyword}%'])
+        if device_id:
+            where += ' AND mainboard_device_id LIKE %s'
+            params.append(f'%{device_id}%')
+        if location_id:
+            where += ' AND c.location_id = %s'
+            params.append(location_id)
+        if agent_id:
+            where += " AND c.location_id IN (SELECT id FROM locations WHERE merchant_id IN (SELECT id FROM merchants WHERE agent_id = %s))"
+            params.append(agent_id)
         if status == 'online':
             where += " AND last_heartbeat >= NOW() - INTERVAL '120 seconds'"
         elif status == 'offline':
             where += " AND (last_heartbeat IS NULL OR last_heartbeat < NOW() - INTERVAL '120 seconds')"
-        c.execute(f'SELECT COUNT(*) FROM cabinets WHERE {where}', params)
+        c.execute(f'SELECT COUNT(*) FROM cabinets c WHERE {where}', params)
         total = c.fetchone()[0]
         c.execute(f'''SELECT c.*, l.name as location_name,
             (SELECT COUNT(*) FROM cabinet_slots cs WHERE cs.cabinet_id=c.id) as total_slots,
@@ -246,14 +258,11 @@ def _push_usage_rules_to_device(device_id):
     """保存寄存规则后向在线设备推送 usage_rules_update"""
     try:
         import json as _json
-        from helpers import connected_devices as _cd
-        ws = _cd.get(str(device_id))
-        if not ws:
-            return
         conn = get_db()
         cur = conn.cursor()
         cur.execute("""SELECT c.usage_rules, c.rules_title, c.reopen_times,
-                              l.usage_rules as loc_usage_rules, l.rules_title as loc_rules_title, l.reopen_times as loc_reopen_times
+                              l.usage_rules as loc_usage_rules, l.rules_title as loc_rules_title, l.reopen_times as loc_reopen_times,
+                              l.show_slot_count
                        FROM cabinets c LEFT JOIN locations l ON c.location_id = l.id
                        WHERE c.mainboard_device_id = %s""", (device_id,))
         row = cur.fetchone()
@@ -265,10 +274,19 @@ def _push_usage_rules_to_device(device_id):
         rt = row['reopen_times']
         if rt is None or rt == '' or int(rt) <= 0:
             rt = row['loc_reopen_times']
+        ssc = row['show_slot_count']
         cmd = {'type': 'usage_rules_update', 'usage_rules': rules, 'rules_title': title,
-               'reopen_times': '' if rt is None or rt == '' else str(rt)}
-        ws.send(_json.dumps(cmd))
-        logger.info('[usage_rules_update] pushed to device=%s', device_id)
+               'reopen_times': '' if rt is None or rt == '' else str(rt),
+               'show_slot_count': 1 if ssc is None or ssc == '' else int(ssc)}
+        # 通过 ws_proxy(5004) 的 /send 转发: 设备WS长连接在5004进程内, 这里直接查本进程connected_devices是空的
+        import urllib.request as _req
+        _body = _json.dumps({"device_id": str(device_id), "command": cmd}).encode()
+        _r = _req.urlopen("http://127.0.0.1:5004/send", data=_body, timeout=3)
+        _resp = _json.loads(_r.read())
+        if _resp.get("success"):
+            logger.info('[usage_rules_update] pushed to device=%s via 5004', device_id)
+        else:
+            logger.warning('[usage_rules_update] push to device=%s failed: %s', device_id, _resp.get('error'))
     except Exception as e:
         logger.warning('[usage_rules_update] push failed: %s', e)
 
@@ -593,6 +611,38 @@ def admin_slots_batch_label():
         return json_response(message=f'已批量设置{updated}个柜门标签', data={'updated': updated})
     except Exception as e:
         logger.error(f'[batch_label] {e}')
+        return json_response(message=str(e), code=500)
+
+@bp.route('/admin/device/restart', methods=['POST'])
+@require_auth
+def admin_device_restart():
+    """远程重启设备(推送reboot指令, 设备3秒后系统重启)"""
+    try:
+        data = request.get_json(silent=True) or {}
+        device_id = data.get('device_id', '')
+        if not device_id:
+            return json_response(message='缺少设备ID', code=400)
+        import json as _json
+        conn = get_db()
+        c = conn.cursor()
+        c.execute('SELECT id, last_heartbeat FROM cabinets WHERE mainboard_device_id=%s', (device_id,))
+        cab = c.fetchone()
+        if not cab:
+            conn.close()
+            return json_response(message='设备不存在', code=404)
+        from helpers import is_device_online
+        if not is_device_online(device_id, cab.get('last_heartbeat')):
+            conn.close()
+            return json_response(message='设备离线，无法重启', code=400)
+        cmd = _json.dumps({'type': 'reboot', 'device_id': device_id})
+        c.execute('INSERT INTO pending_lock_cmds (device_id, cabinet_id, command, status) VALUES (%s,%s,%s,%s)',
+                  (device_id, cab['id'], cmd, 'pending'))
+        conn.commit()
+        conn.close()
+        logger.info(f'[reboot] OK device={device_id}')
+        return json_response(message='已推送重启指令')
+    except Exception as e:
+        logger.error(f'[reboot] {e}')
         return json_response(message=str(e), code=500)
 
 @bp.route('/admin/slots/open-all', methods=['POST'])
@@ -1473,6 +1523,59 @@ def admin_member_detail():
 
 
 # ============ Withdrawals ============
+
+@bp.route('/admin/recharge-records', methods=['GET'])
+@require_auth
+def admin_recharge_records():
+    """会员充值记录: payments关联orders, 带手机号/商户订单号/时间, 支持时间筛选(默认当天)"""
+    try:
+        from datetime import datetime as _dt, timedelta as _td
+        data = request.args
+        page = int(data.get('page', 1))
+        limit = int(data.get('limit', 10))
+        phone = (data.get('phone') or '').strip()
+        start_date = (data.get('start_date') or '').strip()
+        end_date = (data.get('end_date') or '').strip()
+        today = _dt.now().strftime('%Y-%m-%d')
+        if not start_date:
+            start_date = today
+        if not end_date:
+            end_date = today
+        conn = get_db()
+        c = conn.cursor()
+        where = "WHERE p.type IN (1,2) AND p.status = 1"
+        params = []
+        if phone:
+            where += ' AND o.user_phone LIKE %s'
+            params.append(f'%{phone}%')
+        if start_date:
+            where += " AND p.created_at >= %s::timestamp"
+            params.append(start_date + ' 00:00:00')
+        if end_date:
+            where += " AND p.created_at <= %s::timestamp"
+            params.append(end_date + ' 23:59:59')
+        c.execute(f'''SELECT COUNT(*) FROM payments p
+                      JOIN orders o ON o.id = p.order_id
+                      {where}''', params)
+        total = c.fetchone()[0]
+        c.execute(f'''SELECT p.id, p.order_id, p.amount, p.transaction_id, p.refund_transaction_id,
+                             p.created_at, o.user_phone, o.order_no, o.deposit_amount
+                      FROM payments p
+                      JOIN orders o ON o.id = p.order_id
+                      {where}
+                      ORDER BY p.id DESC LIMIT %s OFFSET %s''', params + [limit, (page-1)*limit])
+        rows = []
+        for r in c.fetchall():
+            d = dict(r)
+            if d.get('created_at'):
+                d['create_time'] = d['created_at'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(d['created_at'], 'strftime') else str(d['created_at'])
+            rows.append(d)
+        conn.close()
+        return json_response(data={'list': rows, 'total': total, 'page': page})
+    except Exception as e:
+        logger.error(f'[recharge_records] {e}')
+        return json_response(message=str(e), code=500)
+
 
 @bp.route('/admin/withdrawals', methods=['GET', 'POST'])
 @require_auth
@@ -3332,6 +3435,12 @@ def admin_channels():
     try:
         conn = get_db()
         c = conn.cursor()
+        mch_filter = request.args.get('mch_id', '') or (request.get_json(silent=True) or {}).get('mch_id', '')
+        mch_where = ''
+        mch_params = []
+        if mch_filter:
+            mch_where = ' WHERE pc.mch_id LIKE %s'
+            mch_params.append(f'%{mch_filter}%')
         c.execute("""
             CREATE TABLE IF NOT EXISTS wechat_trade_bills (
                 id BIGSERIAL PRIMARY KEY,
@@ -3368,7 +3477,7 @@ def admin_channels():
             CREATE UNIQUE INDEX IF NOT EXISTS uq_wechat_trade_bills
                 ON wechat_trade_bills (mch_id, bill_date, out_trade_no, COALESCE(out_refund_no, ''))
         """)
-        c.execute("""
+        c.execute(f"""
             SELECT pc.*,
                    COALESCE(oi.paid_count, 0) as paid_total_count,
                    COALESCE(oi.paid_amount, 0) as paid_total_amount,
@@ -3378,7 +3487,8 @@ def admin_channels():
                    COALESCE(bi.bill_paid_amount, 0) as bill_paid_amount,
                    COALESCE(bi.bill_refund_count, 0) as bill_refund_count,
                    COALESCE(bi.bill_refund_amount, 0) as bill_refund_amount,
-                   bi.bill_synced_until
+                   bi.bill_synced_until,
+                   COALESCE(pcb.balance, 0) as yesterday_balance
             FROM payment_channels pc
             LEFT JOIN (SELECT payment_channel_id, COUNT(*) as paid_count, COALESCE(SUM(deposit_amount), 0) as paid_amount
                        FROM orders WHERE status IN (2,3,4) GROUP BY payment_channel_id) oi
@@ -3395,8 +3505,20 @@ def admin_channels():
                        MAX(bill_date) as bill_synced_until
                 FROM wechat_trade_bills GROUP BY mch_id
             ) bi ON bi.mch_id = pc.mch_id
+            LEFT JOIN (
+                SELECT pcb.mch_id, pcb.balance
+                FROM payment_channel_balance pcb
+                INNER JOIN (
+                    SELECT mch_id, MAX(balance_date) as max_date
+                    FROM payment_channel_balance
+                    WHERE account_type = 'BASIC'
+                    GROUP BY mch_id
+                ) m ON pcb.mch_id = m.mch_id AND pcb.balance_date = m.max_date
+                WHERE pcb.account_type = 'BASIC'
+            ) pcb ON pcb.mch_id = pc.mch_id
+            {mch_where}
             ORDER BY pc.created_at DESC
-        """)
+        """, mch_params)
         channels = [dict(r) for r in c.fetchall()]
         for ch in channels:
             # 仅当对账单确有交易数据且金额接近订单口径(>=90%)时才用对账单，否则回退订单表统计(修复8-16对账单统计后数字变0/偏小)
@@ -5760,7 +5882,9 @@ def alerts_list():
         device_id = request.args.get('device_id', '')
         days = int(request.args.get('days', 3))
         logger.info(f'[alerts_list] DB_PATH={DB_PATH}, page={page}, limit={limit}, device={device_id}, type={alert_type}, days={days}')
-        conn = sqlite3.connect(DB_PATH)
+        # database.py 会把 sqlite3.connect patch 成 PostgreSQL, 这里用原始 SQLite 连接访问 locker.db
+        from database import _orig_connect as _sqlite_orig
+        conn = _sqlite_orig(DB_PATH)
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
         c.execute("""CREATE TABLE IF NOT EXISTS device_alerts (
@@ -5795,7 +5919,8 @@ def alerts_list():
             where += " AND alert_type=?"
             params.append(alert_type)
         if days > 0:
-            where += " AND created_at >= NOW() - INTERVAL '" + str(days) + " days'"
+            where += " AND created_at >= datetime(?, ?)"
+            params.extend(['now', f'-{days} days'])
         total = c.execute(f"SELECT COUNT(*) FROM device_alerts {where}", params).fetchone()[0]
         rows = c.execute(f"SELECT * FROM device_alerts {where} ORDER BY id DESC LIMIT ? OFFSET ?", params + [limit, (page-1)*limit]).fetchall()
         result_list = []

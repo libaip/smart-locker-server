@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 独立 WebSocket 代理服务（端口 5004）
 """
@@ -72,6 +72,44 @@ def _db_st(did, st):
     _db_exec("INSERT INTO devices (device_id,status,update_time) VALUES (%s,%s,NOW()) ON CONFLICT (device_id) DO UPDATE SET status=%s,update_time=NOW()", (did, st, st))
     if st != 'offline':
         _db_exec("UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (did,))
+    _record_device_alert(did, st)
+
+
+# 设备上下线告警记录 -> 写入 SQLite locker.db 的 device_alerts 表(与告警管理共用)
+_last_alert_state = {}
+
+def _record_device_alert(did, st):
+    """设备WS连接建立(online)/断开(offline)时记录告警, 仅状态变化时写, 防刷屏"""
+    try:
+        prev = _last_alert_state.get(did)
+        if prev == st:
+            return
+        import sqlite3 as _sqlite3
+        _db3 = _sqlite3.connect('/home/ubuntu/smart-locker/locker.db', timeout=10)
+        _cur3 = _db3.cursor()
+        _cur3.execute('''CREATE TABLE IF NOT EXISTS device_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id TEXT,
+            alert_type TEXT,
+            detail TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+        if st == 'online':
+            _msg = '设备WebSocket连接建立'
+        else:
+            _msg = '设备WebSocket断开连接'
+        _cur3.execute('INSERT INTO device_alerts (device_id, alert_type, detail) VALUES (?,?,?)',
+                      (str(did), st, _msg))
+        _db3.commit()
+        _db3.close()
+        _last_alert_state[did] = st
+        logger.info(f"[ALERT] 设备{did} 状态变化 -> {st}")
+    except Exception as e:
+        try:
+            _db3.close()
+        except Exception:
+            pass
+        logger.warning(f"[ALERT] 记录失败 {did} {st}: {e}")
 
 def _update_version(device_id, version, version_code=0):
     _db_exec("UPDATE cabinets SET app_version=%s, app_version_code=%s WHERE mainboard_device_id=%s", (version, version_code, device_id))
@@ -239,7 +277,15 @@ def app(environ, start_response):
             if not ws or ws.closed:
                 start_response("200 OK", [("Content-Type", "application/json")])
                 return [json.dumps({"success": False, "error": "offline"}).encode()]
-            gevent.spawn(_ws_send, device_id, ws, json.dumps(command))
+            # 同步发送（去掉 gevent.spawn 异步并发），保证逐门指令按 1,2,3... 顺序到达设备
+            # 加 3 秒超时保护，避免设备 TCP 缓冲满导致卡死
+            try:
+                with gevent.Timeout(3):
+                    _ws_send(device_id, ws, json.dumps(command))
+            except gevent.Timeout:
+                logger.warning(f"[SEND] 发送超时 device={device_id}")
+                start_response("200 OK", [("Content-Type", "application/json")])
+                return [json.dumps({"success": False, "error": "send timeout"}).encode()]
             start_response("200 OK", [("Content-Type", "application/json")])
             return [json.dumps({"success": True}).encode()]
         except Exception as e:

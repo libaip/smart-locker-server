@@ -6900,7 +6900,10 @@ def _verify_wechatpay_signature(headers, raw_body):
         return False, '缺少验签请求头'
     cert_pem, err = _load_platform_cert(serial)
     if not cert_pem:
-        return False, err
+        # 新制"公钥"商户(平台证书404 RESOURCE_NOT_EXISTS)自动降级: 改用微信支付公钥验签
+        cert_pem, err2 = _load_wechatpay_public_key(serial)
+        if not cert_pem:
+            return False, err + ' | ' + err2
     try:
         from cryptography import x509
         from cryptography.hazmat.primitives import hashes
@@ -6965,6 +6968,59 @@ def _load_platform_cert(serial_no):
         return None, '平台证书序列号不匹配: %s' % serial_no
     except Exception as e:
         return None, '加载平台证书异常: %s' % e
+
+
+def _load_wechatpay_public_key(serial_no):
+    """加载微信支付公钥（新制"公钥"商户）：磁盘缓存 → 首次自动下载 GET /v3/pay/public-key（2026-08-23 投诉验签404修复）"""
+    import os as _os, time as _t, base64 as _b64
+    if serial_no in _wx_platform_cert_cache:
+        return _wx_platform_cert_cache[serial_no], ''
+    cert_path = _os.path.join(_os.path.dirname(WX_KEY_PATH), 'wechatpay_public_%s.pem' % serial_no)
+    if _os.path.exists(cert_path):
+        with open(cert_path, 'r') as f:
+            pem = f.read()
+        _wx_platform_cert_cache[serial_no] = pem
+        return pem, ''
+    try:
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding
+        key_path = WX_KEY_PATH
+        cert_serial = WX_CERT_SERIAL_NO
+        mch_id = WX_MCH_ID
+        if not _os.path.exists(key_path):
+            _pc = get_db()
+            _pc_cur = _pc.cursor()
+            _pc_cur.execute("SELECT mch_id, cert_serial_no, cert_name FROM payment_channels WHERE cert_name IS NOT NULL AND cert_name != '' AND is_active=1 LIMIT 1")
+            _pc_row = _pc_cur.fetchone()
+            _pc.close()
+            if _pc_row:
+                mch_id = _pc_row[0]
+                cert_serial = _pc_row[1]
+                key_path = '/home/ubuntu/smart-locker/cert/%s_key.pem' % _pc_row[2]
+        with open(key_path, 'r') as f:
+            pk = serialization.load_pem_private_key(f.read().encode(), password=None)
+        ts = str(int(_t.time()))
+        nonce = _os.urandom(16).hex()
+        url_path = '/v3/pay/public-key'
+        sign_str = 'GET\n' + url_path + '\n' + ts + '\n' + nonce + '\n\n'
+        sig = _b64.b64encode(pk.sign(sign_str.encode('utf-8'), padding.PKCS1v15(), hashes.SHA256())).decode()
+        auth = 'WECHATPAY2-SHA256-RSA2048 mchid="%s",nonce_str="%s",timestamp="%s",serial_no="%s",signature="%s"' % (mch_id, nonce, ts, cert_serial, sig)
+        import requests as _req
+        r = _req.get('https://api.mch.weixin.qq.com' + url_path, headers={'Authorization': auth, 'Accept': 'application/json'}, timeout=10)
+        if r.status_code != 200:
+            return None, '下载支付公钥失败 %s %s' % (r.status_code, r.text[:200])
+        data = r.json()
+        if data.get('serial_no') != serial_no:
+            return None, '支付公钥序列号不匹配: %s' % serial_no
+        pem = data.get('public_key', '')
+        if not pem:
+            return None, '支付公钥为空'
+        with open(cert_path, 'w') as f:
+            f.write(pem)
+        _wx_platform_cert_cache[serial_no] = pem
+        return pem, ''
+    except Exception as e:
+        return None, '加载支付公钥异常: %s' % e
 
 
 def _decrypt_complaint_resource(resource):

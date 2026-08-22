@@ -90,4 +90,4 @@ n
 | T-1787359945 | S29 | routes/admin_v2.py,static/admin-v2.html | 已完成 | 08-22 08:52 | 08-22 09:23 | 后台远程重启设备: admin_v2加restart接口+设备端处理reboot命令+机器列表详情按钮改重启 |
 | T-1787361793 | S30 | routes/admin_v2.py,smart-locker-apk/app/src/main/java/com/smartlocker/screen/MainActivity.java,smart-locker-apk/app/src/main/java/com/smartlocker/screen/service/LockerService.java,smart-locker-apk/app/src/main/java/com/smartlocker/screen/utils/PreferencesHelper.java,smart-locker-apk/app/src/main/res/layout/activity_main.xml,smart-locker-apk/app/src/main/res/layout/guize5.xml | 进行中 | 08-22 09:23 | | 柜门数量开关打通+UI优化: admin_v2推送show_slot_count+设备端控制可用柜门显示/隐藏+密码取包按钮下移/规则区调整, 重新编译1.4.12 |
 | T-1787366348 | S31 | app.py | 已完成 | 08-22 10:39 | 08-22 10:39 | 超时清理竞态修复:跨进程文件锁+抢占式取消,防支付中订单被误取消自动退款 |
-| T-1787378990 | S32 | helpers.py | 进行中 | 08-22 14:09 | | 修复add_whitelist过期时间参数化bug(拉白全失败),被拒拉白失效 |
+| T-1787378990 | S32 | helpers.py | 已完成 | 08-22 14:09 | 08-22 14:09 | 修复add_whitelist过期时间参数化bug(拉白全失败),被拒拉白失效 |

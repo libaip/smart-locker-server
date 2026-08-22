@@ -1302,7 +1302,7 @@ def merchant_device_status():
         hide_filter = '' if show_hidden else " AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)"
         conn = get_db()
         cursor = conn.cursor()
-        sql = "SELECT c.id, c.name, c.cabinet_code, c.mainboard_device_id, c.last_heartbeat, l.name as location_name FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE " + mfilter + " AND (c.last_heartbeat IS NULL OR c.last_heartbeat < NOW() - INTERVAL '120 seconds') ORDER BY l.name, c.name"
+        sql = "SELECT c.id, c.name, c.cabinet_code, c.mainboard_device_id, c.last_heartbeat, l.name as location_name FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE " + mfilter + " AND (c.last_heartbeat IS NULL OR c.last_heartbeat < NOW() - INTERVAL '120 seconds') ORDER BY c.last_heartbeat DESC NULLS LAST, l.name, c.name"
         cursor.execute(sql, mparams)
         rows = cursor.fetchall()
         conn.close()

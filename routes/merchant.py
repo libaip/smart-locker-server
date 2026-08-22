@@ -270,19 +270,21 @@ def merchant_dashboard():
         prev_month_income = cursor.fetchone()['total']
         cursor.execute(f"SELECT COALESCE(SUM(o.per_use_price), 0) - COALESCE(SUM(CASE WHEN o.refund_amount > o.deposit_amount THEN o.refund_amount - o.deposit_amount ELSE 0 END), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND o.per_use_price > 0 AND o.status IN (2, 4)  {hide_filter} AND DATE(o.created_at) BETWEEN %s AND %s", (*mparams, prev_month_start, prev_month_end))
         prev_month_storage_income = cursor.fetchone()['fee']
-        # 押金统计
-        cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN p.status=1 THEN p.amount ELSE 0 END),0) as deposit_held, COALESCE(SUM(CASE WHEN p.status=1 THEN p.amount ELSE 0 END),0) as deposit_refunded FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000', mparams)
-        deposit_row = cursor.fetchone()
-        # 各时间段押金退还（提现金额）：按订单使用日(DATE(o.created_at))归集，而非退款日，保证"当天用的单"无论何时退都算当天
-        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1 AND DATE(o.created_at)=%s', (*mparams, today))
+        # 押金统计: deposit_held=押金流水(原口径), deposit_refunded=订单维度已退(与后台统计分析一致,含余额退款)
+        cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN p.status=1 THEN p.amount ELSE 0 END),0) as deposit_held FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000', mparams)
+        deposit_held_val = cursor.fetchone()['deposit_held']
+        cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END),0) as deposit_refunded FROM orders o JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter}', mparams)
+        deposit_row = {'deposit_held': deposit_held_val, 'deposit_refunded': cursor.fetchone()['deposit_refunded']}
+        # 各时间段押金退还（提现金额）：按订单维度(refund_amount,含余额退款)按使用日(DATE(o.created_at))归集，与后台统计分析口径一致
+        cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END),0) as total FROM orders o JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND DATE(o.created_at)=%s', (*mparams, today))
         today_deposit_refunded = cursor.fetchone()['total']
-        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1 AND DATE(o.created_at)=%s', (*mparams, yesterday))
+        cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END),0) as total FROM orders o JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND DATE(o.created_at)=%s', (*mparams, yesterday))
         yesterday_deposit_refunded = cursor.fetchone()['total']
-        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1 AND DATE(o.created_at) >= %s', (*mparams, month_start))
+        cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END),0) as total FROM orders o JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND DATE(o.created_at) >= %s', (*mparams, month_start))
         month_deposit_refunded = cursor.fetchone()['total']
-        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1 AND DATE(o.created_at) BETWEEN %s AND %s', (*mparams, prev_month_start, prev_month_end))
+        cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END),0) as total FROM orders o JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND DATE(o.created_at) BETWEEN %s AND %s', (*mparams, prev_month_start, prev_month_end))
         prev_month_deposit_refunded = cursor.fetchone()['total']
-        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1', mparams)
+        cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END),0) as total FROM orders o JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter}', mparams)
         total_all_deposit_refunded = cursor.fetchone()['total']
         # 退款统计（按次收益订单被退的数量/按次实际退款金额）
         def _fee_refund(extra_sql='', extra_params=()):
@@ -896,8 +898,10 @@ def merchant_business_stats():
         deposit_params = list(params)
         deposit_where = ' AND '.join(where_parts)
         deposit_where += ' AND p.type = 2'
-        cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN p.status = 1 THEN p.amount ELSE 0 END), 0) as deposit_collected, COALESCE(SUM(CASE WHEN p.status = 1 THEN p.amount ELSE 0 END), 0) as deposit_refunded FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {deposit_where}', deposit_params)
-        deposit_stats = cursor.fetchone()
+        cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN p.status = 1 THEN p.amount ELSE 0 END), 0) as deposit_collected FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {deposit_where}', deposit_params)
+        deposit_collected = cursor.fetchone()['deposit_collected']
+        cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END), 0) as deposit_refunded FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {where_sql}', params)
+        deposit_stats = {'deposit_collected': deposit_collected, 'deposit_refunded': cursor.fetchone()['deposit_refunded']}
         # 柜门使用率
         slot_where = [mfilter]
         slot_params = list(mparams)

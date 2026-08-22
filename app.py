@@ -180,12 +180,23 @@ except Exception as e:
 # 后台定时任务：清理超时未付款订单（每60秒）
 # ============================================
 def _cleanup_expired_orders():
-    import threading
+    import threading, fcntl
     from database import get_db
+    # 跨进程互斥锁：gunicorn 8个worker都会跑此线程，同一时刻只允许一个worker清理，
+    # 杜绝并发竞态（修复"支付中的订单被另一worker误取消+晚到支付回调自动退款"）
+    LOCK_FILE = "/tmp/cleanup_expired_orders.lock"
     while True:
         db = None
+        lock_fd = None
         try:
             threading.Event().wait(60)
+            lock_fd = open(LOCK_FILE, "w")
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                lock_fd.close()
+                lock_fd = None
+                continue
             db = get_db()
             cur = db.cursor()
             cur.execute("SELECT o.id, o.slot_id, o.order_no, o.payment_channel_id, o.deposit_amount FROM orders o WHERE o.status IN (0,1) AND o.store_time < NOW() - INTERVAL '3 minutes'")
@@ -231,12 +242,14 @@ def _cleanup_expired_orders():
                     # 查询失败无法确认：保守保留，下轮再查，避免误杀已付款订单
                     logger.warning(f'[超时清理] 查支付状态失败，暂不清理 order={oid}')
                     continue
-                # 明确未支付（或无渠道）:按原逻辑清理
+                # 明确未支付（或无渠道）：抢占式取消（条件更新，只让一个worker生效），成功才释放柜格
+                cur.execute('UPDATE orders SET status = 5 WHERE id = %s AND status IN (0,1)', (oid,))
+                if cur.rowcount == 0:
+                    continue  # 已被其他worker/流程处理，跳过
                 if order['slot_id']:
                     cur.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s AND status = 2', (order['slot_id'],))
                     if cur.rowcount > 0:
                         released += 1
-                cur.execute('UPDATE orders SET status = 5 WHERE id = %s', (oid,))
                 cleaned += 1
             if expired:
                 db.commit()
@@ -247,6 +260,12 @@ def _cleanup_expired_orders():
             if db is not None:
                 try:
                     db.close()
+                except Exception:
+                    pass
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    lock_fd.close()
                 except Exception:
                     pass
 

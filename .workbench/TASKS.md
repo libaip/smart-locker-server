@@ -82,3 +82,11 @@ n
 | T-1787318601 | S21 | static/admin-v2.html | 已完成 | 08-21 21:23 | 08-21 21:23 | 在线订单: 选网点后设备下拉联动加载该网点设备 |
 | T-1787322116 | S22 | static/admin-v2.html | 已完成 | 08-21 22:21 | 08-21 22:21 | 微信投诉页状态显示补全(退款失败标红)+加提现手动退款按钮 |
 | T-1787323006 | S23 | .workbench/TASKS.md | 已完成 | 08-21 22:36 | 08-21 22:36 | 铁律3:改动后端admin_v2.py等需同时重启smart-locker与smart-locker-admin(5002后台通道) |
+| T-1787323507 | S24 | routes/admin_v2.py | 已完成 | 08-21 22:45 | 08-21 22:51 | 柜门查询修复: door_status_queries表解决8worker跨进程丢结果 |
+| T-1787326350 | S25 | routes/admin_v2.py | 已完成 | 08-21 23:32 | 08-21 23:54 | 柜门查询去双通道: WS推送成功则不插poll命令, 避免设备重复执行/上报混乱 |
+| T-1787328454 | S26 | helpers.py,routes/admin_v2.py,routes/admin.py,routes/merchant.py | 已完成 | 08-22 00:07 | 08-22 07:28 | 一键开门列表方案C: send_open_lock_list(单命令带门列表) + 一键开门改用它 |
+| T-1787355313 | S27 | routes/admin_v2.py,routes/merchant.py | 已完成 | 08-22 07:35 | 08-22 07:35 | 小程序查询/一键开门修复: admin_v2一键开门改方案C, merchant两个查询接口改DB共享表方案返回真实状态 |
+| T-1787357943 | S28 | routes/admin.py,routes/merchant.py,routes/admin_v2.py | 已完成 | 08-22 08:19 | 08-22 08:19 | 一键开门乱序根因修复: open_all三个入口SQL加ORDER BY slot_number(PostgreSQL无ORDER BY返回物理顺序导致乱) |
+| T-1787359945 | S29 | routes/admin_v2.py,static/admin-v2.html | 已完成 | 08-22 08:52 | 08-22 09:23 | 后台远程重启设备: admin_v2加restart接口+设备端处理reboot命令+机器列表详情按钮改重启 |
+| T-1787361793 | S30 | routes/admin_v2.py,smart-locker-apk/app/src/main/java/com/smartlocker/screen/MainActivity.java,smart-locker-apk/app/src/main/java/com/smartlocker/screen/service/LockerService.java,smart-locker-apk/app/src/main/java/com/smartlocker/screen/utils/PreferencesHelper.java,smart-locker-apk/app/src/main/res/layout/activity_main.xml,smart-locker-apk/app/src/main/res/layout/guize5.xml | 进行中 | 08-22 09:23 | | 柜门数量开关打通+UI优化: admin_v2推送show_slot_count+设备端控制可用柜门显示/隐藏+密码取包按钮下移/规则区调整, 重新编译1.4.12 |
+| T-1787366348 | S31 | app.py | 进行中 | 08-22 10:39 | | 超时清理竞态修复:跨进程文件锁+抢占式取消,防支付中订单被误取消自动退款 |

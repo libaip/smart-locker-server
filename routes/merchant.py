@@ -273,14 +273,14 @@ def merchant_dashboard():
         # 押金统计
         cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN p.status=1 THEN p.amount ELSE 0 END),0) as deposit_held, COALESCE(SUM(CASE WHEN p.status=1 THEN p.amount ELSE 0 END),0) as deposit_refunded FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000', mparams)
         deposit_row = cursor.fetchone()
-        # 各时间段押金退还（提现金额）
-        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1 AND DATE(p.created_at)=%s', (*mparams, today))
+        # 各时间段押金退还（提现金额）：按订单使用日(DATE(o.created_at))归集，而非退款日，保证"当天用的单"无论何时退都算当天
+        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1 AND DATE(o.created_at)=%s', (*mparams, today))
         today_deposit_refunded = cursor.fetchone()['total']
-        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1 AND DATE(p.created_at)=%s', (*mparams, yesterday))
+        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1 AND DATE(o.created_at)=%s', (*mparams, yesterday))
         yesterday_deposit_refunded = cursor.fetchone()['total']
-        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1 AND DATE(p.created_at) >= %s', (*mparams, month_start))
+        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1 AND DATE(o.created_at) >= %s', (*mparams, month_start))
         month_deposit_refunded = cursor.fetchone()['total']
-        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1 AND DATE(p.created_at) BETWEEN %s AND %s', (*mparams, prev_month_start, prev_month_end))
+        cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1 AND DATE(o.created_at) BETWEEN %s AND %s', (*mparams, prev_month_start, prev_month_end))
         prev_month_deposit_refunded = cursor.fetchone()['total']
         cursor.execute(f'SELECT COALESCE(SUM(p.amount),0) as total FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000 AND p.status=1', mparams)
         total_all_deposit_refunded = cursor.fetchone()['total']

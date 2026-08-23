@@ -762,6 +762,20 @@ def get_cabinet_by_mainboard(mainboard_id):
             if _fee_rules_txt:
                 _fee_rules_txt += '\n'
             result['usage_rules'] = _fee_rules_txt + '\n'.join(_fee_lines)
+        # 按次收费模式：也生成默认寄存规则（否则设备屏幕规则区空白）
+        elif (result.get('charge_mode') or '') == 'per_use':
+            _fee_rules_txt = (result.get('usage_rules') or '').strip()
+            _fmt_amt2 = lambda n: str(int(n)) if float(n).is_integer() else ('%.2f' % float(n)).rstrip('0').rstrip('.')
+            _pp = float(result.get('per_use_price') or 0)
+            _fee_lines2 = [
+                '按次寄存{}元/次'.format(_fmt_amt2(_pp)) if _pp > 0 else '按次寄存',
+                '存放时间截止到当日23:00，请提前取走物品',
+                '寄存期间可随时凭密码取包',
+                '请务必确认锁好柜门',
+            ]
+            if _fee_rules_txt:
+                _fee_rules_txt += '\n'
+            result['usage_rules'] = _fee_rules_txt + '\n'.join(_fee_lines2)
         cursor.execute("SELECT cs.*, m.board_index, m.slot_count FROM cabinet_slots cs LEFT JOIN mainboards m ON cs.mainboard_id = m.id WHERE cs.cabinet_id = %s AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) ORDER BY cs.slot_number", (cabinet['id'],))
         slots = [dict(s) for s in cursor.fetchall()]
         # 精简：不返回64格全量slots（APK轮询只需可用柜格列表，省流量）
@@ -833,9 +847,10 @@ def get_cabinet_by_mainboard(mainboard_id):
                         result['display_text'] = '\xe5\x85\x8d\xe8\xb4\xb9\xe5\xaf\x84\xe5\xad\x98'
         elif charge_mode == 'per_use':
             price = result.get('per_use_price', 0)
-            result['display_text'] = f'?{int(price)}??' if price and price == int(price) else f'?{price}??'
+            _fmt_p = lambda n: str(int(n)) if float(n).is_integer() else ('%.2f' % float(n)).rstrip('0').rstrip('.')
+            result['display_text'] = '\xe6\x8c\x89\xe6\xac\xa1\xe5\xaf\x84\xe5\xad\x98 \xc2\xa5{}/'.format(_fmt_p(float(price))) + '\xe6\xac\xa1' if price else '\xe6\x8c\x89\xe6\xac\xa1\xe5\xaf\x84\xe5\xad\x98'
         else:  # deposit
-            result['display_text'] = '????'
+            result['display_text'] = '\xe8\x87\xaa\xe5\x8a\xa9\xe5\xaf\x84\xe5\xad\x98'
         result['cabinet_name'] = result.get('name', '')
         conn.close()
         # 存入缓存

@@ -79,4 +79,50 @@ git commit -m "说明这次改了什么"
 3. **部署前必校验**：`bash .workbench/deploy_check.sh <文件1> <文件2>`——文件开工后被别人动过会**拦截**；确认无冲突后加 `--force` 放行。**禁止跳过校验直接部署**。
 4. **提交带会话编号**：commit message 末尾加 `by S<n>`，可追溯。
 5. **收工必登记**：`bash .workbench/release.sh <任务ID>` 标记完成。
+
+## 14. 主备互换后的代码修改SOP（2026-08-23 起，方案A，所有会话必须遵守）
+
+### 机器角色（已互换，勿搞错）
+| 机器 | IP | 角色 | 做什么 |
+|---|---|---|---|
+| **旧机**（轻量） | 106.55.7.10 | **代码源 + Git仓库 + 工作台** | 改代码、备份、claim/deploy_check/release、git commit/push 都在这 |
+| **新机**（CVM） | 175.178.156.121 | **生产运行环境** | 应用/nginx/PG/证书在这跑；**无 .git**（rsync 排除），禁止任何 git 命令 |
+
+### 标准流程（改代码必走）
+1. 旧机看 `cat .workbench/TASKS.md`：目标文件被登记「进行中」→ 不许碰，先协调
+2. 旧机 `bash .workbench/claim.sh "说明" "文件1,文件2"` 登记（拿 S编号）
+3. 旧机备份：`cp <文件> backups/<文件>.bak.<时间戳>`
+4. 旧机改代码 → `python3 -m py_compile <文件>` 通过
+5. 旧机 `bash .workbench/deploy_check.sh <文件>`（被拦先确认无冲突再 --force；注意多claim匹配bug，S5修复中）
+6. **部署到新机（在新机上执行拉取）**：
+   ```bash
+   # 新机执行：从旧机拉单文件
+   rsync -a -e "ssh -o StrictHostKeyChecking=no" ubuntu@106.55.7.10:/home/ubuntu/smart-locker/<文件路径> /tmp/
+   sudo cp /tmp/<文件名> /home/ubuntu/smart-locker/<文件路径>
+   cd /home/ubuntu/smart-locker && python3 -m py_compile <文件路径>
+   # 按改的文件重启对应服务（新机）
+   sudo systemctl restart smart-locker        # 主API(5001)
+   sudo systemctl restart smart-locker-admin  # 后台/投诉(5002)
+   sudo systemctl restart ws-proxy            # WebSocket(5004)
+   sudo systemctl restart wecom-kf            # 企微客服(5005)
+   ```
+7. 新机验证：`curl -s http://127.0.0.1:5001/api/health` + `sudo journalctl -u <服务> -n 30 --no-pager`
+8. 旧机提交推送（老规矩）：
+   ```bash
+   git add <文件>
+   git commit -m "说明 by S编号"        # 必须带 by S#，hook会拦
+   git tag old-main-$(date +%Y%m%d) $(git ls-remote github refs/heads/main | cut -f1)
+   git push github old-main-$(date +%Y%m%d)
+   git push github peruse-fix:main
+   ```
+   ⚠️ 推送**只用 SSH remote `github`**（git@github.com:libaip/smart-locker-server.git）；`gh`/`origin` 是 https 无凭证会挂起
+9. 旧机 `bash .workbench/release.sh <任务ID>` 标记完成
+
+### 红线
+- **新机无 .git**：git 命令报错正常，别在新机跑 git；代码改动必须经旧机存档，否则 rsync 覆盖丢失
+- **别跑完整 `sync_from_primary.sh`**（脚本 PRIMARY 指向旧版、且会同步 crontab：旧机 crontab 为空，会把新机 13 条生产 cron 清掉）——脚本修正前一律用上面的单文件 rsync
+- 旧机 crontab 为空是**正常状态**（备机不跑任务）；新机 13 条 cron 是生产
+- 数据库 DDL：新主是逻辑复制发布者，**改表结构后必须在备机(旧机)补 schema**（对比 information_schema，见 smart-locker-迁移CVM方案.md §7.3）
+- 证书/nginx 改动在新机（/etc/letsencrypt、/etc/nginx），改完 `nginx -t && systemctl reload nginx`
+- 多会话冲突：TASKS.md 铁律 + deploy_check 双保险；`routes/admin_v2.py` 被 S30 登记（柜门任务），改前先协调
 6. 完整流程见 `.workbench/WORKFLOW.md`（开工→调研→备份→改→校验→部署→提交→收工）。

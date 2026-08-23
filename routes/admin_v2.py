@@ -3366,31 +3366,6 @@ def admin_biz_stats():
             if not is_hidden:
                 grouped[key]['visible_count'] += 1
         
-        # 转换为列表
-        for (stat_date, loc_id), data in grouped.items():
-            if has_location_filter:
-                location_details.append({
-                    'location_id': loc_id,
-                    'location_name': data['location_name'],
-                    'stat_date': stat_date,
-                    'order_count': data['order_count'],
-                    'visible_count': data['visible_count'],
-                    'deposit_total': round(data['deposit_total'], 2),
-                    'refund_total': round(data['refund_total'], 2),
-                    'user_count': len(data['user_phones']),
-                    'balance': round(data['deposit_total'] - data['refund_total'], 2)
-                })
-            else:
-                location_details.append({
-                    'stat_date': stat_date,
-                    'order_count': data['order_count'],
-                    'visible_count': data['visible_count'],
-                    'deposit_total': round(data['deposit_total'], 2),
-                    'refund_total': round(data['refund_total'], 2),
-                    'user_count': len(data['user_phones']),
-                    'balance': round(data['deposit_total'] - data['refund_total'], 2)
-                })
-
         # 退款实时明细: 独立按退款日(refund_time)统计, 不限使用日; 支持网点/代理商/省份/退款日期筛选
         refund_today_details = []
         _rtd_where = ["o.status NOT IN (5)", "o.refund_time IS NOT NULL"]
@@ -3431,6 +3406,43 @@ def admin_biz_stats():
         except Exception as e:
             logger.error(f'[biz_stats_refund_today] {e}')
             refund_today_details = []
+
+        # 按日期建退款实时金额索引: (日期[, 网点id]) -> 金额, 用于合并进使用日明细
+        _rtd_map = {}
+        for _rd in refund_today_details:
+            if location_id:
+                _rtd_map[(_rd.get('refund_date'), _rd.get('location_id'))] = _rd.get('refund_today_total', 0)
+            else:
+                _rtd_map[_rd.get('refund_date')] = _rd.get('refund_today_total', 0)
+
+        # 转换为列表
+        for (stat_date, loc_id), data in grouped.items():
+            if has_location_filter:
+                _rt_amt = _rtd_map.get((stat_date, loc_id), 0)
+                location_details.append({
+                    'location_id': loc_id,
+                    'location_name': data['location_name'],
+                    'stat_date': stat_date,
+                    'order_count': data['order_count'],
+                    'visible_count': data['visible_count'],
+                    'deposit_total': round(data['deposit_total'], 2),
+                    'refund_total': round(data['refund_total'], 2),
+                    'refund_today_total': round(_rt_amt, 2),
+                    'user_count': len(data['user_phones']),
+                    'balance': round(data['deposit_total'] - data['refund_total'], 2)
+                })
+            else:
+                _rt_amt = _rtd_map.get(stat_date, 0)
+                location_details.append({
+                    'stat_date': stat_date,
+                    'order_count': data['order_count'],
+                    'visible_count': data['visible_count'],
+                    'deposit_total': round(data['deposit_total'], 2),
+                    'refund_total': round(data['refund_total'], 2),
+                    'refund_today_total': round(_rt_amt, 2),
+                    'user_count': len(data['user_phones']),
+                    'balance': round(data['deposit_total'] - data['refund_total'], 2)
+                })
         
         # 按天聚合趋势
         daily = []

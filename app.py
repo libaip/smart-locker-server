@@ -974,6 +974,7 @@ def _balance_hide_scheduler():
             c.execute("SELECT id, balance_hide_days FROM locations WHERE balance_hide_enabled = 1 AND balance_hide_days > 0")
             locations = c.fetchall()
             total_hidden = 0
+            total_order_hidden = 0
             for loc in locations:
                 days = loc['balance_hide_days']
                 c.execute(
@@ -988,24 +989,28 @@ def _balance_hide_scheduler():
                 )
                 hidden = c.rowcount
                 if hidden > 0:
-                    # 同步隐藏对应订单(logic_mark=Y), 用户订单列表不可见
-                    c.execute(
-                        "UPDATE orders SET logic_mark = 'Y' "
-                        "WHERE id IN ("
-                        "  SELECT o.id FROM orders o"
-                        "  JOIN cabinets cab ON o.cabinet_id = cab.id"
-                        "  WHERE cab.location_id = %s AND o.status NOT IN (2)"
-                        "  AND NOT EXISTS (SELECT 1 FROM user_balance_details d2"
-                        "    WHERE d2.order_id = o.id AND d2.status = 'available')"
-                        ")",
-                        (loc['id'],)
-                    )
                     total_hidden += hidden
                     logger.info('[余额隐藏] Location %s: 隐藏 %s 条超 %s 天余额明细' % (loc['id'], hidden, days))
+                # 同步隐藏对应订单(logic_mark=Y), 用户订单列表不可见; 独立于余额隐藏执行(历史已pending的订单也要隐藏)
+                c.execute(
+                    "UPDATE orders SET logic_mark = 'Y' "
+                    "WHERE id IN ("
+                    "  SELECT o.id FROM orders o"
+                    "  JOIN cabinets cab ON o.cabinet_id = cab.id"
+                    "  WHERE cab.location_id = %s AND o.status NOT IN (2)"
+                    "  AND COALESCE(o.logic_mark,'') != 'Y'"
+                    "  AND NOT EXISTS (SELECT 1 FROM user_balance_details d2"
+                    "    WHERE d2.order_id = o.id AND d2.status = 'available')"
+                    ")",
+                    (loc['id'],)
+                )
+                total_order_hidden += c.rowcount
             conn.commit()
             conn.close()
             if total_hidden > 0:
                 logger.info('[余额隐藏] 本次共隐藏 %d 条余额明细' % total_hidden)
+            if total_order_hidden > 0:
+                logger.info('[余额隐藏] 本次共隐藏 %d 个订单' % total_order_hidden)
         except Exception as e:
             logger.error('[余额隐藏] 异常: %s' % e)
         finally:

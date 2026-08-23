@@ -1120,6 +1120,7 @@ Vue.component('page-member-withdraw',{template:'\
 <div class="search-bar">\
 <div class="search-item"><label>状态</label><select v-model="$parent.withdrawalStatusFilter" @change="$parent.loadWithdrawals(1)"><option value="">全部</option><option value="0">待审核</option><option value="1">退款中</option><option value="2">已退款</option><option value="3">已拒绝</option><option value="4">已退回余额</option><option value="5">已取消</option></select></div>\
 <div class="search-item"><label>代理商</label><select v-model="$parent.withdrawalAgentFilter" @change="$parent.onWithdrawalAgentChange()"><option value="">全部</option><option v-for="a in $parent.agents" :value="a.id">{{a.name}}</option></select></div>\
+<div class="search-item"><label>审批人</label><input v-model="$parent.withdrawalApproverFilter" placeholder="输入审批人" @keyup.enter="$parent.loadWithdrawals(1)" style="width:120px"></div>\
 <div class="search-item"><label>网点</label><select v-model="$parent.withdrawalLocationFilter" @change="$parent.loadWithdrawals(1)"><option value="">全部</option><option v-for="l in $parent.withdrawalLocations" :value="l.id">{{l.name}}</option></select></div>\
 <div class="search-item"><label>手机号</label><input v-model="$parent.withdrawalSearchPhone" placeholder="输入手机号" @keyup.enter="$parent.loadWithdrawals(1)" style="width:120px"></div>\
 <div class="search-item"><label>订单号</label><input v-model="$parent.withdrawalSearchOrder" placeholder="输入订单号" @keyup.enter="$parent.loadWithdrawals(1)" style="width:140px"></div>\
@@ -1258,6 +1259,8 @@ Vue.component('page-biz-stat',{template:`
 <div class="stat-card"><div class="stat-label">进行中订单</div><div class="stat-value" style="color:#667eea">{{$parent.orderStats.active_count||0}}</div></div>
 <div class="stat-card"><div class="stat-label">预付款总收入</div><div class="stat-value" style="color:#67c23a">¥{{($parent.orderStats.deposit_total||0).toFixed(2)}}</div></div>
 <div class="stat-card"><div class="stat-label">退款总额</div><div class="stat-value" style="color:#f56c6c">¥{{($parent.orderStats.refund_total||0).toFixed(2)}}</div></div>
+<div class="stat-card"><div class="stat-label">退款实时金额</div><div class="stat-value" style="color:#f56c6c">¥{{($parent.orderStats.refund_today_total||0).toFixed(2)}}</div></div>
+<div class="stat-card"><div class="stat-label">使用人数</div><div class="stat-value" style="color:#409eff">{{$parent.orderStats.user_count||0}}</div></div>
 <div class="stat-card"><div class="stat-label">净收入</div><div class="stat-value" style="color:#e6a23c">¥{{($parent.orderStats.net_income||0).toFixed(2)}}</div></div>
 </div>
 </div>
@@ -1268,17 +1271,19 @@ Vue.component('page-biz-stat',{template:`
 <div class="page-box" style="margin-top:16px">
 <div class="box-header"><h3>网点明细统计</h3></div>
 <table>
-<tr><th>日期</th><th v-if="$parent.statsFilter.location_id">网点</th><th>订单数(实际)</th><th>订单数(可见)</th><th>预付款收入</th><th>退款金额</th><th>余额</th></tr>
+<tr><th>日期</th><th v-if="$parent.statsFilter.location_id">网点</th><th>订单数(实际)</th><th>订单数(可见)</th><th>使用人数</th><th>预付款收入</th><th>退款金额</th><th>退款实时金额</th><th>余额</th></tr>
 <tr v-for="loc in $parent.locationDetails" :key="loc.stat_date+'-'+(loc.location_id||'')">
 <td>{{loc.stat_date||'-'}}</td>
 <td v-if="$parent.statsFilter.location_id">{{loc.location_name}}</td>
 <td>{{loc.order_count}}</td>
 <td>{{loc.visible_count}}</td>
+<td>{{loc.user_count||0}}</td>
 <td style="color:#67c23a">¥{{(loc.deposit_total||0).toFixed(2)}}</td>
 <td style="color:#f56c6c">¥{{(loc.refund_total||0).toFixed(2)}}</td>
+<td style="color:#f56c6c">¥{{(loc.refund_today_total||0).toFixed(2)}}</td>
 <td style="color:#e6a23c;font-weight:bold">¥{{(loc.balance||0).toFixed(2)}}</td>
 </tr>
-<tr v-if="!$parent.locationDetails.length"><td :colspan="$parent.statsFilter.location_id ? 7 : 6" class="empty-row">暂无数据</td></tr>
+<tr v-if="!$parent.locationDetails.length"><td :colspan="$parent.statsFilter.location_id ? 9 : 8" class="empty-row">暂无数据</td></tr>
 </table>
 </div>
 </div>
@@ -1894,7 +1899,7 @@ orderDetailModal:false,orderDetail:null,
 members:[],memberTotal:0,memberPage:1,selectedMembers:[],memberSearchPhone:'',
 memberDetailModal:false,memberDetail:null,
 // Withdrawals
-withdrawals:[],withdrawalTotal:0,withdrawalPage:1,withdrawalStatusFilter:'',withdrawalSearchOrder:'',withdrawalSearchWechat:'',withdrawalSearchPhone:'',withdrawalDateStart:'',withdrawalDateEnd:'',withdrawalAgentFilter:'',withdrawalLocationFilter:'',withdrawalLocations:[],agents:[],rechargeRecords:[],rechargeTotal:0,rechargePage:1,rechargeSearchPhone:'',rechargeDateStart:'',rechargeDateEnd:'',rechargeDateStart:'',rechargeDateEnd:'',
+withdrawals:[],withdrawalTotal:0,withdrawalPage:1,withdrawalStatusFilter:'',withdrawalSearchOrder:'',withdrawalSearchWechat:'',withdrawalSearchPhone:'',withdrawalDateStart:'',withdrawalDateEnd:'',withdrawalAgentFilter:'',withdrawalLocationFilter:'',withdrawalLocations:[],withdrawalApproverFilter:'',agents:[],rechargeRecords:[],rechargeTotal:0,rechargePage:1,rechargeSearchPhone:'',rechargeDateStart:'',rechargeDateEnd:'',rechargeDateStart:'',rechargeDateEnd:'',
 rejectModal:false,rejectForm:{},
 // Complaints
 complaints:[],complaintTotal:0,complaintPage:1,complaintStatusFilter:'',complaintPhoneFilter:'',complaintOrderFilter:'',complaintMchFilter:'',complaintLocationFilter:'',complaintLocations:[],complaint_start_date:'',complaint_end_date:'',complaintDetailModal:false,complaintDetail:{},
@@ -2049,7 +2054,7 @@ exportOrders:function(){var params=[];Object.keys(this.orderSearch).forEach(func
 loadMembers:function(p){var self=this;if(p)this.memberPage=p;this.api('/admin/members',{phone:this.memberSearchPhone,page:this.memberPage},'GET').then(function(d){self.members=d.data&&d.data.list||[];self.memberTotal=d.data&&d.data.total||0;}).catch(function(){});},
 toggleSelectAllMembers:function(){if(this.selectedMembers.length===this.members.length){this.selectedMembers=[];}else{this.selectedMembers=this.members.map(function(m){return m.phone;});}},refundMember:function(m){var self=this;this.confirm2('确定退款 ¥'+Number(m.balance||0).toFixed(2)+' 到 '+m.phone+'?',function(){self.api('/admin/member/refund',{phone:m.phone,amount:m.balance}).then(function(d){self.toast(d.message||'退款成功');self.loadMembers();}).catch(function(e){self.toast(e.message||'退款失败','error');});});},batchRefundMembers:function(){var self=this;if(!this.selectedMembers.length){this.toast('请先选择会员','warning');return;}var phones=this.selectedMembers;this.confirm2('确定批量退款 '+phones.length+' 个会员?',function(){self.api('/admin/member/batch-refund',{phones:phones}).then(function(d){self.toast(d.message||'批量退款成功');self.selectedMembers=[];self.loadMembers();}).catch(function(e){self.toast(e.message||'批量退款失败','error');});});},viewMemberDetail:function(row){var self=this;this.api('/admin/member/detail',{user_id:row.id}).then(function(d){self.memberDetail=d.data||row;self.memberDetailModal=true;}).catch(function(){self.memberDetail=row;self.memberDetailModal=true;});},
 // Withdrawals
-loadWithdrawals:function(p){var self=this;if(p)this.withdrawalPage=p;this.api('/admin/withdrawals',{status:this.withdrawalStatusFilter,search:this.withdrawalSearchPhone,order_no:this.withdrawalSearchOrder,wechat_name:this.withdrawalSearchWechat,date_start:this.withdrawalDateStart,date_end:this.withdrawalDateEnd,location_id:this.withdrawalLocationFilter,agent_id:this.withdrawalAgentFilter,page:this.withdrawalPage},'GET').then(function(d){self.withdrawals=d.data&&d.data.list||[];self.withdrawalTotal=d.data&&d.data.total||0;}).catch(function(){});},onWithdrawalAgentChange:function(){var self=this;self.withdrawalLocationFilter='';self.withdrawalLocations=[];if(!self.withdrawalAgentFilter){self.loadWithdrawals(1);return;}self.api('/admin/locations',{agent_id:self.withdrawalAgentFilter,limit:10000,page:1},'GET').then(function(d){self.withdrawalLocations=d.data&&d.data.list||[];self.loadWithdrawals(1);}).catch(function(){self.withdrawalLocations=[];self.loadWithdrawals(1);});},loadWithdrawalAgents:function(){var self=this;this.api('/admin/agents',{limit:10000,page:1},'GET').then(function(d){self.agents=d.data&&d.data.list||[];}).catch(function(){self.agents=[];});},
+loadWithdrawals:function(p){var self=this;if(p)this.withdrawalPage=p;this.api('/admin/withdrawals',{status:this.withdrawalStatusFilter,search:this.withdrawalSearchPhone,order_no:this.withdrawalSearchOrder,wechat_name:this.withdrawalSearchWechat,date_start:this.withdrawalDateStart,date_end:this.withdrawalDateEnd,location_id:this.withdrawalLocationFilter,agent_id:this.withdrawalAgentFilter,approver:this.withdrawalApproverFilter,page:this.withdrawalPage},'GET').then(function(d){self.withdrawals=d.data&&d.data.list||[];self.withdrawalTotal=d.data&&d.data.total||0;}).catch(function(){});},onWithdrawalAgentChange:function(){var self=this;self.withdrawalLocationFilter='';self.withdrawalLocations=[];if(!self.withdrawalAgentFilter){self.loadWithdrawals(1);return;}self.api('/admin/locations',{agent_id:self.withdrawalAgentFilter,limit:10000,page:1},'GET').then(function(d){self.withdrawalLocations=d.data&&d.data.list||[];self.loadWithdrawals(1);}).catch(function(){self.withdrawalLocations=[];self.loadWithdrawals(1);});},loadWithdrawalAgents:function(){var self=this;this.api('/admin/agents',{limit:10000,page:1},'GET').then(function(d){self.agents=d.data&&d.data.list||[];}).catch(function(){self.agents=[];});},
 approveWithdrawal:function(row){var self=this;this.confirm2('确定通过此提现申请?',function(){self.api('/admin/withdrawal/approve',{id:row.id}).then(function(){self.toast('已通过');self.loadWithdrawals();}).catch(function(e){self.toast(e.message||'操作失败','error');});});},loadRechargeRecords:function(p){var self=this;if(p)this.rechargePage=p;var today=new Date();if(!self.rechargeDateStart)self.rechargeDateStart=self.fmtDate(today);if(!self.rechargeDateEnd)self.rechargeDateEnd=self.fmtDate(today);var ds=self.rechargeDateStart;var de=self.rechargeDateEnd;var params={phone:this.rechargeSearchPhone,page:this.rechargePage,start_date:ds,end_date:de};this.api("/admin/recharge-records",params,"GET").then(function(d){self.rechargeRecords=d.data&&d.data.list||[];self.rechargeTotal=d.data&&d.data.total||0;}).catch(function(){});},
 confirmRefund:function(row){var self=this;this.confirm2('确认退款已完成?',function(){self.api('/admin/withdrawal/confirm-refund',{id:row.id}).then(function(){self.toast('已确认退款');self.loadWithdrawals();}).catch(function(e){self.toast(e.message||'操作失败','error');});});},
 showRejectModal:function(row){this.rejectForm={id:row.id,amount:row.amount,reason:''};this.rejectModal=true;},

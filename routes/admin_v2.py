@@ -1591,6 +1591,7 @@ def admin_withdrawals():
         date_end = (data or {}).get('date_end', '') or request.args.get('date_end', '')
         location_id = (data or {}).get('location_id', '') or request.args.get('location_id', '')
         agent_id = (data or {}).get('agent_id', '') or request.args.get('agent_id', '')
+        approver = (data or {}).get('approver', '') or request.args.get('approver', '')
         page = int(request.args.get("page", (data or {}).get("page", 1)))
         page_size = int(request.args.get("limit", (data or {}).get("limit", 20)))
         conn = get_db()
@@ -1608,6 +1609,9 @@ def admin_withdrawals():
         if wechat_name:
             where += ' AND (ub.wechat_name LIKE %s OR up.wechat_name LIKE %s)'
             params.extend([f'%%{wechat_name}%%', f'%%{wechat_name}%%'])
+        if approver:
+            where += ' AND wr.approver LIKE %s'
+            params.append(f'%%{approver}%%')
         if date_start:
             where += ' AND wr.created_at >= %s'
             params.append(date_start)
@@ -3228,11 +3232,13 @@ def admin_biz_stats():
             COUNT(CASE WHEN (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0) THEN 1 END) as visible_count,
             SUM(CASE WHEN o.status=2 THEN 1 ELSE 0 END) as active_count,
             COALESCE(SUM(o.deposit_amount),0) as deposit_total,
-            COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END),0) as refund_total
+            COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END),0) as refund_total,
+            COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL AND date(o.refund_time)>=%s AND date(o.refund_time)<=%s THEN o.refund_amount ELSE 0 END),0) as refund_today_total,
+            COUNT(DISTINCT o.user_phone) as user_count
             FROM orders o
             LEFT JOIN cabinets cab ON o.cabinet_id=cab.id
             LEFT JOIN locations l ON cab.location_id=l.id
-            {where_clause}''', params)
+            {where_clause}''', params + [start_date or '1900-01-01', end_date or '2999-12-31'])
         row = c.fetchone()
         orderStats = {
             'total': row[0] if row else 0,
@@ -3240,6 +3246,8 @@ def admin_biz_stats():
             'active_count': row[2] if row else 0,
             'deposit_total': round(float(row[3] if row and row[3] else 0), 2),
             'refund_total': round(float(row[4] if row and row[4] else 0), 2),
+            'refund_today_total': round(float(row[5] if row and row[5] else 0), 2),
+            'user_count': row[6] if row else 0,
             'net_income': round(float(row[3] if row and row[3] else 0) - float(row[4] if row and row[4] else 0), 2)
         }
         
@@ -3257,6 +3265,7 @@ def admin_biz_stats():
                 o.auto_hidden,
                 o.deposit_amount,
                 CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END as refund_amount,
+                date(o.refund_time) as refund_date,
                 l.merchant_id,
                 l.hide_ratio,
                 l.whitelist_phones
@@ -3274,6 +3283,7 @@ def admin_biz_stats():
                 o.auto_hidden,
                 o.deposit_amount,
                 CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END as refund_amount,
+                date(o.refund_time) as refund_date,
                 l.merchant_id,
                 l.hide_ratio,
                 l.whitelist_phones
@@ -3288,7 +3298,7 @@ def admin_biz_stats():
         orders = []
         
         # 按(stat_date, location_id)分组
-        grouped = defaultdict(lambda: {'order_count': 0, 'visible_count': 0, 'deposit_total': 0, 'refund_total': 0, 'location_name': ''})
+        grouped = defaultdict(lambda: {'order_count': 0, 'visible_count': 0, 'deposit_total': 0, 'refund_total': 0, 'refund_today_total': 0, 'user_phones': set(), 'location_name': ''})
         
         for row in c.fetchall():
             if has_location_filter:
@@ -3300,6 +3310,7 @@ def admin_biz_stats():
                 logic_mark = row['logic_mark']
                 deposit = float(row['deposit_amount'] or 0)
                 refund = float(row['refund_amount'] or 0)
+                refund_date = str(row['refund_date']) if row['refund_date'] else ''
                 merchant_id = row['merchant_id']
                 hide_ratio = row['hide_ratio'] or 0
                 whitelist_phones = row['whitelist_phones']
@@ -3312,6 +3323,7 @@ def admin_biz_stats():
                 logic_mark = row['logic_mark']
                 deposit = float(row['deposit_amount'] or 0)
                 refund = float(row['refund_amount'] or 0)
+                refund_date = str(row['refund_date']) if row['refund_date'] else ''
                 merchant_id = row['merchant_id']
                 hide_ratio = row['hide_ratio'] or 0
                 whitelist_phones = row['whitelist_phones']
@@ -3320,6 +3332,11 @@ def admin_biz_stats():
             grouped[key]['order_count'] += 1
             grouped[key]['deposit_total'] += deposit
             grouped[key]['refund_total'] += refund
+            # 退款实时金额: 退款日期落在筛选范围内才计入
+            if refund_date and start_date and end_date and start_date <= refund_date <= end_date:
+                grouped[key]['refund_today_total'] += refund
+            if user_phone:
+                grouped[key]['user_phones'].add(user_phone)
             if loc_name:
                 grouped[key]['location_name'] = loc_name
             
@@ -3344,6 +3361,8 @@ def admin_biz_stats():
                     'visible_count': data['visible_count'],
                     'deposit_total': round(data['deposit_total'], 2),
                     'refund_total': round(data['refund_total'], 2),
+                    'refund_today_total': round(data['refund_today_total'], 2),
+                    'user_count': len(data['user_phones']),
                     'balance': round(data['deposit_total'] - data['refund_total'], 2)
                 })
             else:
@@ -3353,6 +3372,8 @@ def admin_biz_stats():
                     'visible_count': data['visible_count'],
                     'deposit_total': round(data['deposit_total'], 2),
                     'refund_total': round(data['refund_total'], 2),
+                    'refund_today_total': round(data['refund_today_total'], 2),
+                    'user_count': len(data['user_phones']),
                     'balance': round(data['deposit_total'] - data['refund_total'], 2)
                 })
         

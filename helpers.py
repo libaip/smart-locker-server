@@ -2188,7 +2188,7 @@ def check_whitelist(openid='', unionid=''):
 
 
 def add_whitelist(openid, source, remain_count=-1, unionid='', expire_days=None):
-    """加入提现白名单。expire_days>0: N天后过期(重新拉白会刷新计时); None/<=0: 不改动已有有效期(新行永不过期)"""
+    """加入提现白名单。expire_days>0: N天后过期; 重复拉白时次数取较小值(不重置回满), 有效期不刷新(保留原值)"""
     try:
         from database import get_db
         conn = get_db()
@@ -2201,12 +2201,27 @@ def add_whitelist(openid, source, remain_count=-1, unionid='', expire_days=None)
             cur.execute("SELECT openid FROM withdrawal_whitelist WHERE unionid = %s LIMIT 1", (unionid,))
             exist = cur.fetchone()
             if exist:
-                cur.execute("UPDATE withdrawal_whitelist SET openid = %s, source = %s, remain_count = CASE WHEN withdrawal_whitelist.remain_count = -1 THEN -1 ELSE %s END, created_at = NOW(), expires_at = COALESCE(NOW() + make_interval(days => %s), withdrawal_whitelist.expires_at) WHERE unionid = %s",
-                            (openid, source, remain_count, _exp_days, unionid))
+                cur.execute("""UPDATE withdrawal_whitelist SET openid = %s, source = %s,
+                               remain_count = CASE
+                                 WHEN withdrawal_whitelist.remain_count = -1 THEN %s
+                                 WHEN %s = -1 THEN withdrawal_whitelist.remain_count
+                                 ELSE LEAST(withdrawal_whitelist.remain_count, %s)
+                               END
+                               WHERE unionid = %s""",
+                            (openid, source, remain_count, remain_count, remain_count, unionid))
                 conn.commit()
                 conn.close()
                 return True
-        sql = "INSERT INTO withdrawal_whitelist (openid, source, remain_count, unionid, created_at, expires_at) VALUES (%s, %s, %s, %s, NOW(), NOW() + make_interval(days => %s)) ON CONFLICT (openid) DO UPDATE SET source = EXCLUDED.source, remain_count = CASE WHEN withdrawal_whitelist.remain_count = -1 THEN -1 ELSE EXCLUDED.remain_count END, unionid = COALESCE(NULLIF(EXCLUDED.unionid, ''), withdrawal_whitelist.unionid), created_at = NOW(), expires_at = EXCLUDED.expires_at"
+        sql = """INSERT INTO withdrawal_whitelist (openid, source, remain_count, unionid, created_at, expires_at)
+                 VALUES (%s, %s, %s, %s, NOW(), NOW() + make_interval(days => %s))
+                 ON CONFLICT (openid) DO UPDATE SET source = EXCLUDED.source,
+                   remain_count = CASE
+                     WHEN withdrawal_whitelist.remain_count = -1 THEN EXCLUDED.remain_count
+                     WHEN EXCLUDED.remain_count = -1 THEN withdrawal_whitelist.remain_count
+                     ELSE LEAST(withdrawal_whitelist.remain_count, EXCLUDED.remain_count)
+                   END,
+                   unionid = COALESCE(NULLIF(EXCLUDED.unionid, ''), withdrawal_whitelist.unionid),
+                   expires_at = withdrawal_whitelist.expires_at"""
         cur.execute(sql, (openid, source, remain_count, unionid, _exp_days))
         conn.commit()
         conn.close()

@@ -5143,11 +5143,10 @@ def _process_auto_withdrawal_record(wid):
             rcnt = int(rcnt_row[0]) if rcnt_row else 3
             if ('余额不足' in str(first_msg) or 'NOTENOUGH' in str(first_msg).upper()):
                 # 商户号余额不足：直接拒绝不重试，避免队列积压 (2026-08-19)
-                # 2026-08-23: 失败单不退余额, 余额明细保持pending(隐藏), 同步隐藏订单(logic_mark=Y)
+                # 2026-08-23: 失败单不退余额, 余额明细保持pending(隐藏); 2026-08-23晚: 不再同步打logic_mark=Y(避免破坏商户订单比例隐藏)
                 if failed_amount > 0:
                     for foid in failed:
                         c2.execute("UPDATE user_balance_details SET status='pending' WHERE order_id=%s", (foid,))
-                        c2.execute("UPDATE orders SET logic_mark='Y' WHERE id=%s", (foid,))
                 _reject_msg = '商户号余额不足，该部分余额已隐藏'
                 c2.execute("UPDATE withdrawal_records SET status=3, error_msg=%s, dedup_key=NULL, next_attempt_at=NULL, approve_time=NOW(), approver='自动' WHERE id=%s", (_reject_msg, wid))
                 try:

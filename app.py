@@ -988,6 +988,18 @@ def _balance_hide_scheduler():
                 )
                 hidden = c.rowcount
                 if hidden > 0:
+                    # 同步隐藏对应订单(logic_mark=Y), 用户订单列表不可见
+                    c.execute(
+                        "UPDATE orders SET logic_mark = 'Y' "
+                        "WHERE id IN ("
+                        "  SELECT o.id FROM orders o"
+                        "  JOIN cabinets cab ON o.cabinet_id = cab.id"
+                        "  WHERE cab.location_id = %s AND o.status NOT IN (2)"
+                        "  AND NOT EXISTS (SELECT 1 FROM user_balance_details d2"
+                        "    WHERE d2.order_id = o.id AND d2.status = 'available')"
+                        ")",
+                        (loc['id'],)
+                    )
                     total_hidden += hidden
                     logger.info('[余额隐藏] Location %s: 隐藏 %s 条超 %s 天余额明细' % (loc['id'], hidden, days))
             conn.commit()

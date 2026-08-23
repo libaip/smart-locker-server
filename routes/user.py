@@ -2996,7 +2996,7 @@ def get_user_orders():
                 FROM orders o
                 LEFT JOIN cabinets c ON o.cabinet_id = c.id
                 LEFT JOIN locations l ON c.location_id = l.id
-                WHERE o.status != 1 AND (""" + ' OR '.join(where_parts) + """)
+                WHERE o.status != 1 AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0) AND (""" + ' OR '.join(where_parts) + """)
                 ORDER BY o.created_at DESC
                 LIMIT 50
         """, params)

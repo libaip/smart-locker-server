@@ -5143,13 +5143,12 @@ def _process_auto_withdrawal_record(wid):
             rcnt = int(rcnt_row[0]) if rcnt_row else 3
             if ('余额不足' in str(first_msg) or 'NOTENOUGH' in str(first_msg).upper()):
                 # 商户号余额不足：直接拒绝不重试，避免队列积压 (2026-08-19)
+                # 2026-08-23: 失败单不退余额, 余额明细保持pending(隐藏), 同步隐藏订单(logic_mark=Y)
                 if failed_amount > 0:
-                    c2.execute("UPDATE user_balances SET balance=balance+%s, total_withdrawn=GREATEST(total_withdrawn-%s,0) WHERE phone=%s ", (failed_amount, failed_amount, phone))
-                    if c2.rowcount == 0:
-                        c2.execute("INSERT INTO user_balances (phone, balance, total_withdrawn, first_use_time) VALUES (%s, %s, 0, NOW())", (phone, failed_amount))
                     for foid in failed:
-                        c2.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (foid,))
-                _reject_msg = '商户号余额不足，已自动拒绝，请稍后重试'
+                        c2.execute("UPDATE user_balance_details SET status='pending' WHERE order_id=%s", (foid,))
+                        c2.execute("UPDATE orders SET logic_mark='Y' WHERE id=%s", (foid,))
+                _reject_msg = '商户号余额不足，该部分余额已隐藏'
                 c2.execute("UPDATE withdrawal_records SET status=3, error_msg=%s, dedup_key=NULL, next_attempt_at=NULL, approve_time=NOW(), approver='自动' WHERE id=%s", (_reject_msg, wid))
                 try:
                     c2.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('withdraw_refund_failed', NULL, %s, '0', NOW())", (('余额不足自动拒绝: ' + _reject_msg)[:500],))

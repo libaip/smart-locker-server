@@ -844,13 +844,13 @@ def get_cabinet_by_mainboard(mainboard_id):
         # 根据收费模式生成屏幕大字显示文本
         charge_mode = result.get('charge_mode', 'deposit')
         if charge_mode == 'free':
-                        result['display_text'] = '\xe5\x85\x8d\xe8\xb4\xb9\xe5\xaf\x84\xe5\xad\x98'
+                        result['display_text'] = '免费寄存'
         elif charge_mode == 'per_use':
             price = result.get('per_use_price', 0)
             _fmt_p = lambda n: str(int(n)) if float(n).is_integer() else ('%.2f' % float(n)).rstrip('0').rstrip('.')
-            result['display_text'] = '\xe6\x8c\x89\xe6\xac\xa1\xe5\xaf\x84\xe5\xad\x98 \xc2\xa5{}/'.format(_fmt_p(float(price))) + '\xe6\xac\xa1' if price else '\xe6\x8c\x89\xe6\xac\xa1\xe5\xaf\x84\xe5\xad\x98'
+            result['display_text'] = '按次寄存 ¥{}/次'.format(_fmt_p(float(price))) if price else '按次寄存'
         else:  # deposit
-            result['display_text'] = '\xe8\x87\xaa\xe5\x8a\xa9\xe5\xaf\x84\xe5\xad\x98'
+            result['display_text'] = '自助寄存'
         result['cabinet_name'] = result.get('name', '')
         conn.close()
         # 存入缓存

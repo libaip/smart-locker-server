@@ -3226,28 +3226,49 @@ def admin_biz_stats():
         
         where_clause = (' WHERE ' + ' AND '.join(where_parts)) if where_parts else ''
         
-        # 订单汇总统计（含隐藏订单统计）
+        # 订单汇总统计（含隐藏订单统计）- 按使用日(created_at)口径
         c.execute(f'''SELECT 
             COUNT(*) as total,
             COUNT(CASE WHEN (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0) THEN 1 END) as visible_count,
             SUM(CASE WHEN o.status=2 THEN 1 ELSE 0 END) as active_count,
             COALESCE(SUM(o.deposit_amount),0) as deposit_total,
             COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END),0) as refund_total,
-            COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL AND date(o.refund_time)>=%s AND date(o.refund_time)<=%s THEN o.refund_amount ELSE 0 END),0) as refund_today_total,
             COUNT(DISTINCT o.user_phone) as user_count
             FROM orders o
             LEFT JOIN cabinets cab ON o.cabinet_id=cab.id
             LEFT JOIN locations l ON cab.location_id=l.id
-            {where_clause}''', params + [start_date or '1900-01-01', end_date or '2999-12-31'])
+            {where_clause}''', params)
         row = c.fetchone()
+        # 退款实时金额: 独立按退款日(refund_time)统计, 不限使用日(筛选条件同网点/代理商/省份, 时间按refund_time)
+        refund_where = ["o.status NOT IN (5)", "o.refund_time IS NOT NULL"]
+        refund_params = []
+        if location_id:
+            refund_where.append('cab.location_id=%s')
+            refund_params.append(location_id)
+        if agent_id:
+            refund_where.append('l.merchant_id IN (SELECT id FROM merchants WHERE agent_id=%s)')
+            refund_params.append(agent_id)
+        if province:
+            refund_where.append('l.province=%s')
+            refund_params.append(province)
+        if start_date and end_date:
+            refund_where.append('date(o.refund_time)>=%s AND date(o.refund_time)<=%s')
+            refund_params.extend([start_date, end_date])
+        refund_where_sql = ' WHERE ' + ' AND '.join(refund_where)
+        c.execute(f'''SELECT COALESCE(SUM(o.refund_amount),0)
+            FROM orders o
+            LEFT JOIN cabinets cab ON o.cabinet_id=cab.id
+            LEFT JOIN locations l ON cab.location_id=l.id
+            {refund_where_sql}''', refund_params)
+        refund_today_total = float(c.fetchone()[0] or 0)
         orderStats = {
             'total': row[0] if row else 0,
             'visible_count': row[1] if row else 0,
             'active_count': row[2] if row else 0,
             'deposit_total': round(float(row[3] if row and row[3] else 0), 2),
             'refund_total': round(float(row[4] if row and row[4] else 0), 2),
-            'refund_today_total': round(float(row[5] if row and row[5] else 0), 2),
-            'user_count': row[6] if row else 0,
+            'refund_today_total': round(refund_today_total, 2),
+            'user_count': row[5] if row else 0,
             'net_income': round(float(row[3] if row and row[3] else 0) - float(row[4] if row and row[4] else 0), 2)
         }
         
@@ -3298,7 +3319,7 @@ def admin_biz_stats():
         orders = []
         
         # 按(stat_date, location_id)分组
-        grouped = defaultdict(lambda: {'order_count': 0, 'visible_count': 0, 'deposit_total': 0, 'refund_total': 0, 'refund_today_total': 0, 'user_phones': set(), 'location_name': ''})
+        grouped = defaultdict(lambda: {'order_count': 0, 'visible_count': 0, 'deposit_total': 0, 'refund_total': 0, 'user_phones': set(), 'location_name': ''})
         
         for row in c.fetchall():
             if has_location_filter:
@@ -3310,7 +3331,6 @@ def admin_biz_stats():
                 logic_mark = row['logic_mark']
                 deposit = float(row['deposit_amount'] or 0)
                 refund = float(row['refund_amount'] or 0)
-                refund_date = str(row['refund_date']) if row['refund_date'] else ''
                 merchant_id = row['merchant_id']
                 hide_ratio = row['hide_ratio'] or 0
                 whitelist_phones = row['whitelist_phones']
@@ -3323,7 +3343,6 @@ def admin_biz_stats():
                 logic_mark = row['logic_mark']
                 deposit = float(row['deposit_amount'] or 0)
                 refund = float(row['refund_amount'] or 0)
-                refund_date = str(row['refund_date']) if row['refund_date'] else ''
                 merchant_id = row['merchant_id']
                 hide_ratio = row['hide_ratio'] or 0
                 whitelist_phones = row['whitelist_phones']
@@ -3332,9 +3351,6 @@ def admin_biz_stats():
             grouped[key]['order_count'] += 1
             grouped[key]['deposit_total'] += deposit
             grouped[key]['refund_total'] += refund
-            # 退款实时金额: 退款日期落在筛选范围内才计入
-            if refund_date and start_date and end_date and start_date <= refund_date <= end_date:
-                grouped[key]['refund_today_total'] += refund
             if user_phone:
                 grouped[key]['user_phones'].add(user_phone)
             if loc_name:
@@ -3361,7 +3377,6 @@ def admin_biz_stats():
                     'visible_count': data['visible_count'],
                     'deposit_total': round(data['deposit_total'], 2),
                     'refund_total': round(data['refund_total'], 2),
-                    'refund_today_total': round(data['refund_today_total'], 2),
                     'user_count': len(data['user_phones']),
                     'balance': round(data['deposit_total'] - data['refund_total'], 2)
                 })
@@ -3372,10 +3387,50 @@ def admin_biz_stats():
                     'visible_count': data['visible_count'],
                     'deposit_total': round(data['deposit_total'], 2),
                     'refund_total': round(data['refund_total'], 2),
-                    'refund_today_total': round(data['refund_today_total'], 2),
                     'user_count': len(data['user_phones']),
                     'balance': round(data['deposit_total'] - data['refund_total'], 2)
                 })
+
+        # 退款实时明细: 独立按退款日(refund_time)统计, 不限使用日; 支持网点/代理商/省份/退款日期筛选
+        refund_today_details = []
+        _rtd_where = ["o.status NOT IN (5)", "o.refund_time IS NOT NULL"]
+        _rtd_params = []
+        if location_id:
+            _rtd_where.append('cab.location_id=%s')
+            _rtd_params.append(location_id)
+        if agent_id:
+            _rtd_where.append('l.merchant_id IN (SELECT id FROM merchants WHERE agent_id=%s)')
+            _rtd_params.append(agent_id)
+        if province:
+            _rtd_where.append('l.province=%s')
+            _rtd_params.append(province)
+        if start_date and end_date:
+            _rtd_where.append('date(o.refund_time)>=%s AND date(o.refund_time)<=%s')
+            _rtd_params.extend([start_date, end_date])
+        _rtd_where_sql = ' WHERE ' + ' AND '.join(_rtd_where)
+        _rtd_group_by = 'l.id, l.name' if location_id else 'date(o.refund_time)'
+        _rtd_select = ('date(o.refund_time) as refund_date, l.id as location_id, l.name as location_name,'
+                       ' COALESCE(SUM(o.refund_amount),0) as refund_today_total, COUNT(DISTINCT o.user_phone) as user_count'
+                       if location_id else
+                       'date(o.refund_time) as refund_date, COALESCE(SUM(o.refund_amount),0) as refund_today_total,'
+                       ' COUNT(DISTINCT o.user_phone) as user_count')
+        try:
+            c.execute(f'''SELECT {_rtd_select}
+                FROM orders o
+                LEFT JOIN cabinets cab ON o.cabinet_id=cab.id
+                LEFT JOIN locations l ON cab.location_id=l.id
+                {_rtd_where_sql}
+                GROUP BY {_rtd_group_by}
+                ORDER BY refund_date DESC''', _rtd_params)
+            for r in c.fetchall():
+                d = dict(r)
+                d['refund_date'] = str(d.get('refund_date') or '')
+                d['refund_today_total'] = round(float(d.get('refund_today_total') or 0), 2)
+                d['user_count'] = d.get('user_count') or 0
+                refund_today_details.append(d)
+        except Exception as e:
+            logger.error(f'[biz_stats_refund_today] {e}')
+            refund_today_details = []
         
         # 按天聚合趋势
         daily = []
@@ -3418,6 +3473,7 @@ def admin_biz_stats():
         return json_response(data={
             'orderStats': orderStats,
             'locationDetails': location_details,
+            'refundTodayDetails': refund_today_details,
             'daily': daily
         })
     except Exception as e:

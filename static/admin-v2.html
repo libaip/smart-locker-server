@@ -1269,9 +1269,9 @@ Vue.component('page-biz-stat',{template:`
 <div id="statsChart" style="width:100%;height:350px"></div>
 </div>
 <div class="page-box" style="margin-top:16px">
-<div class="box-header"><h3>网点明细统计</h3></div>
+<div class="box-header"><h3>网点明细统计（按使用日期）</h3></div>
 <table>
-<tr><th>日期</th><th v-if="$parent.statsFilter.location_id">网点</th><th>订单数(实际)</th><th>订单数(可见)</th><th>使用人数</th><th>预付款收入</th><th>退款金额</th><th>退款实时金额</th><th>余额</th></tr>
+<tr><th>日期</th><th v-if="$parent.statsFilter.location_id">网点</th><th>订单数(实际)</th><th>订单数(可见)</th><th>使用人数</th><th>预付款收入</th><th>退款金额</th><th>余额</th></tr>
 <tr v-for="loc in $parent.locationDetails" :key="loc.stat_date+'-'+(loc.location_id||'')">
 <td>{{loc.stat_date||'-'}}</td>
 <td v-if="$parent.statsFilter.location_id">{{loc.location_name}}</td>
@@ -1280,10 +1280,22 @@ Vue.component('page-biz-stat',{template:`
 <td>{{loc.user_count||0}}</td>
 <td style="color:#67c23a">¥{{(loc.deposit_total||0).toFixed(2)}}</td>
 <td style="color:#f56c6c">¥{{(loc.refund_total||0).toFixed(2)}}</td>
-<td style="color:#f56c6c">¥{{(loc.refund_today_total||0).toFixed(2)}}</td>
 <td style="color:#e6a23c;font-weight:bold">¥{{(loc.balance||0).toFixed(2)}}</td>
 </tr>
-<tr v-if="!$parent.locationDetails.length"><td :colspan="$parent.statsFilter.location_id ? 9 : 8" class="empty-row">暂无数据</td></tr>
+<tr v-if="!$parent.locationDetails.length"><td :colspan="$parent.statsFilter.location_id ? 8 : 7" class="empty-row">暂无数据</td></tr>
+</table>
+</div>
+<div class="page-box" style="margin-top:16px">
+<div class="box-header"><h3>退款实时明细（按退款日期，不限使用日）</h3></div>
+<table>
+<tr><th>退款日期</th><th v-if="$parent.statsFilter.location_id">网点</th><th>退款实时金额</th><th>使用人数</th></tr>
+<tr v-for="rd in $parent.refundTodayDetails" :key="rd.refund_date+'-'+(rd.location_id||'')">
+<td>{{rd.refund_date||'-'}}</td>
+<td v-if="$parent.statsFilter.location_id">{{rd.location_name||'-'}}</td>
+<td style="color:#f56c6c">¥{{(rd.refund_today_total||0).toFixed(2)}}</td>
+<td>{{rd.user_count||0}}</td>
+</tr>
+<tr v-if="!$parent.refundTodayDetails.length"><td :colspan="$parent.statsFilter.location_id ? 4 : 3" class="empty-row">暂无数据</td></tr>
 </table>
 </div>
 </div>
@@ -1925,7 +1937,7 @@ afterSales:[],afterSalesTotal:0,afterSalesPage:1,afterSalesStatusFilter:'',
 afterSalesModal:false,afterSalesForm:{},afterSalesFormTitle:'',
 afterSalesHandleModal:false,afterSalesHandleForm:{},
 // Stats
-statsFilter:{province:'',agent_id:'',location_id:'',start_date:'',end_date:''},statsLocations:[],orderStats:{},locationDetails:[],statsChart:null,shareFilter:{agent_id:'',merchant_id:'',start_date:'',end_date:''},shareStats:{details:[],summary:{total_orders:0,total_share:0}},merchantList:[],
+statsFilter:{province:'',agent_id:'',location_id:'',start_date:'',end_date:''},statsLocations:[],orderStats:{},locationDetails:[],refundTodayDetails:[],statsChart:null,shareFilter:{agent_id:'',merchant_id:'',start_date:'',end_date:''},shareStats:{details:[],summary:{total_orders:0,total_share:0}},merchantList:[],
 settleList:[],settleTotal:0,settlePage:1,settleStats:{},settleFilter:{location_id:'',date_start:'',date_end:''},
 withdrawList:[],withdrawTotal:0,withdrawPage:1,withdrawFilter:{status:''},
 flowList:[],flowTotal:0,flowPage:1,flowFilter:{type:''},flowStats:{},
@@ -2108,7 +2120,7 @@ saveAfterSales:function(){var self=this;this.api('/admin/after-sales/save',this.
 handleAfterSales:function(row){this.afterSalesHandleForm=JSON.parse(JSON.stringify(row));this.afterSalesHandleModal=true;},
 saveAfterSalesHandle:function(){var self=this;this.api('/admin/after-sales/handle',this.afterSalesHandleForm).then(function(){self.toast('处理成功');self.afterSalesHandleModal=false;self.loadAfterSales();}).catch(function(e){self.toast(e.message||'处理失败','error');});},
 // Stats
-loadStats:function(){var self=this;var params={province:this.statsFilter.province,agent_id:this.statsFilter.agent_id,location_id:this.statsFilter.location_id,start_date:this.statsFilter.start_date,end_date:this.statsFilter.end_date};this.api('/admin/biz-stats',params,'GET').then(function(d){self.orderStats=d.data&&d.data.orderStats||{};self.locationDetails=d.data&&d.data.locationDetails||[];self.$nextTick(function(){self.renderStatsChart(d.data&&d.data.daily||[]);});}).catch(function(){});},
+loadStats:function(){var self=this;var params={province:this.statsFilter.province,agent_id:this.statsFilter.agent_id,location_id:this.statsFilter.location_id,start_date:this.statsFilter.start_date,end_date:this.statsFilter.end_date};this.api('/admin/biz-stats',params,'GET').then(function(d){self.orderStats=d.data&&d.data.orderStats||{};self.locationDetails=d.data&&d.data.locationDetails||[];self.refundTodayDetails=d.data&&d.data.refundTodayDetails||[];self.$nextTick(function(){self.renderStatsChart(d.data&&d.data.daily||[]);});}).catch(function(){});},
 loadStatsLocations:function(){var self=this;this.api('/admin/locations',{agent_id:this.statsFilter.agent_id,limit:10000},'GET').then(function(d){self.statsLocations=d.data&&d.data.list||[];var keep=false;for(var i=0;i<self.statsLocations.length;i++){if(String(self.statsLocations[i].id)===String(self.statsFilter.location_id)){keep=true;break;}}if(!keep)self.statsFilter.location_id='';}).catch(function(){self.statsLocations=[];});},
 onStatsAgentChange:function(){this.statsFilter.location_id='';this.loadStatsLocations();this.loadStats();},
 resetStatsFilter:function(){var d=new Date();var _s=new Date(d);_s.setDate(d.getDate()-30);this.statsFilter={province:'',agent_id:'',location_id:'',start_date:_s.toISOString().slice(0,10),end_date:d.toISOString().slice(0,10)};this.loadStats();this.loadStatsLocations();},

@@ -983,8 +983,8 @@ def _balance_hide_scheduler():
                     "  SELECT o.id FROM orders o"
                     "  JOIN cabinets cab ON o.cabinet_id = cab.id"
                     "  WHERE cab.location_id = %s"
-                    ") AND source_time < NOW() - INTERVAL '%s days'"
-                    % (loc['id'], days)
+                    ") AND source_time < NOW() - make_interval(days => %s)",
+                    (loc['id'], days)
                 )
                 hidden = c.rowcount
                 if hidden > 0:

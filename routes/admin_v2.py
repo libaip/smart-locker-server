@@ -3383,7 +3383,7 @@ def admin_biz_stats():
             _rtd_where.append('date(o.refund_time)>=%s AND date(o.refund_time)<=%s')
             _rtd_params.extend([start_date, end_date])
         _rtd_where_sql = ' WHERE ' + ' AND '.join(_rtd_where)
-        _rtd_group_by = 'l.id, l.name' if location_id else 'date(o.refund_time)'
+        _rtd_group_by = 'l.id, l.name, date(o.refund_time)' if location_id else 'date(o.refund_time)'
         _rtd_select = ('date(o.refund_time) as refund_date, l.id as location_id, l.name as location_name,'
                        ' COALESCE(SUM(o.refund_amount),0) as refund_today_total, COUNT(DISTINCT o.user_phone) as user_count'
                        if location_id else

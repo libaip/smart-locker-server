@@ -1854,6 +1854,7 @@ def admin_complaints():
         phone = (data or {}).get('phone', '') or request.args.get('phone', '')
         order_no = (data or {}).get('order_no', '') or request.args.get('order_no', '')
         mch_id = (data or {}).get('mch_id', '') or request.args.get('mch_id', '')
+        location_id = (data or {}).get('location_id', '') or request.args.get('location_id', '')
         start_date = (data or {}).get('start_date', '') or request.args.get('start_date', '')
         end_date = (data or {}).get('end_date', '') or request.args.get('end_date', '')
         page = int(request.args.get("page", (data or {}).get("page", 1)))
@@ -1896,6 +1897,9 @@ def admin_complaints():
         if mch_id:
             where += ' AND (c.mch_id LIKE %s OR pc.mch_id LIKE %s)'
             params.extend([f'%{mch_id}%', f'%{mch_id}%'])
+        if location_id:
+            where += ' AND ca.location_id = %s'
+            params.append(location_id)
         if start_date:
             where += ' AND c.created_at >= %s'
             params.append(start_date)
@@ -1905,6 +1909,7 @@ def admin_complaints():
         c.execute(f'''SELECT COUNT(*) FROM complaints c
             LEFT JOIN orders o ON c.order_id=o.id OR (c.order_no IS NOT NULL AND c.order_no = o.order_no)
             LEFT JOIN payment_channels pc ON o.payment_channel_id=pc.id
+            LEFT JOIN cabinets ca ON o.cabinet_id=ca.id
             WHERE {where}''', params)
         total = c.fetchone()[0]
         c.execute(f'''SELECT c.*, CASE WHEN c.source IS NOT NULL AND c.source != '' THEN c.source WHEN c.type IN ('self','complaint') OR c.complaint_type IN ('self','complaint') THEN '自有投诉' WHEN c.type='wechat' OR c.complaint_type='wechat' THEN '微信投诉' WHEN c.type='kf' OR c.complaint_type='kf_auto' THEN '客服自动处理' ELSE COALESCE(c.type,'') END as source, COALESCE(NULLIF(po.wechat_name,''), NULLIF(up.wechat_name,''), o.wechat_name, c.nick_name) as nickname, CASE WHEN o.status IN (2,3) THEN o.order_no ELSE c.order_no END as order_no, CASE WHEN c.type = 'self' THEN c.user_phone ELSE COALESCE(o.user_phone, c.user_phone) END as user_phone, pc.mch_id, ca.cabinet_code, l.name as location_name, o.refund_status as order_refund_status

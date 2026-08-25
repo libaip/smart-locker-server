@@ -3842,6 +3842,7 @@ def _ensure_tables():
         c.execute("""CREATE TABLE IF NOT EXISTS blacklist(
             id SERIAL PRIMARY KEY,
             phone TEXT NOT NULL,
+            unionid TEXT,
             reason TEXT,
             cabinet_id INTEGER,
             operator TEXT,
@@ -8169,6 +8170,32 @@ def _complaint_scheduler():
                 elif cstatus in ("1", "2"):
                     # 已回复(1)或转人工(2): 满5分钟后执行退款 → 到账通知 → 结案；失败每5分钟重试，3次后转人工
                     # status=2(转人工)也继续自动重试: 商户充值后自动退掉, 无需人工盯
+                    # 自动拉黑: 投诉时订单未结束(retrieve_time为空或投诉早于结束)的用户直接拉黑(手机号+unionid)
+                    try:
+                        _bl_conn = get_db()
+                        _bl = _bl_conn.cursor()
+                        _bl.execute("""
+                            SELECT o.user_phone, o.openid, o.unionid, o.retrieve_time, o.id AS oid
+                            FROM complaints cc
+                            LEFT JOIN orders o ON cc.order_id=o.id OR (cc.order_no IS NOT NULL AND cc.order_no=o.order_no)
+                            WHERE cc.id=%s AND o.id IS NOT NULL
+                            LIMIT 1
+                        """, (cid,))
+                        _bl_row = _bl.fetchone()
+                        if _bl_row and (_bl_row['retrieve_time'] is None or comp.get('created_at') and _bl_row['retrieve_time'] > comp.get('created_at')):
+                            _bl_phone = _bl_row.get('user_phone') or ''
+                            _bl_unionid = _bl_row.get('unionid') or ''
+                            _bl_reason = '未结束订单投诉拉黑(订单未结束即投诉)'
+                            if _bl_phone:
+                                _bl.execute("SELECT id FROM blacklist WHERE phone=%s AND (unionid IS NULL OR unionid='' OR unionid=%s) LIMIT 1", (_bl_phone, _bl_unionid or ''))
+                                if not _bl.fetchone():
+                                    _bl.execute("INSERT INTO blacklist(phone, unionid, reason, operator, status) VALUES(%s,%s,%s,'auto',1)",
+                                                (_bl_phone, _bl_unionid or None, _bl_reason))
+                                    logger.info('[complaint_scheduler] 自动拉黑用户 phone=%s unionid=%s 投诉id=%s 订单未结束', _bl_phone, _bl_unionid, cid)
+                        _bl_conn.commit()
+                        _bl_conn.close()
+                    except Exception as _bl_e:
+                        logger.warning('[complaint_scheduler] 自动拉黑失败: %s', _bl_e)
                     _age = 0.0
                     try:
                         _ag_conn = get_db()

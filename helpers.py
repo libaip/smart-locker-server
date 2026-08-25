@@ -2339,6 +2339,27 @@ def count_today_whitelist_uses(phone='', openid=''):
 def check_use_limits(phone='', unionid='', openid=''):
     """开单前风控：返回 None 可正常使用，否则返回禁止原因"""
     try:
+        # 黑名单拦截: 手机号 或 unionid 在黑名单(status=1)则禁止使用
+        _bl_conn = get_db()
+        _bl = _bl_conn.cursor()
+        _bl_phones = set()
+        if phone:
+            _bl_phones.add(str(phone))
+        if unionid:
+            _bl.execute("SELECT DISTINCT phone FROM phone_openids WHERE unionid=%s AND phone IS NOT NULL AND phone != ''", (unionid,))
+            for _r in _bl.fetchall():
+                if _r[0]:
+                    _bl_phones.add(str(_r[0]))
+        if _bl_phones:
+            _ph_marks = ','.join(['%s'] * len(_bl_phones))
+            _bl_params = list(_bl_phones) + [unionid or '']
+            _bl.execute(
+                "SELECT id FROM blacklist WHERE status=1 AND (phone IN (%s) OR (unionid IS NOT NULL AND unionid != '' AND unionid=%%s)) LIMIT 1" % _ph_marks,
+                _bl_params)
+            if _bl.fetchone():
+                _bl_conn.close()
+                return '您好，因您多次在订单未结束时发起投诉，为保障服务秩序，您的账号已被限制使用寄存服务。如有疑问请拨打客服电话 4006981080。'
+        _bl_conn.close()
         black = get_setting_int('complaint_blacklist_limit', 3)
         if black > 0 and count_user_complaints(phone, unionid, openid) > black:
             return '累计投诉次数过多，暂不可使用'

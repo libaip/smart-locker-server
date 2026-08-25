@@ -1372,10 +1372,10 @@ def h5_store():
         if not cabinet:
             conn.close()
             return json_response(message='设备不存在', code=404)
-        # 检查设备是否在线（2分钟内有心跳即认为在线）
+        # 检查设备是否在线（心跳2分钟内 或 WS连接/5004在线列表 都算在线，避免心跳偶发延迟误报离线）
         dev_id = cabinet['mainboard_device_id'] or ''
         if dev_id:
-            if not is_heartbeat_online(cabinet.get('last_heartbeat')):
+            if not is_device_online(dev_id, cabinet.get('last_heartbeat')):
                 conn.close()
                 return json_response(message='设备离线，请稍后再试', code=400)
         cabinet_id = cabinet['id']

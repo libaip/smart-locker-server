@@ -2358,7 +2358,7 @@ def check_use_limits(phone='', unionid='', openid=''):
                 _bl_params)
             if _bl.fetchone():
                 _bl_conn.close()
-                return '您好，因您多次在订单未结束时发起投诉，为保障服务秩序，您的账号已被限制使用寄存服务。如有疑问请拨打客服电话 4006981080。'
+                return '操作异常，请联系客服4006981080'
         _bl_conn.close()
         black = get_setting_int('complaint_blacklist_limit', 3)
         if black > 0 and count_user_complaints(phone, unionid, openid) > black:

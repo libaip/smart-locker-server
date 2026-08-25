@@ -22,6 +22,7 @@ WECHAT_FIRST_REPLY = '您好，您的投诉已收到，我们正在为您核实�
 WECHAT_ARRIVAL_NOTICE = '您好，您的退款¥{amount}已原路退回，请注意查收。如未退款请联系人工客服帮您处理，客服电话4006981080。'
 WECHAT_MANUAL_REPLY = '您好，您的退款遇到异常，请联系人工客服帮您处理，客服电话4006981080。'
 WECHAT_NO_REFUND = '您好，经核实您的订单已退款或无需退款，如有疑问请拨打客服电话4006981080。'
+WECHAT_FINAL_REPLY = '您好，您的预付款已全额退款，请注意查收。如有疑问请拨打客服电话4006981080。'
 def _fmt_time(t):
     """格式化时间: YYYY-MM-DD HH:MM:SS"""
     if not t:
@@ -7267,7 +7268,15 @@ def wechat_complaint_notify():
                 except:
                     pass
             if _mch_id:
-                _auto_reply_complaint(complaint_id, _search_no, transaction_id, mch_id=_mch_id, cert_serial=_cert_serial, private_key_path=_key_path, content=WECHAT_FIRST_REPLY, complete_now=False)
+                # 只发一条: 取消即时受理通知, 置status=1进入调度器退款流程(退款成功/失败/无需退款时发唯一一条)
+                try:
+                    _ns_conn = get_db()
+                    _ns = _ns_conn.cursor()
+                    _ns.execute("UPDATE complaints SET status='1' WHERE wx_complaint_id=%s AND status='0'", (complaint_id,))
+                    _ns_conn.commit()
+                    _ns_conn.close()
+                except Exception as _ns_e:
+                    logger.warning('[投诉处理] 更新投诉状态失败: %s', _ns_e)
             else:
                 logger.error('[投诉处理] 无可用商户号，投诉 %s 未回复', complaint_id)
         
@@ -8148,7 +8157,15 @@ def _complaint_scheduler():
                             c3_conn.close()
                         except:
                             pass
-                    _auto_reply_complaint(wxid, order_no=ono, transaction_id=_txn, mch_id=cmch, cert_serial=ccert, private_key_path=ckey, content=WECHAT_FIRST_REPLY, complete_now=False)
+                    # 只发一条: 取消补发受理通知, 置status=1进入退款流程(退款完成时才发唯一一条)
+                    try:
+                        _ns2_conn = get_db()
+                        _ns2 = _ns2_conn.cursor()
+                        _ns2.execute("UPDATE complaints SET status='1' WHERE id=%s AND status='0'", (cid,))
+                        _ns2_conn.commit()
+                        _ns2_conn.close()
+                    except Exception as _ns2_e:
+                        logger.warning('[complaint_scheduler] 更新投诉状态失败: %s', _ns2_e)
                 elif cstatus in ("1", "2"):
                     # 已回复(1)或转人工(2): 满5分钟后执行退款 → 到账通知 → 结案；失败每5分钟重试，3次后转人工
                     # status=2(转人工)也继续自动重试: 商户充值后自动退掉, 无需人工盯
@@ -8230,7 +8247,7 @@ def _complaint_scheduler():
                                     _amt = float(_am_row[0])
                             except:
                                 pass
-                            notice = WECHAT_ARRIVAL_NOTICE.format(amount='%.2f' % _amt)
+                            notice = WECHAT_FINAL_REPLY
                             _auto_reply_complaint(wxid, order_no=ono, transaction_id=_txn, mch_id=cmch, cert_serial=ccert, private_key_path=ckey, content=notice, complete_now=False)
                             if _cmch:
                                 _auto_complete_complaint(wxid, _cmch, ccert, ckey)

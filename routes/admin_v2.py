@@ -8192,6 +8192,33 @@ def _complaint_scheduler():
                                     _bl.execute("INSERT INTO blacklist(phone, unionid, reason, operator, status) VALUES(%s,%s,%s,'auto',1)",
                                                 (_bl_phone, _bl_unionid or None, _bl_reason))
                                     logger.info('[complaint_scheduler] 自动拉黑用户 phone=%s unionid=%s 投诉id=%s 订单未结束', _bl_phone, _bl_unionid, cid)
+                        # 累计投诉>=2次拉黑: 统计该用户全部微信投诉, 达到2次即拉黑(手机号+unionid)
+                        try:
+                            _bl2_phone = _bl_row.get('user_phone') or '' if '_bl_row' in dir() and _bl_row else ''
+                            _bl2_unionid = _bl_row.get('unionid') or '' if '_bl_row' in dir() and _bl_row else ''
+                            if not _bl2_phone:
+                                _bl2_phone = comp.get('user_phone') or ''
+                            _bl2_phones = set()
+                            if _bl2_phone:
+                                _bl2_phones.add(str(_bl2_phone))
+                            if _bl2_unionid:
+                                _bl.execute("SELECT DISTINCT phone FROM phone_openids WHERE unionid=%s AND phone IS NOT NULL AND phone != ''", (_bl2_unionid,))
+                                for _pr in _bl.fetchall():
+                                    if _pr[0]:
+                                        _bl2_phones.add(str(_pr[0]))
+                            _bl2_total = 0
+                            if _bl2_phones:
+                                _ph_m = ','.join(['%s'] * len(_bl2_phones))
+                                _bl.execute("SELECT COUNT(*) FROM complaints WHERE (type='wechat' OR complaint_type='wechat') AND user_phone IN (%s)" % _ph_m, list(_bl2_phones))
+                                _bl2_total = int(_bl.fetchone()[0] or 0)
+                            if _bl2_total >= 2 and _bl2_phone:
+                                _bl.execute("SELECT id FROM blacklist WHERE phone=%s AND (unionid IS NULL OR unionid='' OR unionid=%s) LIMIT 1", (_bl2_phone, _bl2_unionid or ''))
+                                if not _bl.fetchone():
+                                    _bl.execute("INSERT INTO blacklist(phone, unionid, reason, operator, status) VALUES(%s,%s,%s,'auto',1)",
+                                                (_bl2_phone, _bl2_unionid or None, '累计投诉>=2次拉黑'))
+                                    logger.info('[complaint_scheduler] 累计投诉>=2次拉黑 phone=%s unionid=%s 总投诉=%s', _bl2_phone, _bl2_unionid, _bl2_total)
+                        except Exception as _bl2_e:
+                            logger.warning('[complaint_scheduler] 累计投诉拉黑失败: %s', _bl2_e)
                         _bl_conn.commit()
                         _bl_conn.close()
                     except Exception as _bl_e:

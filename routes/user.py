@@ -909,6 +909,10 @@ def retrieve_confirm():
         if action == 'continue':
             conn.close()
             return json_response({'action': 'continue', 'message': '请继续使用，已为您保留柜格'})
+        if action == 'end':
+            # 2026-08-25: H5 retrieve page only allows mid-open; ending goes through /deposit/end-storage
+            conn.close()
+            return json_response(message='\u8bf7\u5728\u5c0f\u7a0b\u5e8f\u6216\u8ba2\u5355\u4e2d\u5fc3\u7ed3\u675f\u8ba2\u5355\u9000\u62bc\u91d1', code=400)
         # 检查设备是否在线（2分钟心跳）
         cursor.execute("SELECT mainboard_device_id, last_heartbeat FROM cabinets WHERE id = %s", (order['cabinet_id'],))
         _cab = cursor.fetchone()

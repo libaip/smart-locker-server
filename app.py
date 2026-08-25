@@ -131,6 +131,13 @@ try:
 except Exception as e:
     logger.error(f'[注册] 加载device blueprint失败: {e}')
 
+try:
+    from routes.oauth_test import bp as oauth_test_bp
+    blueprints.append((oauth_test_bp, '/api'))
+    logger.info('[oauth_test] blueprint loaded (backup gzh verify)')
+except Exception as e:
+    logger.error(f'[oauth_test] load fail: {e}')
+
 # 注册所有Blueprint
 from routes.refund_fee import bp as refund_fee_bp
 blueprints.append((refund_fee_bp, "/api"))
@@ -290,7 +297,7 @@ def _patrol_ghost_slots():
             cur.execute("""
                 UPDATE cabinet_slots cs SET status=1
                 WHERE cs.status = 2
-                  AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.slot_id = cs.id AND o.status = 2)
+                  AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.slot_id = cs.id AND o.status IN (1, 2))
                 RETURNING cs.id, cs.cabinet_id, cs.slot_number
             """)
             fixed = cur.fetchall()

@@ -1672,10 +1672,10 @@ def deposit_end_storage():
         if order['store_time'] and (datetime.now() - order['store_time']).total_seconds() < 120:
             conn.close()
             return json_response(message='订单刚创建，请稍后再试', code=400)
-        if not data.get('local_opened'):
-            if not is_device_online(str(order['mainboard_device_id'] or ''), order.get('last_heartbeat')):
-                conn.close()
-                return json_response(message='设备离线，无法开门', code=400)
+        _device_online = is_device_online(str(order['mainboard_device_id'] or ''), order.get('last_heartbeat'))
+        if not data.get('local_opened') and not _device_online:
+            # device offline: still allow end order (no door open), refund to balance
+            logger.warning('[end_storage] device offline, skip remote open, end order: order=' + str(order_id))
         refund_amount = order['deposit_amount']
         compartment_number = order['slot_number'] or order['compartment_number']
         cursor.execute('INSERT INTO storage_records (cabinet_id, compartment_number, user_phone, access_code, status, store_time, retrieve_time) VALUES (%s, %s, %s, %s, 1, %s, %s)',
@@ -1765,7 +1765,7 @@ def deposit_end_storage():
                 logger.info(f'[end_storage] door_records写入(local): device={order["mainboard_device_id"]}, board={order["board_no"]}, lock={order["lock_no"]}')
             except Exception as dre:
                 logger.error(f'[end_storage] door_records写入失败: {dre}')
-        else:
+        elif _device_online:
             # 远程开门：调用 send_open_lock（会写 door_records + 发开门指令）
             try:
                 from helpers import send_open_lock
@@ -1774,6 +1774,8 @@ def deposit_end_storage():
                 logger.info(f'[end_storage] send_open_lock called: device={device_id}, board={order["board_no"]}, lock={order["lock_no"]}')
             except Exception as we:
                 logger.error(f'[end_storage] send_open_lock失败: {we}')
+        else:
+            logger.info('[end_storage] device offline, skip remote open cmd: order=' + str(order_id))
         # 发送寄存结束订阅消息
         _openid = order.get("mp_openid") or order.get("openid")
         if not _openid:

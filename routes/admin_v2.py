@@ -2210,7 +2210,7 @@ def admin_agent_stats():
             conn.close()
             return empty_result
         c_ph = ','.join(['%s'] * len(cabinet_ids))
-        sql = 'SELECT COUNT(*) as order_count, COALESCE(SUM(deposit_amount),0) as total_deposit, COALESCE(SUM(CASE WHEN status=4 THEN refund_amount ELSE 0 END),0) as total_refund, COALESCE(SUM(deposit_amount - CASE WHEN status=4 THEN refund_amount ELSE 0 END),0) as total_unreturned FROM orders o WHERE o.cabinet_id IN (' + c_ph + ') ' + date_where
+        sql = 'SELECT COUNT(*) as order_count, COALESCE(SUM(deposit_amount),0) as total_deposit, COALESCE(SUM(CASE WHEN status=4 THEN refund_amount ELSE 0 END),0) as total_refund, COALESCE(SUM(deposit_amount - CASE WHEN status=4 THEN refund_amount ELSE 0 END),0) as total_unreturned FROM orders o WHERE o.cabinet_id IN (' + c_ph + ') AND COALESCE(o.free_use,0)=0 ' + date_where
         c.execute(sql, cabinet_ids + date_params)
         row = c.fetchone()
         order_count = row[0]

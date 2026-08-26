@@ -1791,11 +1791,19 @@ Vue.component('page-system-settings',{template:`
 <div class="form-group"><label>白名单手机号</label><textarea v-model="$parent.settingsData.order_hide_whitelist.value" rows="3" placeholder="多个手机号用逗号分隔"></textarea></div>
 </div>
 </div>
+<div class="form-group" style="display:flex;align-items:center;gap:12px;margin-top:16px;padding-top:16px;border-top:1px dashed #ebeef5">
+<label style="flex:0 0 auto;font-weight:600">免押模式</label>
+<label class="switch">
+<input type="checkbox" :checked="$parent.freeUseEnabled==='true'" @change="$parent.toggleFreeUse($event.target.checked)">
+<span class="slider"></span>
+</label>
+<span style="color:#909399;font-size:12px">商户号全部封停时开启: 用户免押使用柜门, 订单不计入商家业绩</span>
+</div>
 <div style="text-align:right;padding-top:12px;border-top:1px solid #ebeef5">
 <button class="btn btn-blue" @click="$parent.saveSettings()">保存设置</button>
 </div>
 </div>
-</div>`,created(){this.$parent.loadSettings();}});
+</div>`,created(){this.$parent.loadSettings();this.$parent.loadFreeUse();}});
 
 Vue.component('page-cabinet-groups',{template:`
 <div class="page-box">
@@ -2152,6 +2160,8 @@ saveRole:function(){var self=this;this.api('/roles/save',this.roleForm).then(fun
 loadResetStats:function(){var self=this;this.api('/data-reset/stats').then(function(d){self.resetStats=d.data||{};}).catch(function(){});},
 
 // P1 Methods
+loadFreeUse:function(){var self=this;this.api('/admin/free-use-setting').then(function(d){self.freeUseEnabled=(d&&d.data&&d.data.enabled)?'true':'false';}).catch(function(){});},
+toggleFreeUse:function(checked){var self=this;this.api('/admin/free-use-setting',{method:'POST',body:{enabled:checked?'true':'false'}}).then(function(d){self.freeUseEnabled=checked?'true':'false';self.toast(d.message||'已保存');}).catch(function(e){self.toast(e.message||'操作失败','error');});},
 loadSettings:function(){var self=this;this.api('/settings').then(function(d){var sd={};var src=(d&&d.data&&typeof d.data==='object')?d.data:(Array.isArray(d)?d:[]);if(Array.isArray(src)){src.forEach(function(r){sd[r.setting_key]={value:r.setting_value,desc:r.description||r.setting_key};});}else{Object.keys(src).forEach(function(k){sd[k]={value:(src[k]&&src[k].value!==undefined)?src[k].value:'',desc:(src[k]&&src[k].desc)||k};});}if(!sd.whitelist_daily_use_limit)sd.whitelist_daily_use_limit={value:'3',desc:'当天投诉用户今日可用次数'};if(!sd.complaint_blacklist_limit)sd.complaint_blacklist_limit={value:'3',desc:'累计投诉禁止使用次数'};self.settingsData=sd;}).catch(function(e){self.toast(e.message||'加载失败','error');});},
 saveSettings:function(){var self=this;var arr=[];for(var k in this.settingsData){arr.push({setting_key:k,setting_value:this.settingsData[k].value});}this.api('/settings/save',{settings:arr}).then(function(){self.toast('保存成功');}).catch(function(e){self.toast(e.message||'保存失败','error');});},
 loadOfflineOrders:function(){var self=this;this.api('/admin/offline-orders',{page:this.offlineOrdersPage},'GET').then(function(d){self.offlineOrders=d.data&&d.data.list||[];self.offlineOrdersTotal=d.data&&d.data.total||0;}).catch(function(e){self.toast(e.message||'加载失败','error');});},

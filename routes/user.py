@@ -523,9 +523,19 @@ def store_init():
         payment_channel = select_payment_channel()
         payment_channel_id = payment_channel['id'] if payment_channel else None
 
+        # 免押模式: 商户号全部封停时, 用户免押使用, 订单不计入商家业绩
+        _free_use = False
+        try:
+            from helpers import get_setting as _gst
+            _free_use = _gst('free_use_enabled', 'false') == 'true'
+        except Exception:
+            pass
+        if _free_use:
+            deposit_amount = 0.0
+
         _store_uid = _resolve_user(cursor, openid=openid, mp_openid=mp_openid, phone=user_phone, unionid=unionid)
-        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, per_use_price, status, store_time, group_id, payment_channel_id, openid, unionid, mp_openid, user_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
-                       (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, per_use_price, datetime.now(), group_id, payment_channel_id, openid, unionid, mp_openid, _store_uid))
+        cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, per_use_price, status, store_time, group_id, payment_channel_id, openid, unionid, mp_openid, user_id, free_use) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
+                       (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, per_use_price, 2 if _free_use else 1, datetime.now(), group_id, payment_channel_id, openid, unionid, mp_openid, _store_uid, 1 if _free_use else 0))
         row = cursor.fetchone()
         if not row:
             conn.close()
@@ -537,7 +547,7 @@ def store_init():
 
         return json_response({'order_id': order_id, 'order_no': order_no, 'access_code': access_code,
                               'slot_id': slot['id'], 'cabinet_id': cabinet_id, 'compartment_number': compartment_display, 'compartment_label': slot['slot_label'] if 'slot_label' in slot.keys() and slot['slot_label'] else '',
-                              'slot_size': slot['slot_size'], 'deposit_amount': deposit_amount})
+                              'slot_size': slot['slot_size'], 'deposit_amount': deposit_amount, 'free_use': 1 if _free_use else 0})
     except Exception as e:
         import traceback; logger.error(f'[store_init] 错误: {e}'); logger.error(traceback.format_exc())
         return json_response(message=str(e), code=500)
@@ -566,6 +576,22 @@ def get_pay_params_api():
         if order['status'] == 2:
             conn.close()
             return json_response({'order_status': 'paid', 'order_id': order['id'], 'compartment_number': order['compartment_number']})
+        if order.get('free_use'):
+            # 免押单: 无需支付, 直接开门(首次调用时发指令)
+            try:
+                from helpers import send_open_lock as _fu_sol
+                _fu_cur = conn.cursor()
+                _fu_cur.execute('SELECT c.mainboard_device_id, c.mainboard_source, cs.board_no, cs.lock_no, cs.slot_number FROM cabinets c LEFT JOIN cabinet_slots cs ON cs.id=%s WHERE c.id=%s', (order['slot_id'], order['cabinet_id']))
+                _fu_ci = _fu_cur.fetchone()
+                if _fu_ci and _fu_ci['mainboard_device_id']:
+                    _fu_sol(str(_fu_ci['mainboard_device_id']), _fu_ci['board_no'] or 1, _fu_ci['lock_no'] or 1,
+                            protocol=(_fu_ci['mainboard_source'] or 'YBM'), order_id=order['order_no'],
+                            slot_number=_fu_ci['slot_number'], skip_dedup=True)
+                    logger.info(f'[get-pay-params] 免押单开门指令已发送: order={order["id"]}')
+            except Exception as _fue:
+                logger.error(f'[get-pay-params] 免押开门失败: {_fue}')
+            conn.close()
+            return json_response({'order_status': 'free_use', 'order_id': order['id'], 'compartment_number': order['compartment_number'], 'free_use': 1, 'message': '免押使用，柜门已开'})
         if order['status'] != 1:
             conn.close()
             return json_response(message='订单状态异常', code=400)
@@ -1219,6 +1245,22 @@ def store_pay():
         if not order:
             conn.close()
             return json_response(message='订单不存在', code=404)
+        if order.get('free_use'):
+            # 免押单: 无需支付, 直接开门(首次调用时发指令)
+            try:
+                from helpers import send_open_lock as _fu_sol2
+                _fu_c2 = conn.cursor()
+                _fu_c2.execute('SELECT c.mainboard_device_id, c.mainboard_source, cs.board_no, cs.lock_no, cs.slot_number FROM cabinets c LEFT JOIN cabinet_slots cs ON cs.id=%s WHERE c.id=%s', (order['slot_id'], order['cabinet_id']))
+                _fu_ci2 = _fu_c2.fetchone()
+                if _fu_ci2 and _fu_ci2['mainboard_device_id']:
+                    _fu_sol2(str(_fu_ci2['mainboard_device_id']), _fu_ci2['board_no'] or 1, _fu_ci2['lock_no'] or 1,
+                             protocol=(_fu_ci2['mainboard_source'] or 'YBM'), order_id=order['order_no'],
+                             slot_number=_fu_ci2['slot_number'], skip_dedup=True)
+                    logger.info(f'[store_pay] 免押单开门指令已发送: order={order["id"]}')
+            except Exception as _fue2:
+                logger.error(f'[store_pay] 免押开门失败: {_fue2}')
+            conn.close()
+            return json_response({'code': 0, 'order_id': order['id'], 'free_use': 1, 'order_status': 'free_use', 'message': '免押使用，柜门已开'})
         if order['status'] == 2:
             # 已支付的订单，开门指令已由支付回调或首次/store/pay发送，不再重复发送
             conn.close()

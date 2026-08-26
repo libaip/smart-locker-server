@@ -4480,6 +4480,24 @@ def get_settings():
         except Exception:
             pass
 
+@bp.route('/admin/free-use-setting', methods=['GET', 'POST'])
+@require_auth
+def admin_free_use_setting():
+    """免押模式开关: GET查状态, POST设值(enabled=true/false)"""
+    from helpers import get_setting, set_setting
+    try:
+        if request.method == 'POST':
+            data = request.get_json() or {}
+            enabled = str(data.get('enabled', 'false')).lower() in ('true', '1', 'yes')
+            set_setting('free_use_enabled', 'true' if enabled else 'false')
+            return json_response({'code': 0, 'enabled': enabled, 'message': '免押模式已%s' % ('开启' if enabled else '关闭')})
+        enabled = get_setting('free_use_enabled', 'false') == 'true'
+        return json_response({'code': 0, 'enabled': enabled})
+    except Exception as e:
+        logger.error(f'[free_use_setting] {e}')
+        return json_response(message=str(e), code=500)
+
+
 @bp.route('/settings/save', methods=['POST'])
 def save_settings():
     try:

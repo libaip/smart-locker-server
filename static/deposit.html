@@ -595,7 +595,7 @@
         </div>
         <div class="rc-actions">
             <button class="rc-btn-mid" onclick="midOpen()">中途开柜</button>
-            <button class="rc-btn-end" onclick="endRetrieval()">取包结束</button>
+            <button class="rc-btn-end" onclick="alert('请在小程序或订单中心结束订单退押金')" style="display:none">取包结束</button>
         </div>
     </div>
 
@@ -1320,6 +1320,14 @@
     }
 
     function handlePayResult(data) {
+        if (data.order_status === 'free_use' || data.free_use === 1) {
+            // 免押模式: 无需支付, 柜门已开
+            stopCountdown();
+            showOpeningPage();
+            var btn0 = document.getElementById('payBtn');
+            if (btn0) { btn0.disabled = false; btn0.textContent = '支付开门'; }
+            return;
+        }
         if (data.order_status === 'paid' || data.status === 2) { stopCountdown(); showOpeningPage(); return; }
         currentOrderId = data.order_id;
         currentOrderNo = data.order_no;

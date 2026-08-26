@@ -8192,7 +8192,7 @@ def _complaint_scheduler():
                 logger.error("[complaint_scheduler] sync complaint status error: %s", _se)
             conn = get_db()
             c = conn.cursor()
-            c.execute("SELECT * FROM complaints WHERE status IN ('0','1','2') AND type IN ('wechat') AND created_at < NOW() - INTERVAL '2 minutes' AND created_at > NOW() - INTERVAL '7 days' AND NOT (status='2' AND POSITION('订单缺失终态' IN COALESCE(refund_fail_reason,'')) > 0) ORDER By created_at LIMIT 100")
+            c.execute("SELECT * FROM complaints WHERE status IN ('0','1','2') AND type IN ('wechat') AND COALESCE(refund_retry,0) < 3 AND created_at < NOW() - INTERVAL '2 minutes' AND created_at > NOW() - INTERVAL '7 days' AND NOT (status='2' AND POSITION('订单缺失终态' IN COALESCE(refund_fail_reason,'')) > 0) ORDER By created_at LIMIT 100")
             rows = c.fetchall()
             conn.close()
             conn = None

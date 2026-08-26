@@ -8204,21 +8204,29 @@ def _complaint_scheduler():
                 elif cstatus in ("1", "2"):
                     # 已回复(1)或转人工(2): 满5分钟后执行退款 → 到账通知 → 结案；失败每5分钟重试，3次后转人工
                     # status=2(转人工)也继续自动重试: 商户充值后自动退掉, 无需人工盯
-                    # 自动拉黑: 投诉时订单未结束(retrieve_time为空或投诉早于结束)的用户直接拉黑(手机号+unionid)
+                    # 自动拉黑: ①投诉时订单未结束 ②累计投诉>=2次, 命中即拉黑(手机号+unionid)
                     try:
                         _bl_conn = get_db()
                         _bl = _bl_conn.cursor()
-                        _bl.execute("""
-                            SELECT o.user_phone, o.openid, o.unionid, o.retrieve_time, o.id AS oid
-                            FROM complaints cc
-                            LEFT JOIN orders o ON cc.order_id=o.id OR (cc.order_no IS NOT NULL AND cc.order_no=o.order_no)
-                            WHERE cc.id=%s AND o.id IS NOT NULL
-                            LIMIT 1
-                        """, (cid,))
-                        _bl_row = _bl.fetchone()
+                        _bl_phone = comp.get('user_phone') or ''
+                        _bl_unionid = comp.get('unionid') or ''
+                        _bl_row = None
+                        try:
+                            _bl.execute("""
+                                SELECT o.user_phone, o.openid, o.unionid, o.retrieve_time, o.id AS oid
+                                FROM complaints cc
+                                LEFT JOIN orders o ON cc.order_id=o.id OR (cc.order_no IS NOT NULL AND cc.order_no=o.order_no)
+                                WHERE cc.id=%s AND o.id IS NOT NULL
+                                LIMIT 1
+                            """, (cid,))
+                            _bl_row = _bl.fetchone()
+                        except Exception:
+                            _bl_row = None
+                        if _bl_row:
+                            _bl_phone = _bl_row.get('user_phone') or _bl_phone
+                            _bl_unionid = _bl_row.get('unionid') or _bl_unionid
+                        # ① 未结束订单投诉拉黑
                         if _bl_row and (_bl_row['retrieve_time'] is None or comp.get('created_at') and _bl_row['retrieve_time'] > comp.get('created_at')):
-                            _bl_phone = _bl_row.get('user_phone') or ''
-                            _bl_unionid = _bl_row.get('unionid') or ''
                             _bl_reason = '未结束订单投诉拉黑(订单未结束即投诉)'
                             if _bl_phone:
                                 _bl.execute("SELECT id FROM blacklist WHERE phone=%s AND (unionid IS NULL OR unionid='' OR unionid=%s) LIMIT 1", (_bl_phone, _bl_unionid or ''))
@@ -8226,33 +8234,31 @@ def _complaint_scheduler():
                                     _bl.execute("INSERT INTO blacklist(phone, unionid, reason, operator, status) VALUES(%s,%s,%s,'auto',1)",
                                                 (_bl_phone, _bl_unionid or None, _bl_reason))
                                     logger.info('[complaint_scheduler] 自动拉黑用户 phone=%s unionid=%s 投诉id=%s 订单未结束', _bl_phone, _bl_unionid, cid)
-                        # 累计投诉>=2次拉黑: 统计该用户全部微信投诉, 达到2次即拉黑(手机号+unionid)
-                        try:
-                            _bl2_phone = _bl_row.get('user_phone') or '' if '_bl_row' in dir() and _bl_row else ''
-                            _bl2_unionid = _bl_row.get('unionid') or '' if '_bl_row' in dir() and _bl_row else ''
-                            if not _bl2_phone:
-                                _bl2_phone = comp.get('user_phone') or ''
-                            _bl2_phones = set()
-                            if _bl2_phone:
-                                _bl2_phones.add(str(_bl2_phone))
-                            if _bl2_unionid:
-                                _bl.execute("SELECT DISTINCT phone FROM phone_openids WHERE unionid=%s AND phone IS NOT NULL AND phone != ''", (_bl2_unionid,))
-                                for _pr in _bl.fetchall():
-                                    if _pr[0]:
-                                        _bl2_phones.add(str(_pr[0]))
-                            _bl2_total = 0
-                            if _bl2_phones:
-                                _ph_m = ','.join(['%s'] * len(_bl2_phones))
-                                _bl.execute("SELECT COUNT(*) FROM complaints WHERE (type='wechat' OR complaint_type='wechat') AND user_phone IN (%s)" % _ph_m, list(_bl2_phones))
-                                _bl2_total = int(_bl.fetchone()[0] or 0)
-                            if _bl2_total >= 2 and _bl2_phone:
-                                _bl.execute("SELECT id FROM blacklist WHERE phone=%s AND (unionid IS NULL OR unionid='' OR unionid=%s) LIMIT 1", (_bl2_phone, _bl2_unionid or ''))
-                                if not _bl.fetchone():
-                                    _bl.execute("INSERT INTO blacklist(phone, unionid, reason, operator, status) VALUES(%s,%s,%s,'auto',1)",
-                                                (_bl2_phone, _bl2_unionid or None, '累计投诉>=2次拉黑'))
-                                    logger.info('[complaint_scheduler] 累计投诉>=2次拉黑 phone=%s unionid=%s 总投诉=%s', _bl2_phone, _bl2_unionid, _bl2_total)
-                        except Exception as _bl2_e:
-                            logger.warning('[complaint_scheduler] 累计投诉拉黑失败: %s', _bl2_e)
+                        # ② 累计投诉>=2次拉黑
+                        _bl2_phones = set()
+                        if _bl_phone:
+                            _bl2_phones.add(str(_bl_phone))
+                        if _bl_unionid:
+                            _bl.execute("SELECT DISTINCT phone FROM phone_openids WHERE unionid=%s AND phone IS NOT NULL AND phone != ''", (_bl_unionid,))
+                            for _pr in _bl.fetchall():
+                                if _pr[0]:
+                                    _bl2_phones.add(str(_pr[0]))
+                        _bl2_total = 0
+                        if _bl2_phones:
+                            _ph_m = ','.join(['%s'] * len(_bl2_phones))
+                            _bl.execute("""
+                                SELECT COUNT(DISTINCT cc.id) FROM complaints cc
+                                LEFT JOIN orders oo ON cc.order_id=oo.id OR (cc.order_no IS NOT NULL AND cc.order_no=oo.order_no)
+                                WHERE (cc.type='wechat' OR cc.complaint_type='wechat')
+                                  AND COALESCE(oo.user_phone, cc.user_phone) IN (%s)
+                            """ % _ph_m, list(_bl2_phones))
+                            _bl2_total = int(_bl.fetchone()[0] or 0)
+                        if _bl2_total >= 2 and _bl_phone:
+                            _bl.execute("SELECT id FROM blacklist WHERE phone=%s AND (unionid IS NULL OR unionid='' OR unionid=%s) LIMIT 1", (_bl_phone, _bl_unionid or ''))
+                            if not _bl.fetchone():
+                                _bl.execute("INSERT INTO blacklist(phone, unionid, reason, operator, status) VALUES(%s,%s,%s,'auto',1)",
+                                            (_bl_phone, _bl_unionid or None, '累计投诉>=2次拉黑'))
+                                logger.info('[complaint_scheduler] 累计投诉>=2次拉黑 phone=%s unionid=%s 总投诉=%s', _bl_phone, _bl_unionid, _bl2_total)
                         _bl_conn.commit()
                         _bl_conn.close()
                     except Exception as _bl_e:

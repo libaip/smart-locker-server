@@ -4202,11 +4202,26 @@ def companies_delete():
 @require_auth
 def blacklist_list():
     try:
+        data = request.get_json() if request.method == 'POST' else {}
+        phone = (data or {}).get('phone', '') or request.args.get('phone', '')
+        reason = (data or {}).get('reason', '') or request.args.get('reason', '')
+        status = (data or {}).get('status', '') or request.args.get('status', '')
+        where, params = "1=1", []
+        if phone:
+            where += " AND b.phone LIKE %s"
+            params.append(f'%{phone}%')
+        if reason:
+            where += " AND b.reason LIKE %s"
+            params.append(f'%{reason}%')
+        if status != '' and status is not None:
+            where += " AND b.status=%s"
+            params.append(int(status))
         conn = get_db()
         c = conn.cursor()
-        c.execute("""SELECT b.*, c.cabinet_code, c.name as cabinet_name
+        c.execute(f"""SELECT b.*, c.cabinet_code, c.name as cabinet_name
                 FROM blacklist b LEFT JOIN cabinets c ON b.cabinet_id=c.id
-                ORDER BY b.id DESC""")
+                WHERE {where}
+                ORDER BY b.id DESC""", params)
         rows = [dict(r) for r in c.fetchall()]
         conn.close()
         return json_response(data={'list': rows, 'total': len(rows)})
@@ -4239,17 +4254,36 @@ def blacklist_save():
 @bp.route('/blacklist/delete', methods=['POST'])
 @require_auth
 def blacklist_delete():
+    """临时解除: 不删除记录, 置status=0(解封), 用户恢复使用; 记录保留可重新封禁"""
     try:
         data = request.get_json()
         bid = data.get('id')
         conn = get_db()
         c = conn.cursor()
-        c.execute("DELETE FROM blacklist WHERE id=%s", (bid,))
+        c.execute("UPDATE blacklist SET status=0 WHERE id=%s", (bid,))
         conn.commit()
         conn.close()
-        return json_response(message='删除成功')
+        return json_response(message='已临时解除')
     except Exception as e:
         logger.error(f'[blacklist_delete] {e}')
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/blacklist/re-ban', methods=['POST'])
+@require_auth
+def blacklist_reban():
+    """重新封禁已解封的黑名单记录"""
+    try:
+        data = request.get_json()
+        bid = data.get('id')
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("UPDATE blacklist SET status=1 WHERE id=%s", (bid,))
+        conn.commit()
+        conn.close()
+        return json_response(message='已重新封禁')
+    except Exception as e:
+        logger.error(f'[blacklist_reban] {e}')
         return json_response(message=str(e), code=500)
 
 # ============ 8. 报警记录 ============

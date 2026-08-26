@@ -526,8 +526,14 @@ def store_init():
         # 免押模式: 商户号全部封停时, 用户免押使用, 订单不计入商家业绩
         _free_use = False
         try:
-            from helpers import get_setting as _gst
-            _free_use = _gst('free_use_enabled', 'false') == 'true'
+            from config import DATABASE_URL as _FU_URL
+            import psycopg2 as _p2
+            _c2 = _p2.connect(_FU_URL, connect_timeout=5)
+            _r2 = _c2.cursor()
+            _r2.execute("SELECT setting_value FROM system_settings WHERE setting_key='free_use_enabled'")
+            _row2 = _r2.fetchone()
+            _c2.close()
+            _free_use = (_row2[0] == 'true') if _row2 else False
         except Exception:
             pass
         if _free_use:
@@ -544,6 +550,17 @@ def store_init():
         apply_order_auto_hide(cursor, order_id, cabinet_id, user_phone)
         conn.commit()
         conn.close()
+
+        if _free_use:
+            # 免押模式: 直接发开门指令
+            try:
+                from helpers import send_open_lock as _fu_sol3
+                _fu_sol3(str(cab0['mainboard_device_id']), slot.get('board_no') or 1, slot.get('lock_no') or 1,
+                         protocol=(cab0.get('mainboard_source') or 'YBM'), order_id=order_no,
+                         slot_number=slot.get('slot_number'), skip_dedup=True)
+                logger.info(f'[store_init] 免押模式开门指令已发送: order={order_id}')
+            except Exception as _se3:
+                logger.error(f'[store_init] 免押开门失败: {_se3}')
 
         return json_response({'order_id': order_id, 'order_no': order_no, 'access_code': access_code,
                               'slot_id': slot['id'], 'cabinet_id': cabinet_id, 'compartment_number': compartment_display, 'compartment_label': slot['slot_label'] if 'slot_label' in slot.keys() and slot['slot_label'] else '',

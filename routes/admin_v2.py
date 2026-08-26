@@ -4483,15 +4483,25 @@ def get_settings():
 @bp.route('/admin/free-use-setting', methods=['GET', 'POST'])
 @require_auth
 def admin_free_use_setting():
-    """免押模式开关: GET查状态, POST设值(enabled=true/false)"""
-    from helpers import get_setting, set_setting
+    """免押模式开关: GET查状态, POST设值(enabled=true/false) - 存PG, 避免SQLite缓存问题"""
+    from config import DATABASE_URL as _FU_DB_URL
+    import psycopg2
     try:
         if request.method == 'POST':
             data = request.get_json() or {}
             enabled = str(data.get('enabled', 'false')).lower() in ('true', '1', 'yes')
-            set_setting('free_use_enabled', 'true' if enabled else 'false')
+            _conn = psycopg2.connect(_FU_DB_URL, connect_timeout=5)
+            _cur = _conn.cursor()
+            _cur.execute("INSERT INTO system_settings (setting_key, setting_value) VALUES ('free_use_enabled', %s) ON CONFLICT (setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value", ('true' if enabled else 'false',))
+            _conn.commit()
+            _conn.close()
             return json_response({'code': 0, 'enabled': enabled, 'message': '免押模式已%s' % ('开启' if enabled else '关闭')})
-        enabled = get_setting('free_use_enabled', 'false') == 'true'
+        _conn = psycopg2.connect(_FU_DB_URL, connect_timeout=5)
+        _cur = _conn.cursor()
+        _cur.execute("SELECT setting_value FROM system_settings WHERE setting_key='free_use_enabled'")
+        _row = _cur.fetchone()
+        _conn.close()
+        enabled = (_row[0] == 'true') if _row else False
         return json_response({'code': 0, 'enabled': enabled})
     except Exception as e:
         logger.error(f'[free_use_setting] {e}')

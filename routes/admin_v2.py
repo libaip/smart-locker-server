@@ -3845,6 +3845,7 @@ def _ensure_tables():
             unionid TEXT,
             reason TEXT,
             cabinet_id INTEGER,
+            unban_use_once INTEGER DEFAULT 0,
             operator TEXT,
             status INTEGER DEFAULT 1,
             created_at TIMESTAMP DEFAULT NOW()
@@ -4260,10 +4261,10 @@ def blacklist_delete():
         bid = data.get('id')
         conn = get_db()
         c = conn.cursor()
-        c.execute("UPDATE blacklist SET status=0 WHERE id=%s", (bid,))
+        c.execute("UPDATE blacklist SET status=0, unban_use_once=1 WHERE id=%s", (bid,))
         conn.commit()
         conn.close()
-        return json_response(message='已临时解除')
+        return json_response(message='已解除(可用1次)')
     except Exception as e:
         logger.error(f'[blacklist_delete] {e}')
         return json_response(message=str(e), code=500)

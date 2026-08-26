@@ -2354,11 +2354,22 @@ def check_use_limits(phone='', unionid='', openid=''):
             _ph_marks = ','.join(['%s'] * len(_bl_phones))
             _bl_params = list(_bl_phones) + [unionid or '']
             _bl.execute(
-                "SELECT id FROM blacklist WHERE status=1 AND (phone IN (%s) OR (unionid IS NOT NULL AND unionid != '' AND unionid=%%s)) LIMIT 1" % _ph_marks,
+                "SELECT id, status, unban_use_once FROM blacklist WHERE (phone IN (%s) OR (unionid IS NOT NULL AND unionid != '' AND unionid=%%s)) LIMIT 1" % _ph_marks,
                 _bl_params)
-            if _bl.fetchone():
-                _bl_conn.close()
-                return '操作异常，请联系客服4006981080'
+            _bl_hit = _bl.fetchone()
+            if _bl_hit:
+                _bl_status = int(_bl_hit['status'] or 0)
+                _bl_once = int(_bl_hit.get('unban_use_once') or 0)
+                if _bl_status == 1:
+                    # 封禁中: 直接拦截
+                    _bl_conn.close()
+                    return '操作异常，请联系客服4006981080'
+                if _bl_status == 0 and _bl_once:
+                    # 临时解除一次性: 本次放行, 使用后立即重新封禁
+                    _bl.execute("UPDATE blacklist SET status=1, unban_use_once=0 WHERE id=%s", (_bl_hit['id'],))
+                    _bl_conn.commit()
+                    _bl_conn.close()
+                    return None
         _bl_conn.close()
         black = get_setting_int('complaint_blacklist_limit', 3)
         if black > 0 and count_user_complaints(phone, unionid, openid) > black:

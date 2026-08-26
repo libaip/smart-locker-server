@@ -455,7 +455,7 @@ def merchant_orders():
         where_clauses = [mfilter]
         params = list(mparams)
         # 只显示成功订单：使用中(2)和已结束(4)
-        where_clauses.append('o.status IN (2, 4)')
+        where_clauses.append('o.status IN (2, 3)')
         if status:
             where_clauses.append('o.status = %s')
             params.append(status)

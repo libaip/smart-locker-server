@@ -2517,15 +2517,19 @@ def is_heartbeat_online(heartbeat, timeout_seconds=120):
 
 
 def is_device_online(device_id, heartbeat=None):
-    """??????????????????/??????"""
+    """设备在线判断: 心跳120秒内 或 WebSocket连接/5004在线列表 任一在线即认为在线
+    (心跳偶发延迟>120s但WS连接活着时, 不能误判离线)"""
     device_id = str(device_id)
     if is_heartbeat_online(heartbeat):
         return True
-    if heartbeat is None:
+    # 心跳过期: 继续查 WS 连接/5004 在线列表, 任一在即在线(避免心跳延迟误报离线)
+    try:
         if device_id in connected_devices:
             return True
         if device_id in get_online_device_ids():
             return True
+    except Exception:
+        pass
     return False
 
 

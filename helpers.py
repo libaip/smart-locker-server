@@ -1979,27 +1979,6 @@ def merchant_health_scheduler():
         try:
             logger.info('[MerchantHealth] ????...')
             check_merchant_health()
-            # 自动免押模式: 所有启用商户号均不可用(auto_disabled=1或is_active=0) -> 开启; 有可用 -> 关闭
-            try:
-                _fu_c = conn_f.cursor() if conn_f else None
-                if _fu_c is None:
-                    conn_f = get_db()
-                    _fu_c = conn_f.cursor()
-                _fu_c.execute("SELECT COUNT(*) FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0)")
-                _fu_alive = _fu_c.fetchone()[0]
-                _fu_c.execute("SELECT setting_value FROM system_settings WHERE setting_key='free_use_enabled'")
-                _fu_row = _fu_c.fetchone()
-                _fu_cur = (_fu_row[0] == 'true') if _fu_row else False
-                if _fu_alive == 0 and not _fu_cur:
-                    _fu_c.execute("INSERT INTO system_settings (setting_key, setting_value) VALUES ('free_use_enabled', 'true') ON CONFLICT (setting_key) DO UPDATE SET setting_value='true'")
-                    conn_f.commit()
-                    logger.warning('[MerchantHealth] 所有商户号不可用, 已自动开启免押模式!')
-                elif _fu_alive > 0 and _fu_cur:
-                    _fu_c.execute("UPDATE system_settings SET setting_value='false' WHERE setting_key='free_use_enabled'")
-                    conn_f.commit()
-                    logger.info('[MerchantHealth] 商户号恢复可用, 已自动关闭免押模式')
-            except Exception as _fue:
-                logger.error('[MerchantHealth] 自动免押开关异常: %s' % _fue)
             # Auto-failover
             conn_f = get_db()
             c_f = conn_f.cursor()

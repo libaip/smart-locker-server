@@ -8170,24 +8170,55 @@ def _complaint_scheduler():
             except Exception as _ce:
                 logger.error("[complaint_scheduler] clear stale red error: %s", _ce)
             # 定期同步: 订单已退但投诉仍标退款失败/转人工的, 自动置完成(投诉状态与订单一致)
+            # 2026-08-26: 同时调用微信complete接口完结微信侧投诉, 避免本地完结但微信侧仍PENDING
             try:
                 _sync_conn = get_db()
                 _sync_cur = _sync_conn.cursor()
                 _sync_cur.execute("""
-                    UPDATE complaints c
-                    SET status='3', refund_status='refunded', reply=COALESCE(reply,'已退款'),
-                        reply_time=CURRENT_TIMESTAMP
-                    FROM orders o
-                    WHERE c.order_no = o.order_no
-                      AND c.type = 'wechat'
+                    SELECT c.id, c.wx_complaint_id, c.mch_id, o.refund_status
+                    FROM complaints c
+                    JOIN orders o ON c.order_no = o.order_no
+                    WHERE c.type = 'wechat'
                       AND c.status IN ('1','2')
                       AND COALESCE(o.refund_status,'') IN ('refunded','success')
+                    ORDER BY c.id DESC LIMIT 50
                 """)
-                _sync_rows = _sync_cur.rowcount
-                _sync_conn.commit()
+                _sync_rows = _sync_cur.fetchall()
                 _sync_conn.close()
-                if _sync_rows:
-                    logger.info("[complaint_scheduler] complaint synced with refunded order count=%s", _sync_rows)
+                _sync_completed = 0
+                for _sr in _sync_rows:
+                    _cid = _sr[0]
+                    _wxid = _sr[1]
+                    _smch = _sr[2] or ''
+                    _srefund = _sr[3]
+                    # 先调微信complete完结微信侧投诉
+                    _s_ok = False
+                    try:
+                        if _smch:
+                            _s_cert = WX_CERT_SERIAL_NO
+                            _s_key = WX_KEY_PATH
+                            _scc = get_db()
+                            _scur = _scc.cursor()
+                            _scur.execute('SELECT cert_serial_no, cert_name FROM payment_channels WHERE mch_id=%s', (_smch,))
+                            _spc = _scur.fetchone()
+                            _scc.close()
+                            if _spc and _spc[1]:
+                                _s_cert = _spc[0]
+                                _s_key = f'/home/ubuntu/smart-locker/cert/{_spc[1]}_key.pem'
+                            _auto_complete_complaint(_wxid, _smch, _s_cert, _s_key)
+                            _s_ok = True
+                    except Exception as _sc_e:
+                        logger.warning('[complaint_scheduler] 同步完结微信投诉失败 wx=%s err=%s', _wxid, _sc_e)
+                    # 更新本地
+                    _suc = get_db()
+                    _sucur = _suc.cursor()
+                    _sucur.execute("UPDATE complaints SET status='3', refund_status='refunded', reply=COALESCE(reply,'已退款'), reply_time=CURRENT_TIMESTAMP WHERE id=%s", (_cid,))
+                    _suc.commit()
+                    _suc.close()
+                    _sync_completed += 1
+                    logger.info('[complaint_scheduler] 订单已退款投诉完结 id=%s wx=%s 微信complete=%s', _cid, _wxid, 'OK' if _s_ok else 'SKIP')
+                if _sync_completed:
+                    logger.info("[complaint_scheduler] complaint synced with refunded order count=%s", _sync_completed)
             except Exception as _se:
                 logger.error("[complaint_scheduler] sync complaint status error: %s", _se)
             conn = get_db()

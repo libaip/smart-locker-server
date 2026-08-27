@@ -5224,7 +5224,7 @@ def _process_auto_withdrawal_record(wid):
                 except Exception as _alarm_e:
                     logger.error('[auto_withdraw] alarm insert fail: %s', _alarm_e)
                 conn2.commit()
-                _send_withdraw_subscribe(phone, amount, '提现被拒绝', '商户号余额不足，请稍后重试', row.get('w_openid') or '', row.get('w_unionid') or '')
+                # 2026-08-26: 余额不足自动拒绝不再发订阅通知给用户
                 logger.warning('[auto_withdraw] 余额不足直接拒绝 id=%s orders=%s msg=%s', wid, order_ids, first_msg)
                 done = True
             elif rcnt >= 3:

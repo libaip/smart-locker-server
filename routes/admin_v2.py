@@ -7255,6 +7255,10 @@ def wechat_complaint_notify():
         payer_phone = complaint_data.get('payer_phone', '')
         complaint_state = complaint_data.get('complaint_state', '')
         complained_mchid = complaint_data.get('complainted_mchid', '')
+        # 新版会话式字段: 用户投诉次数(>1=升级投诉过), 是否需即时服务(咨询单), 操作类型
+        complaint_times = complaint_data.get('complaint_times', 1) or 1
+        is_immediate = complaint_data.get('need_immediate_service', '') or complaint_data.get('is_need_immediate_service', '') or ''
+        action_type = complaint_data.get('action_type', '') or ''
         
         # 提取订单号（优先从顶层取，兼容 complaint_order_info）
         order_no = complaint_data.get('out_trade_no', '') or complaint_data.get('transaction_id', '')
@@ -7268,8 +7272,9 @@ def wechat_complaint_notify():
         existing = c.execute('SELECT id FROM complaints WHERE wx_complaint_id=%s', (complaint_id,)).fetchone()
         if not existing:
             c.execute(
-                'INSERT INTO complaints (user_phone, type, content, order_no, wx_complaint_id, complaint_type, status, mch_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
-                (payer_phone, 'wechat', complaint_detail or complaint_time or '微信投诉', order_no, complaint_id, 'wechat', 0, complained_mchid)
+                'INSERT INTO complaints (user_phone, type, content, order_no, wx_complaint_id, complaint_type, status, mch_id, note, admin_remark) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
+                (payer_phone, 'wechat', complaint_detail or complaint_time or '微信投诉', order_no, complaint_id, 'wechat', 0, complained_mchid,
+                 ('升级投诉' if (complaint_times or 1) > 1 else '') + ('咨询单' if is_immediate else '') + ('|' + action_type if action_type else ''), '投诉次数:%s' % (complaint_times or 1))
             )
             new_id = c.fetchone()[0]
             # 通过order_no或transaction_id关联本地订单

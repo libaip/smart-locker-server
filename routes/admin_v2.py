@@ -3716,6 +3716,13 @@ def admin_channel_save():
                        data.get('mch_id'), data.get('api_key'), data.get('app_secret') or WX_APP_SECRET, data.get('cert_name'), cert_serial, data.get('status',1), data.get('rotation_index', 0)))
         conn.commit()
         conn.close()
+        # 商户号保存成功后自动配置投诉通知URL(新增/编辑都触发, 幂等)
+        try:
+            import subprocess as _sp2
+            _r2 = _sp2.run(['python3', '/home/ubuntu/smart-locker/complaint_notify_check.py'], capture_output=True, text=True, timeout=120)
+            logger.info('[channel_save] 通知URL自动配置结果: %s', (_r2.stdout or _r2.stderr or '').strip()[-120:])
+        except Exception as _ce:
+            logger.error(f'[channel_save] 通知URL自动配置异常: {_ce}')
         return json_response(message='保存成功')
     except Exception as e:
         logger.error(f'[channel_save] {e}')

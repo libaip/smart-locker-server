@@ -2,6 +2,7 @@
 """
 投诉通知URL定期检查脚本
 - 遍历所有启用且有证书的商户号
+- 若缺 cert.pem 但存在 cert.p12, 自动提取(密码=商户号, legacy模式)
 - 查询投诉通知回调URL, 未配置或配置不对则自动修复为系统通知地址
 - 结果输出到 logs/complaint_notify_check.log
 """
@@ -22,6 +23,32 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S',
 )
 log = logging.getLogger('notify_check')
+
+
+def ensure_cert_pem(cert_name):
+    """若缺 _cert.pem 但存在 _cert.p12, 自动提取(密码=商户号, legacy模式)"""
+    cert_pem = os.path.join(SRC, 'cert', cert_name + '_cert.pem')
+    cert_p12 = os.path.join(SRC, 'cert', cert_name + '_cert.p12')
+    if os.path.exists(cert_pem) and os.path.getsize(cert_pem) > 0:
+        return cert_pem, True
+    if not os.path.exists(cert_p12):
+        return None, False
+    # 尝试提取: 先 legacy(新openssl), 再默认
+    for args in (['-legacy'], []):
+        cmd = ['openssl', 'pkcs12'] + args + ['-in', cert_p12, '-nokeys', '-clcerts',
+               '-passin', 'pass:' + cert_name, '-out', cert_pem]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if os.path.exists(cert_pem) and os.path.getsize(cert_pem) > 0:
+                # 校验提取出的证书可用
+                chk = subprocess.run(['openssl', 'x509', '-in', cert_pem, '-noout', '-serial'],
+                                     capture_output=True, text=True, timeout=15)
+                if chk.returncode == 0 and '=' in chk.stdout:
+                    log.info('商户 %s 已从p12自动提取cert.pem', cert_name)
+                    return cert_pem, True
+        except Exception as e:
+            log.warning('商户 %s p12提取异常: %s', cert_name, e)
+    return None, False
 
 
 def sign_req(method, url_path, body_str, mch_id, key_path, cert_path):
@@ -69,10 +96,11 @@ def main():
     for ch in channels:
         mch_id = ch['mch_id']
         cert_name = ch['cert_name']
-        key_path = f"{SRC}/cert/{cert_name}_key.pem"
-        cert_path = f"{SRC}/cert/{cert_name}_cert.pem"
-        if not os.path.exists(key_path) or not os.path.exists(cert_path):
+        key_path = os.path.join(SRC, 'cert', cert_name + '_key.pem')
+        cert_path, has_cert = ensure_cert_pem(cert_name)
+        if not has_cert or not os.path.exists(key_path):
             skip_cnt += 1
+            log.warning('商户 %s 证书文件缺失(key或pem/p12), 跳过', mch_id)
             continue
         try:
             sc, qj = query_notify_url(mch_id, key_path, cert_path)

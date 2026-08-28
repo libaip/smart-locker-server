@@ -3883,12 +3883,19 @@ def get_user_transactions():
                 FROM user_balance_details d
                 JOIN orders o ON d.order_id = o.id
                 WHERE (''' + ' OR '.join(id_conds) + f'''){where_extra}
+                AND NOT EXISTS (
+                    SELECT 1 FROM user_balance_details d2
+                    WHERE d2.order_id = o.id AND d2.status = 'pending'
+                    AND NOT EXISTS (SELECT 1 FROM user_balance_details d3 WHERE d3.order_id = o.id AND d3.status IN ('available','withdrawn'))
+                    AND NOT EXISTS (SELECT 1 FROM withdrawal_records wr WHERE wr.order_id = o.id)
+                )
                 ORDER BY d.source_time DESC
                 LIMIT %s OFFSET %s
             ''', tuple(id_params + [limit, offset]))
         rows = [dict(r) for r in cur.fetchall()]
         where_clause = ' OR '.join(id_conds)
-        cur.execute(f'SELECT COUNT(*) FROM user_balance_details d JOIN orders o ON d.order_id = o.id WHERE ({where_clause}){where_extra}', tuple(id_params))
+        _hide_sql = " AND NOT EXISTS (SELECT 1 FROM user_balance_details d2 WHERE d2.order_id = o.id AND d2.status = 'pending' AND NOT EXISTS (SELECT 1 FROM user_balance_details d3 WHERE d3.order_id = o.id AND d3.status IN ('available','withdrawn')) AND NOT EXISTS (SELECT 1 FROM withdrawal_records wr WHERE wr.order_id = o.id))"
+        cur.execute(f'SELECT COUNT(*) FROM user_balance_details d JOIN orders o ON d.order_id = o.id WHERE ({where_clause}){where_extra}{_hide_sql}', tuple(id_params))
         total = cur.fetchone()[0]
         conn.close()
         return json_response(data={'list': rows, 'total': total})

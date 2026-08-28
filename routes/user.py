@@ -3062,7 +3062,7 @@ def get_user_orders():
                 FROM orders o
                 LEFT JOIN cabinets c ON o.cabinet_id = c.id
                 LEFT JOIN locations l ON c.location_id = l.id
-                WHERE o.status != 1 AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)
+                WHERE o.status != 1 AND (o.logic_mark IS NULL OR o.logic_mark != 'Y')
                 AND NOT EXISTS (
                     SELECT 1 FROM user_balance_details d2
                     WHERE d2.order_id = o.id AND d2.status = 'pending'

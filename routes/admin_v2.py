@@ -8245,8 +8245,12 @@ def _complaint_scheduler():
                             if _spc and _spc[1]:
                                 _s_cert = _spc[0]
                                 _s_key = f'/home/ubuntu/smart-locker/cert/{_spc[1]}_key.pem'
-                            _auto_complete_complaint(_wxid, _smch, _s_cert, _s_key)
-                            _s_ok = True
+                            # 先回复再complete(投诉未回复过时complete会被微信拒绝)
+                            try:
+                                _auto_reply_complaint(_wxid, mch_id=_smch, cert_serial=_s_cert, private_key_path=_s_key, content=WECHAT_NO_REFUND, complete_now=False)
+                            except Exception as _sr_e:
+                                logger.warning('[complaint_scheduler] 同步完结先回复失败 wx=%s err=%s', _wxid, _sr_e)
+                            _s_ok = bool(_auto_complete_complaint(_wxid, _smch, _s_cert, _s_key))
                     except Exception as _sc_e:
                         logger.warning('[complaint_scheduler] 同步完结微信投诉失败 wx=%s err=%s', _wxid, _sc_e)
                     # 更新本地
@@ -8433,6 +8437,11 @@ def _complaint_scheduler():
                     if refund_ok:
                         if refund_msg in ('订单已退款，无需重复退款', '无押金', '无可退金额'):
                             # 无需退款，直接结案
+                            # 2026-08-28: 必须先回复用户再complete, 否则微信拒绝complete(投诉从未回复过, 手动退款场景会卡死)
+                            try:
+                                _auto_reply_complaint(wxid, order_no=ono, transaction_id=_txn, mch_id=cmch, cert_serial=ccert, private_key_path=ckey, content=WECHAT_NO_REFUND, complete_now=False)
+                            except Exception as _nr_e:
+                                logger.warning('[complaint_scheduler] 无需退款回复失败 cid=%s err=%s', cid, _nr_e)
                             if _cmch:
                                 _auto_complete_complaint(wxid, _cmch, ccert, ckey)
                             _u_conn = get_db()

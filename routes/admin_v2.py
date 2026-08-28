@@ -7517,6 +7517,17 @@ def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id="", p
             # 记录退款流水
             c.execute('INSERT INTO payments (order_id, type, amount, transaction_id, refund_transaction_id, status, created_at) VALUES (%s, 2, %s, %s, %s, 1, CURRENT_TIMESTAMP)',
                       (order_id, refund_amount, order.get('transaction_id', ''), refund_id or ''))
+            # S93 2026-08-29: 补建提现记录(此前投诉自动退款只改余额明细漏建提现记录, 导致用户提现记录空白)
+            try:
+                _wr_phone = order.get('user_phone') or ''
+                # 已有待处理/处理中的提现记录 -> 直接置为已通过(投诉退款已完成)
+                c.execute("UPDATE withdrawal_records SET status=2, approver='投诉自动退款', approve_time=CURRENT_TIMESTAMP WHERE order_id=%s AND status IN (0,1)", (order_id,))
+                # 没有则补建一条已通过记录(dedup_key+NOT EXISTS防重复)
+                c.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, approver, approve_time, openid, order_ids, dedup_key) SELECT %s, %s, %s, 2, '投诉自动退款', CURRENT_TIMESTAMP, %s, %s, %s WHERE NOT EXISTS (SELECT 1 FROM withdrawal_records WHERE order_id=%s)",
+                          (order_id, _wr_phone, refund_amount, '', '["%s"]' % order_id, 'C:%s:%s' % (_wr_phone, order_id), order_id))
+                logger.info('[auto_refund_complaint] 提现记录已补建/确认 order_id=%s amount=%s', order_id, refund_amount)
+            except Exception as _wr_e:
+                logger.warning('[auto_refund_complaint] 补建提现记录失败 order_id=%s err=%s', order_id, _wr_e)
             # 更新投诉记录关联
             if complaint_id:
                 c.execute('UPDATE complaints SET status=2, reply=%s, reply_time=CURRENT_TIMESTAMP WHERE wx_complaint_id=%s OR id=%s',

@@ -1964,8 +1964,9 @@ def deposit_mid_retrieve_precheck():
 def deposit_mid_retrieve():
     """中途取物开锁"""
     try:
-        if _is_miniprogram_request():
-            return json_response(message='功能维护中，请稍后', code=403)
+        # 2026-08-28: 解除小程序端拦截(接口有订单归属/次数上限/网点开关校验, 安全). 之前小程序中途开门提示'功能维护中'
+        # if _is_miniprogram_request():
+        #     return json_response(message='功能维护中，请稍后', code=403)
         data = request.get_json()
         order_id = data.get('order_id')
         if not order_id:

@@ -7600,12 +7600,33 @@ def _auto_reply_complaint(complaint_id, order_no="", transaction_id="", mch_id="
                 c.execute('SELECT id, payment_channel_id FROM orders WHERE transaction_id=%s LIMIT 1', (transaction_id,))
                 order = c.fetchone()
             if order and order.get('payment_channel_id'):
-                c.execute('SELECT mch_id, cert_serial_no FROM payment_channels WHERE id=%s', (order['payment_channel_id'],))
+                c.execute('SELECT mch_id, cert_serial_no, cert_name FROM payment_channels WHERE id=%s', (order['payment_channel_id'],))
                 channel = c.fetchone()
                 if channel and channel.get('mch_id'):
                     mch_id = channel['mch_id']
                     cert_serial = channel.get('cert_serial_no') or cert_serial
                     private_key_path = os.path.join(os.path.dirname(WX_KEY_PATH), mch_id + '_key.pem')
+                    # 2026-08-28: 证书序列号为空时, 从证书文件自动补提并更新数据库(避免complete/回复SIGN_ERROR)
+                    if not cert_serial and os.path.exists(private_key_path):
+                        try:
+                            import subprocess as _sp
+                            _cp = private_key_path.replace('_key.pem', '_cert.pem')
+                            if os.path.exists(_cp):
+                                _sr = _sp.run(["openssl", "x509", "-in", _cp, "-noout", "-serial"], capture_output=True, text=True, timeout=5)
+                                _serial = _sr.stdout.strip().replace("serial=", "")
+                                if _serial:
+                                    cert_serial = _serial
+                                    try:
+                                        _cc2 = get_db()
+                                        _ccu = _cc2.cursor()
+                                        _ccu.execute("UPDATE payment_channels SET cert_serial_no=%s WHERE mch_id=%s", (_serial, mch_id))
+                                        _cc2.commit()
+                                        _cc2.close()
+                                        logger.info('[auto_reply] 商户 %s 证书序列号为空, 已从证书补提: %s', mch_id, _serial[:20])
+                                    except Exception as _ce2:
+                                        logger.warning('[auto_reply] 更新证书序列号失败 %s: %s', mch_id, _ce2)
+                        except Exception as _ce:
+                            logger.warning('[auto_reply] 补提证书序列号失败 %s: %s', mch_id, _ce)
                     logger.info('[auto_reply] 使用商户 %s 的证书回复投诉 %s', mch_id, complaint_id)
             conn.close()
         except Exception as lookup_e:

@@ -420,7 +420,7 @@ def store_init():
         cab0 = cur0.fetchone()
         conn0.close()
         if cab0 and cab0['mainboard_device_id']:
-            if not is_heartbeat_online(cab0.get('last_heartbeat')):
+            if not is_device_online(cab0['mainboard_device_id'], cab0.get('last_heartbeat')):
                 return json_response(message='设备离线，请稍后再试', code=400)
         if device_id and cab0 and cab0['mainboard_device_id'] and str(cab0['mainboard_device_id']) != str(device_id):
             return json_response(message='设备与柜体不匹配', code=400)
@@ -960,7 +960,7 @@ def retrieve_confirm():
         cursor.execute("SELECT mainboard_device_id, last_heartbeat FROM cabinets WHERE id = %s", (order['cabinet_id'],))
         _cab = cursor.fetchone()
         if _cab and _cab['mainboard_device_id']:
-            if not is_heartbeat_online(_cab.get('last_heartbeat')):
+            if not is_device_online(_cab['mainboard_device_id'], _cab.get('last_heartbeat')):
                 conn.close()
                 return json_response(message='设备离线，请稍后再试', code=400)
 
@@ -1134,7 +1134,7 @@ def create_deposit_order():
         cursor.execute("SELECT mainboard_device_id, last_heartbeat FROM cabinets WHERE id = %s", (cabinet_id,))
         cab = cursor.fetchone()
         if cab and cab['mainboard_device_id']:
-            if not is_heartbeat_online(cab.get('last_heartbeat')):
+            if not is_device_online(cab['mainboard_device_id'], cab.get('last_heartbeat')):
                 conn.close()
                 return json_response(message='设备离线，请稍后再试', code=400)
         if device_id and cab and cab['mainboard_device_id'] and str(cab['mainboard_device_id']) != str(device_id):

@@ -2517,20 +2517,34 @@ def is_heartbeat_online(heartbeat, timeout_seconds=120):
 
 
 def is_device_online(device_id, heartbeat=None):
-    """设备在线判断: 心跳120秒内 或 WebSocket连接/5004在线列表 任一在线即认为在线
-    (心跳偶发延迟>120s但WS连接活着时, 不能误判离线)"""
+    """设备在线判断(2026-08-28彻底版):
+    1. 先查 WS 连接/5004在线列表(实时最准, 设备WS连着=真在线, 可远程开门)
+    2. 不在WS列表才回退看心跳(120秒内算在线)
+    3. 5004查询失败时容错: 不直接判离线, 回退看心跳
+    """
     device_id = str(device_id)
-    if is_heartbeat_online(heartbeat):
-        return True
-    # 心跳过期: 继续查 WS 连接/5004 在线列表, 任一在即在线(避免心跳延迟误报离线)
+    # 优先: 本进程内存中的 WS 连接表
     try:
         if device_id in connected_devices:
             return True
-        if device_id in get_online_device_ids():
-            return True
     except Exception:
         pass
-    return False
+    # 5004 WS 在线列表(实时): 查询失败不算离线, 回退心跳
+    _ws_ok = False
+    try:
+        if device_id in get_online_device_ids():
+            return True
+        _ws_ok = True
+    except Exception:
+        _ws_ok = False
+    # 回退: 心跳120秒内
+    if is_heartbeat_online(heartbeat):
+        return True
+    # 5004查询正常且设备不在列表+心跳过期 => 真离线
+    if _ws_ok:
+        return False
+    # 5004查询失败: 无法确认, 看心跳(已过期) => 保守判在线, 避免误拦用户
+    return True
 
 
 # ============================================

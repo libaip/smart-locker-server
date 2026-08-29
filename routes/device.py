@@ -489,11 +489,29 @@ def device_lock_result():
         board_no = data.get("board_no", 0)
         lock_no = data.get("lock_no", 0)
         success = data.get("success", False)
+        cmd_id = data.get("cmd_id", "")
         
         if not device_id:
             return jsonify({"code": 400, "message": "缺少device_id"}), 400
         
         db = get_db()
+        
+        # === 指令回执标记: 按cmd_id把对应的pending指令标记为已完成, 防止重复下发 ===
+        if cmd_id:
+            try:
+                _ack_cur = db.execute(
+                    "UPDATE pending_lock_cmds SET delivered=1, status='completed' "
+                    "WHERE command LIKE %s AND device_id=%s AND (delivered=0 OR status IN ('pending','sent'))",
+                    ('%' + cmd_id + '%', device_id)
+                )
+                if _ack_cur and _ack_cur.rowcount > 0:
+                    logger.info(f"[lock_result] cmd_id回执标记完成: device={device_id}, cmd_id={cmd_id}, rows={_ack_cur.rowcount}")
+                else:
+                    # 没匹配到pending指令(可能已标记或指令不存在), 不报错
+                    logger.info(f"[lock_result] cmd_id回执无匹配pending: device={device_id}, cmd_id={cmd_id}")
+            except Exception as _ack_e:
+                logger.warning(f"[lock_result] cmd_id回执标记失败: {_ack_e}")
+        
         slot = db.execute(
             "SELECT cs.id, cs.slot_number FROM cabinet_slots cs "
             "JOIN cabinets c ON cs.cabinet_id = c.id "

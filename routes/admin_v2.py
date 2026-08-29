@@ -1149,7 +1149,14 @@ def admin_order_refund():
         c.execute('INSERT INTO payments (order_id, type, amount, transaction_id, refund_transaction_id, status, created_at) VALUES (%s, 2, %s, %s, %s, 1, %s)',
                   (order_id, amount, transaction_id, refund_no, datetime.now()))
         # 如果订单是已结算(3)，保证金已从余额退过，需要扣回余额
-        if order_dict.get('status') == 3 and order_dict.get('user_phone'):
+        # S97 2026-08-29: 若该订单有待审核/处理中的提现记录(用户已申请提现,余额已扣), 则不再重复扣回余额, 避免余额负数
+        _has_pending_wr = False
+        try:
+            c.execute("SELECT 1 FROM withdrawal_records WHERE order_id=%s AND status IN (0,1) LIMIT 1", (order_id,))
+            _has_pending_wr = c.fetchone() is not None
+        except Exception:
+            _has_pending_wr = False
+        if order_dict.get('status') == 3 and order_dict.get('user_phone') and not _has_pending_wr:
             c.execute("UPDATE user_balances SET balance = balance + %s, total_withdrawn = total_withdrawn + %s WHERE phone = %s",
                       (-amount, amount, order_dict.get("user_phone")))
         # [Agent-modified 2026-07-04] 退款时释放格口：无论订单是使用中(2)还是已结算(3)，都要释放格口为空闲(0)
@@ -1734,12 +1741,20 @@ def admin_withdrawal_approve():
             refund_success = True
             refund_id = 'BALANCE_' + datetime.now().strftime('%Y%m%d%H%M%S')
             refund_msg = '余额提现成功'
+        # S97 2026-08-29: 订单已由其他路径(订单退款/投诉自动退款)微信退款成功, 用户提现时扣的余额需要补回, 避免余额负数
+        _already_refunded_elsewhere = bool(order_id and refund_success and refund_msg == '订单已退款，余额已计入')
         if refund_success or ('已退款' in str(refund_msg)) or ('全额退款' in str(refund_msg)):
             c.execute('UPDATE withdrawal_records SET status=2, approver=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s',
                        (session.get('admin_username', 'admin'), withdrawal_id))
             if order_id:
                 c.execute('UPDATE orders SET status=4, refund_id=%s, refund_time=%s, refund_amount=%s WHERE id=%s', (refund_id, datetime.now(), amount, order_id))
                 c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s", (order_id,))
+                if _already_refunded_elsewhere:
+                    upsert_user_balance_row(c, phone=wd.get('user_phone', ''), openid=wd.get('openid', ''),
+                                            unionid=wd.get('unionid', '') or '',
+                                            mp_openid=wd.get('mp_openid', '') or '',
+                                            balance=float(amount), total_withdrawn=-float(amount),
+                                            user_id=wd.get('user_id') or 0)
         else:
             c.execute('UPDATE withdrawal_records SET status=4, error_msg=%s, approver=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s',
                        (str(refund_msg), session.get('admin_username', 'admin'), withdrawal_id))

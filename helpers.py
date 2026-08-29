@@ -497,8 +497,8 @@ def send_open_lock(device_id, board_no, lock_no, protocol=None, order_id='', slo
         if command not in pending_lock_commands[device_id]:
             pending_lock_commands[device_id].append(command)
     
-    # ????????delivered=0??HTTP?????????WS?????????????
-    _delivered = 0
+    # 已通过WS/daemon发送成功的指令, 标记delivered=1, 避免HTTP轮询重复下发
+    _delivered = 1 if _ws_sent else 0
     _sl_conn = None
     try:
         import psycopg2

@@ -1708,14 +1708,10 @@ def admin_withdrawal_approve():
                             failed_oids.append(oid)
             c.execute('UPDATE withdrawal_records SET status=%s, approver=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s',
                        (2 if all_ok else 4, session.get('admin_username', 'admin'), withdrawal_id))
+            # S100 2026-08-30: 退款失败保持pending隐藏(用户端看不到), 不恢复余额, 后台手动处理
             if failed_amount > 0:
-                upsert_user_balance_row(c, phone=wd.get('user_phone', ''), openid=wd.get('openid', ''),
-                                        unionid=wd.get('unionid', '') or '',
-                                        mp_openid=wd.get('mp_openid', '') or '',
-                                        balance=failed_amount, total_withdrawn=-failed_amount,
-                                        user_id=wd.get('user_id') or 0)
                 for foid in failed_oids:
-                    c.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (foid,))
+                    c.execute("UPDATE user_balance_details SET status='pending' WHERE order_id=%s AND status IN ('available','pending')", (foid,))
             conn.commit()
             conn.close()
             return json_response(message='审批通过，退款已处理' if all_ok else '审批通过，部分退款失败')
@@ -5506,16 +5502,14 @@ def _run_withdrawal_batch_auto():
                 c.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), approver='白名单' WHERE id=%s", (_wid,))
                 approved += 1
             else:
-                # 退款失败：退余额（用户可再提现），记录错误，后台下轮可重试
-                if _failed_amt > 0 and _w_phone:
-                    c.execute("UPDATE user_balances SET balance=balance+%s, total_withdrawn=GREATEST(COALESCE(total_withdrawn,0)-%s,0) WHERE phone=%s", (_failed_amt, _failed_amt, _w_phone))
-                    if c.rowcount == 0:
-                        c.execute("INSERT INTO user_balances (phone, balance, total_withdrawn, first_use_time) VALUES (%s, %s, 0, NOW())", (_w_phone, _failed_amt))
+                # S100 2026-08-30: 退款失败保持pending隐藏(用户端看不到), wr置3拒绝, 后台手动处理; 不恢复余额
+                if _failed_amt > 0:
                     for _foid in _failed_oids:
-                        c.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (_foid,))
-                c.execute("UPDATE withdrawal_records SET status=0, error_msg=%s, approve_time=NOW(), approver='白名单' WHERE id=%s", ((_first_msg or '退款失败')[:500], _wid))
+                        c.execute("UPDATE user_balance_details SET status='pending' WHERE order_id=%s AND status IN ('available','pending')", (_foid,))
+                _reject_msg = '白名单退款失败，余额已隐藏待人工处理'
+                c.execute("UPDATE withdrawal_records SET status=3, error_msg=%s, dedup_key=NULL, next_attempt_at=NULL, approve_time=NOW(), approver='白名单' WHERE id=%s", ((_reject_msg + '|' + str(_first_msg or ''))[:500], _wid))
                 try:
-                    c.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('whitelist_refund_failed', NULL, %s, '0', NOW())", (('白名单退款失败: ' + (_first_msg or '退款失败'))[:500],))
+                    c.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('whitelist_refund_failed', NULL, %s, '0', NOW())", (('白名单退款失败余额隐藏: ' + str(_first_msg or ''))[:500],))
                 except Exception:
                     pass
         conn.commit()
@@ -5593,15 +5587,14 @@ def _run_withdrawal_batch_auto():
                         except Exception:
                             pass
                 else:
+                    # S100 2026-08-30: 退款失败保持pending隐藏(用户端看不到), wr置3拒绝, 后台手动处理; 不恢复余额
                     if failed_amount > 0:
-                        c2.execute("UPDATE user_balances SET balance=balance+%s, total_withdrawn=GREATEST(total_withdrawn-%s,0) WHERE phone=%s ", (failed_amount, failed_amount, r['user_phone']))
-                        if c2.rowcount == 0 and r.get('user_phone'):
-                            c2.execute("INSERT INTO user_balances (phone, balance, total_withdrawn, first_use_time) VALUES (%s, %s, 0, NOW())", (r['user_phone'], failed_amount))
                         for foid in failed_oids:
-                            c2.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (foid,))
-                    c2.execute("UPDATE withdrawal_records SET status=4, error_msg=%s, dedup_key=NULL, approve_time=datetime('now'), approver='自动' WHERE id=%s", ((first_msg or '退款失败')[:500], r['id']))
+                            c2.execute("UPDATE user_balance_details SET status='pending' WHERE order_id=%s AND status IN ('available','pending')", (foid,))
+                    _reject_msg = '队列退款失败，余额已隐藏待人工处理'
+                    c2.execute("UPDATE withdrawal_records SET status=3, error_msg=%s, dedup_key=NULL, next_attempt_at=NULL, approve_time=datetime('now'), approver='自动' WHERE id=%s", ((_reject_msg + '|' + str(first_msg or ''))[:500], r['id']))
                     try:
-                        c2.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('withdraw_refund_failed', NULL, %s, '0', NOW())", (('队列退款失败: ' + (first_msg or '退款失败'))[:500],))
+                        c2.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('withdraw_refund_failed', NULL, %s, '0', NOW())", (('队列退款失败余额隐藏: ' + str(first_msg or ''))[:500],))
                     except Exception:
                         pass
             else:
@@ -5703,16 +5696,15 @@ def _run_withdrawal_batch_auto():
                             except Exception:
                                 pass
                     else:
+                        # S100 2026-08-30: 退款失败保持pending隐藏(用户端看不到), wr置3拒绝, 后台手动处理; 不恢复余额
                         _rp = r.get('user_phone') or ''
                         if failed_amount > 0:
-                            lc.execute("UPDATE user_balances SET balance=balance+%s, total_withdrawn=GREATEST(total_withdrawn-%s,0) WHERE phone=%s", (failed_amount, failed_amount, _rp))
-                            if lc.rowcount == 0 and _rp:
-                                lc.execute("INSERT INTO user_balances (phone, balance, total_withdrawn, first_use_time) VALUES (%s, %s, 0, NOW())", (_rp, failed_amount))
                             for foid in failed_oids:
-                                lc.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (foid,))
-                        lc.execute("UPDATE withdrawal_records SET status=4, error_msg=%s, approve_time=NOW(), approver='自动', dedup_key=NULL WHERE id=%s", ((first_msg or '退款失败')[:500], r['id']))
+                                lc.execute("UPDATE user_balance_details SET status='pending' WHERE order_id=%s AND status IN ('available','pending')", (foid,))
+                        _reject_msg = '自动审批退款失败，余额已隐藏待人工处理'
+                        lc.execute("UPDATE withdrawal_records SET status=3, error_msg=%s, approve_time=NOW(), approver='自动', dedup_key=NULL WHERE id=%s", ((_reject_msg + '|' + str(first_msg or ''))[:500], r['id']))
                         try:
-                            lc.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('withdraw_refund_failed', NULL, %s, '0', NOW())", (('自动审批退款失败: ' + (first_msg or '退款失败'))[:500],))
+                            lc.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('withdraw_refund_failed', NULL, %s, '0', NOW())", (('自动审批退款失败余额隐藏: ' + str(first_msg or ''))[:500],))
                         except Exception:
                             pass
                 else:

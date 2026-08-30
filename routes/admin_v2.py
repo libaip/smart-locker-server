@@ -918,7 +918,7 @@ def admin_orders():
             o.store_time, o.retrieve_time, o.created_at, o.group_id, COALESCE(c.cabinet_code, o.cabinet_code) as cabinet_code, c.name as cabinet_name,
             o.transaction_id, o.pay_time, o.refund_time, o.refund_mark, o.logic_mark, o.auto_hidden,
             COALESCE(NULLIF(ub.wechat_name,''), NULLIF(po.wechat_name,''), up.wechat_name) as wechat_name,""" + f"""
-            l.id as location_id, l.name as location_name, m.name as merchant_name, m.id as merchant_id, pc.mch_id as pay_mch_id
+            l.id as location_id, l.name as location_name, m.name as merchant_name, m.id as merchant_id, pc.mch_id as pay_mch_id, pc.name as pay_mch_name
             FROM orders o LEFT JOIN cabinets c ON o.cabinet_id=c.id
             LEFT JOIN cabinet_slots cs ON o.slot_id=cs.id
             LEFT JOIN (SELECT DISTINCT ON (phone) * FROM user_balances ORDER BY phone, id DESC) ub ON o.user_phone=ub.phone
@@ -957,7 +957,7 @@ def admin_order_detail():
         c = conn.cursor()
         c.execute('''SELECT o.*, o.access_code as password, c.cabinet_code, c.name as cabinet_name,
             COALESCE(NULLIF(ub.wechat_name,''), NULLIF(po.wechat_name,''), up.wechat_name) as wechat_name,
-            l.id as location_id, l.name as location_name, m.name as merchant_name, m.id as merchant_id, pc.mch_id as pay_mch_id
+            l.id as location_id, l.name as location_name, m.name as merchant_name, m.id as merchant_id, pc.mch_id as pay_mch_id, pc.name as pay_mch_name
             FROM orders o LEFT JOIN cabinets c ON o.cabinet_id=c.id
             LEFT JOIN cabinet_slots cs ON o.slot_id=cs.id
             LEFT JOIN (SELECT DISTINCT ON (phone) * FROM user_balances ORDER BY phone, id DESC) ub ON o.user_phone=ub.phone

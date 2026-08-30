@@ -1125,6 +1125,8 @@ def admin_order_refund():
         _wd_matched = False
         c.execute("SELECT id, amount, order_ids FROM withdrawal_records WHERE status=0 AND (order_ids::jsonb @> %s OR order_id=%s) ORDER BY id",
                   (_json_wd.dumps([order_id]), order_id))
+        # S102 2026-08-30: 订单退款时, 若该订单在待审核wr里, 从wr移除并扣减金额, 同时补生成一条独立"订单退款"提现记录(金额=押金), 避免提现记录金额变0
+        _refund_wr_inserted = False
         for _wrow in c.fetchall():
             _wd_matched = True
             try:
@@ -1139,10 +1141,18 @@ def admin_order_refund():
                 c.execute("UPDATE withdrawal_records SET amount=%s, order_ids=%s, error_msg=NULL, retry_count=0 WHERE id=%s",
                           (round(_new_amt, 2), _json_wd.dumps(_oids), _wrow['id']))
             else:
-                # 全部订单退完：置成功
+                # 全部订单退完：置成功(金额为扣减后的剩余值, 即0或正)
                 c.execute("UPDATE withdrawal_records SET status=2, amount=%s, order_ids=%s, approver='管理员', approve_time=CURRENT_TIMESTAMP WHERE id=%s",
                           (round(_new_amt, 2), _json_wd.dumps(_oids), _wrow['id']))
-        if not _wd_matched:
+            # 补生成一条独立的"订单退款"提现记录, 金额=该订单押金, 保证提现记录有完整退款流水
+            if not _refund_wr_inserted:
+                try:
+                    c.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, approver, order_ids, approve_time, error_msg) VALUES (%s, %s, %s, 2, '管理员-订单退款', %s, NOW(), %s) ON CONFLICT DO NOTHING",
+                              (order_id, order_dict.get('user_phone'), amount, f'[{order_id}]', '订单退款(原提现申请已联动扣减)'))
+                    _refund_wr_inserted = True
+                except Exception as _se:
+                    logger.error('[order_refund] 补生成退款提现记录失败 order=%s: %s', order_id, _se)
+        if not _wd_matched and not _refund_wr_inserted:
             c.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, approver, order_ids, approve_time) VALUES (%s, %s, %s, 2, '管理员', %s, NOW())",
                       (order_id, order_dict.get('user_phone'), amount, f'[{order_id}]'))
         # 记录payments退款流水

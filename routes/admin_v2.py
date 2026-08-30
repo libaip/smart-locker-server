@@ -1853,6 +1853,40 @@ def admin_withdrawal_confirm_refund():
         logger.error(f'[withdrawal_confirm_refund] {e}')
         return json_response(message=str(e), code=500)
 
+@bp.route('/admin/withdrawal/offline-transfer', methods=['POST'])
+@require_auth
+def admin_withdrawal_offline_transfer():
+    # S101: 线下转账处理完成标记
+    try:
+        data = request.get_json()
+        withdrawal_id = data.get('id')
+        note = str(data.get('note') or '').strip()
+        conn = get_db()
+        c = conn.cursor()
+        c.execute('SELECT id, status, user_phone, amount, order_id FROM withdrawal_records WHERE id=%s', (withdrawal_id,))
+        wd = c.fetchone()
+        if not wd:
+            conn.close()
+            return json_response(message='提现记录不存在', code=400)
+        if wd['status'] == 2:
+            conn.close()
+            return json_response(message='该记录已完成，无需重复处理', code=400)
+        order_id = wd['order_id']
+        offline_no = 'OFFLINE_' + datetime.now().strftime('%Y%m%d%H%M%S') + str(withdrawal_id)
+        if order_id:
+            c.execute("UPDATE orders SET refund_status='refunded', status=4, refund_id=%s, refund_amount=COALESCE(refund_amount, %s), refund_time=CURRENT_TIMESTAMP, refund_mark=1 WHERE id=%s",
+                      (offline_no, wd['amount'], order_id))
+            c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order_id,))
+        _note = ('线下转账:' + note) if note else '线下转账(未填备注)'
+        c.execute("UPDATE withdrawal_records SET status=2, approver='线下转账', error_msg=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s",
+                  (_note, withdrawal_id))
+        conn.commit()
+        conn.close()
+        return json_response(message='已标记线下转账完成')
+    except Exception as e:
+        logger.error('[withdrawal_offline_transfer] %s', e)
+        return json_response(message=str(e), code=500)
+
 # ============ Complaints ============
 
 @bp.route('/admin/complaints', methods=['GET', 'POST'])

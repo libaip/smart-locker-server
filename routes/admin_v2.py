@@ -5250,25 +5250,33 @@ def _process_auto_withdrawal_record(wid):
                 logger.warning('[auto_withdraw] 余额不足直接拒绝 id=%s orders=%s msg=%s', wid, order_ids, first_msg)
                 done = True
             elif rcnt >= 3:
+                # S98 2026-08-29: 退款失败重试3次后不再恢复余额显示, 改为保持pending隐藏(用户端看不到), wr置3拒绝, 后台手动处理
+                # 只动 user_balance_details + withdrawal_records, 不碰 logic_mark/订单状态, 不影响商户订单数
                 if failed_amount > 0:
-                    c2.execute("UPDATE user_balances SET balance=balance+%s, total_withdrawn=GREATEST(total_withdrawn-%s,0) WHERE phone=%s ", (failed_amount, failed_amount, phone))
-                    if c2.rowcount == 0:
-                        c2.execute("INSERT INTO user_balances (phone, balance, total_withdrawn, first_use_time) VALUES (%s, %s, 0, NOW())", (phone, failed_amount))
                     for foid in failed:
-                        c2.execute("UPDATE user_balance_details SET status='available' WHERE order_id=%s AND status='pending'", (foid,))
-                c2.execute("UPDATE withdrawal_records SET status=4, error_msg=%s, dedup_key=NULL, next_attempt_at=NULL, approve_time=NOW(), approver='自动' WHERE id=%s", (first_msg, wid))
+                        c2.execute("UPDATE user_balance_details SET status='pending' WHERE order_id=%s AND status IN ('available','pending')", (foid,))
+                _reject_msg = '退款失败，余额已隐藏待人工处理'
+                c2.execute("UPDATE withdrawal_records SET status=3, error_msg=%s, dedup_key=NULL, next_attempt_at=NULL, approve_time=NOW(), approver='自动' WHERE id=%s", ((_reject_msg + '|' + str(first_msg))[:500], wid))
                 try:
-                    c2.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('withdraw_refund_failed', NULL, %s, '0', NOW())", (('自动退款失败: ' + str(first_msg))[:500],))
+                    c2.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('withdraw_refund_failed', NULL, %s, '0', NOW())", (('退款失败余额隐藏: ' + str(first_msg))[:500],))
                 except Exception as _alarm_e:
                     logger.error('[auto_withdraw] alarm insert fail: %s', _alarm_e)
                 conn2.commit()
-                logger.error('[auto_withdraw] ???????? id=%s orders=%s msg=%s', wid, order_ids, first_msg)
+                logger.error('[auto_withdraw] 退款失败余额隐藏 id=%s orders=%s msg=%s', wid, order_ids, first_msg)
                 done = True
             else:
-                delay = '30 seconds' if rcnt == 1 else '2 minutes'
-                c2.execute("UPDATE withdrawal_records SET next_attempt_at=NOW() + INTERVAL %s WHERE id=%s", (delay, wid))
+                # S98 2026-08-29: 退款失败一次即隐藏, 不再重试(用户端不提示, 后台手动处理)
+                if failed_amount > 0:
+                    for foid in failed:
+                        c2.execute("UPDATE user_balance_details SET status='pending' WHERE order_id=%s AND status IN ('available','pending')", (foid,))
+                _reject_msg = '退款失败，余额已隐藏待人工处理'
+                c2.execute("UPDATE withdrawal_records SET status=3, error_msg=%s, dedup_key=NULL, next_attempt_at=NULL, approve_time=NOW(), approver='自动' WHERE id=%s", ((_reject_msg + '|' + str(first_msg))[:500], wid))
+                try:
+                    c2.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('withdraw_refund_failed', NULL, %s, '0', NOW())", (('退款失败余额隐藏: ' + str(first_msg))[:500],))
+                except Exception as _alarm_e:
+                    logger.error('[auto_withdraw] alarm insert fail: %s', _alarm_e)
                 conn2.commit()
-                logger.warning('[auto_withdraw] ????????? id=%s orders=%s msg=%s retry=%s/3', wid, order_ids, first_msg, rcnt)
+                logger.warning('[auto_withdraw] 退款失败一次即隐藏 id=%s orders=%s msg=%s', wid, order_ids, first_msg)
                 done = True
     except Exception as e:
         logger.error('[auto_withdraw] ???? id=%s: %s', wid, e, exc_info=True)

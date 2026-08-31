@@ -1879,6 +1879,27 @@ def deposit_end_storage():
             except Exception as e:
                 logger.error(f"[deposit_end_storage发送订阅消息失败] {e}")
 
+        # S106: 结束订单退押金短信通知(网点开关控制)
+        try:
+            from helpers import send_smsbao
+            _sms_on = False
+            try:
+                _sdb = get_db()
+                _scur = _sdb.cursor()
+                _scur.execute("SELECT COALESCE(sms_enabled,1) FROM cabinets c JOIN locations l ON c.location_id=l.id WHERE c.id=%s", (order.get('cabinet_id'),))
+                _sr = _scur.fetchone()
+                _sms_on = bool(_sr and _sr[0] == 1)
+                _sdb.close()
+            except Exception as _se:
+                logger.warning(f'[end_storage] 查sms_enabled失败: {_se}')
+            if _sms_on and order.get('user_phone'):
+                _fee = order.get('per_use_price') or 0
+                _amt = order.get('deposit_amount') or 0
+                ok, msg = send_smsbao(order['user_phone'], fee=_fee, amount=_amt)
+                logger.info(f'[end_storage] 短信通知 phone={order.get("user_phone")} sms_on={_sms_on} result={ok} msg={msg}')
+        except Exception as _sms_e:
+            logger.warning(f'[end_storage] 短信发送失败: {_sms_e}')
+
         if new_status == 3 or new_status == 4:
             if new_status == 4 and _direct_refund:
                 return json_response({'message': '取物完成，预付款已原路退回', 'order_id': order_id, 'refund_amount': refund_amount, 'refund_id': _direct_refund_id, 'compartment_number': compartment_number})

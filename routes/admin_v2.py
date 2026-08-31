@@ -746,7 +746,8 @@ def admin_location_save():
                     'hide_start_orders',
                      'whitelist_phones','duplicate_filter_enabled','duplicate_filter_days','duplicate_filter_limit',
                      'refund_approve_rate','refund_approve_start_min','refund_approve_end_min',
-                     'balance_hide_enabled','balance_hide_days','wl_max_uses']
+                     'balance_hide_enabled','balance_hide_days','wl_max_uses',
+                     'sms_enabled']
             sets, params = [], []
             for f in fields:
                 if f in data:

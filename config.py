@@ -60,3 +60,10 @@ ORDER_HIDE_SECRET = 'smart_locker_hide_2024'
 # PushPlus 推送配置
 # ============================================
 PUSHPLUS_TOKEN = '43993c7f92d14ebd8762dc08d34e6151'
+
+# ===== 短信宝短信 (S106) =====
+SMSBAO_USERNAME = '2424'
+SMSBAO_APIKEY = '92aa86ee836242d089f453ce00e16f48'
+SMSBAO_SIGN = '【重庆科莱维科技】'
+SMSBAO_TEMPLATE = '本次寄存费{fee}元，您的预付款{amount}元已退款，请进入{appName}查看，也可以微信/支付宝搜索"科莱智"小程序我的钱包提取。'
+SMSBAO_APP_NAME = '科莱智'

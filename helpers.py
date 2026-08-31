@@ -2810,3 +2810,34 @@ def calc_balance(user_id=None, phone=None, openid=None, mp_openid=None, unionid=
     finally:
         try: conn.close()
         except: pass
+
+
+def send_smsbao(phone, fee=0, amount=0, app_name=''):
+    """短信宝发送短信 (S106): 结束订单退押金通知
+    返回 (success, msg)
+    """
+    try:
+        from config import (SMSBAO_USERNAME, SMSBAO_APIKEY, SMSBAO_SIGN,
+                            SMSBAO_TEMPLATE, SMSBAO_APP_NAME)
+        import hashlib, requests, urllib.parse
+        # 填充模板变量
+        content = SMSBAO_TEMPLATE.format(
+            fee=str(fee or 0),
+            amount=('%g' % float(amount or 0)),
+            appName=app_name or SMSBAO_APP_NAME,
+        )
+        full = SMSBAO_SIGN + content
+        pwd_md5 = hashlib.md5(SMSBAO_APIKEY.encode()).hexdigest()
+        url = 'https://api.smsbao.com/sms?' + urllib.parse.urlencode({
+            'u': SMSBAO_USERNAME, 'p': pwd_md5, 'm': phone, 'c': full
+        })
+        resp = requests.get(url, timeout=10)
+        code = resp.text.strip()
+        if code == '0':
+            logger.info('[smsbao] 发送成功 phone=%s', phone)
+            return True, 'ok'
+        logger.warning('[smsbao] 发送失败 phone=%s code=%s msg=%s', phone, code, full[:50])
+        return False, code
+    except Exception as e:
+        logger.error('[smsbao] 发送异常 phone=%s: %s', phone, e)
+        return False, str(e)

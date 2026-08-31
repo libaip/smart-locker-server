@@ -3067,7 +3067,7 @@ def get_user_orders():
                     SELECT 1 FROM user_balance_details d2
                     WHERE d2.order_id = o.id AND d2.status = 'pending'
                     AND NOT EXISTS (SELECT 1 FROM user_balance_details d3 WHERE d3.order_id = o.id AND d3.status IN ('available','withdrawn'))
-                    AND NOT EXISTS (SELECT 1 FROM withdrawal_records wr WHERE wr.order_id = o.id)
+                    AND NOT EXISTS (SELECT 1 FROM withdrawal_records wr WHERE wr.order_id = o.id AND wr.status IN (0,1,2))
                 )
                 AND (""" + ' OR '.join(where_parts) + """)
                 ORDER BY o.created_at DESC
@@ -3421,6 +3421,9 @@ def user_withdraw():
                 conn.close()
                 return json_response(message='没有可退款的金额', code=400)
             actual_amount = min(float(amount), total_refundable)
+            if actual_amount <= 0.001:
+                conn.close()
+                return json_response(message='没有可提现的金额，无法提现', code=400)
             for _oid, _amt, _br in order_refund_plan:
                 if _has_pending_withdrawal(cursor, _oid):
                     conn.close()
@@ -3500,6 +3503,9 @@ def user_withdraw():
                 conn.close()
                 return json_response(message='没有可退款的金额', code=400)
             actual_amount = min(float(amount), total_refundable)
+            if actual_amount <= 0.001:
+                conn.close()
+                return json_response(message='没有可提现的金额，无法提现', code=400)
             for _oid, _amt, _br in order_plan:
                 if _has_pending_withdrawal(cursor, _oid):
                     conn.close()
@@ -3887,7 +3893,7 @@ def get_user_transactions():
                     SELECT 1 FROM user_balance_details d2
                     WHERE d2.order_id = o.id AND d2.status = 'pending'
                     AND NOT EXISTS (SELECT 1 FROM user_balance_details d3 WHERE d3.order_id = o.id AND d3.status IN ('available','withdrawn'))
-                    AND NOT EXISTS (SELECT 1 FROM withdrawal_records wr WHERE wr.order_id = o.id)
+                    AND NOT EXISTS (SELECT 1 FROM withdrawal_records wr WHERE wr.order_id = o.id AND wr.status IN (0,1,2))
                 )
                 ORDER BY d.source_time DESC
                 LIMIT %s OFFSET %s

@@ -1124,8 +1124,12 @@ def admin_order_refund():
         # 联动更新待审核的提现记录：按 order_ids 匹配合并记录逐单扣减，避免重复记账/金额虚高 (2026-08-20)
         import json as _json_wd
         _wd_matched = False
-        c.execute("SELECT id, amount, order_ids FROM withdrawal_records WHERE status=0 AND (order_ids::jsonb @> %s OR order_id=%s) ORDER BY id",
-                  (_json_wd.dumps([order_id]), order_id))
+        # S111 2026-09-02: order_ids 元素可能是字符串也可能是数字, 统一双匹配+字符串比较,
+        #   修复"订单已在待审核wr但移除失败 -> 金额扣成0残留待审批"的类型bug
+        _oid_num = order_id
+        _oid_str = str(order_id)
+        c.execute("SELECT id, amount, order_ids FROM withdrawal_records WHERE status=0 AND (order_ids::jsonb @> %s OR order_ids::jsonb @> %s OR order_id=%s) ORDER BY id",
+                  (_json_wd.dumps([_oid_num]), _json_wd.dumps([_oid_str]), _oid_num))
         # S102 2026-08-30: 订单退款时, 若该订单在待审核wr里, 从wr移除并扣减金额, 同时补生成一条独立"订单退款"提现记录(金额=押金), 避免提现记录金额变0
         _refund_wr_inserted = False
         for _wrow in c.fetchall():
@@ -1134,9 +1138,12 @@ def admin_order_refund():
                 _oids = _json_wd.loads(_wrow['order_ids'] or '[]')
             except Exception:
                 _oids = []
-            if order_id in _oids:
-                _oids.remove(order_id)
-            _new_amt = max(0.0, float(_wrow['amount'] or 0) - float(amount))
+            # 统一字符串比较: 移除匹配的订单号(兼容数字/字符串元素)
+            _before_cnt = len(_oids)
+            _oids = [x for x in _oids if str(x) != _oid_str]
+            _removed = len(_oids) < _before_cnt
+            # 只有确实从该wr移除了本订单才扣减金额, 避免误匹配乱扣
+            _new_amt = max(0.0, float(_wrow['amount'] or 0) - float(amount)) if _removed else float(_wrow['amount'] or 0)
             if _oids:
                 # 还有其他未退订单：保持待处理，扣减金额和订单
                 c.execute("UPDATE withdrawal_records SET amount=%s, order_ids=%s, error_msg=NULL, retry_count=0 WHERE id=%s",

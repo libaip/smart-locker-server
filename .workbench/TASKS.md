@@ -13,6 +13,7 @@
 | 任务ID | 会话 | 目标文件 | 状态 | 开工时间 | 完成时间 | 备注 |
 |--------|------|---------|------|---------|---------|------|
 | T-000 | 示例 | routes/user.py | 已完成 | 08-20 09:00 | 08-20 09:30 | 示例行，可删 |
+| T-1788357059 | 待办 | 小程序通用版(uni-app) | 待办 | 09-02 21:50 | | 微信+支付宝通用版工程已建(D:\工具配置迁移包_20260811\小程序_通用版, uni-app Vue3): 工程骨架+platform适配层+subscribe订阅授权页完成, 微信/支付宝两端均编译通过; 微信原生版不动继续跑; 待办: ①企业认证过->开放平台创建小程序应用->appid填manifest.json的mp-alipay.appid ②领支付宝订阅模板(长期优先:取件/退款提醒)->填utils/api.js的TEMPLATES.alipay ③后端加支付宝接口(link-alipay绑定/订阅消息发送templatemessage.send/alipay.py手机网站支付下单退款回调/payment_channels支持channel_type=alipay) ④H5按UA分流跳alipays scheme ⑤功能页逐步迁移(17页), 迁移完微信切换; 注意: 支付宝无exitMiniProgram等价物, 返回H5链路需真实环境验证 |
 | T-1788329411 | 待办 | 支付宝接入(整体) | 待办 | 09-02 14:10 | | 支付宝双通道接入(分摊微信封号风险+微信不可用兜底): ①企业支付宝注册(用户办理, 用营业执照, 流程见.workbench/ALIPAY_REGISTER.md) ②后端alipay.py(手机网站支付下单/退款/回调验签, 照抄wxpay.py结构) ③payment_channels支持channel_type=alipay+新回调路由/api/pay/alipay/notify ④H5(deposit.html+store.html)按UA分流: 微信走原流程, 支付宝扫同一设备二维码(https://locker.cqdyxl.com/store?cabinet_id=x)进支付宝通道 ⑤支付宝小程序极简版(subscribe授权订阅消息1页, 逻辑翻版微信subscribe.js, my.requestSubscribeMessage传2模板: 取件提醒+退款提醒, 每单授权每单推, 拒绝授权不卡支付) ⑥推送优先订阅消息(alipay.open.app.mini.templatemessage.send), 长期模板优先一次性兜底, 推不了先记日志(短信宝接好后再补短信) ⑦退款走支付宝原路(alipay.trade.refund) ⑧投诉/对账链路接alipay通道 |
 
 # 历史记录（追加在下面，不删除）

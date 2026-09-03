@@ -13,6 +13,7 @@
 | 任务ID | 会话 | 目标文件 | 状态 | 开工时间 | 完成时间 | 备注 |
 |--------|------|---------|------|---------|---------|------|
 | T-000 | 示例 | routes/user.py | 已完成 | 08-20 09:00 | 08-20 09:30 | 示例行，可删 |
+| T-1788402874 | 待办 | 支付宝接入-授权函 | 待办 | 09-03 10:34 | | 支付宝手机网站支付开通卡在网站主体核验: cqdyxl.com备案主体≠支付宝账号主体(科莱维), 需走网址授权函流程(模板: opendocs.alipay.com/b/03aia3): ①下载模板 ②填: 授权方=网站备案公司(盖章) 被授权方=科莱维 授权使用locker.cqdyxl.com收款 ③网站备案公司盖章(注意别盖反, 是备案公司盖章) ④上传等待1个工作日审核; 审核通过后继续: 开放平台创建网页应用+配RSA2密钥(记appid/应用私钥/支付宝公钥) -> 填进系统payment_channels(channel_type=alipay); 另建小程序应用(订阅消息)填manifest.json的mp-alipay.appid |
 | T-1788357059 | 待办 | 小程序通用版(uni-app) | 待办 | 09-02 21:50 | | 微信+支付宝通用版工程已建(D:\工具配置迁移包_20260811\小程序_通用版, uni-app Vue3): 工程骨架+platform适配层+subscribe订阅授权页完成, 微信/支付宝两端均编译通过; 微信原生版不动继续跑; 待办: ①企业认证过->开放平台创建小程序应用->appid填manifest.json的mp-alipay.appid ②领支付宝订阅模板(长期优先:取件/退款提醒)->填utils/api.js的TEMPLATES.alipay ③后端加支付宝接口(link-alipay绑定/订阅消息发送templatemessage.send/alipay.py手机网站支付下单退款回调/payment_channels支持channel_type=alipay) ④H5按UA分流跳alipays scheme ⑤功能页逐步迁移(17页), 迁移完微信切换; 注意: 支付宝无exitMiniProgram等价物, 返回H5链路需真实环境验证 |
 | T-1788329411 | 待办 | 支付宝接入(整体) | 待办 | 09-02 14:10 | | 支付宝双通道接入(分摊微信封号风险+微信不可用兜底): ①企业支付宝注册(用户办理, 用营业执照, 流程见.workbench/ALIPAY_REGISTER.md) ②后端alipay.py(手机网站支付下单/退款/回调验签, 照抄wxpay.py结构) ③payment_channels支持channel_type=alipay+新回调路由/api/pay/alipay/notify ④H5(deposit.html+store.html)按UA分流: 微信走原流程, 支付宝扫同一设备二维码(https://locker.cqdyxl.com/store?cabinet_id=x)进支付宝通道 ⑤支付宝小程序极简版(subscribe授权订阅消息1页, 逻辑翻版微信subscribe.js, my.requestSubscribeMessage传2模板: 取件提醒+退款提醒, 每单授权每单推, 拒绝授权不卡支付) ⑥推送优先订阅消息(alipay.open.app.mini.templatemessage.send), 长期模板优先一次性兜底, 推不了先记日志(短信宝接好后再补短信) ⑦退款走支付宝原路(alipay.trade.refund) ⑧投诉/对账链路接alipay通道 |
 
@@ -172,3 +173,4 @@ n
 | T-1788184335 | S106 | routes/user.py,routes/admin_v2.py,static/admin-v2.html,config.py,helpers.py | 已完成 | 08-31 21:52 | 08-31 22:10 | 短信宝短信接入: 结束订单退押金时发短信(场景A), 网点级开关控制发不发(sms_enabled字段+前端配置), send_sms.py调短信宝API, 模板{fee}{amount}{appName} |
 | T-1788188835 | S106补充 | 生产库+前端 | 已完成 | 08-31 22:50 | | 网点短信发送默认关闭: 生产库42网点sms_enabled置0+DB默认0+前端默认false; 短信宝API待客服确认(返回0但后台无记录/签名套智行, 疑VIP通道需人工报备开通) |
 | T-1788245480 | 待办 | 短信宝 | 待办 | 09-01 00:10 | | 短信宝等工信部正式审批(签名+模板已预审通过): 审批通过后改send_smsbao用新模板(无引流词版: 您的寄存押金{1}元已退款,请注意查收)+模板匹配发送, 测试稳定后按网点打开sms_enabled |
+| T-1788359926 | S111 | routes/admin_v2.py | 已完成 | 09-02 22:38 | 09-02 22:45 | 订单退款联动扣减类型bug修复: order_ids字符串vs数字匹配不上致0元待审批wr残留 |

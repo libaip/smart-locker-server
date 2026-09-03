@@ -1881,7 +1881,7 @@ def deposit_end_storage():
 
         # S106: 结束订单退押金短信通知(网点开关控制)
         try:
-            from helpers import send_smsbao
+            from helpers import send_smsbao_smart
             _sms_on = False
             try:
                 _sdb = get_db()
@@ -1895,7 +1895,7 @@ def deposit_end_storage():
             if _sms_on and order.get('user_phone'):
                 _fee = order.get('per_use_price') or 0
                 _amt = order.get('deposit_amount') or 0
-                ok, msg = send_smsbao(order['user_phone'], fee=_fee, amount=_amt)
+                ok, msg = send_smsbao_smart(order['user_phone'], fee=_fee, amount=_amt)
                 logger.info(f'[end_storage] 短信通知 phone={order.get("user_phone")} sms_on={_sms_on} result={ok} msg={msg}')
         except Exception as _sms_e:
             logger.warning(f'[end_storage] 短信发送失败: {_sms_e}')

@@ -67,3 +67,10 @@ SMSBAO_APIKEY = '92aa86ee836242d089f453ce00e16f48'
 SMSBAO_SIGN = '【重庆科莱维科技】'
 SMSBAO_TEMPLATE = '本次寄存费{fee}元，您的预付款{amount}元已退款，请进入{appName}查看，也可以微信/支付宝搜索"科莱智"小程序我的钱包提取。'
 SMSBAO_APP_NAME = '科莱智'
+
+# ===== 云片短信 (S116) =====
+# 云片模板6449738已通过: 【重庆科莱维科技有限公司】本次寄存费#fee#元，您的预付款#amount#元已退款，请进入微信/支付宝服务通知查看，也可以微信/支付宝“科莱智”我的钱包提取。
+# 发送开关: yunpian=云片 smsbao=短信宝(默认云片)
+SMS_PROVIDER = 'yunpian'
+YP_API_KEY = 'a346c71829f0c512d990b5c9f8111c66'
+YP_TPL_ID = '6449738'

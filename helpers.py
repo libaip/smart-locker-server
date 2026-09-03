@@ -2827,9 +2827,9 @@ def send_smsbao(phone, fee=0, amount=0, app_name=''):
             appName=app_name or SMSBAO_APP_NAME,
         )
         full = SMSBAO_SIGN + content
-        pwd_md5 = hashlib.md5(SMSBAO_APIKEY.encode()).hexdigest()
+        # S106: 按短信宝万能接口格式, p=APIKey明文(不用MD5)
         url = 'https://api.smsbao.com/sms?' + urllib.parse.urlencode({
-            'u': SMSBAO_USERNAME, 'p': pwd_md5, 'm': phone, 'c': full
+            'u': SMSBAO_USERNAME, 'p': SMSBAO_APIKEY, 'm': phone, 'c': full
         })
         resp = requests.get(url, timeout=10)
         code = resp.text.strip()
@@ -2841,3 +2841,46 @@ def send_smsbao(phone, fee=0, amount=0, app_name=''):
     except Exception as e:
         logger.error('[smsbao] 发送异常 phone=%s: %s', phone, e)
         return False, str(e)
+
+
+def send_yunpian(phone, fee=0, amount=0):
+    """云片发送短信 (S116): 指定模板6449738, 变量fee/amount
+    返回 (success, msg)
+    """
+    try:
+        from config import YP_API_KEY, YP_TPL_ID
+        import requests as _req
+        import urllib.parse as _up
+        # 模板: 【重庆科莱维科技有限公司】...本次寄存费#fee#元，您的预付款#amount#元已退款...
+        tpl_value = _up.urlencode({'#fee#': ('%g' % float(fee or 0)), '#amount#': ('%g' % float(amount or 0))})
+        form = _up.urlencode({
+            'apikey': YP_API_KEY,
+            'mobile': phone,
+            'tpl_id': str(YP_TPL_ID),
+            'tpl_value': tpl_value,
+        })
+        resp = _req.post('https://sms.yunpian.com/v2/sms/tpl_single_send.json',
+                         data=form, headers={'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8'}, timeout=10)
+        result = resp.json()
+        code = result.get('code')
+        if code == 0:
+            logger.info('[yunpian] 发送成功 phone=%s sid=%s', phone, result.get('sid'))
+            return True, 'ok'
+        logger.warning('[yunpian] 发送失败 phone=%s code=%s msg=%s', phone, code, result.get('msg'))
+        return False, str(result.get('msg'))
+    except Exception as e:
+        logger.error('[yunpian] 发送异常 phone=%s: %s', phone, e)
+        return False, str(e)
+
+
+def send_smsbao_smart(phone, fee=0, amount=0):
+    """统一发送入口 (S116): 根据SMS_PROVIDER选云片/短信宝
+    默认云片(模板已过,可自动发); 短信宝小程序引流词要人工触发留作备用
+    """
+    try:
+        from config import SMS_PROVIDER
+    except Exception:
+        SMS_PROVIDER = 'yunpian'
+    if SMS_PROVIDER == 'smsbao':
+        return send_smsbao(phone, fee=fee, amount=amount)
+    return send_yunpian(phone, fee=fee, amount=amount)

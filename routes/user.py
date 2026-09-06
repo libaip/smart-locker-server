@@ -2496,9 +2496,8 @@ def get_user_info():
         # S120 2026-09-06: 提现规则改为回当完整版(微信审核要求清晰展示额度/次数/时间/到账), 不再读柜机旧文案;
         #   攮底用完整版, 柜机自己配了则优先用柜机的(保留灵活性)
         _FIR = '显示余额为最大可提现额度，仅支持全部提现，不可部分提现\n每日提现时间 00:00-24:00，不限制提现次数\n到账时间 0-3个工作日，若超时未到账请联系客服'
-        withdrawal_rules = order_row['withdrawal_rules'] if order_row and order_row.get('withdrawal_rules') else ''
-        if not withdrawal_rules:
-            withdrawal_rules = _FIR
+        # S120: 深度修复 - 柜机旧文案会覆盖兑底,整体改为直接返回完整版规则(微信审核要求)
+        withdrawal_rules = _FIR
         conn.close()
         return json_response(data={
             'phone': phone,

@@ -2495,9 +2495,10 @@ def get_user_info():
         cabinet_name = order_row['cabinet_name'] if order_row else ''
         # S120 2026-09-06: 提现规则改为回当完整版(微信审核要求清晰展示额度/次数/时间/到账), 不再读柜机旧文案;
         #   攮底用完整版, 柜机自己配了则优先用柜机的(保留灵活性)
-        _FIR = ('1. 显示余额为最大可提现额度，仅支持全部提现，不可部分提现\n'
-                 '2. 每日提现时间 00:00-24:00，不限制提现次数\n'
-                 '3. 到账时间 0-3个工作日，若超时未到账请联系客服 40006981080')
+        _FIR = ('1. 可提现额度为您的账户当前余额\n'
+                 '2. 提现全天均可操作，不限次数\n'
+                 '3. 提现将原路退回支付账户，预计1-3个工作日到账\n'
+                 '4. 如有疑问请联系客服 40006981080')
         # S120: 深度修复 - 柜机旧文案会覆盖兑底,整体改为直接返回完整版规则(微信审核要求)
         withdrawal_rules = _FIR
         conn.close()
@@ -4125,7 +4126,12 @@ def order_by_no(order_no):
         conn.close()
         if not row:
             return json_response(message='订单不存在', code=404)
-        return json_response(data=dict(row))
+        _d = dict(row)
+        _st = _d.get('status')
+        _sm = {1:'\u5f85\u652f\u4ed8', 2:'\u4f7f\u7528\u4e2d', 3:'\u5df2\u7ed3\u675f', 4:'\u5df2\u9000\u6b3e', 5:'\u5df2\u53d6\u6d88', 6:'\u9000\u6b3e\u5f02\u5e38'}
+        _d['status_text'] = _sm.get(_st, str(_st))
+        _d['user_phone'] = _d.get('user_phone') or ''
+        return json_response(data=_d)
     except Exception as e:
         logger.error(f'[order_by_no] 错误: {e}')
         return json_response(message=str(e), code=500)

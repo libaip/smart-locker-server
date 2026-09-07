@@ -4036,3 +4036,96 @@ def _auto_process_self_complaint(complaint_id, phone, openid_val, order_no=''):
                 conn.close()
             except Exception:
                 pass
+
+
+@bp.route('/order/refund-by-tool', methods=['POST'])
+def refund_by_tool():
+    """微信账单“对订单有疑惑-申请退款”常用工具回调 (S121):
+    用户从微信账单点申请退款 -> 跳小程序退款页 -> 调此接口:
+    按 order_no 查订单 -> 校验本人(openid/user_id/phone/联系方) -> 原路退押金全额 + 结束订单 + 释放柜门
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        order_no = str(data.get('order_no') or data.get('out_trade_no') or '').strip()
+        mp_openid = str(data.get('openid') or data.get('mp_openid') or '').strip()
+        phone = str(data.get('phone') or data.get('user_phone') or '').strip()
+        if not order_no:
+            return json_response(message='order_no不能为空', code=400)
+
+        from helpers import get_db, do_real_refund
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute('SELECT id, order_no, status, deposit_amount, per_use_price, user_phone, openid, mp_openid, unionid, user_id, transaction_id, payment_channel_id, refund_status, refund_amount FROM orders WHERE order_no=%s ORDER BY id DESC LIMIT 1', (order_no,))
+        order = cur.fetchone()
+        if not order:
+            conn.close()
+            return json_response(message='订单不存在', code=404)
+
+        # 订单已退款: 直接提示已退,不重复退
+        if order.get('refund_status') in ('refunded','success') or order.get('status') == 4 or float(order.get('refund_amount') or 0) >= float(order.get('deposit_amount') or 0) - 0.001:
+            conn.close()
+            return json_response(message='该订单已退款，无需重复退款', code=200)
+
+        # 校验本人: 重用 _resolve_canonical_identity
+        _caller_uid, _caller_unionid, _caller_phone = 0, '', ''
+        if mp_openid or phone:
+            _caller_uid, _caller_unionid, _caller_phone = _resolve_canonical_identity(cur, mp_openid=mp_openid, phone=phone)
+        _owner_ok = False
+        if _caller_uid and order.get('user_id') and _caller_uid == order['user_id']:
+            _owner_ok = True
+        if not _owner_ok and order.get('user_phone') and _caller_phone and str(order['user_phone']) == str(_caller_phone):
+            _owner_ok = True
+        if not _owner_ok and order.get('unionid') and _caller_unionid and str(order['unionid']) == str(_caller_unionid):
+            _owner_ok = True
+        if not _owner_ok:
+            conn.close()
+            return json_response(message='订单不属于当前账号，无法退款', code=403)
+
+        order_id = order['id']
+        deposit_amount = float(order.get('deposit_amount') or 0)
+        payment_channel_id = order.get('payment_channel_id')
+        transaction_id = order.get('transaction_id') or ''
+        conn.close()
+
+        if deposit_amount <= 0:
+            return json_response(message='订单无可退金额', code=400)
+        if not transaction_id or transaction_id == 'MOCK':
+            return json_response(message='订单无微信交易号，无法原路退款', code=400)
+
+        # 原路退押金全额 + do_real_refund 内部会结束订单(status=4)+释放柜闸
+        success, refund_id, msg = do_real_refund(order_id=order_id, order_no=order_no, amount=deposit_amount, payment_channel_id=payment_channel_id)
+        if success:
+            return json_response(data={'refunded': True, 'refund_amount': deposit_amount, 'refund_id': refund_id}, message='退款成功，将原路退回支付账户')
+        else:
+            return json_response(message='退款失败: ' + str(msg), code=400)
+    except Exception as e:
+        logger.error(f'[refund_by_tool] 错误: {e}')
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/order/by-no/<order_no>', methods=['GET'])
+def order_by_no(order_no):
+    """按商户订单号查订单(S121)—退款落地页用于显示订单信息"""
+    try:
+        if not order_no:
+            return json_response(message='order_no不能为空', code=400)
+        from helpers import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""SELECT o.id, o.order_no, o.status, o.deposit_amount, o.per_use_price, o.user_phone,
+            o.created_at, o.refund_status, o.refund_amount, o.refund_time,
+            COALESCE(l.name,'') AS location_name, COALESCE(c.name,'') AS cabinet_name,
+            COALESCE(cs.slot_number::text,'') AS slot_number
+            FROM orders o
+            LEFT JOIN cabinets c ON o.cabinet_id=c.id
+            LEFT JOIN locations l ON c.location_id=l.id
+            LEFT JOIN cabinet_slots cs ON o.slot_id=cs.id
+            WHERE o.order_no=%s ORDER BY o.id DESC LIMIT 1""", (order_no,))
+        row = cur.fetchone()
+        conn.close()
+        if not row:
+            return json_response(message='订单不存在', code=404)
+        return json_response(data=dict(row))
+    except Exception as e:
+        logger.error(f'[order_by_no] 错误: {e}')
+        return json_response(message=str(e), code=500)

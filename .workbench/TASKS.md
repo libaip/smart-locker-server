@@ -13,6 +13,7 @@
 | 任务ID | 会话 | 目标文件 | 状态 | 开工时间 | 完成时间 | 备注 |
 |--------|------|---------|------|---------|---------|------|
 | T-000 | 示例 | routes/user.py | 已完成 | 08-20 09:00 | 08-20 09:30 | 示例行，可删 |
+| T-1788876683 | S122 | 设备升级-1.4.12->1.4.13 | 已完成 | 09-08 22:11 | 09-08 22:11 | 远程推送升级: 25台在线1.4.12设备升级到1.4.13(version_code=270, app_1.4.13.apk md5=08f02aadb3eb9df8da586aa85450a980), 写pending_lock_cmds force_update指令设备轮询拾取下载安装, 5分钟内全部成功(101057/101077/101094等, 含初期download failed的101024/101034重试成功); 16台离线1.4.12设备未推送(等上线后再升); 文件/URL/md5验证正常 |
 | T-1788532031 | 待办 | SSL证书-kelaiwei.top | 待办 | 09-04 22:27 | | kelaiwei.top备用域名证书2026-09-16到期(DNS指向旧机106.55.7.10, 新机175上只是default_server兜底); 已处理: locker.cqdyxl.com证书已强制续期到2026-12-03+certbot.timer自动续期在跑(每天2次); cqdyxl.com根域证书9-11到期按用户决定忽略(指向114.117.249.232另一台); kelaiwei.top待定: 若备用域名切新机则改DNS+新机certbot申请, 若走旧机则旧机续 |
 | T-1788448525 | S117 | 生产库数据隔离(334脏user_id) | 已完成 | 09-03 23:15 | 09-03 23:15 | 脏数据全隔离: 334个user_id(user_balances.phone≠users.phone错位, 7-8月迁移事故产生)按4批隔离成新用户(测试号9/批1废弃+无手机号171/批2活跃117/批3双活45), 隔离=users+phone_openids身份字段加frozen_前缀+user_balances余额清零(共13850元作废)remark标注; 下次登录=新用户不串号; 备份: /home/ubuntu/backups/dirty_20260903/(全库dump+分批行备份) 隔离日志表dirty_isolate_log; 回滚: 从备份恢复users/phone_openids/user_balances行; 注意: users表frozen_前缀数据为已隔离, 勿当正常用户处理 |
 | T-1788434855 | 待办 | 支付宝接入-建应用配密钥 | 待办 | 09-03 19:27 | | 支付宝继续推进(授权函提额度先挂起): ①开放平台open.alipay.com创建网页应用(名称科莱智, 网页应用类型) ②开发设置-接口加签方式-密钥工具生成RSA2: 填应用公钥换支付宝公钥, 应用私钥自存 ③把appid+应用私钥+支付宝公钥给技术配置(payment_channels加channel_type=alipay行, 后端alipay.py开发) ④另建小程序应用(订阅消息)填manifest.json的mp-alipay.appid ⑤订阅模板: 商家平台b.alipay.com运营中心领长期订阅(取件/退款提醒) |
@@ -180,3 +181,6 @@ n
 | T-1788435208 | S114 | config.py | 已完成 | 09-03 19:33 | 09-03 19:36 | 短信宝模板更新为服务通知版(去掉appName变量+文案改'服务通知'), 与后台报备模板一致 |
 | T-1788440151 | S115 | config.py | 已完成 | 09-03 20:55 | 09-03 20:57 | 短信宝模板切回已通过版(带appName+搜索小程序): S114误改新模板(服务通知版未过审), 后台已通过的是老模板 |
 | T-1788441995 | S116 | config.py,helpers.py | 已完成 | 09-03 21:26 | 09-03 21:32 | 云片短信接入: 新增send_yunpian函数(模板6449738, 变量fee/amount), config加云片配置, 与短信宝并存, 结束后台短信开关场景发云片 |
+| T-1788653985 | S119 | routes/payment.py | 已完成 | 09-06 08:19 | 09-06 08:22 | 启用寄存成功通知订阅(支付回调): 取消注释+换新模板ID aUc6gRRMUXKxy94Pd6kLWY3RkLdFw-ZguEjaskVnenc+字段改thing1/thing2/amount3/time4匹配模板 |
+| T-1788661500 | S120 | routes/user.py | 已完成 | 09-06 10:25 | 09-06 10:28 | getUserInfo提现规则改为返回完整规则(微信审核要求: 额度/次数/时间/到账), 不再读柜机旧文案 |
+| T-1788753852 | S121 | routes/user.py,小程序pages/refund/refund | 已完成 | 09-07 12:04 | 09-07 12:09 | 微信账单对订单有疑惑-常用工具申请退款: 新增后端接口/order/refund-by-tool(按order_no查订单校验本人+do_real_refund原路退押金全额+释放柜门结单) + 小程序新页面pages/refund/refund(接out_trade_no显示金额确认退款) + 微信申请配置常用工具(文档指引邮件) |

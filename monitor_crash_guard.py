@@ -16,6 +16,7 @@ import time
 import subprocess
 import logging
 import socket
+import glob
 
 sys.path.insert(0, '/home/ubuntu/smart-locker')
 
@@ -29,9 +30,9 @@ logging.basicConfig(
 _LAST_ALERT = {}
 _THROTTLE = 600
 
-def _should_alert(key):
+def _should_alert(key, throttle=None):
     now = time.time()
-    if now - _LAST_ALERT.get(key, 0) < _THROTTLE:
+    if now - _LAST_ALERT.get(key, 0) < (throttle or _THROTTLE):
         return False
     _LAST_ALERT[key] = now
     return True
@@ -145,6 +146,32 @@ def main():
             os.remove('/tmp/crash_guard_health_fail')
         except Exception:
             pass
+
+    # 6. 数据库备份新鲜度 (2026-09-11 添加)
+    #    背景: 175 此前没有任何定时数据库备份, 唯一的"副本"是已坏19天的逻辑复制。
+    #    本项确保"备份真的跑成功了", 兜住定时任务静默失败的情况。
+    try:
+        _bk_files = sorted(glob.glob('/home/ubuntu/db_backups/smart_locker_*.dump'))
+        _bk_ok = False
+        if _bk_files:
+            _newest = _bk_files[-1]
+            _age_h = (time.time() - os.path.getmtime(_newest)) / 3600.0
+            _sz_mb = os.path.getsize(_newest) / 1048576.0
+            _bk_msg = '最新备份 %s: %.1f小时前, %.1fMB' % (os.path.basename(_newest), _age_h, _sz_mb)
+            if _age_h <= 28 and _sz_mb >= 20:
+                _bk_ok = True
+        else:
+            _bk_msg = '备份目录内没有找到任何备份文件'
+        if not _bk_ok:
+            # 备份类问题每 6 小时最多告警一次, 避免每分钟刷屏
+            if _should_alert('backup', 21600):
+                _alert('【严重】数据库备份异常',
+                       'smart-locker 数据库备份检查未通过: %s\n备份目录: /home/ubuntu/db_backups/\n'
+                       '排查: tail -50 /home/ubuntu/smart-locker/logs/backup_db.log\n时间: %s'
+                       % (_bk_msg, time.strftime('%Y-%m-%d %H:%M:%S')))
+            issues.append('backup=BAD')
+    except Exception as e:
+        logging.error('备份新鲜度检查失败: %s', e)
 
     if issues:
         logging.warning('检测到异常指标: %s', '; '.join(issues))

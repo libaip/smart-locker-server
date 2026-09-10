@@ -15,12 +15,22 @@
 #
 # 当前有效期: 2026-09-10 签发, 2026-12-09 到期 (ECC=YE1, RSA=YR1)
 #
-# 用法 (在工作机 C:\...\Documents\Codex 下, 按顺序执行):
-#   1) 106 打包:  Proxmox-> ssh 106.55.7.10 "bash -s" < renew_kelaiwei_cert.sh pack
-#   2) 取回本地:  ssh 106.55.7.10 "base64 -w0 /tmp/kelaiwei_new.tgz" > cert.b64
-#   3) 送到 175:  Get-Content cert.b64 -Raw | ssh ubuntu@175.178.156.121 "base64 -d > /tmp/kelaiwei_new.tgz"
-#   4) 175 部署:  ssh ubuntu@175.178.156.121 "bash -s" < renew_kelaiwei_cert.sh deploy
-#   所有 ssh 到 175 用: ubuntu@175.178.156.121
+# 用法 (在工作机按顺序执行; 175 一律用 ubuntu@175.178.156.121):
+#   1) 送脚本并打包(在 106):
+#        scp renew_kelaiwei_cert.sh 106.55.7.10:/tmp/
+#        ssh 106.55.7.10 "bash /tmp/renew_kelaiwei_cert.sh pack"
+#   2) 取回本地:
+#        ssh 106.55.7.10 "base64 -w0 /tmp/kelaiwei_new.tgz" > cert.b64
+#   3) 送到 175:
+#        ssh ubuntu@175.178.156.121 "base64 -d > /tmp/kelaiwei_new.tgz" < cert.b64
+#   4) 送脚本并部署(在 175):
+#        scp renew_kelaiwei_cert.sh ubuntu@175.178.156.121:/tmp/
+#        ssh ubuntu@175.178.156.121 "bash /tmp/renew_kelaiwei_cert.sh deploy"
+#
+# !! Windows PowerShell 5.1 陷阱(2026-09-10 踩过): Get-Content -Raw 用 ANSI(GBK)
+#    解码 UTF-8 文件, 中文会被静默改坏, 而且改坏后的 md5 两边还能对上(假通过).
+#    传文本文件必须走字节: $b=[IO.File]::ReadAllBytes($p);
+#    $t=[Text.Encoding]::UTF8.GetString($b); 再 base64. 二进制(cert.b64)不受影响.
 # ============================================================================
 set -u
 

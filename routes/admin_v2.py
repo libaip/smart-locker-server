@@ -2681,7 +2681,7 @@ def admin_agent_settlement_confirm():
         for aid, delta_sum in agent_delta.items():
             delta_sum = _m2(delta_sum)
             c.execute('SELECT agent_id, COALESCE(carry_amount, 0) AS carry, name FROM agent_settlement_carry '
-                      'LEFT JOIN agents ON agents.id=agent_settlement_carry.agent_id WHERE agent_id=%s FOR UPDATE',
+                      'LEFT JOIN agents ON agents.id=agent_settlement_carry.agent_id WHERE agent_id=%s FOR UPDATE OF agent_settlement_carry',
                       (aid,))
             row = c.fetchone()
             carry_before = _m2(row['carry'] or 0) if row else 0

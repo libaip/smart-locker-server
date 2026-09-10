@@ -1416,6 +1416,17 @@ def upsert_phone_openid_row(cursor, phone='', openid='', mp_openid='', unionid='
             if _r:
                 _existing_id = _r['id']
         if _existing_id:
+            # 修复(2026-09-10): 目标 unionid 若已被同手机号的其他行占用(一机两号场景),
+            # 本次不更新 unionid, 避免撞 idx_phone_openids_phone_unionid 唯一约束导致 link-mp-openid 500
+            _upd_unionid = unionid
+            if unionid:
+                try:
+                    cursor.execute("SELECT id FROM phone_openids WHERE phone = %s AND unionid = %s AND id <> %s LIMIT 1", (phone, unionid, _existing_id))
+                    if cursor.fetchone():
+                        _upd_unionid = ''
+                        logger.info('[upsert_phone_openid] unionid已被同号码其他行占用, 本次不更新: phone=%s', phone)
+                except Exception:
+                    _upd_unionid = unionid
             cursor.execute(
                 """UPDATE phone_openids SET
                      openid = COALESCE(NULLIF(%s,''), openid),
@@ -1427,7 +1438,7 @@ def upsert_phone_openid_row(cursor, phone='', openid='', mp_openid='', unionid='
                      updated_at = NOW()
                    WHERE id = %s
                    RETURNING id""",
-                (openid, mp_openid, unionid, wechat_name, gzh_openid, user_id, user_id, _existing_id),
+                (openid, mp_openid, _upd_unionid, wechat_name, gzh_openid, user_id, user_id, _existing_id),
             )
             _row = cursor.fetchone()
             return _row['id'] if _row else _existing_id

@@ -31,6 +31,11 @@ textarea.form-input{min-height:90px;resize:none}
 .success-msg svg{width:80px;height:80px;margin-bottom:16px}
 .success-msg .msg-title{font-size:18px;font-weight:600;color:#333;margin-bottom:8px}
 .success-msg .msg-desc{font-size:14px;color:#999;margin-bottom:24px}
+.service-tip{max-width:100%;margin:0 auto 24px;background:#FFF8EC;border:2px solid #F5DCA8;border-radius:12px;padding:18px}
+.service-tip-title{font-size:13px;color:#B8860B;display:block;text-align:center;margin-bottom:14px}
+.service-call-btn{display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(135deg,#FFB03A,#F0932B);color:#fff;border-radius:24px;padding:12px;border:none;cursor:pointer;font-family:inherit;line-height:1.4;width:100%}
+.service-call-num{font-size:22px;font-weight:700;letter-spacing:1px}
+.service-call-label{font-size:12px;color:rgba(255,255,255,.9);margin-top:4px}
 .back-btn{display:inline-block;padding:10px 40px;background:#4ECDC4;color:#fff;border-radius:24px;border:none;font-size:15px;cursor:pointer;text-decoration:none}
 </style>
 </head>
@@ -60,6 +65,13 @@ textarea.form-input{min-height:90px;resize:none}
   <svg viewBox="0 0 80 80" fill="none"><circle cx="40" cy="40" r="36" fill="#E8F8F7"/><path d="M25 42l10 10 20-22" stroke="#4ECDC4" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>
   <div class="msg-title">投诉已提交</div>
   <div class="msg-desc">我们会尽快处理您的投诉</div>
+  <div class="service-tip">
+    <span class="service-tip-title">如需加急处理，请联系客服</span>
+    <button class="service-call-btn" id="btnCallService">
+      <span class="service-call-num">4006981080</span>
+      <span class="service-call-label">拨打客服电话</span>
+    </button>
+  </div>
   <a class="back-btn" id="linkBackOk">返回</a>
 </div>
 <script>
@@ -135,6 +147,9 @@ function updateCount(el){document.getElementById('char-num').textContent=el.valu
       document.getElementById('formArea').style.display='none';
       document.getElementById('successArea').style.display='block';
     }).catch(function(e){alert(e.message||'提交失败');btn.disabled=false;btn.textContent='提交';});
+  });
+  document.getElementById('btnCallService').addEventListener('click',function(){
+    window.location.href='tel:4006981080';
   });
 })();
 </script>

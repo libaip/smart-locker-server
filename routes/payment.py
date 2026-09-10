@@ -346,12 +346,12 @@ def pay_notify():
         if we_updated and (trade_state == 'SUCCESS' or result.get('result_code') == 'SUCCESS'):
             try:
                 openid = order.get('mp_openid') or ''
-                if not (openid and openid.startswith('oWrA8')):
+                if not (openid and openid.startswith('ooTcRx')):
                     openid = order.get('openid') or ''
-                if not (openid and openid.startswith('oWrA8')):
+                if not (openid and openid.startswith('ooTcRx')):
                     try:
                         cur = conn.cursor()
-                        cur.execute("SELECT mp_openid, unionid FROM users WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE 'oWrA8%%' LIMIT 1", (order['user_phone'],))
+                        cur.execute("SELECT mp_openid, unionid FROM users WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE 'ooTcRx%%' LIMIT 1", (order['user_phone'],))
                         r = cur.fetchone()
                         if r:
                             openid = r['mp_openid'] or ''
@@ -361,7 +361,7 @@ def pay_notify():
                         _pay_unionid = ''
                 else:
                     _pay_unionid = order.get('unionid') or ''
-                if openid and openid.startswith('oWrA8'):
+                if openid and openid.startswith('ooTcRx'):
                     from helpers import send_wx_subscribe_message
                     location_name = _open_lock_info.get('location_name', '智能寄存柜') if _open_lock_info else '智能寄存柜'
                     cabinet_name = _open_lock_info.get('cabinet_name', '') if _open_lock_info else ''
@@ -370,10 +370,11 @@ def pay_notify():
                         'thing1': {'value': location_name},
                         'thing2': {'value': door_label},
                         'amount3': {'value': str(order['deposit_amount']) + '元'},
-                        'time4': {'value': datetime.now().strftime('%Y-%m-%d %H:%M')}
+                        'time4': {'value': datetime.now().strftime('%Y-%m-%d %H:%M')},
+                        'character_string9': {'value': str(order.get('order_no') or order.get('orderNo') or '')}
                     }
                     # S119 2026-09-06: 启用寄存成功通知(新模板已加入小程序订阅授权列表)
-                    send_wx_subscribe_message(openid, 'aUc6gRRMUXKxy94Pd6kLWY3RkLdFw-ZguEjaskVnenc', subscribe_data, phone=order.get('user_phone'), page='pages/index/index', unionid=_pay_unionid)
+                    send_wx_subscribe_message(openid, 'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk', subscribe_data, phone=order.get('user_phone'), page='pages/index/index', unionid=_pay_unionid)
             except Exception as e:
                 logger.error(f'[支付回调发送订阅消息失败] {e}')
         

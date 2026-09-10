@@ -133,7 +133,7 @@ var API_BASE='https://locker.cqdyxl.com/api';
     withdrawalRules=data.withdrawal_rules||'';
   }).catch(function(e){});
   document.getElementById('btnRule').addEventListener('click',function(){
-    alert(withdrawalRules||'提现规则：\n提现无最低金额限制\n提现将在1-3个工作日内原路退回支付账户\n如有疑问请联系客服');
+    alert(withdrawalRules||'提现规则：\n1. 可提现额度为您的账户当前余额\n2. 每日提现次数：不限次数（支持全天多笔提现）\n3. 提现时间：00:00-24:00，全天可操作\n4. 提现将在0-3个工作日内原路退回支付账户\n5. 如有疑问请联系客服 4006981080');
   });
 })();
 </script>

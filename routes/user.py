@@ -798,12 +798,12 @@ def retrieve():
                 try:
                     from helpers import send_wx_subscribe_message
                     subscribe_data = {
-                        "amount6": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))},
-                        "time4": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
-                        "thing7": {"value": "已退还至小程序用户钱包"},
-                        "thing2": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}
+                        "amount1": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))},
+                        "time2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
+                        "thing4": {"value": "已退还至小程序用户钱包"},
+                        "thing3": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}
                     }
-                    send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
+                    send_wx_subscribe_message(_openid, "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA", subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
                 except Exception as e:
                     logger.error(f"[retrieve发送订阅消息失败] {e}")
             conn.commit()
@@ -1068,12 +1068,12 @@ def retrieve_confirm():
                 _thing7 = "已原路退回支付账户" if _direct_refund else "已退还至小程序用户钱包"
                 _thing2 = "无需提现，请留意微信到账" if _direct_refund else "请自行点击此通知消息跳转“我的钱包”提现"
                 subscribe_data = {
-                    "amount6": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))},
-                    "time4": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
-                    "thing7": {"value": _thing7},
-                    "thing2": {"value": _thing2}
+                    "amount1": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))},
+                    "time2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
+                    "thing4": {"value": _thing7},
+                    "thing3": {"value": _thing2}
                 }
-                send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page='pages/mine/mine')
+                send_wx_subscribe_message(_openid, "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA", subscribe_data, phone=order.get("user_phone"), page='pages/mine/mine')
             except Exception as e:
                 logger.error(f"[retrieve_confirm发送订阅消息失败] {e}")
         if _direct_refund:
@@ -1638,12 +1638,12 @@ def deposit_retrieve():
                         from helpers import send_wx_subscribe_message
                         _now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                         _nsd = {
-                            'amount6': {'value': '¥{:.2f}'.format(_n_amt)},
-                            'time4': {'value': _now},
-                            'thing7': {'value': '已退还至小程序用户钱包'},
-                            'thing2': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
+                            'amount1': {'value': '¥{:.2f}'.format(_n_amt)},
+                            'time2': {'value': _now},
+                            'thing4': {'value': '已退还至小程序用户钱包'},
+                            'thing3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                         }
-                        send_wx_subscribe_message(_noid, '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', _nsd, phone=_n_phone, page='pages/mine/mine')
+                        send_wx_subscribe_message(_noid, 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA', _nsd, phone=_n_phone, page='pages/mine/mine')
                     except Exception as _ne:
                         logger.error('[deposit_retrieve_notify1] '+ str(_ne))
                 else:
@@ -1848,7 +1848,7 @@ def deposit_end_storage():
                 _nconn = psycopg2.connect(_NURL, connect_timeout=5)
                 _ncur = _nconn.cursor()
                 # first check user_balances mp_openid (has correct mini-program openid)
-                # [FIX-20260716] 必须排除 oLhbm2 前缀（公众号openid），只保留 oWrA8 前缀的小程序openid
+                # [FIX-20260716] 必须排除 oLhbm2 前缀（公众号openid），只保留 ooTcRx 前缀的小程序openid
                 _nrow = find_user_balance_row(_ncur, phone=order.get('user_phone', ''), unionid=order.get('unionid', '') or '')
                 logger.info(f"[end_storage_debug] user_balances mp_openid query: {_nrow}")
                 if _nrow and _nrow.get('mp_openid'):
@@ -1870,8 +1870,8 @@ def deposit_end_storage():
                 # 发送押金退还通知
                 _thing7 = "已原路退回支付账户" if _direct_refund else "已退还至小程序用户钱包"
                 _thing2 = "无需提现，请留意微信到账" if _direct_refund else "请自行点击此通知消息跳转“我的钱包”提现"
-                subscribe_data = {"amount6": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))}, "time4": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}, "thing7": {"value": _thing7}, "thing2": {"value": _thing2}}
-                _sent = send_wx_subscribe_message(_openid, "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
+                subscribe_data = {"amount1": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))}, "time2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}, "thing4": {"value": _thing7}, "thing3": {"value": _thing2}}
+                _sent = send_wx_subscribe_message(_openid, "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA", subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
                 if _sent:
                     logger.info(f"[deposit_end_storage] 订阅消息已发送: order={order_id}")
                 else:
@@ -2496,9 +2496,10 @@ def get_user_info():
         # S120 2026-09-06: 提现规则改为回当完整版(微信审核要求清晰展示额度/次数/时间/到账), 不再读柜机旧文案;
         #   攮底用完整版, 柜机自己配了则优先用柜机的(保留灵活性)
         _FIR = ('1. 可提现额度为您的账户当前余额\n'
-                 '2. 提现全天均可操作，不限次数\n'
-                 '3. 提现将原路退回支付账户，预计0-3个工作日到账\n'
-                 '4. 如有疑问请联系客服 40006981080')
+                 '2. 每日提现次数：不限次数（支持全天多笔提现）\n'
+                 '3. 提现时间：00:00-24:00，全天可操作\n'
+                 '4. 提现将原路退回支付账户，预计0-3个工作日到账\n'
+                 '5. 如有疑问请联系客服 4006981080')
         # S120: 深度修复 - 柜机旧文案会覆盖兑底,整体改为直接返回完整版规则(微信审核要求)
         withdrawal_rules = _FIR
         conn.close()
@@ -3051,11 +3052,12 @@ def get_user_orders():
     try:
         request_phone = request.args.get('phone', '')
         openid = request.args.get('openid', '')
+        unionid = request.args.get('unionid', '')
         
         conn = get_db()
         cur = conn.cursor()
         
-        ident = resolve_user_identity(cur, mp_openid=openid, phone=request_phone)
+        ident = resolve_user_identity(cur, mp_openid=openid, phone=request_phone, unionid=unionid)
         if ident['ambiguous']:
             conn.close()
             return json_response(message='账号身份待确认，请重新登录', code=400)
@@ -3113,12 +3115,18 @@ def get_user_orders():
 
 @bp.route('/user/subscribe-templates', methods=['GET'])
 def get_subscribe_templates():
-    """返回订阅消息模板ID列表"""
+    """返回订阅消息模板ID列表（动态下发，前端不写死）"""
+    _withdraw = 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c'   # 退款成功
+    _general = 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'     # 押金退还
+    _deposit = 'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk'     # 寄存成功
     return json_response(data={
-        'templates': [
-            '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A',
-            'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE'
-        ]
+        'templates': [_withdraw, _general, _deposit],
+        'withdraw_notify': _withdraw,
+        'general_notify': _general,
+        'deposit_notify': _deposit,
+        'withdraw': _withdraw,
+        'general': _general,
+        'deposit': _deposit,
     })
 
 @bp.route('/user/withdrawal-rules', methods=['GET'])
@@ -3485,12 +3493,12 @@ def user_withdraw():
                 try:
                     from helpers import send_wx_subscribe_message
                     wd_data = {
-                        'amount8': {'value': '¥{:.2f}'.format(actual_amount)},
-                        'time6': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
-                        'thing3': {'value': '提现申请已提交'},
-                        'thing2': {'value': '预计0-3个工作日到账'}
+                        'amount2': {'value': '¥{:.2f}'.format(actual_amount)},
+                        'time5': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
+                        'thing4': {'value': '提现申请已提交'},
+                        'thing3': {'value': '预计0-3个工作日到账'}
                     }
-                    send_wx_subscribe_message(mp_openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone, page='pages/mine/mine')
+                    send_wx_subscribe_message(mp_openid, 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c', wd_data, phone=phone, page='pages/mine/mine')
                 except Exception as e:
                     logger.error(f'[提现通知失败] {e}')
             return json_response(data={
@@ -3601,12 +3609,12 @@ def user_withdraw():
                 try:
                     from helpers import send_wx_subscribe_message
                     wd_data = {
-                        'amount8': {'value': '¥{:.2f}'.format(actual_amount)},
-                        'time6': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
-                        'thing3': {'value': '原路退回支付账户'},
-                        'thing2': {'value': '预计0-3个工作日到账'}
+                        'amount2': {'value': '¥{:.2f}'.format(actual_amount)},
+                        'time5': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
+                        'thing4': {'value': '原路退回支付账户'},
+                        'thing3': {'value': '预计0-3个工作日到账'}
                     }
-                    send_wx_subscribe_message(mp_openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', wd_data, phone=phone, page='pages/mine/mine')
+                    send_wx_subscribe_message(mp_openid, 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c', wd_data, phone=phone, page='pages/mine/mine')
                 except Exception as e:
                     logger.error(f'[提现通知失败] {e}')
             return json_response(data={

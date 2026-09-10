@@ -1232,21 +1232,21 @@ def admin_order_close():
         conn.commit()
         
         # 发送寄存结束订阅消息
-        # 只认小程序 mp_openid（oWrA8 前缀）；公众号 openid(oLhbm2) 发不了订阅消息
+        # 只认小程序 mp_openid（ooTcRx 前缀）；公众号 openid(oLhbm2) 发不了订阅消息
         def _is_mp_openid(v):
-            return bool(v) and str(v).startswith('oWrA8')
+            return bool(v) and str(v).startswith('ooTcRx')
         ntf_openid = order_dict.get('mp_openid') or ''
         if not _is_mp_openid(ntf_openid):
             ntf_openid = order_dict.get('openid') or ''
         if not _is_mp_openid(ntf_openid) and order_dict.get('user_phone'):
             try:
                 c2 = conn.cursor(cursor_factory=RealDictCursor)
-                c2.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE 'oWrA8%%' LIMIT 1", (order_dict['user_phone'],))
+                c2.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE 'ooTcRx%%' LIMIT 1", (order_dict['user_phone'],))
                 _r = c2.fetchone()
                 if _r and _r['mp_openid']:
                     ntf_openid = _r['mp_openid']
                 if not ntf_openid:
-                    c2.execute("SELECT mp_openid FROM users WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE 'oWrA8%%' ORDER BY updated_at DESC LIMIT 1", (order_dict['user_phone'],))
+                    c2.execute("SELECT mp_openid FROM users WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE 'ooTcRx%%' ORDER BY updated_at DESC LIMIT 1", (order_dict['user_phone'],))
                     _r = c2.fetchone()
                     if _r and _r['mp_openid']:
                         ntf_openid = _r['mp_openid']
@@ -1256,12 +1256,12 @@ def admin_order_close():
             try:
                 from helpers import send_wx_subscribe_message
                 subscribe_data = {
-                    'amount6': {'value': '¥{:.2f}'.format(deposit_amount)},
-                    'time4': {'value': now},
-                    'thing7': {'value': '已退还至小程序用户钱包'},
-                    'thing2': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
+                    'amount1': {'value': '¥{:.2f}'.format(deposit_amount)},
+                    'time2': {'value': now},
+                    'thing4': {'value': '已退还至小程序用户钱包'},
+                    'thing3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                 }
-                send_wx_subscribe_message(ntf_openid, '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data, phone=order_dict.get('user_phone'), page='pages/mine/mine')
+                send_wx_subscribe_message(ntf_openid, 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA', subscribe_data, phone=order_dict.get('user_phone'), page='pages/mine/mine')
                 # 退款通知在用户提现时发送，不在结束寄存时发送
             except Exception as e:
                 logger.error(f"[order_close发送订阅消息失败] {e}") 
@@ -1491,20 +1491,58 @@ def admin_members():
     try:
         data = request.get_json() if request.method == 'POST' else {}
         phone = (data or {}).get('phone', '') or request.args.get('phone', '')
+        mp_openid = (data or {}).get('mp_openid', '') or request.args.get('mp_openid', '')
+        gz_openid = (data or {}).get('gz_openid', '') or request.args.get('gz_openid', '')
+        unionid = (data or {}).get('unionid', '') or request.args.get('unionid', '')
         page = int(request.args.get("page", (data or {}).get("page", 1)))
         page_size = int(request.args.get("limit", (data or {}).get("limit", 20)))
         conn = get_db()
         c = conn.cursor()
         where, params = "1=1", []
         if phone:
-            where += ' AND phone LIKE %s'
+            where += ' AND ub.phone LIKE %s'
             params.append(f'%{phone}%')
-        c.execute(f'SELECT COUNT(*) FROM user_balances WHERE {where}', params)
+        if mp_openid:
+            where += ' AND mp.mp_openid LIKE %s'
+            params.append(f'%{mp_openid}%')
+        if gz_openid:
+            where += ' AND (mp.gzh_openid LIKE %s OR mp.openid LIKE %s)'
+            params.extend([f'%{gz_openid}%', f'%{gz_openid}%'])
+        if unionid:
+            where += ' AND mp.unionid LIKE %s'
+            params.append(f'%{unionid}%')
+        c.execute(f'''SELECT COUNT(*) FROM user_balances ub
+            LEFT JOIN (
+                SELECT phone,
+                       MAX(NULLIF(unionid,''))  AS unionid,
+                       MAX(NULLIF(mp_openid,'')) AS mp_openid,
+                       MAX(NULLIF(gzh_openid,'')) AS gzh_openid,
+                       MAX(NULLIF(openid,''))  AS openid
+                FROM phone_openids
+                WHERE NULLIF(phone,'') IS NOT NULL
+                GROUP BY phone
+            ) mp ON mp.phone=ub.phone
+            WHERE {where}''', params)
         total = c.fetchone()[0]
-        c.execute(f'''SELECT ub.*, 
+        c.execute(f'''SELECT ub.id, ub.phone, ub.balance, ub.total_deposited, ub.total_withdrawn,
+            ub.created_at, ub.wechat_name,
+            COALESCE(NULLIF(mp.openid,''), NULLIF(ub.openid,'')) as gzh_openid,
+            COALESCE(NULLIF(mp.mp_openid,''), NULLIF(ub.mp_openid,'')) as mp_openid,
+            COALESCE(NULLIF(mp.unionid,''), NULLIF(ub.unionid,'')) as unionid,
             (SELECT COUNT(*) FROM orders WHERE user_phone=ub.phone) as total_orders,
             (SELECT COALESCE(SUM(deposit_amount),0) FROM orders WHERE user_phone=ub.phone AND deposit_amount>0) as total_deposit
-            FROM user_balances ub WHERE {where} ORDER BY ub.created_at DESC LIMIT %s OFFSET %s''',
+            FROM user_balances ub
+            LEFT JOIN (
+                SELECT phone,
+                       MAX(NULLIF(unionid,''))  AS unionid,
+                       MAX(NULLIF(mp_openid,'')) AS mp_openid,
+                       MAX(NULLIF(gzh_openid,'')) AS gzh_openid,
+                       MAX(NULLIF(openid,''))  AS openid
+                FROM phone_openids
+                WHERE NULLIF(phone,'') IS NOT NULL
+                GROUP BY phone
+            ) mp ON mp.phone=ub.phone
+            WHERE {where} ORDER BY ub.created_at DESC LIMIT %s OFFSET %s''',
                   params + [page_size, (page-1)*page_size])
         members = [dict(r) for r in c.fetchall()]
         conn.close()
@@ -5132,7 +5170,7 @@ def admin_employee_reset_password():
 _AUTO_WITHDRAW_SCHEDULER_LOCK_FILE = "/tmp/auto_withdraw_scheduler.lock"
 _AUTO_WITHDRAW_BATCH_SIZE = 50
 _AUTO_WITHDRAW_SCAN_SECONDS = 5
-_AUTO_WITHDRAW_TEMPLATE_ID = "YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE"
+_AUTO_WITHDRAW_TEMPLATE_ID = "lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c"
 
 
 def _reset_stale_auto_claims():
@@ -5186,9 +5224,9 @@ def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid='', unionid='
             'thing3': {'value': thing3},
             'thing2': {'value': thing2}
         }
-        # 只认小程序 mp_openid（oWrA8 前缀）；公众号 openid(oLhbm2) 发不了订阅消息
+        # 只认小程序 mp_openid（ooTcRx 前缀）；公众号 openid(oLhbm2) 发不了订阅消息
         _ok = openid or ''
-        if not (str(_ok).startswith('oWrA8')):
+        if not (str(_ok).startswith('ooTcRx')):
             _ok = ''
         send_wx_subscribe_message(_ok, _AUTO_WITHDRAW_TEMPLATE_ID, wd_data, phone=phone, page='pages/mine/mine', unionid=unionid)
     except Exception as e:
@@ -6727,12 +6765,12 @@ def admin_device_clear_all():
                 if not already_credited:
                     try:
                         subscribe_data = {
-                            'amount6': {'value': '¥{:.2f}'.format(deposit_amount)},
-                            'time4': {'value': now},
-                            'thing7': {'value': '已退还至小程序用户钱包'},
-                            'thing2': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
+                            'amount1': {'value': '¥{:.2f}'.format(deposit_amount)},
+                            'time2': {'value': now},
+                            'thing4': {'value': '已退还至小程序用户钱包'},
+                            'thing3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                         }
-                        send_wx_subscribe_message(mp_openid or '', '5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A', subscribe_data, phone=o_dict.get('user_phone'), page='pages/mine/mine', unionid=o_dict.get('unionid') or '')
+                        send_wx_subscribe_message(mp_openid or '', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA', subscribe_data, phone=o_dict.get('user_phone'), page='pages/mine/mine', unionid=o_dict.get('unionid') or '')
                         notified += 1
                     except Exception as e:
                         logger.error(f'[clear_all] 发送订阅消息失败 order={o_dict["id"]}: {e}')
@@ -9012,6 +9050,219 @@ def _trade_bill_sync_scheduler():
                     pass
         time.sleep(_TRADE_BILL_SYNC_INTERVAL)
 
+
+# ==================== 小程序用户反馈 (2026-09-09 接入, 微信运维中心 getFeedback) ====================
+@bp.route('/admin/feedbacks', methods=['GET', 'POST'])
+@require_auth
+def admin_feedbacks():
+    """小程序用户反馈列表"""
+    try:
+        data = request.get_json() if request.method == 'POST' else {}
+        status = (data or {}).get('status', '') or request.args.get('status', '')
+        phone = (data or {}).get('phone', '') or request.args.get('phone', '')
+        content = (data or {}).get('content', '') or request.args.get('content', '')
+        ftype = (data or {}).get('type', '') or request.args.get('type', '')
+        start_date = (data or {}).get('start_date', '') or request.args.get('start_date', '')
+        end_date = (data or {}).get('end_date', '') or request.args.get('end_date', '')
+        page = int(request.args.get("page", (data or {}).get("page", 1)))
+        page_size = int(request.args.get("limit", (data or {}).get("limit", 20)))
+        conn = get_db()
+        c = conn.cursor()
+        where, params = "1=1", []
+        if status:
+            where += ' AND status=%s'
+            params.append(status)
+        if phone:
+            where += ' AND phone LIKE %s'
+            params.append(f'%{phone}%')
+        if content:
+            where += ' AND content LIKE %s'
+            params.append(f'%{content}%')
+        if ftype:
+            try:
+                where += ' AND type=%s'
+                params.append(int(ftype))
+            except:
+                pass
+        if start_date:
+            where += ' AND created_at >= %s'
+            params.append(start_date)
+        if end_date:
+            where += ' AND created_at < %s::date + INTERVAL \'1 day\''
+            params.append(end_date)
+        c.execute(f'SELECT COUNT(*) FROM wx_feedback WHERE {where}', params)
+        total = c.fetchone()[0]
+        c.execute(f'SELECT * FROM wx_feedback WHERE {where} ORDER BY create_time DESC, id DESC LIMIT %s OFFSET %s',
+                  params + [page_size, (page-1)*page_size])
+        rows = [dict(r) for r in c.fetchall()]
+        conn.close()
+        for r in rows:
+            for key in ['created_at', 'pulled_at', 'handle_time']:
+                if key in r and hasattr(r[key], 'strftime'):
+                    r[key] = r[key].strftime('%Y-%m-%d %H:%M:%S')
+        return json_response(data={'list': rows, 'total': total})
+    except Exception as e:
+        logger.error(f'[admin_feedbacks] {e}')
+        return json_response(data={'list': [], 'total': 0})
+
+
+@bp.route('/admin/feedback/handle', methods=['POST'])
+@require_auth
+def admin_feedback_handle():
+    """处理/回复一条用户反馈"""
+    try:
+        data = request.get_json() or {}
+        fid = data.get('id')
+        status = data.get('status', '1')
+        reply = data.get('reply', '')
+        if not fid:
+            return json_response(message='缺少id', code=400)
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("UPDATE wx_feedback SET status=%s, handle_reply=%s, handle_by=%s, handle_time=CURRENT_TIMESTAMP WHERE id=%s",
+                  (status, reply, session.get('admin_username', ''), fid))
+        conn.commit()
+        conn.close()
+        logger.info('[admin_feedback_handle] id=%s status=%s admin=%s', fid, status, session.get('admin_username', ''))
+        return json_response(message='已更新')
+    except Exception as e:
+        logger.error(f'[admin_feedback_handle] {e}')
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/admin/feedback/pull', methods=['POST'])
+@require_auth
+def admin_feedback_pull():
+    """手动触发拉取小程序用户反馈"""
+    try:
+        import importlib
+        import sys as _sys
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if base not in _sys.path:
+            _sys.path.insert(0, base)
+        import pull_feedback as _pf
+        _pf.main()
+        return json_response(message='拉取完成')
+    except Exception as e:
+        logger.error(f'[admin_feedback_pull] {e}')
+        return json_response(message=str(e), code=500)
+
+
+# ==================== 用户反馈->未退款订单->手动退款 (2026-09-09) ====================
+@bp.route('/admin/feedback/user-orders', methods=['POST'])
+@require_auth
+def admin_feedback_user_orders():
+    """按反馈用户(优先openid反查真实手机号)查未退款订单, 含商户号/设备名/网点名/实际手机号"""
+    try:
+        data = request.get_json() or {}
+        phone = (data.get('phone') or '').strip()
+        openid = (data.get('openid') or '').strip()
+        feedback_id = data.get('feedback_id')
+        reply_text = '经核查没有未退款的订单，如有疑问请联系客服4006981080'
+        if not phone and not openid:
+            return json_response(message='缺手机号/openid', code=400)
+        conn = get_db()
+        c = conn.cursor()
+        # 1) 优先用 openid 反查 phone_openids 拿真实注册手机号(反馈phone常是邮箱/错号)
+        phones = []
+        if openid:
+            c.execute("""SELECT DISTINCT phone FROM phone_openids
+                WHERE (openid=%s OR mp_openid=%s OR unionid=%s)
+                  AND phone IS NOT NULL AND phone!=''""", (openid, openid, openid))
+            phones = [r[0] for r in c.fetchall()]
+        if phone:
+            phones.append(phone)
+        phones = list(dict.fromkeys(phones))  # 去重保序
+        if not phones:
+            if feedback_id:
+                c.execute("""UPDATE wx_feedback SET status='1', handle_reply=%s, handle_by=%s, handle_time=CURRENT_TIMESTAMP WHERE id=%s""", (reply_text, session.get('admin_username',''), feedback_id))
+                conn.commit()
+            conn.close()
+            return json_response(data={'list': [], 'total': 0, 'auto_handled': bool(feedback_id)})
+
+        # 2) 订单匹配: user_phone 在这些手机号里, 状态未退款
+        phs = ','.join(['%s'] * len(phones))
+        c.execute(f"""SELECT o.id, o.order_no, o.user_phone, o.deposit_amount, o.store_time, o.status,
+                   COALESCE(o.refund_status,'') as refund_status,
+                   COALESCE(pc.mch_id,'') as mch_id,
+                   COALESCE(pc.name,'') as channel_name,
+                   COALESCE(c.cabinet_code,'') as cabinet_code,
+                   COALESCE(l.name,'') as location_name
+            FROM orders o
+            LEFT JOIN payment_channels pc ON o.payment_channel_id=pc.id
+            LEFT JOIN cabinets c ON o.cabinet_id=c.id
+            LEFT JOIN locations l ON c.location_id=l.id
+            WHERE o.user_phone IN ({phs}) AND o.status IN (2,3) AND COALESCE(o.refund_status,'') NOT IN ('success','refunded')
+            ORDER BY o.id DESC LIMIT 50""", tuple(phones))
+        orders = [dict(r) for r in c.fetchall()]
+        conn.close()
+        for o in orders:
+            if o.get('store_time') and hasattr(o['store_time'], 'strftime'):
+                o['store_time'] = o['store_time'].strftime('%Y-%m-%d %H:%M:%S')
+        if not orders and feedback_id:
+            c.execute("""UPDATE wx_feedback SET status='1', handle_reply=%s, handle_by=%s, handle_time=CURRENT_TIMESTAMP WHERE id=%s""", (reply_text, session.get('admin_username',''), feedback_id))
+            conn.commit()
+            conn.close()
+            return json_response(data={'list': orders, 'total': 0, 'auto_handled': True})
+        return json_response(data={'list': orders, 'total': len(orders)})
+    except Exception as e:
+        logger.error(f'[admin_feedback_user_orders] {e}')
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/admin/feedback/refund', methods=['POST'])
+@require_auth
+def admin_feedback_refund():
+    """对指定的未退款订单原路退押金, 成功后把回复写进反馈的handle_reply"""
+    try:
+        from helpers import do_real_refund
+        data = request.get_json() or {}
+        feedback_id = data.get('feedback_id')
+        order_id = data.get('order_id')
+        if not order_id:
+            return json_response(message='缺订单id', code=400)
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT id, order_no, user_phone, deposit_amount, status, refund_status, refund_id, transaction_id, payment_channel_id FROM orders WHERE id=%s", (order_id,))
+        order = c.fetchone()
+        if not order:
+            conn.close()
+            return json_response(message='订单不存在', code=404)
+        oid = order['id']
+        ono = order['order_no']
+        amount = order['deposit_amount'] or 0
+        payment_channel_id = order['payment_channel_id']
+        refund_status = order['refund_status'] or ''
+        if refund_status in ('success', 'refunded'):
+            conn.close()
+            return json_response(message='订单已退款', code=400)
+
+        ok, rid, msg = do_real_refund(order_id=oid, order_no=ono, amount=amount, payment_channel_id=payment_channel_id)
+        if not ok:
+            conn.close()
+            logger.warning('[feedback_refund] 退款失败 order_id=%s msg=%s', oid, msg)
+            return json_response(message='退款失败: ' + str(msg), code=400)
+
+        # 退款成功: 更新订单
+        c.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=%s, refund_amount=%s, refund_time=CURRENT_TIMESTAMP, refund_mark=1 WHERE id=%s", (rid, amount, oid))
+        c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (oid,))
+        c.execute("INSERT INTO payments (order_id, type, amount, transaction_id, refund_transaction_id, status, created_at) VALUES (%s, 2, %s, %s, %s, 1, CURRENT_TIMESTAMP)", (oid, amount, order['transaction_id'] or '', rid))
+        # 写提现记录(管理员-反馈退款)
+        c.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, approver, order_ids, approve_time) VALUES (%s, %s, %s, 2, '管理员-反馈退款', %s, NOW())", (oid, order['user_phone'] or '', amount, '[' + str(oid) + ']'))
+
+        # 自动回复写进反馈的 handle_reply
+        reply_text = '已帮你反馈客服处理，请稍后核对订单，未到款请拨打人工客服处理-4006981080'
+        if feedback_id:
+            c.execute("UPDATE wx_feedback SET status='1', handle_reply=%s, handle_by=%s, handle_time=CURRENT_TIMESTAMP WHERE id=%s", (reply_text, session.get('admin_username', ''), feedback_id))
+        conn.commit()
+        conn.close()
+        logger.info('[feedback_refund] 退款成功 feedback=%s order_id=%s refund_id=%s', feedback_id, oid, rid)
+        return json_response(message='退款成功')
+    except Exception as e:
+        logger.error(f'[admin_feedback_refund] {e}')
+        try: conn.close()
+        except: pass
+        return json_response(message=str(e), code=500)
 
 if os.path.isdir('/tmp'):
     _trade_bill_sync_thread = threading.Thread(target=_trade_bill_sync_scheduler, daemon=True)

@@ -1465,12 +1465,12 @@ def withdrawal_apply():
                             from datetime import datetime as dt_notify
                             now_str = dt_notify.now().strftime('%Y-%m-%d %H:%M:%S')
                             refund_notify_data = {
-                                'amount8': {'value': '¥' + f'{amount:.2f}'},
-                                'time6': {'value': now_str},
-                                'thing3': {'value': '原路退回支付账户'},
-                                'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
+                                'amount2': {'value': '¥' + f'{amount:.2f}'},
+                                'time5': {'value': now_str},
+                                'thing4': {'value': '原路退回支付账户'},
+                                'thing3': {'value': '预计0-3个工作日到账，请耐心等待'}
                             }
-                            send_wx_subscribe_message(user_openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', refund_notify_data, phone=user_phone, page='pages/mine/mine')
+                            send_wx_subscribe_message(user_openid, 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c', refund_notify_data, phone=user_phone, page='pages/mine/mine')
                         except Exception as e:
                             logger.error(f'[withdrawal_apply] 发送退款通知失败: {e}')
                         return json_response({'withdrawal_id': withdrawal_id, 'order_id': order_id, 'status': 'auto_approve', 'amount': amount, 'message': '提现成功，退款将原路返回'})
@@ -1487,12 +1487,12 @@ def withdrawal_apply():
                             from datetime import datetime as dt_notify
                             now_str = dt_notify.now().strftime('%Y-%m-%d %H:%M:%S')
                             refund_notify_data = {
-                                'amount8': {'value': '¥' + f'{amount:.2f}'},
-                                'time6': {'value': now_str},
-                                'thing3': {'value': '原路退回支付账户'},
-                                'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
+                                'amount2': {'value': '¥' + f'{amount:.2f}'},
+                                'time5': {'value': now_str},
+                                'thing4': {'value': '原路退回支付账户'},
+                                'thing3': {'value': '预计0-3个工作日到账，请耐心等待'}
                             }
-                            send_wx_subscribe_message(user_openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', refund_notify_data, phone=user_phone, page='pages/mine/mine')
+                            send_wx_subscribe_message(user_openid, 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c', refund_notify_data, phone=user_phone, page='pages/mine/mine')
                         except Exception as e:
                             logger.error(f'[withdrawal_apply] 发送退款通知失败: {e}')
                         # 前端仍然显示成功
@@ -1516,12 +1516,12 @@ def withdrawal_apply():
                         from datetime import datetime as dt_notify
                         now_str = dt_notify.now().strftime('%Y-%m-%d %H:%M:%S')
                         refund_notify_data = {
-                            'amount8': {'value': '¥' + f'{amount:.2f}'},
-                            'time6': {'value': now_str},
-                            'thing3': {'value': '原路退回支付账户'},
-                            'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
+                            'amount2': {'value': '¥' + f'{amount:.2f}'},
+                            'time5': {'value': now_str},
+                            'thing4': {'value': '原路退回支付账户'},
+                            'thing3': {'value': '预计0-3个工作日到账，请耐心等待'}
                         }
-                        send_wx_subscribe_message(user_openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', refund_notify_data, phone=user_phone, page='pages/mine/mine')
+                        send_wx_subscribe_message(user_openid, 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c', refund_notify_data, phone=user_phone, page='pages/mine/mine')
                     except Exception as e:
                         logger.error(f'[withdrawal_apply] 发送退款通知失败: {e}')
                     return json_response({'withdrawal_id': withdrawal_id, 'order_id': order_id, 'order_no': eligible['order_no'],
@@ -1583,12 +1583,12 @@ def withdrawal_apply():
                     from datetime import datetime as dt_notify
                     now_str = dt_notify.now().strftime('%Y-%m-%d %H:%M:%S')
                     refund_notify_data = {
-                        'amount8': {'value': '¥' + f'{amount:.2f}'},
-                        'time6': {'value': now_str},
-                        'thing3': {'value': '原路退回支付账户'},
-                        'thing2': {'value': '预计1-3个工作日到账，请耐心等待'}
+                        'amount2': {'value': '¥' + f'{amount:.2f}'},
+                        'time5': {'value': now_str},
+                        'thing4': {'value': '原路退回支付账户'},
+                        'thing3': {'value': '预计0-3个工作日到账，请耐心等待'}
                     }
-                    send_wx_subscribe_message(user_openid, 'YsfB8FH4eMrISAS92oUzBhoXe178AnxP8XSA0_24YoE', refund_notify_data, phone=user_phone, page='pages/mine/mine')
+                    send_wx_subscribe_message(user_openid, 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c', refund_notify_data, phone=user_phone, page='pages/mine/mine')
                 except Exception as e:
                     logger.error(f'[withdrawal_apply] 发送退款通知失败: {e}')
                 return json_response({'withdrawal_id': withdrawal_id, 'order_id': order_id, 'order_no': eligible['order_no'],

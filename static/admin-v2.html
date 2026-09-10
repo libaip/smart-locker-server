@@ -1483,10 +1483,10 @@ Vue.component('page-agent-settlement',{template:`
 <div style="margin-top:20px">
 <div class="box-header"><h3>历史结算批次</h3><button class="btn btn-sm" @click="loadHistory()">刷新</button></div>
 <table>
-<thead><tr><th>批次</th><th>结算日期</th><th>月份范围</th><th>代理商数</th><th>应结合计</th><th>应付合计</th><th>操作人</th><th>备注</th><th>操作</th></tr></thead>
+<thead><tr><th>批次</th><th>结算日期</th><th>月份范围</th><th>代理商</th><th>应结合计</th><th>应付合计</th><th>操作人</th><th>备注</th><th>操作</th></tr></thead>
 <tbody>
 <tr v-for="h in historyList">
-<td>{{h.id}}</td><td>{{h.settle_date}}</td><td>{{h.start_month}} ~ {{h.end_month}}</td><td>{{h.agent_count||0}}</td>
+<td>{{h.id}}</td><td>{{h.settle_date}}</td><td>{{h.start_month}} ~ {{h.end_month}}</td><td>{{h.agent_names||'-'}}</td>
 <td>¥{{(h.total_delta||0).toFixed(2)}}</td><td>¥{{(h.total_payable||0).toFixed(2)}}</td><td>{{h.created_by||'-'}}</td><td>{{h.note||'-'}}</td>
 <td><button class="btn btn-sm" @click="viewDetail(h.id)">查看</button></td>
 </tr>

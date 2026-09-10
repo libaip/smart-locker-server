@@ -2726,6 +2726,7 @@ def admin_agent_settlement_history():
             SELECT b.id, b.settle_date, b.created_by, b.note, b.created_at, b.confirmed_at,
                    MIN(l.settle_month) AS start_month, MAX(l.settle_month) AS end_month,
                    COUNT(DISTINCT l.agent_id) AS agent_count,
+                   STRING_AGG(DISTINCT l.agent_name, '、') AS agent_names,
                    COALESCE(SUM(l.delta_amount), 0) AS total_delta,
                    COALESCE(SUM(p.payable), 0) AS total_payable
             FROM agent_settlement_batches b

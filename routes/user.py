@@ -2797,7 +2797,9 @@ def wx_login():
                                                 mp_openid=openid_val, unionid=unionid_val)
                         upsert_user_balance_row(_ucur_save, phone=_phone, openid=openid_from_h5,
                                                 unionid=unionid_val, mp_openid=openid_val)
-                        _ucur_save.execute("UPDATE users SET mp_openid = %s WHERE phone = %s AND (mp_openid IS NULL OR mp_openid = chr(39)||chr(39))", (openid_val, _phone))
+                        # [FIX-20260911] 加 unionid 条件: 不能只按手机号写, 否则会把 A 号的小程序openid
+                        #   写进"同一手机号"的 B 号那一行(本次事故: 2LL8 的 openid 被写进了 Q1mrvz 的 users 97336)
+                        _ucur_save.execute("UPDATE users SET mp_openid = %s WHERE phone = %s AND unionid = %s AND (mp_openid IS NULL OR mp_openid = chr(39)||chr(39))", (openid_val, _phone, unionid_val))
                     else:
                         upsert_phone_openid_row(_ucur_save, phone=_phone or '', openid=openid_from_h5,
                                                 mp_openid=openid_val, unionid=unionid_val)
@@ -2812,20 +2814,26 @@ def wx_login():
                     logger.error(f'[wx_login] 保存unionid失败: {_ue_save}')
 
             # 查询 unionid 返回给前端
-            _unionid = ''
-            try:
-                _uc = get_db()
-                _ucur = _uc.cursor()
-                if _phone:
-                    _ucur.execute("SELECT unionid FROM user_balances WHERE phone=%s AND unionid IS NOT NULL AND unionid != '' LIMIT 1", (_phone,))
-                else:
-                    _ucur.execute("SELECT unionid FROM user_balances WHERE mp_openid=%s AND unionid IS NOT NULL AND unionid != '' LIMIT 1", (result['openid'],))
-                _ur = _ucur.fetchone()
-                if _ur and _ur['unionid']:
-                    _unionid = _ur['unionid']
-                _uc.close()
-            except Exception as _ue:
-                logger.error(f'[wx_login] 查unionid失败: {_ue}')
+            # [FIX-20260911] 关键修复: 微信已返回 unionid 时必须以微信的为准, 绝不能再拿手机号回查覆盖。
+            #   原因: 同一个手机号可能对上两个不同的微信号(测试号 / 用户换微信号 / 家人共用一个号),
+            #   用手机号回查会把 A 号认成 B 号。本次事故即: 微信给的是 oTGtk2e5...(2LL8),
+            #   却被手机号回查覆盖成 oTGtk2Q1...(Q1mrvz), 导致 2LL8 登录看到 Q1mrvz 的数据。
+            #   只有微信没返回 unionid(少见)时才回查兜底。
+            _unionid = unionid_val or ''
+            if not _unionid:
+                try:
+                    _uc = get_db()
+                    _ucur = _uc.cursor()
+                    if _phone:
+                        _ucur.execute("SELECT unionid FROM user_balances WHERE phone=%s AND unionid IS NOT NULL AND unionid != '' LIMIT 1", (_phone,))
+                    else:
+                        _ucur.execute("SELECT unionid FROM user_balances WHERE mp_openid=%s AND unionid IS NOT NULL AND unionid != '' LIMIT 1", (result['openid'],))
+                    _ur = _ucur.fetchone()
+                    if _ur and _ur['unionid']:
+                        _unionid = _ur['unionid']
+                    _uc.close()
+                except Exception as _ue:
+                    logger.error(f'[wx_login] 查unionid失败: {_ue}')
             if _unionid:
                 _resp['unionid'] = _unionid
 
@@ -2835,6 +2843,20 @@ def wx_login():
                     _auc = get_db()
                     _aucur = _auc.cursor()
                     _merged_uid = _resolve_user(_aucur, mp_openid=openid_val, phone=_phone, unionid=_unionid)
+                    # [FIX-20260911] 用解析出的账号自身的手机号回填给前端。
+                    #   否则客户端会继续缓存并上报错误的手机号, 后续 /api/user/info、/api/user/balance
+                    #   仍会按旧手机号查到另一个微信号的数据(本次事故根因之一)。
+                    if _merged_uid:
+                        try:
+                            _aucur.execute("SELECT phone FROM users WHERE id = %s", (_merged_uid,))
+                            _urow = _aucur.fetchone()
+                            _own_phone = ((_urow['phone'] if _urow else '') or '').strip()
+                            if _own_phone and not _own_phone.startswith('frozen') and _own_phone != _phone:
+                                logger.info(f'[wx_login] 手机号纠正: {_phone} -> {_own_phone[:3]}****{_own_phone[-4:]} (uid={_merged_uid})')
+                                _phone = _own_phone
+                                _resp['phone'] = _own_phone
+                        except Exception as _pe:
+                            logger.error(f'[wx_login] 回填手机号失败: {_pe}')
                     if _merged_uid and openid_val:
                         _aucur.execute("UPDATE users SET mp_openid = %s WHERE id = %s AND (mp_openid IS NULL OR mp_openid = '')", (openid_val, _merged_uid))
                     _auc.commit()
@@ -3710,7 +3732,11 @@ def link_mp_openid_from_mini():
         if phone and mp_openid:
 
             cursor.execute("UPDATE users SET mp_openid = %s WHERE unionid = %s AND (mp_openid IS NULL OR mp_openid = chr(39)||chr(39))", (mp_openid, unionid))
-            cursor.execute("UPDATE users SET mp_openid = %s WHERE phone = %s AND (mp_openid IS NULL OR mp_openid = chr(39)||chr(39))", (mp_openid, phone))
+            # [FIX-20260911] 有 unionid 时必须一起限定, 避免把当前小程序的 openid 写到同手机号的另一个微信号行上
+            if unionid:
+                cursor.execute("UPDATE users SET mp_openid = %s WHERE phone = %s AND unionid = %s AND (mp_openid IS NULL OR mp_openid = chr(39)||chr(39))", (mp_openid, phone, unionid))
+            else:
+                cursor.execute("UPDATE users SET mp_openid = %s WHERE phone = %s AND (mp_openid IS NULL OR mp_openid = chr(39)||chr(39))", (mp_openid, phone))
         # 把小程序身份写回已经创建的订单，H5 跳小程序订阅后订单就能带上 unionid
         if phone and mp_openid:
             if order_id:
@@ -3737,7 +3763,11 @@ def link_mp_openid_from_mini():
                 """, (gzh_openid, unionid, mp_openid, _mp_uid, phone))
         if phone and nickname:
             cursor.execute("UPDATE orders SET wechat_name = %s WHERE user_phone = %s AND (wechat_name IS NULL OR wechat_name = chr(39)||chr(39))", (nickname, phone))
-            cursor.execute("UPDATE users SET nickname = %s WHERE phone = %s AND (nickname IS NULL OR nickname = chr(39)||chr(39))", (nickname, phone))
+            # [FIX-20260911] 昵称同样不能按手机号跨微信号写(订单按手机号存没问题, users 行必须限定 unionid)
+            if unionid:
+                cursor.execute("UPDATE users SET nickname = %s WHERE phone = %s AND unionid = %s AND (nickname IS NULL OR nickname = chr(39)||chr(39))", (nickname, phone, unionid))
+            else:
+                cursor.execute("UPDATE users SET nickname = %s WHERE phone = %s AND (nickname IS NULL OR nickname = chr(39)||chr(39))", (nickname, phone))
 
         
         conn.commit()

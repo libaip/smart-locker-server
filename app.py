@@ -323,6 +323,9 @@ logger.info('[启动] 幽灵柜门巡逻任务已启动(每600秒,threading)')
 # 全局异常处理
 # ============================================
 
+# [FIX-20260912] 区分"HTTP 语义错误(405/404/400)"与"真服务器异常"所必需
+from werkzeug.exceptions import HTTPException  # noqa: E402
+
 @app.errorhandler(404)
 def not_found(e):
     """404页面"""
@@ -340,7 +343,22 @@ def server_error(e):
 
 @app.errorhandler(Exception)
 def handle_exception(e):
-    """通用异常捕获"""
+    """通用异常捕获
+
+    [FIX-20260912] HTTPException(405/404/400 等) 必须原样返回它自己的状态码, 绝不能一律当 500。
+      起因: 外网扫描器大量探测 POST / 、POST /admin、/?rest_route=... 这些不存在的路由,
+      Flask 本应正确返回 405 Method Not Allowed, 但原来的写法把它转成 500 并打完整 traceback:
+        (1) 污染日志 (2) 让 "5xx 告警" 彻底失去意义 —— 2026-09-11 全天 46 个 5xx 里 39 个是扫描器造的,
+        还因此推了一条"175 smart-locker 最近1分钟 5xx=23"的误报告警。
+      4xx 只记一行 warning(不打 traceback); 只有非 HTTPException 的真异常才 error + traceback。
+    """
+    if isinstance(e, HTTPException):
+        code = e.code or 500
+        if 400 <= code < 500:
+            logger.warning(f'[{code}] {request.method} {request.path}')
+        else:
+            logger.error(f'[{code}] {request.method} {request.path}: {e}')
+        return json_response(message=e.description or '请求无效', code=code)
     logger.error(f'[异常] 未捕获异常: {e}', exc_info=True)
     return json_response(message='服务器异常', code=500)
 

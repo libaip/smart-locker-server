@@ -102,6 +102,11 @@ def main():
     stamp = time.strftime('%Y%m%d_%H%M%S')
     fname = 'smart_locker_%s.dump' % stamp
     fpath = os.path.join(BACKUP_DIR, fname)
+    # [FIX-20260912] 先写到 .tmp, 校验通过后再原子改名成正式文件。
+    #   起因: 2026-09-12 04:30 监控误报"最新备份 0.0MB" —— 因为备份脚本直接往最终文件名里流式写,
+    #   而监控每分钟检查一次最新 *.dump, 恰好在备份开始后 1 秒看到了半成品。
+    #   改用 .tmp 后, *.dump 永远只会是完整文件(monitor_crash_guard 的 glob 只匹配 *.dump, 不会看到 .tmp)。
+    fpath_tmp = fpath + '.tmp'
     problems = []
 
     logging.info('===== 备份开始 =====')
@@ -116,9 +121,9 @@ def main():
         _alert('【严重】数据库备份被跳过(磁盘将满)', msg + '\n时间: %s' % time.strftime('%Y-%m-%d %H:%M:%S'))
         return 1
 
-    # 2. pg_dump
+    # 2. pg_dump（先写 .tmp, 避免监控读到半成品)
     try:
-        with open(fpath, 'wb') as fh:
+        with open(fpath_tmp, 'wb') as fh:
             r = subprocess.run(
                 ['sudo', '-u', 'postgres', 'pg_dump', '-Fc', '-d', DB_NAME],
                 stdout=fh, stderr=subprocess.PIPE, timeout=1800,
@@ -129,15 +134,15 @@ def main():
     except Exception as e:
         problems.append('pg_dump 异常: %s' % e)
 
-    # 3. 校验
+    # 3. 校验（校验 .tmp，通过后才改名）
     size_mb = 0
-    if os.path.exists(fpath):
-        size_mb = os.path.getsize(fpath) / 1048576.0
+    if os.path.exists(fpath_tmp):
+        size_mb = os.path.getsize(fpath_tmp) / 1048576.0
     if not problems:
         if size_mb < MIN_SIZE_MB:
             problems.append('备份文件过小: %.1fMB < %dMB' % (size_mb, MIN_SIZE_MB))
         else:
-            rc, out, err = _run('pg_restore -l %s' % fpath, timeout=300)
+            rc, out, err = _run('pg_restore -l %s' % fpath_tmp, timeout=300)
             if rc != 0:
                 problems.append('pg_restore 校验失败(rc=%d): %s' % (rc, err[:300]))
             else:
@@ -148,17 +153,39 @@ def main():
                     logging.info('校验通过: %s (%.1fMB, %d个对象)', fname, size_mb, n_items)
 
     if problems:
-        try:
-            if os.path.exists(fpath):
-                os.remove(fpath)   # 删掉可疑的坏文件, 免得监控误判为"有备份"
-        except Exception:
-            pass
+        for _f in (fpath_tmp, fpath):
+            try:
+                if os.path.exists(_f):
+                    os.remove(_f)   # 删掉可疑的坏/半成品文件, 免得监控误判为"有备份"
+            except Exception:
+                pass
         msg = '数据库备份失败:\n' + '\n'.join('- ' + p for p in problems)
         logging.error(msg.replace('\n', ' | '))
         _alert('【严重】数据库备份失败', msg + '\n时间: %s' % time.strftime('%Y-%m-%d %H:%M:%S'))
         return 1
 
+    # 3.5 校验全部通过 -> 原子改名成正式文件(此刻监控才可能看到它, 且一定是完整的)
+    try:
+        os.replace(fpath_tmp, fpath)
+        logging.info('已发布正式备份: %s (%.1fMB)', fname, size_mb)
+    except Exception as e:
+        logging.error('改名失败: %s', e)
+        _alert('【严重】数据库备份改名失败',
+               '备份已生成但无法发布为正式文件: %s\n临时文件: %s\n时间: %s'
+               % (e, fpath_tmp, time.strftime('%Y-%m-%d %H:%M:%S')))
+        return 1
+
     # 4. 本机保留策略
+    #   顺手清掉超过1天的 .tmp 残留(备份中途被杀会留下半成品)
+    try:
+        _cutoff = time.time() - 86400
+        for _t in glob.glob(os.path.join(BACKUP_DIR, 'smart_locker_*.dump.tmp')):
+            if os.path.getmtime(_t) < _cutoff:
+                os.remove(_t)
+                logging.info('清理残留临时文件: %s', os.path.basename(_t))
+    except Exception as e:
+        logging.warning('清理临时文件失败: %s', e)
+
     removed = _prune(BACKUP_DIR, 'smart_locker_*.dump', KEEP_DAYS)
     if removed:
         logging.info('本机清理旧备份 %d 个: %s', len(removed), ', '.join(removed))

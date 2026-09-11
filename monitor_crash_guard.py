@@ -17,6 +17,7 @@ import subprocess
 import logging
 import socket
 import glob
+import json
 
 sys.path.insert(0, '/home/ubuntu/smart-locker')
 
@@ -30,10 +31,50 @@ logging.basicConfig(
 _LAST_ALERT = {}
 _THROTTLE = 600
 
+# [FIX-20260912] 节流状态必须落盘!
+#   本脚本由 crontab 每分钟拉起一个【全新进程】, 内存里的 _LAST_ALERT 每次都从空开始,
+#   所以原来的节流实际上完全没生效 —— 一旦某个指标持续异常, 会每分钟推一条告警刷屏。
+#   改为把上次告警时间存到文件, 跨进程生效。
+_ALERT_STATE = '/home/ubuntu/smart-locker/logs/.crash_guard_last_alert.json'
+
+
+def _load_alert_state():
+    try:
+        with open(_ALERT_STATE, 'r') as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_alert_state(d):
+    try:
+        tmp = _ALERT_STATE + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(d, f)
+        os.replace(tmp, _ALERT_STATE)
+    except Exception as e:
+        logging.warning('告警节流状态落盘失败: %s', e)
+
+
 def _should_alert(key, throttle=None):
     now = time.time()
-    if now - _LAST_ALERT.get(key, 0) < (throttle or _THROTTLE):
+    d = _load_alert_state()
+    try:
+        last = float(d.get(key, 0) or 0)
+    except Exception:
+        last = 0
+    if now - last < (throttle or _THROTTLE):
         return False
+    d[key] = now
+    # 顺手清理超过7天的记录, 避免文件无限增长
+    for k in list(d.keys()):
+        try:
+            if now - float(d[k] or 0) > 7 * 86400:
+                d.pop(k, None)
+        except Exception:
+            d.pop(k, None)
+    _save_alert_state(d)
     _LAST_ALERT[key] = now
     return True
 

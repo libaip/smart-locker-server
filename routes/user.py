@@ -2463,6 +2463,25 @@ def cabinet_screen_info():
 # ============================================
 
 
+@bp.route('/user/oa-subscribe-log', methods=['POST'])
+def user_oa_subscribe_log():
+    """[FIX-20260912b] 记录公众号订阅通知授权结果(供通道选择与统计)"""
+    try:
+        data = request.get_json(silent=True) or {}
+        phone = str(data.get('phone') or '')[:20]
+        detail = str(data.get('detail') or '')[:2000]
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("INSERT INTO oa_subscribe_log (phone, detail) VALUES (%s, %s)", (phone, detail))
+        conn.commit()
+        conn.close()
+        logger.info('[oa_subscribe_log] phone=%s detail=%s', phone, detail[:300])
+        return json_response(message='ok')
+    except Exception as e:
+        logger.error('[oa_subscribe_log] 错误: %s', e)
+        return json_response(message=str(e), code=500)
+
+
 @bp.route('/user/info', methods=['GET'])
 def get_user_info():
     """获取用户信息（个人中心页）"""

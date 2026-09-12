@@ -207,7 +207,14 @@ def wechat_message():
 
         if msg_type == 'event':
             if event == 'subscribe':
-                return _reply('''\u6b22\u8fce\u5173\u6ce8\u667a\u80fd\u5bc4\u5b58\u67dc\uff01\u70b9\u51fb\u83dc\u5355\u5373\u53ef\u4f7f\u7528\u5bc4\u5b58\u670d\u52a1\u3002\u5ba2\u670d\u7535\u8bdd\uff1a4006981080''')
+                _ek = (msg.get('EventKey') or '')
+                _scene = _ek.split('qrscene_', 1)[-1] if 'qrscene_' in _ek else ''
+                _link = 'https://locker.cqdyxl.com/store'
+                if _scene.startswith('c') and _scene[1:].isdigit():
+                    _link += '?cabinet_id=' + _scene[1:]
+                elif _scene.startswith('d') and _scene[1:]:
+                    _link += '?device=' + _scene[1:]
+                return _reply('欢迎关注智能寄存柜！点此继续存包：' + _link + '  客服电话：4006981080')
             elif event == 'unsubscribe':
                 return '', 200
 

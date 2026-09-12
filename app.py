@@ -470,6 +470,45 @@ def screen():
         return '页面加载失败', 500
 
 
+def _oa_force_follow_qr(cabinet_id='', device=''):
+    """[FIX-20260912e] 生成/缓存某台柜机的公众号【带参二维码】。
+    用途: 强制关注引导页上显示这张码, 用户长按识别关注后,
+    微信会把场景值(qrscene_xxx)带在关注事件里 -> 我们就能回一条
+    带着这台柜机参数的"点此继续存包"消息, 把用户接回正确的存包页。"""
+    scene = ('c' + str(cabinet_id)) if cabinet_id else (('d' + str(device)) if device else '')
+    if not scene:
+        return ''
+    try:
+        import json as _json, urllib.request as _u, urllib.parse as _up, psycopg2
+        import config as _c
+        _key = 'oa_qr_scene_' + scene[:40]
+        _conn = psycopg2.connect(_c.DATABASE_URL, connect_timeout=5)
+        _cur = _conn.cursor()
+        _cur.execute("SELECT setting_value FROM system_settings WHERE setting_key=%s", (_key,))
+        _row = _cur.fetchone()
+        if _row and _row[0]:
+            _conn.close()
+            return _row[0]
+        _tok = _json.loads(_u.urlopen('https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s' % (_c.WX_APP_ID, _c.WX_APP_SECRET), timeout=8).read().decode()).get('access_token', '')
+        if not _tok:
+            _conn.close(); return ''
+        _body = _json.dumps({'action_name': 'QR_LIMIT_STR_SCENE', 'action_info': {'scene': {'scene_str': scene}}}).encode()
+        _req = _u.Request('https://api.weixin.qq.com/cgi-bin/qrcode/create?access_token=' + _tok, data=_body, headers={'Content-Type': 'application/json'})
+        _r = _json.loads(_u.urlopen(_req, timeout=10).read().decode())
+        _ticket = _r.get('ticket', '')
+        if not _ticket:
+            logger.warning('[force_follow_qr] 生成失败: %s', _r)
+            _conn.close(); return ''
+        _url = 'https://mp.weixin.qq.com/cgi-bin/showqrcode?ticket=' + _up.quote(_ticket)
+        _cur.execute("INSERT INTO system_settings (setting_key, setting_value, description) VALUES (%s,%s,'强制关注带参二维码') ON CONFLICT (setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value", (_key, _url))
+        _conn.commit(); _conn.close()
+        logger.info('[force_follow_qr] 已生成带参二维码 scene=%s', scene)
+        return _url
+    except Exception as _e:
+        logger.warning('[force_follow_qr] %s', _e)
+        return ''
+
+
 @app.route('/store', strict_slashes=False)
 def store_page():
     """存包页面 - 服务端渲染柜子信息"""
@@ -488,7 +527,7 @@ def store_page():
     _ver = str(int(__import__('time').time()))
     
     # 服务端查询柜子信息,直接渲染到页面
-    _ssr = {"site_name":"","site_addr":"","deposit_amount":0,"charge_mode":"deposit","allow_h5_to_mp":0,"force_follow_mp":0,"mp_appid":"","mp_path":"","is_online":True}
+    _ssr = {"site_name":"","site_addr":"","deposit_amount":0,"charge_mode":"deposit","allow_h5_to_mp":0,"force_follow_mp":0,"force_follow_qr":"","mp_appid":"","mp_path":"","is_online":True}
     _cabinet_id = request.args.get('cabinet_id', '')
     try:
         import sqlite3 as _sq
@@ -513,6 +552,11 @@ def store_page():
                 _ssr["force_follow_mp"] = row["force_follow_mp"] or 0
             except Exception:
                 _ssr["force_follow_mp"] = 0
+            if _ssr.get("force_follow_mp"):
+                try:
+                    _ssr["force_follow_qr"] = _oa_force_follow_qr(_cabinet_id or row["id"], device)
+                except Exception:
+                    _ssr["force_follow_qr"] = ""
             if row["allow_h5_to_mp"]:
                 import config as _cfg
                 _ssr["mp_appid"] = _cfg.WX_MP_APP_ID

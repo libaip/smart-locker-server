@@ -2115,7 +2115,7 @@
     // ===== [总开关] 公众号订阅通知功能 =====
     // 2026-09-12 老板决定: 【先关闭, 留作备用】。
     // 将来小程序被封 / 不可用时, 把下面的 false 改成 true 即可一键启用(只改这一处, 改完立即生效, 无需重启服务)。
-    var OA_SUBSCRIBE_ENABLED = false;
+    var OA_SUBSCRIBE_ENABLED = {oa_sub_on};   // 由后台「系统设置→通知设置→公众号订阅通知」控制
     var _oaSubBusy = false;
     function oaSubDiag(stage, extra) {
         try {

@@ -1865,6 +1865,8 @@ Vue.component('page-system-settings',{template:`
 <h4 style="margin:0 0 12px;font-size:15px;color:#303133">通知设置</h4>
 <div style="max-width:500px">
 <div class="form-group"><label>短信通知</label><label class="switch"><input type="checkbox" v-model="$parent.settingsData.sms_enabled.value" :true-value="'true'" :false-value="'false'"><span class="slider"></span></label></div>
+<div class="form-group"><label>公众号订阅通知</label><label class="switch"><input type="checkbox" :checked="$parent.oaSubscribeEnabled==='true'" @change="$parent.toggleOaSubscribe($event.target.checked)"><span class="slider"></span></label></div>
+<div style="font-size:12px;color:#909399;line-height:1.6;margin:-6px 0 6px">开启后: 存包页(H5)会让用户订阅微信通知, 并由公众号下发"寄存成功/押金退还/退款成功"。关闭后存包流程与以前完全一致。建议小程序不可用时再开启。</div>
 </div>
 </div>
 <div style="padding-bottom:20px">
@@ -1886,7 +1888,7 @@ Vue.component('page-system-settings',{template:`
 <button class="btn btn-blue" @click="$parent.saveSettings()">保存设置</button>
 </div>
 </div>
-</div>`,created(){this.$parent.loadSettings();this.$parent.loadFreeUse();}});
+</div>`,created(){this.$parent.loadSettings();this.$parent.loadFreeUse();this.$parent.loadOaSubscribe();}});
 
 Vue.component('page-cabinet-groups',{template:`
 <div class="page-box">
@@ -1992,7 +1994,7 @@ el:'#app',
 data:{
 showLogin:true,loginForm:{username:'',password:'',captcha:''},loginLoading:false,loginError:'',captchaCode:'',
 isShrink:false,isMobile:window.innerWidth<=768,sidebarOpen:false,activeMenu:'dashboard',menuRefKey:0,pageLoading:false,_apiLoadingCount:0,tabs:[{key:'dashboard',label:'控制台'}],activeTab:'dashboard',adminUser:'管理员',openGroups:{},menuGroupsData:[],
-stats:{},dailyTrend:[],freeUseEnabled:'false',
+stats:{},dailyTrend:[],freeUseEnabled:'false',oaSubscribeEnabled:'false',
 // Machines
 machines:[],machineTotal:0,machinePage:1,machineSearch:{keyword:'',status:'',location_id:'',agent_id:'',device_id:''},machineMoreOpen:null,
 cabinetModal:false,cabinetForm:{},cabinetFormTitle:'',cabinetEditTab:'basic',deviceDetailModal:false,deviceDetail:null,doorStatusLoading:false,doorStatusResult:null,addSlotModal:false,addSlotForm:{slot_size:'medium',board_no:1,slot_count:1},deviceQrcodeModal:false,deviceQrcode:null,deviceQrcodeModal:false,deviceQrcode:null,
@@ -2254,6 +2256,8 @@ saveRole:function(){var self=this;this.api('/roles/save',this.roleForm).then(fun
 loadResetStats:function(){var self=this;this.api('/data-reset/stats').then(function(d){self.resetStats=d.data||{};}).catch(function(){});},
 
 // P1 Methods
+loadOaSubscribe:function(){var self=this;this.api('/admin/oa-subscribe-setting').then(function(d){self.oaSubscribeEnabled=(d&&d.data&&d.data.enabled)?'true':'false';}).catch(function(){});},
+toggleOaSubscribe:function(checked){var self=this;this.api('/admin/oa-subscribe-setting',{enabled:checked?'true':'false'},'POST').then(function(d){self.oaSubscribeEnabled=checked?'true':'false';self.toast((d&&d.message)||'已保存');}).catch(function(){self.oaSubscribeEnabled=checked?'false':'true';self.toast('保存失败');});},
 loadFreeUse:function(){var self=this;this.api('/admin/free-use-setting').then(function(d){self.freeUseEnabled=(d&&d.data&&d.data.enabled)?'true':'false';}).catch(function(){});},
 toggleFreeUse:function(checked){var self=this;this.api('/admin/free-use-setting',{enabled:checked?'true':'false'},'POST').then(function(d){self.freeUseEnabled=checked?'true':'false';self.toast(d.message||'已保存');}).catch(function(e){self.toast(e.message||'操作失败','error');});},
 loadSettings:function(){var self=this;this.api('/settings').then(function(d){var sd={};var src=(d&&d.data&&typeof d.data==='object')?d.data:(Array.isArray(d)?d:[]);if(Array.isArray(src)){src.forEach(function(r){sd[r.setting_key]={value:r.setting_value,desc:r.description||r.setting_key};});}else{Object.keys(src).forEach(function(k){sd[k]={value:(src[k]&&src[k].value!==undefined)?src[k].value:'',desc:(src[k]&&src[k].desc)||k};});}if(!sd.whitelist_daily_use_limit)sd.whitelist_daily_use_limit={value:'3',desc:'当天投诉用户今日可用次数'};if(!sd.complaint_blacklist_limit)sd.complaint_blacklist_limit={value:'3',desc:'累计投诉禁止使用次数'};self.settingsData=sd;}).catch(function(e){self.toast(e.message||'加载失败','error');});},

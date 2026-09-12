@@ -546,10 +546,16 @@ def store_page():
     import json as _json
     _ssr_json = _json.dumps(_ssr, ensure_ascii=False)
     
+    try:
+        from helpers import get_setting as _get_setting
+        _oa_sub_on = str(_get_setting('oa_subscribe_enabled', 'false')).lower() in ('true', '1', 'yes')
+    except Exception:
+        _oa_sub_on = False
     tpl_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'deposit.html')
     try:
         with open(tpl_path, 'r', encoding='utf-8') as f:
             html = f.read().replace("{device}", device).replace("{openid}", openid).replace("{_ver}", _ver).replace("{ssr_cabinet}", _ssr_json).replace("{cabinet_id}", _cabinet_id).replace("{deposit_amount}", str(int(_ssr["deposit_amount"]) if _ssr["deposit_amount"] and _ssr["deposit_amount"] == int(_ssr["deposit_amount"]) else _ssr["deposit_amount"]))
+        html = html.replace("{oa_sub_on}", ("true" if _oa_sub_on else "false"))
         from flask import make_response as _mr
         resp = _mr(html)
         resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'

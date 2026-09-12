@@ -4617,6 +4617,41 @@ def admin_free_use_setting():
         return json_response(message=str(e), code=500)
 
 
+@bp.route('/admin/oa-subscribe-setting', methods=['GET', 'POST'])
+@require_auth
+def admin_oa_subscribe_setting():
+    """公众号订阅通知总开关(GET查/POST设)。
+    直接读写 PostgreSQL: 避开 admin 系统设置那套走 SQLite 的老坑
+    (那条路径写的是 sqlite3, 而程序运行时读的是 PG, 两边已分叉)。"""
+    from config import DATABASE_URL as _OA_DB_URL
+    import psycopg2
+    try:
+        if request.method == 'POST':
+            data = request.get_json() or {}
+            enabled = str(data.get('enabled', 'false')).lower() in ('true', '1', 'yes')
+            _conn = psycopg2.connect(_OA_DB_URL, connect_timeout=5)
+            _cur = _conn.cursor()
+            _cur.execute(
+                "INSERT INTO system_settings (setting_key, setting_value) VALUES ('oa_subscribe_enabled', %s) "
+                "ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value",
+                ('true' if enabled else 'false',))
+            _conn.commit()
+            _conn.close()
+            logger.info('[oa_subscribe_setting] 设为 %s', enabled)
+            return json_response({'code': 0, 'enabled': enabled,
+                                  'message': '公众号订阅通知已%s' % ('开启' if enabled else '关闭')})
+        _conn = psycopg2.connect(_OA_DB_URL, connect_timeout=5)
+        _cur = _conn.cursor()
+        _cur.execute("SELECT setting_value FROM system_settings WHERE setting_key='oa_subscribe_enabled'")
+        _row = _cur.fetchone()
+        _conn.close()
+        enabled = (str(_row[0]).lower() in ('true', '1', 'yes')) if _row else False
+        return json_response({'code': 0, 'enabled': enabled})
+    except Exception as e:
+        logger.error(f'[oa_subscribe_setting] {e}')
+        return json_response(message=str(e), code=500)
+
+
 @bp.route('/settings/save', methods=['POST'])
 def save_settings():
     try:

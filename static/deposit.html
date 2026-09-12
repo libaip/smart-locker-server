@@ -488,17 +488,18 @@
                 <input class="cred-input" id="accessCode" type="text" maxlength="4" placeholder="设置4位数密码" inputmode="numeric" pattern="[0-9]*">
             </div>
             <div style="position:relative">
-                <button class="next-btn" onclick="onStep1Next()">下一步</button>
+                <button id="oaOrigBtn" class="next-btn" onclick="onStep1Next()">下一步</button>
                 <div id="oaSubWrap" style="opacity:0;pointer-events:none;position:absolute;left:0;top:0;right:0;bottom:0;z-index:9">
-                    <wx-open-subscribe id="oaSubBtn" template="RyvAHJzC46JDEk_w8nAJHlLppNtNiAgkqP_GdHGWEUg,pG1ieUsHgBg5y0ZJCfjNiUrF7QuftlSWwDYXSpAp6js,nDTX0vT_wODrTnM4A1qSNnSXDUTNgw2Fm0CMF0eZe-o" style="display:block;width:100%;height:100%">
+                    <wx-open-subscribe id="oaSubBtn" template="RyvAHJzC46JDEk_w8nAJHlLppNtNiAgkqP_GdHGWEUg,pG1ieUsHgBg5y0ZJCfjNiUrF7QuftlSWwDYXSpAp6js,nDTX0vT_wODrTnM4A1qSNnSXDUTNgw2Fm0CMF0eZe-o" style="display:block;width:100%">
                         <script type="text/wxtag-template">
-                            <style>.oa-hit{display:block;width:100%;height:100%;background:transparent;border:0;padding:0;margin:0}</style>
-                            <button class="oa-hit"></button>
+                            <style>.oa-hit{display:block;width:100%;padding:14px;background:#FFC107;color:#1a1a1a;border:0;border-radius:24px;font-size:17px;font-weight:700;margin-top:6px;text-align:center;box-sizing:border-box}</style>
+                            <button class="oa-hit">下一步</button>
                         </script>
                     </wx-open-subscribe>
                 </div>
             </div>
-            <div id="oaSubHint" style="display:none;font-size:12px;color:#999;text-align:center;margin-top:6px;line-height:1.5">首次会弹出订阅提示，建议勾选“总是保持以上选择”，以后不再打扰</div>
+            <div id="oaSubEsc" style="display:none;font-size:13px;color:#576b95;text-align:center;margin-top:4px;text-decoration:underline" onclick="onStep1Next()">点不动？点这里继续存包</div>
+            <div id="oaSubHint" style="display:none;font-size:12px;color:#999;text-align:center;margin-top:6px;line-height:1.5">点“下一步”即同时订阅寄存通知（首次会提示，建议勾选“总是保持以上选择”，以后不再打扰）</div>
         </div>
         <!-- 存取包说明 -->
         <div class="usage-tips">
@@ -2165,8 +2166,17 @@
             var h = document.getElementById('oaSubHint');
             if (w) { w.style.opacity = '1'; w.style.pointerEvents = 'auto'; }
             if (h) { h.style.display = 'block'; }
-            oaSubDiag('tag_ready');
+            var _esc = document.getElementById('oaSubEsc');
+            if (_esc) { _esc.style.display = 'block'; }
+            var ob = document.getElementById('oaOrigBtn');
+            if (ob) { ob.style.display = 'none'; }   // 关键: 藏掉原按钮, 用户只能点到订阅标签
+            function _rc(el) { if (!el) { return 'null'; } var r = el.getBoundingClientRect(); return Math.round(r.left) + ',' + Math.round(r.top) + ',' + Math.round(r.width) + 'x' + Math.round(r.height); }
+            oaSubDiag('tag_ready', 'tag=' + _rc(tag) + ' wrap=' + _rc(w) + ' origBtn=' + _rc(ob) + ' innerH=' + window.innerHeight);
         });
+        var _wrapEl = document.getElementById('oaSubWrap');
+        if (_wrapEl) { _wrapEl.addEventListener('click', function() { oaSubDiag('click_layer'); }, true); }
+        var _origEl = document.getElementById('oaOrigBtn');
+        if (_origEl) { _origEl.addEventListener('click', function() { oaSubDiag('click_origbtn'); }, true); }
         tag.addEventListener('success', function(e) { oaSubProceed(e.detail); });
         tag.addEventListener('error', function(e) { oaSubProceed(e.detail); });
         document.addEventListener('WeixinOpenTagsError', function(e) {

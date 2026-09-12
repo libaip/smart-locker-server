@@ -1304,7 +1304,7 @@ def upsert_user_balance_row(cursor, phone='', openid='', unionid='', mp_openid='
                  total_deposited = COALESCE(user_balances.total_deposited,0) + EXCLUDED.total_deposited,
                  total_withdrawn = COALESCE(user_balances.total_withdrawn,0) + EXCLUDED.total_withdrawn,
                  openid = COALESCE(NULLIF(EXCLUDED.openid,''), user_balances.openid),
-                 mp_openid = COALESCE(NULLIF(EXCLUDED.mp_openid,''), user_balances.mp_openid),
+                 mp_openid = keep_new_mp_openid(user_balances.mp_openid, EXCLUDED.mp_openid),
                  wechat_name = COALESCE(NULLIF(EXCLUDED.wechat_name,''), user_balances.wechat_name)
                RETURNING id""",
             (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, total_withdrawn, user_id),
@@ -1335,7 +1335,7 @@ def upsert_user_balance_row(cursor, phone='', openid='', unionid='', mp_openid='
                  balance = COALESCE(user_balances.balance,0) + EXCLUDED.balance,
                  total_deposited = COALESCE(user_balances.total_deposited,0) + EXCLUDED.total_deposited,
                  total_withdrawn = COALESCE(user_balances.total_withdrawn,0) + EXCLUDED.total_withdrawn,
-                 mp_openid = COALESCE(NULLIF(EXCLUDED.mp_openid,''), user_balances.mp_openid),
+                 mp_openid = keep_new_mp_openid(user_balances.mp_openid, EXCLUDED.mp_openid),
                  unionid = COALESCE(NULLIF(EXCLUDED.unionid,''), user_balances.unionid),
                  wechat_name = COALESCE(NULLIF(EXCLUDED.wechat_name,''), user_balances.wechat_name)
                RETURNING id""",
@@ -1352,7 +1352,7 @@ def upsert_user_balance_row(cursor, phone='', openid='', unionid='', mp_openid='
                  total_deposited = COALESCE(user_balances.total_deposited,0) + EXCLUDED.total_deposited,
                  total_withdrawn = COALESCE(user_balances.total_withdrawn,0) + EXCLUDED.total_withdrawn,
                  openid = COALESCE(NULLIF(EXCLUDED.openid,''), user_balances.openid),
-                 mp_openid = COALESCE(NULLIF(EXCLUDED.mp_openid,''), user_balances.mp_openid),
+                 mp_openid = keep_new_mp_openid(user_balances.mp_openid, EXCLUDED.mp_openid),
                  wechat_name = COALESCE(NULLIF(EXCLUDED.wechat_name,''), user_balances.wechat_name)
                RETURNING id""",
             (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, total_withdrawn, user_id),
@@ -1362,7 +1362,16 @@ def upsert_user_balance_row(cursor, phone='', openid='', unionid='', mp_openid='
 
 
 def upsert_phone_openid_row(cursor, phone='', openid='', mp_openid='', unionid='', wechat_name='', gzh_openid='', user_id=0):
-    """Insert or update a phone_openids row keyed by identity, not by phone alone."""
+    """Insert or update a phone_openids row keyed by identity, not by phone alone.
+
+    [FIX-20260912] mp_openid 的写入统一走数据库函数 keep_new_mp_openid(旧值, 新值):
+    禁止用旧小程序的 openid 覆盖已经存在的【新小程序(ooTcRx) openid】。
+      起因: 用户只要偶尔打开一次旧小程序(科莱智), 登录就会把 mp_openid 从 ooTcRx 覆盖成 oWrA8,
+      之后所有订阅通知都查不到新 openid 而静默跳过, 用户完全不知道。
+      实测: 2026-09-12 14:55:06 测试号 18888889999 的 openid 就是这样被覆盖掉的。
+    规则: 新的为空 -> 保留旧值; 新的是 ooTcRx -> 用新的; 旧的是空的 -> 用新的;
+          旧的是 ooTcRx 而新的不是 -> 保留旧值(拒绝降级); 其余 -> 用新的。
+    """
     phone = _clean(phone)
     openid = _clean(openid)
     unionid = _clean(unionid)
@@ -1388,7 +1397,7 @@ def upsert_phone_openid_row(cursor, phone='', openid='', mp_openid='', unionid='
                 cursor.execute(
                     """UPDATE phone_openids SET
                          openid = COALESCE(NULLIF(%s,''), openid),
-                         mp_openid = COALESCE(NULLIF(%s,''), mp_openid),
+                         mp_openid = keep_new_mp_openid(mp_openid, %s),
                          wechat_name = COALESCE(NULLIF(%s,''), wechat_name),
                          gzh_openid = COALESCE(NULLIF(%s,''), gzh_openid),
                          updated_at = NOW()
@@ -1430,7 +1439,7 @@ def upsert_phone_openid_row(cursor, phone='', openid='', mp_openid='', unionid='
             cursor.execute(
                 """UPDATE phone_openids SET
                      openid = COALESCE(NULLIF(%s,''), openid),
-                     mp_openid = COALESCE(NULLIF(%s,''), mp_openid),
+                     mp_openid = keep_new_mp_openid(mp_openid, %s),
                      unionid = COALESCE(NULLIF(%s,''), unionid),
                      wechat_name = COALESCE(NULLIF(%s,''), wechat_name),
                      gzh_openid = COALESCE(NULLIF(%s,''), gzh_openid),
@@ -1448,7 +1457,7 @@ def upsert_phone_openid_row(cursor, phone='', openid='', mp_openid='', unionid='
                ON CONFLICT (phone, unionid) WHERE unionid IS NOT NULL AND unionid <> ''
                DO UPDATE SET
                  openid = COALESCE(NULLIF(EXCLUDED.openid,''), phone_openids.openid),
-                 mp_openid = COALESCE(NULLIF(EXCLUDED.mp_openid,''), phone_openids.mp_openid),
+                 mp_openid = keep_new_mp_openid(phone_openids.mp_openid, EXCLUDED.mp_openid),
                  wechat_name = COALESCE(NULLIF(EXCLUDED.wechat_name,''), phone_openids.wechat_name),
                  gzh_openid = COALESCE(NULLIF(EXCLUDED.gzh_openid,''), phone_openids.gzh_openid),
                  user_id = CASE WHEN %s > 0 THEN %s ELSE phone_openids.user_id END,
@@ -1462,7 +1471,7 @@ def upsert_phone_openid_row(cursor, phone='', openid='', mp_openid='', unionid='
                VALUES (%s,%s,%s,%s,%s,%s,%s,NOW())
                ON CONFLICT (phone, openid) WHERE openid IS NOT NULL AND openid <> ''
                DO UPDATE SET
-                 mp_openid = COALESCE(NULLIF(EXCLUDED.mp_openid,''), phone_openids.mp_openid),
+                 mp_openid = keep_new_mp_openid(phone_openids.mp_openid, EXCLUDED.mp_openid),
                  unionid = COALESCE(NULLIF(EXCLUDED.unionid,''), phone_openids.unionid),
                  wechat_name = COALESCE(NULLIF(EXCLUDED.wechat_name,''), phone_openids.wechat_name),
                  gzh_openid = COALESCE(NULLIF(EXCLUDED.gzh_openid,''), phone_openids.gzh_openid),
@@ -1493,7 +1502,7 @@ def upsert_phone_openid_row(cursor, phone='', openid='', mp_openid='', unionid='
             cursor.execute(
                 """UPDATE phone_openids SET
                      openid = COALESCE(NULLIF(%s,''), openid),
-                     mp_openid = COALESCE(NULLIF(%s,''), mp_openid),
+                     mp_openid = keep_new_mp_openid(mp_openid, %s),
                      unionid = COALESCE(NULLIF(%s,''), unionid),
                      wechat_name = COALESCE(NULLIF(%s,''), wechat_name),
                      gzh_openid = COALESCE(NULLIF(%s,''), gzh_openid),
@@ -2842,6 +2851,20 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
                     _rr = _cur4.fetchone()
                     if _rr and _rr.get('mp_openid'):
                         _r4 = (_rr['mp_openid'],)
+                if not _r4 and unionid:
+                    # [FIX-20260912] 再按 unionid 跨手机号找一遍(关键补充)。
+                    #   起因: 同一个微信号(unionid)的新小程序 openid 会被记在它的"首个手机号"那一行,
+                    #   而消息是按用户当前手机号发的 -> 只按手机号查会查不到, 消息被白白跳过。
+                    #   实例: 测试号 18888889999(unionid oTGtk2e5...) 的新 openid 记在 18867642312 那一行。
+                    _cur4.execute("""
+                        SELECT mp_openid FROM phone_openids
+                        WHERE unionid = %s AND NULLIF(mp_openid,'') IS NOT NULL AND mp_openid LIKE 'ooTcRx%%'
+                        ORDER BY id ASC LIMIT 1
+                    """, (unionid,))
+                    _rru = _cur4.fetchone()
+                    if _rru and _rru.get('mp_openid'):
+                        _r4 = (_rru['mp_openid'],)
+                        logger.info('[subscribe_msg] 按unionid跨手机号找到新openid: phone=%s', phone)
                 _conn4.close()
                 if _r4 and _r4[0]:
                     openid = _r4[0]

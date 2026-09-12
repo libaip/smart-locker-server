@@ -1118,13 +1118,19 @@ def _auto_clear_cabinet_scheduler():
 
                         if refunded and not already_credited:
                             try:
+                                # [FIX-20260912] 这里原来用的是【旧小程序】的模板ID
+                                #   5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A 和旧模板的字段名
+                                #   (amount6/time4/thing7/thing2)。换小程序后该模板在新小程序里不存在,
+                                #   微信一直返回 40037 invalid template_id(24小时31次), 消息永远发不出去。
+                                #   已按其它调用点的正确写法改为"押金退还"模板 PtRJgP(字段 amount1/time2/thing4/thing3,
+                                #   文案与原来完全一致)。
                                 sub_data = {
-                                    "amount6": {"value": "¥{:.2f}".format(deposit_amount)},
-                                    "time4": {"value": now_str},
-                                    "thing7": {"value": "已退还至小程序用户钱包"},
-                                    "thing2": {"value": "请自行点击此通知消息跳转\u201c我的钱包\u201d提现"}
+                                    "amount1": {"value": "¥{:.2f}".format(deposit_amount)},
+                                    "time2": {"value": now_str},
+                                    "thing4": {"value": "已退还至小程序用户钱包"},
+                                    "thing3": {"value": "请自行点击此通知消息跳转\u201c我的钱包\u201d提现"}
                                 }
-                                send_wx_subscribe_message(mp_openid or "", "5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A", sub_data, phone=o["user_phone"])
+                                send_wx_subscribe_message(mp_openid or "", "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA", sub_data, phone=o["user_phone"], page="pages/mine/mine")
                             except Exception as e:
                                 logger.error('[自动清柜] 发送通知失败')
 

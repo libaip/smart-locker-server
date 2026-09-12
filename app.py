@@ -488,7 +488,7 @@ def store_page():
     _ver = str(int(__import__('time').time()))
     
     # 服务端查询柜子信息,直接渲染到页面
-    _ssr = {"site_name":"","site_addr":"","deposit_amount":0,"charge_mode":"deposit","allow_h5_to_mp":0,"mp_appid":"","mp_path":"","is_online":True}
+    _ssr = {"site_name":"","site_addr":"","deposit_amount":0,"charge_mode":"deposit","allow_h5_to_mp":0,"force_follow_mp":0,"mp_appid":"","mp_path":"","is_online":True}
     _cabinet_id = request.args.get('cabinet_id', '')
     try:
         import sqlite3 as _sq
@@ -496,11 +496,11 @@ def store_page():
         conn.row_factory = _sq.Row
         c = conn.cursor()
         if device:
-            c.execute("SELECT c.id,c.name,c.deposit_amount,c.charge_mode,c.per_use_price,c.mainboard_device_id,c.last_heartbeat,l.name as loc_name,l.address as loc_addr,l.allow_h5_to_mp FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.mainboard_device_id=?", (device,))
+            c.execute("SELECT c.id,c.name,c.deposit_amount,c.charge_mode,c.per_use_price,c.mainboard_device_id,c.last_heartbeat,l.name as loc_name,l.address as loc_addr,l.allow_h5_to_mp,l.force_follow_mp FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.mainboard_device_id=?", (device,))
         elif _cabinet_id:
-            c.execute("SELECT c.id,c.name,c.deposit_amount,c.charge_mode,c.per_use_price,c.mainboard_device_id,c.last_heartbeat,l.name as loc_name,l.address as loc_addr,l.allow_h5_to_mp FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.id=?", (_cabinet_id,))
+            c.execute("SELECT c.id,c.name,c.deposit_amount,c.charge_mode,c.per_use_price,c.mainboard_device_id,c.last_heartbeat,l.name as loc_name,l.address as loc_addr,l.allow_h5_to_mp,l.force_follow_mp FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.id=?", (_cabinet_id,))
         else:
-            c.execute("SELECT c.id,c.name,c.deposit_amount,c.charge_mode,c.per_use_price,c.mainboard_device_id,c.last_heartbeat,l.name as loc_name,l.address as loc_addr,l.allow_h5_to_mp FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.id=8")
+            c.execute("SELECT c.id,c.name,c.deposit_amount,c.charge_mode,c.per_use_price,c.mainboard_device_id,c.last_heartbeat,l.name as loc_name,l.address as loc_addr,l.allow_h5_to_mp,l.force_follow_mp FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.id=8")
         row = c.fetchone()
         if row:
             _ssr["site_name"] = row["loc_name"] or row["name"] or ""
@@ -509,6 +509,10 @@ def store_page():
             _ssr["charge_mode"] = row["charge_mode"] or "deposit"
             _ssr["per_use_price"] = row["per_use_price"] or 0
             _ssr["allow_h5_to_mp"] = row["allow_h5_to_mp"] or 0
+            try:
+                _ssr["force_follow_mp"] = row["force_follow_mp"] or 0
+            except Exception:
+                _ssr["force_follow_mp"] = 0
             if row["allow_h5_to_mp"]:
                 import config as _cfg
                 _ssr["mp_appid"] = _cfg.WX_MP_APP_ID

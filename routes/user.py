@@ -2463,6 +2463,40 @@ def cabinet_screen_info():
 # ============================================
 
 
+@bp.route('/user/check-follow', methods=['GET'])
+def user_check_follow():
+    """[FIX-20260912d] 查用户是否已关注公众号(供 H5 强制关注引导轮询)
+    带 5 秒内存缓存, 避免前端轮询把微信接口打爆。"""
+    import time as _t
+    openid = (request.args.get('openid') or '').strip()
+    if not openid or not openid.startswith('oLhbm2'):
+        return json_response({'follow': False, 'known': False})
+    _ck = getattr(user_check_follow, '_cache', None)
+    if _ck is None:
+        _ck = {}
+        user_check_follow._cache = _ck
+    _now = _t.time()
+    _hit = _ck.get(openid)
+    if _hit and _now - _hit[0] < 5:
+        return json_response({'follow': _hit[1], 'known': True, 'cached': True})
+    try:
+        import urllib.request as _u, json as _j
+        import config as _c
+        _tok = _j.loads(_u.urlopen('https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s' % (_c.WX_APP_ID, _c.WX_APP_SECRET), timeout=6).read().decode()).get('access_token', '')
+        if not _tok:
+            return json_response({'follow': False, 'known': False})
+        _d = _j.loads(_u.urlopen('https://api.weixin.qq.com/cgi-bin/user/info?access_token=%s&openid=%s&lang=zh_CN' % (_tok, openid), timeout=6).read().decode())
+        _sub = _d.get('subscribe')
+        _follow = (_sub == 1)
+        _ck[openid] = (_now, _follow)
+        if len(_ck) > 5000:
+            _ck.clear()
+        return json_response({'follow': _follow, 'known': ('subscribe' in _d)})
+    except Exception as _e:
+        logger.warning('[check_follow] %s', _e)
+        return json_response({'follow': False, 'known': False})
+
+
 @bp.route('/user/oa-subscribe-log', methods=['POST'])
 def user_oa_subscribe_log():
     """[FIX-20260912b] 记录公众号订阅通知授权结果(供通道选择与统计)"""

@@ -2112,6 +2112,10 @@
     //       (建议勾"总是保持以上选择"), 之后静默完成 => 无感。
     // 安全: 低版本微信或标签不可用时, 覆盖层始终不显示, 用户点的仍是原来的"下一步"按钮,
     //       存包主流程完全不受影响。
+    // ===== [总开关] 公众号订阅通知功能 =====
+    // 2026-09-12 老板决定: 【先关闭, 留作备用】。
+    // 将来小程序被封 / 不可用时, 把下面的 false 改成 true 即可一键启用(只改这一处, 改完立即生效, 无需重启服务)。
+    var OA_SUBSCRIBE_ENABLED = false;
     var _oaSubBusy = false;
     function oaSubDiag(stage, extra) {
         try {
@@ -2207,7 +2211,13 @@
         var w = document.getElementById('oaSubWrap');
         if (w && w.style.opacity !== '1') { oaSubDiag('tag_timeout'); }
     }, 5000);
-    oaSubDiag('boot', (document.getElementById('oaSubBtn') ? 'tag_in_dom' : 'tag_missing') + '|ready=' + document.readyState + '|ua=' + (navigator.userAgent || '').slice(-60));
-    try { oaSubscribeInit(); } catch (e) { oaSubDiag('init_exc', (e && e.message) || String(e)); }
+    if (!OA_SUBSCRIBE_ENABLED) {
+        // 备用状态: 不请求签名、不显示订阅按钮、不隐藏原按钮,
+        // 页面行为与功能上线前完全一致。
+        console.log('[oa-subscribe] 功能已关闭(备用状态)');
+    } else {
+        oaSubDiag('boot', (document.getElementById('oaSubBtn') ? 'tag_in_dom' : 'tag_missing') + '|ready=' + document.readyState + '|ua=' + (navigator.userAgent || '').slice(-60));
+        try { oaSubscribeInit(); } catch (e) { oaSubDiag('init_exc', (e && e.message) || String(e)); }
+    }
 })();
 </script>

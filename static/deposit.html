@@ -714,10 +714,11 @@
     <div id="mpTipModal" class="modal-overlay">
         <div class="modal-box">
             <div class="modal-title">存包提示</div>
-            <p id="mpTipDesc" style="text-align:center;font-size:14px;color:#666;margin-bottom:10px">建议使用小程序完成存包，体验更佳</p>
+            <p id="mpTipDesc" style="text-align:center;font-size:14px;color:#666;margin-bottom:10px">建议使用小程序完成存包，可收到微信通知；打不开请点“继续H5存包”</p>
+            <p id="mpRetryHint" style="display:none;text-align:center;font-size:13px;color:#e6a23c;margin-bottom:10px">没跳过去？点下面“打开小程序”再试一次</p>
             <div class="modal-btns">
                 <button class="modal-btn modal-btn-cancel" onclick="closeMpTipModal()">继续H5存包</button>
-                <button class="modal-btn modal-btn-confirm" onclick="launchMp()">打开小程序</button>
+                <button id="mpOpenBtn" class="modal-btn modal-btn-confirm" onclick="launchMp()">打开小程序</button>
             </div>
         </div>
     </div>
@@ -1045,7 +1046,7 @@
                 document.getElementById('payDoorNum').textContent = (d.data.compartment_number || '') + '号';
                 console.log("[DEBUG] allowH5ToMp:", allowH5ToMp, "mpAppId:", mpAppId);
                 if (allowH5ToMp === 1) {
-                    launchMp();
+                    mpAutoJump();
                 } else {
                     goToStep2Direct();
                 }
@@ -1061,36 +1062,96 @@
 
     function closeMpTipModal() {
         document.getElementById('mpTipModal').classList.remove('show');
+        if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); mpGiveupTimer = null; }
+        if (mpRescueTimer) { clearTimeout(mpRescueTimer); mpRescueTimer = null; }
+        mpOpenedTime = 0;
         goToStep2Direct();
     }
 
-    function launchMp() {
-        document.getElementById('mpTipModal').classList.remove('show');
-        if (!mpAppId) { mpAppId = 'wxcabd4cbdb3096c4b'; }
-        var phone = currentPhone || document.getElementById('userPhone').value.trim();
-        var code = currentAccessCode || document.getElementById('accessCode').value.trim();
+    // ===== [FIX-20260912] H5→小程序跳转加固(救 iPhone) =====
+    // 原因: 原来是"创建订单回调 → launchMp() → 要scheme的回调 → location.href=scheme",
+    //       全程不在用户点击手势里; iOS 对这类 scheme 跳转拦截严格(还会弹"即将离开微信"),
+    //       安卓宽松 → 实测 安卓≈78% / iPhone≈54%, 每天约 121 次没跳过去(未授权=收不到通知)。
+    // 改法: 1) 预取 scheme 缓存起来; 2) 先按老逻辑自动跳(安卓照旧、用户无感), 2 秒后页面仍可见
+    //       = 跳失败(iPhone) → 弹窗; 3) 用户在弹窗上点"打开小程序"是真实点击 → 同步跳转;
+    //       4) 不再"3 秒悄悄放过": 弹窗留给用户重试, 25 秒后才自动继续, 避免有人卡住。
+    var mpScheme = '';
+    var mpSchemeDone = false;
+    var mpSchemeCbs = [];
+    var mpRescueTimer = null;
+    var mpGiveupTimer = null;
+
+    function mpBuildQuery() {
+        var _el = document.getElementById('userPhone');
+        var _ec = document.getElementById('accessCode');
+        var phone = currentPhone || (_el ? _el.value.trim() : '');
+        var code = currentAccessCode || (_ec ? _ec.value.trim() : '');
         var g = phone.substring(0, 3);
         var h = phone.substring(3, 7);
         var j = phone.substring(7);
-        var basePath = 'pages/subscribe/subscribe';
-        var queryStr = 'g=' + g + '&h=' + h + '&j=' + j + '&code=' + code + '&phone=' + encodeURIComponent(phone) + '&order_id=' + encodeURIComponent(currentOrderId || '') + '&gzh_openid=' + encodeURIComponent(wxOpenid || '');
-        var miniPath = basePath + '?' + queryStr;
-        mpOpenedTime = Date.now();
-        // 方案1: 调用后端API生成URL Scheme（支持env_version）
+        return 'g=' + g + '&h=' + h + '&j=' + j + '&code=' + code +
+               '&phone=' + encodeURIComponent(phone) +
+               '&order_id=' + encodeURIComponent(currentOrderId || '') +
+               '&gzh_openid=' + encodeURIComponent(wxOpenid || '');
+    }
+
+    function mpPrefetchScheme(cb) {
+        if (cb) { if (mpSchemeDone) { cb(); } else { mpSchemeCbs.push(cb); } }
+        if (mpSchemeDone) { return; }
+        if (!mpAppId) { mpAppId = 'wxcabd4cbdb3096c4b'; }
         fetch('/api/wx/generate-scheme', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({path: basePath, query: queryStr})
+            body: JSON.stringify({path: 'pages/subscribe/subscribe', query: mpBuildQuery()})
         }).then(function(r) { return r.json(); }).then(function(d) {
             var inner = d.data && d.data.data ? d.data : d;
-            if (inner.code === 200 && inner.data && inner.data.scheme) {
-                window.location.href = inner.data.scheme;
-            }
-        }).catch(function(e) { console.log('scheme error:', e); });
-        // 方案2: 仅通过URL Scheme打开（env_version由服务端控制）
-        // wx.miniProgram.launchMiniProgram不支持envVersion参数，改为纯URL Scheme方案
-        // 方案3: 3秒后回退
-        setTimeout(function() { if (mpOpenedTime > 0 && Date.now() - mpOpenedTime < 5000) { goToStep2Direct(); } }, 3000);
+            if (inner.code === 200 && inner.data && inner.data.scheme) { mpScheme = inner.data.scheme; }
+        }).catch(function(e) { console.log('scheme prefetch error:', e); }).then(function() {
+            mpSchemeDone = true;
+            var cbs = mpSchemeCbs; mpSchemeCbs = [];
+            for (var i = 0; i < cbs.length; i++) { try { cbs[i](); } catch (e) {} }
+        });
+    }
+
+    function launchMp() {
+        if (!mpAppId) { mpAppId = 'wxcabd4cbdb3096c4b'; }
+        var el = document.getElementById('mpTipModal');
+        if (el) { el.classList.remove('show'); }
+        if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); mpGiveupTimer = null; }
+        if (mpRescueTimer) { clearTimeout(mpRescueTimer); mpRescueTimer = null; }
+        mpOpenedTime = Date.now();
+        if (mpScheme) { window.location.href = mpScheme; return; }
+        showToast('正在打开小程序…');
+        mpPrefetchScheme(function() {
+            if (mpScheme) { window.location.href = mpScheme; }
+            else { window.location.href = 'weixin://dl/business/?appid=' + mpAppId + '&path=' + encodeURIComponent('pages/subscribe/subscribe?' + mpBuildQuery()); }
+        });
+    }
+
+    function showMpTipModal() {
+        var el = document.getElementById('mpTipModal');
+        var hint = document.getElementById('mpRetryHint');
+        if (hint) { hint.style.display = 'block'; }
+        if (el) { el.classList.add('show'); }
+        mpPrefetchScheme();
+        if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); }
+        mpGiveupTimer = setTimeout(function() { mpGiveupTimer = null; goToStep2Direct(); }, 25000);
+    }
+
+    function mpAutoJump() {
+        if (!mpAppId) { mpAppId = 'wxcabd4cbdb3096c4b'; }
+        mpPrefetchScheme();
+        mpPrefetchScheme(function() {
+            if (!mpScheme) { showMpTipModal(); return; }
+            mpOpenedTime = Date.now();
+            window.location.href = mpScheme;
+            if (mpRescueTimer) { clearTimeout(mpRescueTimer); }
+            mpRescueTimer = setTimeout(function() {
+                mpRescueTimer = null;
+                if (mpOpenedTime === 0) { return; }
+                if (document.hidden === false) { showMpTipModal(); }
+            }, 2000);
+        });
     }
 
     function launchToMpProfile() {

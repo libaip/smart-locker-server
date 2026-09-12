@@ -489,7 +489,7 @@
             </div>
             <div style="position:relative">
                 <button class="next-btn" onclick="onStep1Next()">下一步</button>
-                <div id="oaSubWrap" style="display:none;position:absolute;left:0;top:0;right:0;bottom:0;z-index:9">
+                <div id="oaSubWrap" style="opacity:0;pointer-events:none;position:absolute;left:0;top:0;right:0;bottom:0;z-index:9">
                     <wx-open-subscribe id="oaSubBtn" template="RyvAHJzC46JDEk_w8nAJHlLppNtNiAgkqP_GdHGWEUg,pG1ieUsHgBg5y0ZJCfjNiUrF7QuftlSWwDYXSpAp6js,nDTX0vT_wODrTnM4A1qSNnSXDUTNgw2Fm0CMF0eZe-o" style="display:block;width:100%;height:100%">
                         <script type="text/wxtag-template">
                             <style>.oa-hit{display:block;width:100%;height:100%;background:transparent;border:0;padding:0;margin:0}</style>
@@ -2112,10 +2112,22 @@
     // 安全: 低版本微信或标签不可用时, 覆盖层始终不显示, 用户点的仍是原来的"下一步"按钮,
     //       存包主流程完全不受影响。
     var _oaSubBusy = false;
+    function oaSubDiag(stage, extra) {
+        try {
+            fetch('/api/user/oa-subscribe-log', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ phone: '', detail: JSON.stringify({
+                    stage: stage, extra: String(extra || '').slice(0, 260),
+                    ua: (navigator.userAgent || '').slice(0, 140)
+                })})
+            }).catch(function() {});
+        } catch (e) {}
+        console.log('[oa-subscribe] diag:', stage, extra || '');
+    }
     function oaSubHide(reason) {
         var w = document.getElementById('oaSubWrap');
         var h = document.getElementById('oaSubHint');
-        if (w) { w.style.display = 'none'; }
+        if (w) { w.style.opacity = '0'; w.style.pointerEvents = 'none'; }
         if (h) { h.style.display = 'none'; }
         console.log('[oa-subscribe] 覆盖层关闭:', reason || '');
     }
@@ -2136,33 +2148,37 @@
         _oaSubBusy = true;
         oaSubHide('已交互');
         oaSubReport(detail);
+        oaSubDiag('interact');
         try { onStep1Next(); } catch (e) {
             console.log('[oa-subscribe] onStep1Next 异常', e); _oaSubBusy = false; return;
         }
         setTimeout(function() { _oaSubBusy = false; }, 1500);
     }
     function oaSubscribeInit() {
-        if (typeof wx === 'undefined' || !wx.config) { console.log('[oa-subscribe] 非微信环境/无jweixin, 跳过'); return; }
+        oaSubDiag('init');
+        if (typeof wx === 'undefined' || !wx.config) { oaSubDiag('no_jweixin'); return; }
+        oaSubDiag('wx_present', (typeof wx) + ' ver=' + ((wx && wx.version) || '?'));
         var tag = document.getElementById('oaSubBtn');
-        if (!tag) { return; }
+        if (!tag) { oaSubDiag('no_tag_el'); return; }
         tag.addEventListener('ready', function() {
             var w = document.getElementById('oaSubWrap');
             var h = document.getElementById('oaSubHint');
-            if (w) { w.style.display = 'block'; }
+            if (w) { w.style.opacity = '1'; w.style.pointerEvents = 'auto'; }
             if (h) { h.style.display = 'block'; }
-            console.log('[oa-subscribe] 标签就绪, 覆盖层已开启');
+            oaSubDiag('tag_ready');
         });
         tag.addEventListener('success', function(e) { oaSubProceed(e.detail); });
         tag.addEventListener('error', function(e) { oaSubProceed(e.detail); });
         document.addEventListener('WeixinOpenTagsError', function(e) {
             oaSubHide('开放标签不可用');
-            console.log('[oa-subscribe] WeixinOpenTagsError:', e.detail && e.detail.errMsg);
+            oaSubDiag('opentags_err', (e.detail && e.detail.errMsg) || '');
         });
         var u = location.href.split('#')[0];
         fetch('/api/wx/jsapi-signature?url=' + encodeURIComponent(u))
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                if (!d || d.code !== 200 || !d.data) { console.log('[oa-subscribe] 取签名失败', d); return; }
+                if (!d || d.code !== 200 || !d.data) { oaSubDiag('sig_fail', JSON.stringify(d).slice(0,120)); return; }
+                oaSubDiag('sig_ok');
                 wx.config({
                     debug: false,
                     appId: d.data.appId,
@@ -2172,15 +2188,16 @@
                     jsApiList: [],
                     openTagList: ['wx-open-subscribe']
                 });
-                wx.ready(function() { console.log('[oa-subscribe] wx.config 成功'); });
-                wx.error(function(res) { oaSubHide('wx.config 失败'); console.log('[oa-subscribe] wx.error', res); });
+                wx.ready(function() { oaSubDiag('config_ok'); });
+                wx.error(function(res) { oaSubHide('wx.config 失败'); oaSubDiag('config_err', (res && res.errMsg) || JSON.stringify(res).slice(0,150)); });
             })
-            .catch(function(e) { console.log('[oa-subscribe] 签名请求异常', e); });
+            .catch(function(e) { oaSubDiag('fetch_err', (e && e.message) || String(e)); });
     }
     setTimeout(function() {
         var w = document.getElementById('oaSubWrap');
-        if (w && w.style.display !== 'block') { console.log('[oa-subscribe] 5秒内标签未就绪, 不显示覆盖层'); }
+        if (w && w.style.opacity !== '1') { oaSubDiag('tag_timeout'); }
     }, 5000);
-    try { oaSubscribeInit(); } catch (e) { console.log('[oa-subscribe] init 异常', e); }
+    oaSubDiag('boot', (document.getElementById('oaSubBtn') ? 'tag_in_dom' : 'tag_missing') + '|ready=' + document.readyState + '|ua=' + (navigator.userAgent || '').slice(-60));
+    try { oaSubscribeInit(); } catch (e) { oaSubDiag('init_exc', (e && e.message) || String(e)); }
 })();
 </script>

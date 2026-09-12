@@ -374,7 +374,7 @@ def pay_notify():
                         'character_string9': {'value': str(order.get('order_no') or order.get('orderNo') or '')}
                     }
                     # S119 2026-09-06: 启用寄存成功通知(新模板已加入小程序订阅授权列表)
-                    send_wx_subscribe_message(openid, 'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk', subscribe_data, phone=order.get('user_phone'), page='pages/index/index', unionid=_pay_unionid)
+                    send_wx_subscribe_message(openid, 'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk', subscribe_data, phone=order.get('user_phone'), page='pages/mine/mine', unionid=_pay_unionid)
             except Exception as e:
                 logger.error(f'[支付回调发送订阅消息失败] {e}')
         

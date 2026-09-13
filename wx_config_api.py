@@ -177,7 +177,8 @@ def api_account_toggle(account_id):
     active = body.get('active')
     if active is None:
         active = not bool(row.get('is_active'))
-    done, msg = C.set_active(account_id, bool(active))
+    done, msg = C.set_active(account_id, bool(active),
+                             probe_first=not _body().get('skip_probe'), prober=_PROBER)
     if done:
         # [GUARD-20260913] 只有真的改成功了才记日志：被防呆拒绝的操作不能留下
         # "启用（手动）"这种假记录（上线验证时真踩到过，日志里多出一条没发生过的操作）
@@ -193,8 +194,14 @@ def api_account_switch(account_id):
     row = C.get_account(account_id)
     if not row:
         return err('账号不存在', 404)
-    reason = _body().get('reason') or '后台手动切换'
-    done, msg = C.switch_to(row['acct_type'], account_id, operator='local-admin', reason=reason)
+    body = _body()
+    reason = body.get('reason') or '后台手动切换'
+    # [GUARD3-20260913] 默认先探活再切；确实要强切就显式传 skip_probe=true（日志会留痕）
+    _pf = not body.get('skip_probe')
+    if not _pf:
+        reason = (reason + '｜已显式跳过探活')[:255]
+    done, msg = C.switch_to(row['acct_type'], account_id, operator='local-admin', reason=reason,
+                            probe_first=_pf, prober=_PROBER)
     return ok({'effective': C.resolve(row['acct_type'])}, msg) if done else err(msg)
 
 

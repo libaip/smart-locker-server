@@ -418,7 +418,7 @@ def check_usable(row):
     return True, ''
 
 
-def set_active(account_id, active=True):
+def set_active(account_id, active=True, probe_first=True, prober=None):
     """启用/停用一个账号（启用时会自动把同类其它账号停掉，保证只有一个生效）"""
     row = get_account(account_id)
     if not row:
@@ -427,6 +427,13 @@ def set_active(account_id, active=True):
         _ok, _why = check_usable(row)
         if not _ok:
             return False, '不能启用「%s」：%s' % (row.get('name') or account_id, _why)
+        # [GUARD3-20260913] 启用 = 成为当前生效号，同样先探活
+        if probe_first:
+            _pr = probe(account_id, prober=prober)
+            if not _pr.get('ok'):
+                return False, ('不能启用「%s」：探活没过（%s）'
+                               % (row.get('name') or account_id,
+                                  _pr.get('detail') or _pr.get('reason') or ''))
     at = row['acct_type']
     with _conn() as (conn, kind):
         if active:
@@ -439,7 +446,8 @@ def set_active(account_id, active=True):
     return True, ('已启用' if active else '已停用')
 
 
-def switch_to(acct_type, account_id, operator='local-demo', reason='手动切换'):
+def switch_to(acct_type, account_id, operator='local-demo', reason='手动切换',
+              probe_first=True, prober=None):
     """一键切换：目标账号设为生效，同类其它账号全部停用，并写切换日志"""
     if acct_type not in ACCT_TYPES:
         return False, 'acct_type 只能是 %s' % (ACCT_TYPES,)
@@ -451,6 +459,16 @@ def switch_to(acct_type, account_id, operator='local-demo', reason='手动切换
     _ok, _why = check_usable(row)
     if not _ok:
         return False, '不能切换「%s」：%s（请先把编号/密钥填成真实值）' % (row.get('name') or account_id, _why)
+    # [GUARD3-20260913] 切换前先探活：拿新号的编号+密钥真连一次微信。
+    #   不这么做的话，编号填错的号一切过去就是全线不通（授权/登录/支付/通知全挂）。
+    #   探活不过 -> 拒绝切换；想过 -> 用 probe_first=False（或后台传 skip_probe）。
+    if probe_first:
+        _pr = probe(account_id, prober=prober)
+        if not _pr.get('ok'):
+            return False, ('不能切换「%s」：探活没过（%s）。'
+                           '先在后台点一下探活看清楚，把编号/密钥改对再切。'
+                           % (row.get('name') or account_id,
+                              _pr.get('detail') or _pr.get('reason') or ''))
     old = get_effective_account(acct_type, use_cache=False)
     with _conn() as (conn, kind):
         _exec(conn, kind, 'UPDATE wx_accounts SET is_active=0 WHERE acct_type=?', (acct_type,))

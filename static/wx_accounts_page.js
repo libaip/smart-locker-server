@@ -280,7 +280,7 @@ Vue.component('page-wx-accounts', {
     },
     switchAccount: function (a) {
       var self = this;
-      this._confirm('确定把「' + a.name + '」切为当前生效的' + (a.acct_type === 'mp' ? '小程序' : '公众号') + '？\n切换立刻生效，不用重启。', function () {
+      this._confirm('确定把「' + a.name + '」切为当前生效的' + (a.acct_type === 'mp' ? '小程序' : '公众号') + '？\n切换前会自动探活（拿新号真连一次微信），探活不过不会切；切了立刻生效，不用重启。', function () {
         self._api('/wx-config/accounts/' + a.id + '/switch', { reason: '后台手动切换' }, 'POST').then(function (d) {
           self._toast((d && d.message) || '已切换'); self.load();
         }).catch(function (e) { self._fail(e); });

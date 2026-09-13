@@ -581,9 +581,11 @@ def store_page():
                     _ssr["force_follow_qr"] = _oa_force_follow_qr(_cabinet_id or row["id"], device)
                 except Exception:
                     _ssr["force_follow_qr"] = ""
+            # [CFG-STEP2E] 不管这个网点开不开"允许H5跳小程序"，都把当前小程序的 appid
+            #   注入给页面。以前只在 allow_h5_to_mp=1 时注入，页面拿不到就退回页面上写死的
+            #   旧 appid —— 换小程序之后会把用户送到旧小程序里去。
+            _ssr["mp_appid"] = _wx_mp_id()
             if row["allow_h5_to_mp"]:
-                import config as _cfg
-                _ssr["mp_appid"] = _wx_mp_id()
                 _ssr["mp_path"] = "pages/subscribe/subscribe"
 #            # 每次有人扫码加载存包页面就刷新心跳
 #            try:

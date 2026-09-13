@@ -117,7 +117,7 @@ def t05_switch_is_immediate_even_with_cache():
     # [GUARD-20260913] 种子里的备用位是占位符（现在会被防呆拒绝），先造一个真能用的备用号
     _bid = C.create_account('mp', '备用真号(缓存测试)', 'wxcachetest0001', secret='secret' * 4)
     backup = C.get_account(_bid)
-    done, msg = C.switch_to('mp', backup['id'], operator='test', reason='模拟账号被封')
+    done, msg = C.switch_to('mp', backup['id'], operator='test', reason='模拟账号被封', probe_first=False)
     assert done, msg
     after = _mp_effective()                      # 必须立刻变，不能等缓存过期
     assert after['appid'] == backup['appid'], (after, backup['appid'])
@@ -292,6 +292,8 @@ def t15_api_snapshot_and_secret_masking():
 def t16_api_switch_probe_and_failover_flow():
     fresh()
     c = _client()
+    # [GUARD3-20260913] 切换现在会先探活，测试里把它换成假的（不然会真连微信）
+    A.set_prober(lambda acct: (True, '模拟探活通过'))
     # [GUARD-20260913] 备用位是占位符（会被拒），先造真备用号；两边都先体检通过
     primary = [a for a in C.list_accounts('mp') if a['is_active']][0]
     C.mark_health(primary['id'], True, '先体检通过')
@@ -316,6 +318,7 @@ def t16_api_switch_probe_and_failover_flow():
     # 日志里有 auto
     log = c.get('/api/wx-config/log?limit=10').get_json()['data']
     assert any(l['operator'] == 'auto' for l in log), log
+    A.set_prober(None)          # [GUARD3] 别让假探活器漏给后面的用例
 
 
 @test
@@ -589,6 +592,10 @@ def t28_auth_decorator_gate_blocks_and_allows():
         assert (r3.get_json() or {})['data']['effective']['mp']['appid'] == 'wxcabd4cbdb3096c4b'
     finally:
         A.use_auth_decorator(None)          # 清掉，别影响后面的用例
+        try:
+            A.set_prober(None)
+        except Exception:
+            pass
 
 
 # ------------------------------------------------------------
@@ -627,12 +634,12 @@ def t37_switch_ok_for_real_account_and_back():
     """真账号（编号+密钥都有）还应该能正常切，切完能切回来"""
     fresh()
     new_id = C.create_account('mp', '备用真号', 'wxtest1234567890', secret='secret1234567890')
-    ok1, msg1 = C.switch_to('mp', new_id, reason='测试')
+    ok1, msg1 = C.switch_to('mp', new_id, reason='测试', probe_first=False)
     assert ok1, msg1
     assert _mp_effective()['appid'] == 'wxtest1234567890'
     assert ('探活' in msg1) or ('商户号' in msg1), '提醒信息没带上: %s' % msg1
     back = [r for r in C.list_accounts('mp') if r['appid'] == 'wxcabd4cbdb3096c4b'][0]
-    ok2, msg2 = C.switch_to('mp', back['id'], reason='测试切回')
+    ok2, msg2 = C.switch_to('mp', back['id'], reason='测试切回', probe_first=False)
     assert ok2, msg2
     assert _mp_effective()['appid'] == 'wxcabd4cbdb3096c4b'
     print('      （切换提示：%s）' % msg1)
@@ -705,7 +712,10 @@ def t41_refused_toggle_does_not_log():
     assert len(C.get_log(50)) == before, '被拒绝的操作留下了日志: %s' % C.get_log(3)
     # 真账号正常启用，还是要记一笔
     good = C.create_account('oa', '真公众号(日志测试)', 'wxoalog0001', secret='s' * 20)
+    # [GUARD3-20260913] 启用现在会先探活；这个假号探活必然不过，所以测试里装个假探活器
+    A.set_prober(lambda acct: (True, '模拟探活通过'))
     r2 = c.post('/api/wx-config/accounts/%d/toggle' % good, json={'active': True}).get_json()
+    A.set_prober(None)
     assert r2['code'] == 200, r2
     assert len(C.get_log(50)) == before + 1, '正常操作没记日志: %s' % C.get_log(3)
 
@@ -719,14 +729,14 @@ def t42_openid_prefix_follows_account():
     # 造一个"新小程序"，给它一个不同的前缀，切成生效
     nid = C.create_account('mp', '新号(前缀测试)', 'wxnewpfx0001', secret='s' * 20,
                            openid_prefix='oNEW01')
-    ok1, msg1 = C.switch_to('mp', nid, reason='前缀测试')
+    ok1, msg1 = C.switch_to('mp', nid, reason='前缀测试', probe_first=False)
     assert ok1, msg1
     assert C.mp_openid_prefix() == 'oNEW01', '前缀没跟着换：%s' % C.mp_openid_prefix()
     # 公众号的前缀不受影响
     assert C.oa_openid_prefix() == 'oLhbm2'
     # 切回去，前缀也要跟着回去
     back = [a for a in C.list_accounts('mp') if a['appid'] == 'wxcabd4cbdb3096c4b'][0]
-    ok2, msg2 = C.switch_to('mp', back['id'], reason='前缀测试切回')
+    ok2, msg2 = C.switch_to('mp', back['id'], reason='前缀测试切回', probe_first=False)
     assert ok2, msg2
     assert C.mp_openid_prefix() == 'ooTcRx', C.mp_openid_prefix()
     print('      （切换后前缀变化：ooTcRx -> oNEW01 -> ooTcRx）')
@@ -749,6 +759,31 @@ def t43_openid_prefix_empty_falls_back():
     C.clear_cache()
     assert C.mp_openid_prefix() == 'ooTcRx', C.mp_openid_prefix()
     assert C.oa_openid_prefix() == 'oLhbm2', C.oa_openid_prefix()
+
+
+@test
+def t44_switch_requires_probe_pass():
+    """切换/启用前必须探活通过：填了但填错的号不许切过去（切完会全线不通）"""
+    fresh()
+    nid = C.create_account('mp', '密钥填错的号', 'wxwrongkey01', secret='wrongsecret')
+    # 探活失败 -> 拒绝切换，且生效号不能被动
+    done, msg = C.switch_to('mp', nid, reason='测试', prober=lambda acct: (False, 'errcode=40013 invalid appid'))
+    assert done is False, '探活没过居然让切了！%s' % msg
+    assert '探活' in msg, msg
+    assert _mp_effective()['appid'] == 'wxcabd4cbdb3096c4b', '生效号被改动了'
+    # 探活通过 -> 允许切换
+    done2, msg2 = C.switch_to('mp', nid, reason='测试', prober=lambda acct: (True, 'access_token 正常'))
+    assert done2 is True, msg2
+    assert _mp_effective()['appid'] == 'wxwrongkey01'
+    # 启用接口同样要探活
+    d3, m3 = C.set_active(nid, True, prober=lambda acct: (False, 'boom'))
+    assert d3 is False, '启用没做探活: %s' % m3
+    # 显式跳过探活时仍然可以切（留个后门）
+    back = [a for a in C.list_accounts('mp') if a['appid'] == 'wxcabd4cbdb3096c4b'][0]
+    done3, msg3 = C.switch_to('mp', back['id'], reason='切回', probe_first=False)
+    assert done3 is True, msg3
+    assert _mp_effective()['appid'] == 'wxcabd4cbdb3096c4b'
+    print('      （拒绝信息：%s）' % msg)
 
 
 # ------------------------------------------------------------

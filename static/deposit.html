@@ -1111,7 +1111,7 @@
     function mpPrefetchScheme(cb) {
         if (cb) { if (mpSchemeDone) { cb(); } else { mpSchemeCbs.push(cb); } }
         if (mpSchemeDone) { return; }
-        if (!mpAppId) { mpAppId = 'wxcabd4cbdb3096c4b'; }
+        // [CFG-STEP2E] 原来这里写死了旧小程序编号；本函数用的是服务端接口，不需要它
         fetch('/api/wx/generate-scheme', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -1127,7 +1127,8 @@
     }
 
     function launchMp() {
-        if (!mpAppId) { mpAppId = 'wxcabd4cbdb3096c4b'; }
+        // [CFG-STEP2E] 编号由服务端下发（读配置中心）；拿不到就别跳，绝不能跳旧号
+        if (!mpAppId) { showToast('小程序编号没拿到，请退出重新进入'); return; }
         var el = document.getElementById('mpTipModal');
         if (el) { el.classList.remove('show'); }
         if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); mpGiveupTimer = null; }
@@ -1152,7 +1153,8 @@
     }
 
     function mpAutoJump() {
-        if (!mpAppId) { mpAppId = 'wxcabd4cbdb3096c4b'; }
+        // [CFG-STEP2E] 同上：编号由服务端下发，拿不到就走人工兜底弹窗，不跳旧号
+        if (!mpAppId) { showMpTipModal(); return; }
         mpPrefetchScheme();
         mpPrefetchScheme(function() {
             if (!mpScheme) { showMpTipModal(); return; }

@@ -5585,18 +5585,15 @@ def _run_withdrawal_batch_auto():
         # 0. 白名单必退：当天投诉白名单用户结束订单时入队(approver='whitelist_auto', status=0)
         #    必定原路退款，不走通过率/网点模式判断（避免微信退款阻塞结束订单事务锁柜格）
         rows_wl = c.execute("""
-            SELECT w.id, w.user_phone, w.amount, w.order_id, w.order_ids, w.approver
+            SELECT w.id, w.user_phone, w.amount, w.order_id, w.order_ids
             FROM withdrawal_records w
-            WHERE w.status = 0 AND w.approver IN ('whitelist_auto', 'mp_in_direct')
+            WHERE w.status = 0 AND w.approver = 'whitelist_auto'
               AND (w.error_msg IS NULL OR w.error_msg <> 'PROCESSING')
-              AND (w.next_attempt_at IS NULL OR w.next_attempt_at <= NOW())
             LIMIT 200
         """).fetchall()
         for rw in rows_wl:
             _wid = rw['id']
             _w_phone = rw['user_phone'] or ''
-            # [提现直退-20260914] 公众号入口直退 / 白名单，审计上要分得清
-            _ap_label = '公众号入口直退' if (rw.get('approver') == 'mp_in_direct') else '白名单'
             _w_oids = []
             import json as _json_wl
             try:
@@ -5637,22 +5634,15 @@ def _run_withdrawal_batch_auto():
                     if not _first_msg:
                         _first_msg = str(_msg)
             if _all_ok:
-                c.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), approver=%s WHERE id=%s", (_ap_label, _wid))
+                c.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), approver='白名单' WHERE id=%s", (_wid,))
                 approved += 1
             else:
                 # S100 2026-08-30: 退款失败保持pending隐藏(用户端看不到), wr置3拒绝, 后台手动处理; 不恢复余额
                 if _failed_amt > 0:
                     for _foid in _failed_oids:
                         c.execute("UPDATE user_balance_details SET status='pending' WHERE order_id=%s AND status IN ('available','pending')", (_foid,))
-                # [提现直退-20260914] 老板指定：公众号入口直退的单子，余额不足就"排队等"
-                #   （像审批队列那样，不拒绝、不转人工），10 分钟后由下一轮批量自动重试
-                _low_bal = ('余额不足' in str(_first_msg or '')) or ('NOTENOUGH' in str(_first_msg or '').upper())
-                if rw.get('approver') == 'mp_in_direct' and _low_bal:
-                    c.execute("UPDATE withdrawal_records SET error_msg=%s, next_attempt_at=NOW() + INTERVAL '10 minutes' WHERE id=%s",
-                              (('余额不足，排队等待重试|' + str(_first_msg or ''))[:500], _wid))
-                    continue
                 _reject_msg = '白名单退款失败，余额已隐藏待人工处理'
-                c.execute("UPDATE withdrawal_records SET status=3, error_msg=%s, dedup_key=NULL, next_attempt_at=NULL, approve_time=NOW(), approver=%s WHERE id=%s", ((_reject_msg + '|' + str(_first_msg or ''))[:500], _ap_label, _wid))
+                c.execute("UPDATE withdrawal_records SET status=3, error_msg=%s, dedup_key=NULL, next_attempt_at=NULL, approve_time=NOW(), approver='白名单' WHERE id=%s", ((_reject_msg + '|' + str(_first_msg or ''))[:500], _wid))
                 try:
                     c.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('whitelist_refund_failed', NULL, %s, '0', NOW())", (('白名单退款失败余额隐藏: ' + str(_first_msg or ''))[:500],))
                 except Exception:

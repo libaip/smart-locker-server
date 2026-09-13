@@ -925,7 +925,6 @@
                     // 页面已正常渲染
             } else {
                     // 可能白屏，强制刷新
-                    try { mpDiag('watchdog', 'forceReload'); } catch (e) {}
                     localStorage.clear();
                     sessionStorage.clear();
                     window.location.href = window.location.pathname + '?t=' + Date.now();
@@ -1158,7 +1157,6 @@
         mpPrefetchScheme(function() {
             if (!mpScheme) { showMpTipModal(); return; }
             mpOpenedTime = Date.now();
-            mpDiag('jump', 'hasScheme=yes');
             mpStartReturnWatch();
             window.location.href = mpScheme;
             if (mpRescueTimer) { clearTimeout(mpRescueTimer); }
@@ -1233,48 +1231,16 @@
     }
 
     // ==========================================================
-    // [MPRETURN2]  H5 <-> 小程序 往返时保住订单状态（唯一标记，勿删）
+    // [MPRETURN3]  H5 <-> 小程序 往返时保住订单状态（唯一标记，勿删）
     // 背景：2026-09-12 16:25 的「跳转加固」删掉了老的"3秒后自动进支付页"兜底，
-    //       导致跳转成功时再也没有任何代码把页面推进到支付页 -> 用户从小程序回来
-    //       卡在第一步。这里用"跳转前存档 + 回来后读档"补上，并且三种返回情形全覆盖：
-    //         a) pageshow（WebView 被缓存恢复）
-    //         b) load（页面被重新载入）
-    //         c) 页面"隐藏过又变回可见"（鸿蒙等机型：不触发 pageshow 也不重新加载）
+    //       导致跳转成功时没有任何代码推进页面 -> 用户从小程序回来卡在第一步。
+    // 这里用"跳转前存档 + 回来后读档"补上，三种返回情形全覆盖：
+    //   a) pageshow（WebView 被缓存恢复）
+    //   b) load（页面被重新载入，内存状态全丢）
+    //   c) 页面"隐藏过又变回可见"（鸿蒙等机型：不触发 pageshow 也不重新加载）
     // ==========================================================
     var MP_JUMP_KEY = 'locker_mp_jump';
     var mpReturnWatch = null;
-
-    // 远程诊断：把手头状态发到服务器日志（临时，定位完可删）
-    function mpDiag(stage, extra) {
-        try {
-            var vis = 'none';
-            try {
-                var el = document.querySelector('.container > div[id]:not(.page-hidden)');
-                vis = el ? el.id : 'none';
-            } catch (e2) {}
-            var age = 'nosave';
-            try {
-                var raw = localStorage.getItem(MP_JUMP_KEY) || '';
-                if (raw) { age = Math.round((Date.now() - (JSON.parse(raw).ts || 0)) / 1000) + 's'; }
-            } catch (e3) { age = 'bad'; }
-            fetch('/api/user/mp-exit-log', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    from_h5: 1,
-                    phase: ('mpret_' + stage).substring(0, 30),
-                    phone: String(currentPhone || '').substring(0, 11),
-                    order_id: String(currentOrderId || '').substring(0, 40),
-                    err_msg: ('page=' + vis + ' save=' + age +
-                              ' vis=' + (document.visibilityState || '') +
-                              ' opened=' + (mpOpenedTime ? Math.round((Date.now() - mpOpenedTime) / 1000) + 's' : '0') +
-                              ' ' + (extra || '')).substring(0, 300),
-                    platform: String(navigator.platform || '').substring(0, 50),
-                    model: String(navigator.userAgent || '').slice(-70).substring(0, 100)
-                }),
-                keepalive: true
-            }).catch(function () {});
-        } catch (e) {}
-    }
 
     function mpSavePendingJump() {
         try {
@@ -1289,8 +1255,7 @@
                 size: selectedSize || '',
                 phone: currentPhone || (document.getElementById('userPhone') ? document.getElementById('userPhone').value : '') || ''
             }));
-            mpDiag('save', 'ok');
-        } catch (e) { mpDiag('save', 'err=' + e); }
+        } catch (e) {}
     }
 
     function mpReadPendingJump(maxAgeMs) {
@@ -1299,10 +1264,8 @@
             if (!raw) { return null; }
             var o = JSON.parse(raw);
             if (!o || !o.order_id) { return null; }
-            var age = Date.now() - (o.ts || 0);
-            if (age > (maxAgeMs || 15 * 60 * 1000)) {
+            if (Date.now() - (o.ts || 0) > (maxAgeMs || 15 * 60 * 1000)) {
                 localStorage.removeItem(MP_JUMP_KEY);
-                mpDiag('saveStale', Math.round(age / 1000) + 's');
                 return null;
             }
             return o;
@@ -1331,30 +1294,22 @@
             if (pel && !pel.value) { pel.value = o.phone; }
         }
         mpOpenedTime = 0;
-        try {
-            goToStep2Direct();
-            mpDiag('step2', 'by=save order=' + currentOrderId);
-        } catch (e) {
-            mpDiag('step2err', 'e=' + e);
-        }
+        try { goToStep2Direct(); } catch (e) {}
         return true;
     }
 
     // 从小程序回来时统一走这里：先看存档，再看老的内存判断
     function mpReturnCheck() {
-        var has = false;
-        try { has = !!mpReadPendingJump(); } catch (e) {}
-        mpDiag('check', 'hasSave=' + has);
         if (resumeFromMpJump()) { return true; }
         if (mpOpenedTime > 0 && Date.now() - mpOpenedTime > 2000) {
             mpOpenedTime = 0;
-            try { goToStep2Direct(); mpDiag('step2', 'by=mem'); } catch (e) { mpDiag('step2err', 'mem e=' + e); }
+            try { goToStep2Direct(); } catch (e) {}
             return true;
         }
         return false;
     }
 
-    // 兜底：盯着"页面隐藏过又变回可见"（有的机型返回时只有这个信号）
+    // 兜底：盯"页面隐藏过又变回可见"（有的机型返回时只有这个信号）
     function mpStartReturnWatch() {
         if (mpReturnWatch) { clearInterval(mpReturnWatch); }
         var sawHidden = false, ticks = 0;
@@ -1365,24 +1320,19 @@
             if (st === 'hidden') { sawHidden = true; return; }
             if (st === 'visible' && sawHidden) {
                 clearInterval(mpReturnWatch); mpReturnWatch = null;
-                mpDiag('backVisible', 'ticks=' + ticks);
                 mpReturnCheck();
             }
         }, 2500);
     }
 
-    window.addEventListener('pageshow', function (ev) {
-        try { mpDiag('pageshow', 'persisted=' + (ev && ev.persisted)); } catch (e) {}
-        mpReturnCheck();
-    });
+    window.addEventListener('pageshow', function () { mpReturnCheck(); });
     document.addEventListener('visibilitychange', function () {
-        try { mpDiag('vis', 'state=' + document.visibilityState); } catch (e) {}
         if (document.visibilityState === 'visible' && mpOpenedTime > 0) {
             setTimeout(mpReturnCheck, 200);
         }
     });
-    window.addEventListener('load', function () { setTimeout(function () { mpReturnCheck(); }, 300); });
-    try { mpDiag('boot'); } catch (e) {}
+    window.addEventListener('load', function () { setTimeout(mpReturnCheck, 300); });
+
 
     function goToRetrievePage() {
         // 实时检查设备在线状态

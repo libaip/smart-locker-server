@@ -2189,6 +2189,41 @@ def get_withhold_hours(mch_id):
         logger.error(f'[MERCHANT] get_withhold error: {e}')
         return 72
 
+def has_mp_menu_entry(phone='', openid='', unionid=''):
+    """[提现直退-20260914] 这个用户是不是"从公众号点菜单进过小程序"。
+
+    老板定的提现免审直退条件。为什么用这个条件：从微信账单/搜索/分享/支付后提示
+    进公众号的用户，微信报文里【没有任何来源标识】，无法区分；唯一能识别的入口动作
+    就是"点公众号菜单跳小程序"(view_miniprogram 事件 + MenuId)。
+    所以规则=有点过菜单记录 -> 提现免审直退（分不出是哪条路来的，就一律按"从公众号来的"放行）。
+
+    数据来源 wx_oa_messages（公众号收到的全部记录；phone 列是按 unionid 反查出来的手机号）。
+    查不到/报错一律返回 False（钱的事，判不出来就不放行）。
+    """
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        cond, params = [], []
+        if phone:
+            cond.append('phone = %s')
+            params.append(str(phone))
+        if openid:
+            cond.append('openid = %s')
+            params.append(openid)
+        if not cond:
+            conn.close()
+            return False
+        cur.execute("SELECT 1 FROM wx_oa_messages WHERE event = 'view_miniprogram' AND (%s) LIMIT 1"
+                    % ' OR '.join(cond), tuple(params))
+        r = cur.fetchone()
+        conn.close()
+        return bool(r)
+    except Exception as e:
+        logger.warning('[mp_menu_entry] 查询失败(按不放行处理): %s' % e)
+        return False
+
+
 def check_withdraw_auto_approve(openid=None, phone=None, user_id=0):
     """检查提现是否需要审批"""
     try:

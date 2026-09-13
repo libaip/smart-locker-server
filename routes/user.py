@@ -3661,6 +3661,19 @@ def user_withdraw():
                 _auto_time = (datetime.now() + timedelta(minutes=_delay_min)).strftime('%Y-%m-%d %H:%M:%S')
             if wl_record:
                 _auto_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            # [提现直退-20260914] 从公众号点菜单进过小程序的用户 -> 免审直退（老板定；不限金额不限次数；
+            #   余额不足则由批量任务留队重试，不拒绝）。套路和上面白名单一致：把 auto_approve_time 置为
+            #   现在 + 打 approver 标记，由 run_withdrawal_batch.py 的"必退"分支原路退款。
+            _mp_in_direct = False
+            try:
+                from helpers import has_mp_menu_entry
+                _mp_in_direct = bool(has_mp_menu_entry(phone=phone, openid=openid,
+                                                       unionid=ident.get('unionid') or ''))
+            except Exception as _e_mi:
+                logger.warning(f'[提现直退] 判定失败，按普通流程: {_e_mi}')
+                _mp_in_direct = False
+            if _mp_in_direct and not wl_record:
+                _auto_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             plan_ids = []
             for oid, refundable, br in order_plan:
                 if remaining <= 0.001:
@@ -3677,8 +3690,9 @@ def user_withdraw():
             # 一次提现只生成一条记录，订单合并到 order_ids
             order_openid = order_plan[0][2].get('order_openid') or openid
             dedup_key = 'B:%s:%s' % (phone, '_'.join(plan_ids))
-            cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, auto_approve_time, dedup_key, order_ids) VALUES (%s, %s, %s, 0, 1, %s, %s, %s, %s) RETURNING id",
-                           (int(plan_ids[0]), phone, actual_amount, order_openid, _auto_time, dedup_key, _json_auto.dumps(plan_ids)))
+            cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, auto_approve_time, dedup_key, order_ids, approver) VALUES (%s, %s, %s, 0, 1, %s, %s, %s, %s, %s) RETURNING id",
+                           (int(plan_ids[0]), phone, actual_amount, order_openid, _auto_time, dedup_key, _json_auto.dumps(plan_ids),
+                            ('mp_in_direct' if _mp_in_direct else None)))
             row = cursor.fetchone()
             first_wid = row["id"]
             conn.commit()

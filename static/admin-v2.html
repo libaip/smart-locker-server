@@ -8,6 +8,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <title>智能寄存柜 - 管理后台</title>
 <script src="/static/js/vue.min.js"></script>
+<script src="/static/wx_accounts_page.js"></script>
 <script src="/static/libs/echarts.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -236,6 +237,7 @@ tr:hover td.action-col{background:#f5f7fa}
 @keyframes page-spin{to{transform:rotate(360deg)}}
 .content{position:relative}
 </style>
+<link rel="stylesheet" href="/static/wx_accounts_page.css">
 </head>
 <body>
 <div id="app">
@@ -999,7 +1001,7 @@ var menuGroupsData=[
 {key:'personal-mgr',title:'个人中心',defaultOpen:false,items:[{key:'personal-info',label:'个人信息'},{key:'change-pwd',label:'修改密码'}]},
 {key:'after-mgr',title:'售后管理',defaultOpen:false,items:[{key:'store-record',label:'寄存记录'},{key:'blacklist',label:'黑名单'},{key:'alarm-record',label:'告警记录'},{key:'location-alarm',label:'网点告警'}]},
 {key:'apk-mgr',title:'远程升级',defaultOpen:true,items:[{key:'apk-version',label:'APK版本管理'}]},
-{key:'sys-mgr',title:'系统管理',defaultOpen:false,items:[{key:'system-settings',label:'系统设置'},{key:'payment-channels',label:'支付渠道'},{key:'user-manage',label:'用户管理'},{key:'role-manage',label:'角色权限'},{key:'data-reset',label:'数据重置'}]}
+{key:'sys-mgr',title:'系统管理',defaultOpen:false,items:[{key:'system-settings',label:'系统设置'},{key:'payment-channels',label:'支付渠道'},{key:'wx-accounts',label:'微信账号'},{key:'user-manage',label:'用户管理'},{key:'role-manage',label:'角色权限'},{key:'data-reset',label:'数据重置'}]}
 ];
 
 

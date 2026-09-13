@@ -149,6 +149,27 @@ for bp, prefix in blueprints:
     except Exception as e:
         logger.error(f'[注册] 注册蓝图 {bp.name} 失败: {e}')
 
+
+# ============================================
+# [T-1789258762] 微信账号配置中心（小程序/公众号 热切换，像切商户号一样）
+#   只加不改：整段包在 try 里，任何异常都不会影响主程序启动
+#   接口：/api/wx-config/*  鉴权直接复用后台的 require_auth（Bearer/session）
+#   注意：这里不建表（读不到表会自动回落 config.py 的兜底值，业务不受影响），
+#        建表属于上线前的受控步骤，见 wx_config.init_db() / check_schema()
+# ============================================
+try:
+    import wx_config as _wxcfg
+    import wx_config_api as _wxcfg_api
+    from database import get_db as _wxcfg_get_db
+    from helpers import require_auth as _wxcfg_require_auth
+    _wxcfg.bind(_wxcfg_get_db)
+    _wxcfg_api.use_auth_decorator(_wxcfg_require_auth)
+    app.register_blueprint(_wxcfg_api.bp)
+    logger.info('[注册] wx_config 配置中心已注册: /api/wx-config/* （%d 条路由）'
+                % len([r for r in app.url_map.iter_rules() if str(r).startswith('/api/wx-config')]))
+except Exception as _wxcfg_e:
+    logger.error(f'[注册] wx_config 配置中心注册失败（不影响主程序）: {_wxcfg_e}')
+
 # ============================================
 
 # 兼容微信支付投诉回调路径（商户1747572495配置的URL前缀不同）

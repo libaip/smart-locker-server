@@ -8,6 +8,8 @@ import json
 import hashlib
 import sqlite3
 from datetime import datetime, timedelta
+from wx_config import (h5_base as _wx_h5b, h5_store as _wx_h5s, oauth_callback as _wx_oauthcb,
+                     ws_base as _wx_ws, pay_notify_url as _wx_payurl)   # [CFG-STEP2C] 域名改从配置中心读，读不到自动用 config.py 原值
 from wx_config import (mp_appid as _wx_mp_id, mp_secret as _wx_mp_secret,
                      oa_appid as _wx_oa_id, oa_secret as _wx_oa_secret)   # [CFG-STEP2B] 账号凭据改从配置中心读，读不到自动用 config.py 原值
 from functools import wraps
@@ -766,7 +768,7 @@ def get_channel_wxpay(channel, use_mp_appid=False):
     elif channel_type == 'third_party':
         extra = json.loads(channel.get('extra_config', '{}')) if channel.get('extra_config') else {}
         return TPP(appid=channel['mch_id'], appsecret=channel['api_key'],
-                    notify_url=WX_PAY_NOTIFY_URL.replace('/api/pay/notify', '/api/pay/notify/third-party'),
+                    notify_url=_wx_payurl().replace('/api/pay/notify', '/api/pay/notify/third-party'),
                     return_url=extra.get('return_url', '')), 'third_party'
     return None, None
 
@@ -803,11 +805,11 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
         if is_wechat_browser():
             trade_type = 'JSAPI' if openid else 'MWEB'
             if trade_type == 'MWEB':
-                scene_info = json.dumps({'type': 'Wap', 'wap_url': 'https://locker.cqdyxl.com', 'wap_name': '智能寄存柜'})
+                scene_info = json.dumps({'type': 'Wap', 'wap_url': _wx_h5b(), 'wap_name': '智能寄存柜'})
         else:
-            scene_info = json.dumps({'type': 'Wap', 'wap_url': 'https://locker.cqdyxl.com', 'wap_name': '智能寄存柜'})
+            scene_info = json.dumps({'type': 'Wap', 'wap_url': _wx_h5b(), 'wap_name': '智能寄存柜'})
     else:
-        scene_info = json.dumps({'type': 'Wap', 'wap_url': 'https://locker.cqdyxl.com', 'wap_name': '智能寄存柜'})
+        scene_info = json.dumps({'type': 'Wap', 'wap_url': _wx_h5b(), 'wap_name': '智能寄存柜'})
 
     if openid:
         trade_type = 'JSAPI'
@@ -843,7 +845,7 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
 
     result = wxpay.unifiedorder(trade_type=trade_type, body='若预付款未退回，可进入下方公众号提现或拨打客服电话400-698-1080',
                                  total_fee=total_fee, out_trade_no=order_no,
-                                 notify_url=WX_PAY_NOTIFY_URL, openid=openid,
+                                 notify_url=_wx_payurl(), openid=openid,
                                  scene_info=scene_info, time_expire=time_expire)
 
     if result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS':

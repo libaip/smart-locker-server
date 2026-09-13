@@ -747,6 +747,33 @@ def h5_url(path='', base=None):
     return b + ('' if path.startswith('/') else '/') + path
 
 
+# ---- 给业务用的"无引号"域名函数（f-string 里要用，不能带引号） --------------------
+def h5_base():
+    return (get_config('h5_base') or (DEFAULTS.get('config') or {}).get('h5_base') or '').rstrip('/')
+
+
+def h5_store():
+    return h5_base() + '/store'
+
+
+def oauth_callback():
+    p = get_config('oauth_path') or '/api/wx/oauth'
+    return h5_base() + ('' if str(p).startswith('/') else '/') + str(p)
+
+
+def ws_base():
+    """把 https 换成 ws（柜机/页面用的 WebSocket 地址）"""
+    return h5_base().replace('https://', 'ws://').replace('http://', 'ws://')
+
+
+def pay_notify_url():
+    return get_config('pay_notify_url') or (h5_base() + '/api/pay/notify')
+
+
+def refund_notify_url():
+    return get_config('refund_notify_url') or (h5_base() + '/api/refund/notify')
+
+
 # ============================================================
 # 模板（订阅消息 / 模板消息）
 # ============================================================

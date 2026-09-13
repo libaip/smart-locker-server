@@ -6,6 +6,8 @@ import json
 import urllib.request
 import urllib.parse
 from flask import Blueprint, request, redirect, jsonify
+from wx_config import (h5_base as _wx_h5b, h5_store as _wx_h5s, oauth_callback as _wx_oauthcb,
+                     ws_base as _wx_ws, pay_notify_url as _wx_payurl)   # [CFG-STEP2C] 域名改从配置中心读，读不到自动用 config.py 原值
 from wx_config import (mp_appid as _wx_mp_id, mp_secret as _wx_mp_secret,
                      oa_appid as _wx_oa_id, oa_secret as _wx_oa_secret)   # [CFG-STEP2B] 账号凭据改从配置中心读，读不到自动用 config.py 原值
 from config import WX_APP_ID as WX_OA_ID, WX_APP_SECRET as WX_OA_SECRET, WX_MP_APP_ID, WX_MP_APP_SECRET, WX_MP_TOKEN
@@ -72,7 +74,7 @@ def wx_oauth():
         else:
             if not redirect_uri:
                 return json_response(message='缺少redirect_uri', code=400)
-            oauth_callback = 'https://locker.cqdyxl.com/api/wx/oauth'
+            oauth_callback = _wx_oauthcb()
             oauth_redirect = f'https://open.weixin.qq.com/connect/oauth2/authorize?appid={_wx_oa_id()}&redirect_uri={urllib.parse.quote(oauth_callback + "?redirect_uri=" + urllib.parse.quote(redirect_uri, safe=""))}&response_type=code&scope=snsapi_userinfo&state=locker#wechat_redirect'
             return redirect(oauth_redirect)
     except Exception as e:
@@ -211,7 +213,7 @@ def wechat_message():
             if event == 'subscribe':
                 _ek = (msg.get('EventKey') or '')
                 _scene = _ek.split('qrscene_', 1)[-1] if 'qrscene_' in _ek else ''
-                _link = 'https://locker.cqdyxl.com/store'
+                _link = _wx_h5s()
                 if _scene.startswith('c') and _scene[1:].isdigit():
                     _link += '?cabinet_id=' + _scene[1:]
                 elif _scene.startswith('d') and _scene[1:]:

@@ -4,6 +4,8 @@
 """
 import logging
 from datetime import datetime
+from wx_config import (h5_base as _wx_h5b, h5_store as _wx_h5s, oauth_callback as _wx_oauthcb,
+                     ws_base as _wx_ws, pay_notify_url as _wx_payurl)   # [CFG-STEP2C] 域名改从配置中心读，读不到自动用 config.py 原值
 from flask import Blueprint, request, jsonify
 
 logger = logging.getLogger(__name__)
@@ -25,8 +27,8 @@ DEFAULT_CONFIG = {
     "protocol": "YBM",
     "board_start": 1,
     "board_count": 1,
-    "server_url": "https://locker.cqdyxl.com",
-    "websocket_url": "ws://locker.cqdyxl.com/ws/"
+    "server_url": _wx_h5b(),
+    "websocket_url": _wx_ws() + '/ws/'
 }
 
 def get_board_config(protocol):

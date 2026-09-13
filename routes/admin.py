@@ -7,6 +7,8 @@ def generate_random_password(length=6):
     return ''.join(random.choices(string.digits, k=length))
 
 from login_guard import check_rate, fail, ok, left
+from wx_config import (h5_base as _wx_h5b, h5_store as _wx_h5s, oauth_callback as _wx_oauthcb,
+                     ws_base as _wx_ws, pay_notify_url as _wx_payurl)   # [CFG-STEP2C] 域名改从配置中心读，读不到自动用 config.py 原值
 from wx_config import (mp_appid as _wx_mp_id, mp_secret as _wx_mp_secret,
                      oa_appid as _wx_oa_id, oa_secret as _wx_oa_secret)   # [CFG-STEP2B] 账号凭据改从配置中心读，读不到自动用 config.py 原值
 from wx_config import template_id as _wx_tpl   # [CFG-STEP2] 模板ID改从配置中心读，读不到自动用第三个参数的兜底值(原写死值)
@@ -2420,7 +2422,7 @@ def admin_v2_device_qrcode():
     conn.close()
     if not row:
         return json_response(message='设备不存在', code=404)
-    qr_url = f'https://locker.cqdyxl.com/store%scabinet_id={cabinet_id}'
+    qr_url = f'{_wx_h5b()}/store%scabinet_id={cabinet_id}'
     qr = qrcode.QRCode(version=1, box_size=10, border=2)
     qr.add_data(qr_url)
     qr.make(fit=True)
@@ -2586,7 +2588,7 @@ def admin_v2_location_qrcode():
     loc_id = data.get('location_id') or data.get('id')
     if not loc_id:
         return json_response(message='缺少location_id', code=400)
-    qrcode_url = f'https://locker.cqdyxl.com/store%slocation_id={loc_id}'
+    qrcode_url = f'{_wx_h5b()}/store%slocation_id={loc_id}'
     return json_response({'location_id': loc_id, 'qrcode_url': qrcode_url})
 
 def admin_v2_offline_orders():

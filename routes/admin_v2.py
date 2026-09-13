@@ -9,6 +9,8 @@ import os
 import logging
 import time
 from datetime import datetime, timedelta
+from wx_config import (h5_base as _wx_h5b, h5_store as _wx_h5s, oauth_callback as _wx_oauthcb,
+                     ws_base as _wx_ws, pay_notify_url as _wx_payurl)   # [CFG-STEP2C] 域名改从配置中心读，读不到自动用 config.py 原值
 from wx_config import (mp_appid as _wx_mp_id, mp_secret as _wx_mp_secret,
                      oa_appid as _wx_oa_id, oa_secret as _wx_oa_secret)   # [CFG-STEP2B] 账号凭据改从配置中心读，读不到自动用 config.py 原值
 from wx_config import template_id as _wx_tpl   # [CFG-STEP2] 模板ID改从配置中心读，读不到自动用第三个参数的兜底值(原写死值)
@@ -6550,7 +6552,7 @@ def admin_device_qrcode():
             g = c.fetchone()
             if g:
                 group_code = g['group_code']
-        qr_url = 'https://locker.cqdyxl.com/store?group_code=' + group_code + '&cabinet_id=' + str(device_id) if group_code else 'https://locker.cqdyxl.com/store?cabinet_id=' + str(device_id)
+        qr_url = _wx_h5b() + '/store?group_code=' + group_code + '&cabinet_id=' + str(device_id) if group_code else _wx_h5b() + '/store?cabinet_id=' + str(device_id)
         result['qr_url'] = qr_url
         conn.close()
         # Generate QR code image as base64 (with mainboard_device_id label at bottom)
@@ -6607,7 +6609,7 @@ def admin_location_qrcode():
             return json_response(message='网点不存在', code=404)
         c.execute('SELECT cg.*, (SELECT COUNT(*) FROM cabinets WHERE group_id=cg.id) as cabinet_count FROM cabinet_groups cg WHERE cg.location_id=%s ORDER BY cg.created_at', (location_id,))
         groups = [dict(r) for r in c.fetchall()]
-        base_url = 'https://locker.cqdyxl.com/store'
+        base_url = _wx_h5s()
         for g in groups:
             g['qr_url'] = base_url + g['group_code']
         conn.close()

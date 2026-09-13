@@ -993,13 +993,10 @@
             showPage('step1Page');
             fillSavedPhone();
         });
-    // 检测小程序返回
-    window.addEventListener('pageshow', function(ev) {
-        if (mpOpenedTime > 0 && Date.now() - mpOpenedTime > 2000) {
-            mpOpenedTime = 0;
-            goToStep2Direct();
-        }
-    });
+    // FIX-20260912b
+    // 原来在这里注册 pageshow：位置不对（写在 goToStoreStep1 里，调用一次注册一次），
+    // 而且只靠内存变量 —— 从小程序返回时 WebView 被重新载入的话内存全丢，什么都不会发生。
+    // 已挪到脚本末尾统一注册，并升级为"跳转前存档 → 回来后直接进支付页"，见 mpReturnCheck()。
     }
 
     function onStep1Next() {
@@ -1037,6 +1034,7 @@
     }
 
     function reserveDoorAndProceed() {
+        mpClearPendingJump();             // FIX-20260912b 新下单，先清掉上一次的存档
         var phone = currentPhone || document.getElementById('userPhone').value.trim();
         var code = currentAccessCode || document.getElementById('accessCode').value.trim();
         var btn = document.querySelector('.next-btn');
@@ -1060,6 +1058,7 @@
                 document.getElementById('payDoorNum').textContent = (d.data.compartment_number || '') + '号';
                 console.log("[DEBUG] allowH5ToMp:", allowH5ToMp, "mpAppId:", mpAppId);
                 if (allowH5ToMp === 1) {
+                    mpSavePendingJump();      // FIX-20260912b 跳转前存档，回来才能接着付
                     mpAutoJump();
                 } else {
                     goToStep2Direct();
@@ -1478,6 +1477,7 @@
     }
 
     function showDonePage() {
+        mpClearPendingJump();             // FIX-20260912b 已经存好了，存档没用了
         document.getElementById('doneDoorBig').textContent = currentCompartmentNumber || '-';
         sessionStorage.setItem('reopenOrderId', String(currentOrderId));
         sessionStorage.setItem('reopenCompartment', currentCompartmentNumber || '');
@@ -2285,4 +2285,86 @@
         } catch (e) { console.log('[follow] 异常, 不拦', e); }
     })();
 })();
+
+    // ==========================================================
+    // [MPRETURN]  H5 <-> 小程序 往返时保住订单状态（唯一标记，勿删）
+    // 跳转前把订单存档到 localStorage（不是内存变量，页面被重新载入也不丢），
+    // 回到 H5 时读档直接进支付页；成功后只消费一次。
+    // ==========================================================
+    var MP_JUMP_KEY = 'locker_mp_jump';
+
+    function mpSavePendingJump() {
+        try {
+            localStorage.setItem(MP_JUMP_KEY, JSON.stringify({
+                ts: Date.now(),
+                order_id: currentOrderId || '',
+                order_no: currentOrderNo || '',
+                compartment: currentCompartmentNumber || '',
+                access_code: currentAccessCode || '',
+                cabinet_id: currentCabinetId || '',
+                deposit: currentDepositAmount || '',
+                size: selectedSize || '',
+                phone: currentPhone || (document.getElementById('userPhone') ? document.getElementById('userPhone').value : '') || ''
+            }));
+            console.log('[mp-return] 已存档订单 ' + (currentOrderId || ''));
+        } catch (e) { console.warn('[mp-return] 存档失败', e); }
+    }
+
+    function mpReadPendingJump(maxAgeMs) {
+        try {
+            var raw = localStorage.getItem(MP_JUMP_KEY);
+            if (!raw) { return null; }
+            var o = JSON.parse(raw);
+            if (!o || !o.order_id) { return null; }
+            var age = Date.now() - (o.ts || 0);
+            if (age > (maxAgeMs || 15 * 60 * 1000)) {
+                localStorage.removeItem(MP_JUMP_KEY);
+                console.log('[mp-return] 存档太旧，忽略（' + Math.round(age / 1000) + '秒前）');
+                return null;
+            }
+            return o;
+        } catch (e) { return null; }
+    }
+
+    function mpClearPendingJump() {
+        try { localStorage.removeItem(MP_JUMP_KEY); } catch (e) {}
+    }
+
+    // 读档恢复到支付页；成功返回 true
+    function resumeFromMpJump() {
+        var o = mpReadPendingJump();
+        if (!o) { return false; }
+        mpClearPendingJump();
+        currentOrderId = o.order_id;
+        currentOrderNo = o.order_no || '';
+        currentCompartmentNumber = o.compartment || '';
+        if (o.access_code) { currentAccessCode = o.access_code; }
+        if (o.cabinet_id) { currentCabinetId = o.cabinet_id; }
+        if (o.deposit) { currentDepositAmount = o.deposit; }
+        if (o.size) { selectedSize = o.size; }
+        if (o.phone) {
+            currentPhone = o.phone;
+            var pel = document.getElementById('userPhone');
+            if (pel && !pel.value) { pel.value = o.phone; }
+        }
+        mpOpenedTime = 0;
+        console.log('[mp-return] 恢复订单 ' + currentOrderId + '，直接进支付页');
+        try { goToStep2Direct(); } catch (e) { console.warn('[mp-return] 恢复失败', e); }
+        return true;
+    }
+
+    // 从小程序回来时统一走这里：先看存档，再看老的内存判断
+    function mpReturnCheck() {
+        if (resumeFromMpJump()) { return true; }
+        if (mpOpenedTime > 0 && Date.now() - mpOpenedTime > 2000) {
+            mpOpenedTime = 0;
+            goToStep2Direct();
+            return true;
+        }
+        return false;
+    }
+
+    window.addEventListener('pageshow', function () { mpReturnCheck(); });
+    window.addEventListener('load', function () { setTimeout(mpReturnCheck, 300); });
+
 </script>

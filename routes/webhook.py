@@ -189,14 +189,7 @@ def wechat_message():
                            (from_user, _phone, msg_type, content_raw[:500], event, xml_data[:1000]))
             _msg_id_row = _cur_msg.fetchone()
             _msg_id_val = _msg_id_row[0] if _msg_id_row else None
-            # [FIX-20260913] 只有"用户主动发的消息"(文字/图片/语音/视频/位置/链接)才算投诉/留言。
-            #   以前 MsgType=event 也当投诉, 实测事故: 用户在存包页点"订阅"并允许 ->
-            #   生成一条假投诉 -> 触发"投诉自动原路退款" + 被加进"当天投诉白名单"
-            #   -> 当天结束订单被直接退款(不走余额提现)。点公众号菜单(view_miniprogram)
-            #   同理, 也是假投诉, 会让投诉数虚高。
-            _is_user_msg = (msg_type or '').strip().lower() in (
-                'text', 'image', 'voice', 'video', 'shortvideo', 'location', 'link')
-            if _phone and _msg_id_val and _is_user_msg:
+            if _phone and _msg_id_val:
                 _cur_msg.execute("SELECT id FROM complaints WHERE user_phone = %s AND status = '0' ORDER BY id DESC LIMIT 1", (_phone,))
                 _exist_cr = _cur_msg.fetchone()
                 if _exist_cr:

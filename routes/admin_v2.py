@@ -9,6 +9,7 @@ import os
 import logging
 import time
 from datetime import datetime, timedelta
+from wx_config import template_id as _wx_tpl   # [CFG-STEP2] 模板ID改从配置中心读，读不到自动用第三个参数的兜底值(原写死值)
 from flask import Blueprint, request, session, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from database import get_db
@@ -1261,7 +1262,7 @@ def admin_order_close():
                     'thing4': {'value': '已退还至小程序用户钱包'},
                     'thing3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                 }
-                send_wx_subscribe_message(ntf_openid, 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA', subscribe_data, phone=order_dict.get('user_phone'), page='pages/mine/mine')
+                send_wx_subscribe_message(ntf_openid, _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'), subscribe_data, phone=order_dict.get('user_phone'), page='pages/mine/mine')
                 # 退款通知在用户提现时发送，不在结束寄存时发送
             except Exception as e:
                 logger.error(f"[order_close发送订阅消息失败] {e}") 
@@ -5206,7 +5207,10 @@ def admin_employee_reset_password():
 _AUTO_WITHDRAW_SCHEDULER_LOCK_FILE = "/tmp/auto_withdraw_scheduler.lock"
 _AUTO_WITHDRAW_BATCH_SIZE = 50
 _AUTO_WITHDRAW_SCAN_SECONDS = 5
-_AUTO_WITHDRAW_TEMPLATE_ID = "lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c"
+# [CFG-STEP2] 原来是模块级常量（import 时就固定了），改成运行时从配置中心取
+def _auto_withdraw_tpl():
+    return _wx_tpl('subscribe_refund', 'mp', "lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c")
+
 
 
 def _reset_stale_auto_claims():
@@ -5264,7 +5268,7 @@ def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid='', unionid='
         _ok = openid or ''
         if not (str(_ok).startswith('ooTcRx')):
             _ok = ''
-        send_wx_subscribe_message(_ok, _AUTO_WITHDRAW_TEMPLATE_ID, wd_data, phone=phone, page='pages/mine/mine', unionid=unionid)
+        send_wx_subscribe_message(_ok, _auto_withdraw_tpl(), wd_data, phone=phone, page='pages/mine/mine', unionid=unionid)
     except Exception as e:
         logger.error('[auto_withdraw] 订阅通知失败 phone=%s: %s', phone, e)
 
@@ -6806,7 +6810,7 @@ def admin_device_clear_all():
                             'thing4': {'value': '已退还至小程序用户钱包'},
                             'thing3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                         }
-                        send_wx_subscribe_message(mp_openid or '', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA', subscribe_data, phone=o_dict.get('user_phone'), page='pages/mine/mine', unionid=o_dict.get('unionid') or '')
+                        send_wx_subscribe_message(mp_openid or '', _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'), subscribe_data, phone=o_dict.get('user_phone'), page='pages/mine/mine', unionid=o_dict.get('unionid') or '')
                         notified += 1
                     except Exception as e:
                         logger.error(f'[clear_all] 发送订阅消息失败 order={o_dict["id"]}: {e}')

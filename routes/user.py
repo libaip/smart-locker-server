@@ -12,6 +12,7 @@ import qrcode
 import io
 import base64
 from datetime import datetime, timedelta
+from wx_config import template_id as _wx_tpl   # [CFG-STEP2] 模板ID改从配置中心读，读不到自动用第三个参数的兜底值(原写死值)
 from flask import Blueprint, request, jsonify, send_from_directory, redirect, send_file
 from database import get_db
 from helpers import (json_response, get_setting, is_mock_mode, is_wechat_browser, select_payment_channel,
@@ -803,7 +804,7 @@ def retrieve():
                         "thing4": {"value": "已退还至小程序用户钱包"},
                         "thing3": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}
                     }
-                    send_wx_subscribe_message(_openid, "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA", subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
+                    send_wx_subscribe_message(_openid, _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
                 except Exception as e:
                     logger.error(f"[retrieve发送订阅消息失败] {e}")
             conn.commit()
@@ -1073,7 +1074,7 @@ def retrieve_confirm():
                     "thing4": {"value": _thing7},
                     "thing3": {"value": _thing2}
                 }
-                send_wx_subscribe_message(_openid, "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA", subscribe_data, phone=order.get("user_phone"), page='pages/mine/mine')
+                send_wx_subscribe_message(_openid, _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), subscribe_data, phone=order.get("user_phone"), page='pages/mine/mine')
             except Exception as e:
                 logger.error(f"[retrieve_confirm发送订阅消息失败] {e}")
         if _direct_refund:
@@ -1643,7 +1644,7 @@ def deposit_retrieve():
                             'thing4': {'value': '已退还至小程序用户钱包'},
                             'thing3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                         }
-                        send_wx_subscribe_message(_noid, 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA', _nsd, phone=_n_phone, page='pages/mine/mine')
+                        send_wx_subscribe_message(_noid, _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'), _nsd, phone=_n_phone, page='pages/mine/mine')
                     except Exception as _ne:
                         logger.error('[deposit_retrieve_notify1] '+ str(_ne))
                 else:
@@ -1871,7 +1872,7 @@ def deposit_end_storage():
                 _thing7 = "已原路退回支付账户" if _direct_refund else "已退还至小程序用户钱包"
                 _thing2 = "无需提现，请留意微信到账" if _direct_refund else "请自行点击此通知消息跳转“我的钱包”提现"
                 subscribe_data = {"amount1": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))}, "time2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}, "thing4": {"value": _thing7}, "thing3": {"value": _thing2}}
-                _sent = send_wx_subscribe_message(_openid, "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA", subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
+                _sent = send_wx_subscribe_message(_openid, _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
                 if _sent:
                     logger.info(f"[deposit_end_storage] 订阅消息已发送: order={order_id}")
                 else:
@@ -3191,9 +3192,9 @@ def get_user_orders():
 @bp.route('/user/subscribe-templates', methods=['GET'])
 def get_subscribe_templates():
     """返回订阅消息模板ID列表（动态下发，前端不写死）"""
-    _withdraw = 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c'   # 退款成功
-    _general = 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'     # 押金退还
-    _deposit = 'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk'     # 寄存成功
+    _withdraw = _wx_tpl('subscribe_refund', 'mp', 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c')   # 退款成功
+    _general = _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA')     # 押金退还
+    _deposit = _wx_tpl('subscribe_deposit', 'mp', 'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk')     # 寄存成功
     return json_response(data={
         'templates': [_withdraw, _general, _deposit],
         'withdraw_notify': _withdraw,
@@ -3573,7 +3574,7 @@ def user_withdraw():
                         'thing4': {'value': '提现申请已提交'},
                         'thing3': {'value': '预计0-3个工作日到账'}
                     }
-                    send_wx_subscribe_message(mp_openid, 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c', wd_data, phone=phone, page='pages/mine/mine')
+                    send_wx_subscribe_message(mp_openid, _wx_tpl('subscribe_refund', 'mp', 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c'), wd_data, phone=phone, page='pages/mine/mine')
                 except Exception as e:
                     logger.error(f'[提现通知失败] {e}')
             return json_response(data={
@@ -3689,7 +3690,7 @@ def user_withdraw():
                         'thing4': {'value': '原路退回支付账户'},
                         'thing3': {'value': '预计0-3个工作日到账'}
                     }
-                    send_wx_subscribe_message(mp_openid, 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c', wd_data, phone=phone, page='pages/mine/mine')
+                    send_wx_subscribe_message(mp_openid, _wx_tpl('subscribe_refund', 'mp', 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c'), wd_data, phone=phone, page='pages/mine/mine')
                 except Exception as e:
                     logger.error(f'[提现通知失败] {e}')
             return json_response(data={

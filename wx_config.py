@@ -90,6 +90,7 @@ BIZ_LABELS = {
 _FACTORY = None
 _CACHE = {}          # acct_type -> (时间戳, 账号dict|None)
 _CONFIG_CACHE = {'ts': 0, 'vals': None}
+_TPL_CACHE = {}      # biz|channel|default -> (时间戳, 模板ID)
 
 
 def bind(factory):
@@ -210,6 +211,7 @@ def _now():
 def clear_cache(acct_type=None):
     global _CONFIG_CACHE
     _CONFIG_CACHE = {'ts': 0, 'vals': None}
+    _TPL_CACHE.clear()
     if acct_type:
         _CACHE.pop(acct_type, None)
     else:
@@ -729,6 +731,7 @@ def h5_url(path='', base=None):
 # 模板（订阅消息 / 模板消息）
 # ============================================================
 def list_templates(channel=None, active_only=False):
+    """列出模板。数据库读不到（比如生产库还没建表）时返回空列表，绝不抛异常。"""
     sql = 'SELECT * FROM wx_templates'
     where, params = [], []
     if channel:
@@ -739,17 +742,23 @@ def list_templates(channel=None, active_only=False):
     if where:
         sql += ' WHERE ' + ' AND '.join(where)
     sql += ' ORDER BY channel, biz, account_id'
-    with _conn() as (conn, kind):
-        rows = _rows(conn, kind, sql, tuple(params))
+    try:
+        with _conn() as (conn, kind):
+            rows = _rows(conn, kind, sql, tuple(params))
+    except Exception:
+        return []
     for r in rows:
         r['biz_label'] = BIZ_LABELS.get(r['biz'], r['biz'])
     return rows
 
 
 def get_template(biz, channel=None, account_id=None):
-    """取模板：优先账号专属，其次通用（account_id=0）"""
-    with _conn() as (conn, kind):
-        rows = _rows(conn, kind, 'SELECT * FROM wx_templates WHERE biz=? AND is_active=1', (biz,))
+    """取模板：优先账号专属，其次通用（account_id=0）。读不到返回 None，绝不抛异常。"""
+    try:
+        with _conn() as (conn, kind):
+            rows = _rows(conn, kind, 'SELECT * FROM wx_templates WHERE biz=? AND is_active=1', (biz,))
+    except Exception:
+        return None
     if not rows:
         return None
     if channel:
@@ -760,6 +769,31 @@ def get_template(biz, channel=None, account_id=None):
             return hit[0]
     gen = [r for r in rows if not r.get('account_id')]
     return gen[0] if gen else rows[0]
+
+
+TPL_CACHE_TTL = 30      # 模板ID缓存秒数（业务每发一条消息都要取，避免每次都查库）
+
+
+def template_id(biz, channel='mp', default=''):
+    """【第2步·业务统一入口】取模板 ID。
+
+    库里配了就用库里的；库是空的 / 读不到 / 出错 → **返回 default**（= 代码里原来的写死值）。
+    这条兜底是关键：生产库还没建表时，行为与改造前完全一致，绝不会把通知打断。
+    """
+    now = time.time()
+    key = '%s|%s|%s' % (biz, channel, default)
+    hit = _TPL_CACHE.get(key)
+    if hit and now - hit[0] < TPL_CACHE_TTL:
+        return hit[1]
+    val = default
+    try:
+        t = get_template(biz, channel)
+        if t and t.get('template_id'):
+            val = t['template_id']
+    except Exception:
+        val = default
+    _TPL_CACHE[key] = (now, val)
+    return val
 
 
 def get_templates_map(channel, account_id=None):
@@ -789,6 +823,7 @@ def set_template(biz, channel, template_id, page='', fields=None, account_id=0, 
                                  note=excluded.note,
                                  updated_at=excluded.updated_at""",
               (biz, channel, int(account_id or 0), template_id, page, fj, note, _now()))
+    _TPL_CACHE.clear()      # 改完模板立刻生效
     return True
 
 
@@ -796,6 +831,7 @@ def disable_template(biz, channel, account_id=0):
     with _conn() as (conn, kind):
         _exec(conn, kind, 'UPDATE wx_templates SET is_active=0, updated_at=? WHERE biz=? AND channel=? AND account_id=?',
               (_now(), biz, channel, int(account_id or 0)))
+    _TPL_CACHE.clear()
     return True
 
 

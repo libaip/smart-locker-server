@@ -8,6 +8,7 @@ import json
 import random
 import string
 from datetime import datetime
+from wx_config import template_id as _wx_tpl   # [CFG-STEP2] 模板ID改从配置中心读，读不到自动用第三个参数的兜底值(原写死值)
 from flask import Blueprint, request
 from database import get_db
 from helpers import (json_response, require_auth, get_setting, is_mock_mode, logger, _get_device_protocol,
@@ -374,7 +375,7 @@ def pay_notify():
                         'character_string9': {'value': str(order.get('order_no') or order.get('orderNo') or '')}
                     }
                     # S119 2026-09-06: 启用寄存成功通知(新模板已加入小程序订阅授权列表)
-                    send_wx_subscribe_message(openid, 'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk', subscribe_data, phone=order.get('user_phone'), page='pages/mine/mine', unionid=_pay_unionid)
+                    send_wx_subscribe_message(openid, _wx_tpl('subscribe_deposit', 'mp', 'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk'), subscribe_data, phone=order.get('user_phone'), page='pages/mine/mine', unionid=_pay_unionid)
             except Exception as e:
                 logger.error(f'[支付回调发送订阅消息失败] {e}')
         

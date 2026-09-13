@@ -5,6 +5,7 @@
 import logging
 import json
 from datetime import datetime
+from wx_config import template_id as _wx_tpl   # [CFG-STEP2] 模板ID改从配置中心读，读不到自动用第三个参数的兜底值(原写死值)
 from flask import Blueprint, request, session
 from database import get_db
 from helpers import json_response, logger, pending_lock_commands, connected_devices, require_auth, \
@@ -246,7 +247,7 @@ def offline_retrieve():
                 #   新小程序里不存在必然失败)，老板定案取消，只保留下面的"押金退还"通知。
                 _dep = order.get('deposit_amount', 0)
                 if _dep > 0:
-                    send_wx_subscribe_message(_notify_openid, 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA', {
+                    send_wx_subscribe_message(_notify_openid, _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'), {
                         "amount1": {"value": "¥%.2f" % float(_dep)},
                         "time2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
                         "thing4": {"value": "已退还至小程序用户钱包"},
@@ -336,7 +337,7 @@ def offline_retrieve_batch():
                     #   新小程序里不存在必然失败)，老板定案取消，只保留下面的"押金退还"通知。
                     _dep2 = _r_order_data.get('deposit_amount', 0)
                     if _dep2 > 0:
-                        send_wx_subscribe_message(_nopenid, 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA', {
+                        send_wx_subscribe_message(_nopenid, _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'), {
                             "amount1": {"value": "¥%.2f" % float(_dep2)},
                             "time2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
                             "thing4": {"value": "已退还至小程序用户钱包"},

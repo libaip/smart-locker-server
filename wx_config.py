@@ -383,11 +383,39 @@ def delete_account(account_id):
     return True, '已删除'
 
 
+# ============================================================
+# [GUARD-20260913] 账号"能不能真的用"的判定（防呆）
+#   为什么要有这个：备用位现在是占位符(REPLACE_ME_*)且密钥是空的，
+#   一旦被切为生效，微信那边一律报无效 appid —— 授权/登录/支付/通知全挂。
+#   实测踩过：自动降级会挑这个假账号顶上来，等于"从坏直接变成全坏"。
+# ============================================================
+PLACEHOLDER_MARKERS = ('REPLACE_ME', 'CHANGE_ME', 'PLACEHOLDER', 'TODO', 'XXX', '待填')
+
+
+def check_usable(row):
+    """账号能不能真的用：编号和密钥都要有，编号不能还是占位符。返回 (能不能用, 原因)"""
+    if not row:
+        return False, '账号不存在'
+    appid = str(row.get('appid') or '').strip()
+    secret = str(row.get('secret') or '').strip()
+    if not appid:
+        return False, '编号(appid)是空的'
+    if any(m in appid.upper() for m in PLACEHOLDER_MARKERS):
+        return False, '编号还是占位符 %s，请先填真实编号' % appid
+    if not secret:
+        return False, '密钥(secret)是空的，请先填真实密钥'
+    return True, ''
+
+
 def set_active(account_id, active=True):
     """启用/停用一个账号（启用时会自动把同类其它账号停掉，保证只有一个生效）"""
     row = get_account(account_id)
     if not row:
         return False, '账号不存在'
+    if active:
+        _ok, _why = check_usable(row)
+        if not _ok:
+            return False, '不能启用「%s」：%s' % (row.get('name') or account_id, _why)
     at = row['acct_type']
     with _conn() as (conn, kind):
         if active:
@@ -409,6 +437,9 @@ def switch_to(acct_type, account_id, operator='local-demo', reason='手动切换
         return False, '账号不存在'
     if row['acct_type'] != acct_type:
         return False, '账号类型不匹配'
+    _ok, _why = check_usable(row)
+    if not _ok:
+        return False, '不能切换「%s」：%s（请先把编号/密钥填成真实值）' % (row.get('name') or account_id, _why)
     old = get_effective_account(acct_type, use_cache=False)
     with _conn() as (conn, kind):
         _exec(conn, kind, 'UPDATE wx_accounts SET is_active=0 WHERE acct_type=?', (acct_type,))
@@ -419,7 +450,17 @@ def switch_to(acct_type, account_id, operator='local-demo', reason='手动切换
         _log_switch(conn, kind, acct_type,
                     old['name'] if old else '', row['name'], reason, operator)
     clear_cache(acct_type)
-    return True, '已切换到 %s' % row['name']
+    _warn = []
+    if row.get('auto_disabled'):
+        _warn.append('这个号之前被自动停用过，确认问题已修复再切')
+    if (row.get('mch_relation') or '') != 'ok':
+        _warn.append('这个号还没绑定商户号(mch_relation=%s)，支付可能失败' % (row.get('mch_relation') or 'none'))
+    if (row.get('health_status') or '') != 'ok':
+        _warn.append('还没探活通过，建议立刻点一下探活确认')
+    _msg = '已切换到 %s' % row['name']
+    if _warn:
+        _msg += '（提醒：' + '；'.join(_warn) + '）'
+    return True, _msg
 
 
 def _log_switch(conn, kind, acct_type, from_name, to_name, reason, operator):
@@ -564,11 +605,21 @@ def mark_health(account_id, ok, detail=''):
                                     '备用号自动停用（当前生效账号不受影响）: %s' % detail, 'auto')
                         out['note'] = 'standby_disabled'
                     else:
+                        # [GUARD-20260913] 只能切到"探活通过"的账号。
+                        # 实测教训：备用位是占位符/空密钥时，自动降级不是保命，
+                        # 而是从坏直接变成全坏，所以宁可不切。
                         nxt = _row(conn, kind, """SELECT * FROM wx_accounts
                                                   WHERE acct_type=? AND id<>? AND COALESCE(auto_disabled,0)=0
+                                                    AND COALESCE(health_status,'')='ok'
                                                   ORDER BY is_active DESC, priority, id LIMIT 1""",
                                    (at, account_id))
+                        _nxt_ok = False
                         if nxt:
+                            _nxt_ok, _nxt_why = check_usable(nxt)
+                            if not _nxt_ok:
+                                out['note'] = 'standby_not_usable'
+                                out['standby_reason'] = _nxt_why
+                        if nxt and _nxt_ok:
                             _exec(conn, kind, """UPDATE wx_accounts
                                                  SET is_active=1, auto_disabled=0, fail_count=0,
                                                      health_status='unknown', health_detail='', updated_at=?
@@ -578,8 +629,9 @@ def mark_health(account_id, ok, detail=''):
                             out.update({'switched': True, 'to': nxt['name'], 'to_id': nxt['id']})
                         else:
                             _log_switch(conn, kind, at, row['name'], '',
-                                        '自动停用但无备用可用: %s' % detail, 'auto')
+                                        '自动停用但无可用的备用账号(备用必须探活通过): %s' % detail, 'auto')
                             out['reason'] = 'no_standby'
+                            out['fallback'] = 'config.py 里原本的账号'
     clear_cache(at)
     return out
 
@@ -612,6 +664,13 @@ def probe(account_id, prober=None):
     row = get_account(account_id)
     if not row:
         return {'ok': False, 'detail': '账号不存在'}
+    # [GUARD-20260913] 编号/密钥还没配好的账号（比如占位符备用位）直接跳过：
+    # 不然"没配好"会被记成"体检失败"，连点几次还可能把号弄成自动停用
+    _ok, _why = check_usable(row)
+    if not _ok:
+        return {'ok': False, 'skipped': True, 'account_id': account_id,
+                'name': row.get('name') or '', 'detail': '账号还没配好（%s），跳过探活' % _why,
+                'health': row.get('health_status') or 'unknown'}
     fn = prober or default_prober
     try:
         ok, detail = fn(row)
@@ -894,6 +953,8 @@ def mask(s, keep=6):
 
 def snapshot(reveal=False):
     accts = list_accounts()
+    # [GUARD-20260913] 顺便告诉后台"这个号能不能真的用"，前端就能把按钮灰掉
+    accts = [dict(a, usable=check_usable(a)[0], usable_reason=check_usable(a)[1]) for a in accts]
     if not reveal:
         accts = [dict(a, secret=mask(a.get('secret'))) for a in accts]
     return {

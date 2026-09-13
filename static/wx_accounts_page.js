@@ -60,7 +60,7 @@ Vue.component('page-wx-accounts', {
       <tr v-for="a in accounts" :key="a.id" :style="a.is_active?'background:#f6fdf9':''">
         <td>{{a.id}}</td>
         <td>{{a.name}}</td>
-        <td class="wx-mono">{{a.appid}}</td>
+        <td class="wx-mono">{{a.appid}}<span v-if="a.usable===false" class="wx-tag off" :title="a.usable_reason" style="margin-left:4px">未配好</span></td>
         <td>{{a.subject||'-'}}</td>
         <td>{{a.priority}}</td>
         <td>
@@ -72,10 +72,10 @@ Vue.component('page-wx-accounts', {
         <td>{{a.fail_count}}</td>
         <td>{{a.last_used_at||'-'}}</td>
         <td class="wx-nowrap">
-          <button class="btn-text green" v-if="!a.is_active" @click="switchAccount(a)">设为生效</button>
+          <button class="btn-text green" v-if="!a.is_active" :disabled="a.usable===false" :title="a.usable_reason" @click="switchAccount(a)">设为生效</button>
           <button class="btn-text orange" v-if="a.is_active" @click="toggleAccount(a,false)">停用</button>
-          <button class="btn-text blue" v-if="!a.is_active" @click="toggleAccount(a,true)">启用</button>
-          <button class="btn-text blue" @click="probe(a)">探活</button>
+          <button class="btn-text blue" v-if="!a.is_active" :disabled="a.usable===false" :title="a.usable_reason" @click="toggleAccount(a,true)">启用</button>
+          <button class="btn-text blue" :disabled="a.usable===false" :title="a.usable_reason" @click="probe(a)">探活</button>
           <button class="btn-text" @click="openEdit(a)">编辑</button>
           <button class="btn-text red" @click="removeAccount(a)">删除</button>
         </td>

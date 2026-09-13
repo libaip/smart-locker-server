@@ -119,6 +119,8 @@ def api_accounts():
     at = request.args.get('type') or None
     reveal = request.args.get('reveal') in ('1', 'true', 'yes')
     rows = C.list_accounts(at)
+    # [GUARD-20260913] 带上"能不能真的用"，前端才能把不能用的号灰掉
+    rows = [dict(r, usable=C.check_usable(r)[0], usable_reason=C.check_usable(r)[1]) for r in rows]
     if not reveal:
         rows = [dict(r, secret=C.mask(r.get('secret'))) for r in rows]
     return ok(rows)
@@ -175,8 +177,11 @@ def api_account_toggle(account_id):
     if active is None:
         active = not bool(row.get('is_active'))
     done, msg = C.set_active(account_id, bool(active))
-    C.log_switch(row['acct_type'], '', row['name'],
-                 ('启用' if active else '停用') + '（手动）', 'local-admin')
+    if done:
+        # [GUARD-20260913] 只有真的改成功了才记日志：被防呆拒绝的操作不能留下
+        # "启用（手动）"这种假记录（上线验证时真踩到过，日志里多出一条没发生过的操作）
+        C.log_switch(row['acct_type'], '', row['name'],
+                     ('启用' if active else '停用') + '（手动）', 'local-admin')
     return ok({'is_active': 1 if active else 0}, msg) if done else err(msg)
 
 
@@ -208,9 +213,20 @@ def api_account_probe(account_id):
 
 @bp.route('/accounts/<int:account_id>/simulate-fail', methods=['POST'])
 def api_account_simulate_fail(account_id):
-    """模拟调用失败 N 次 → 验证"连续失败自动停用 + 自动切备用"这条链路"""
+    """模拟调用失败 N 次 → 验证"连续失败自动停用 + 自动切备用"这条链路。
+
+    注意：这是给开发/演示用的接口。如果对着"当前正在生效"的账号用，会真的把它
+    自动停用（业务会回落到 config.py 原本的账号），生产上属于误伤，所以默认拦住；
+    确实要测就显式传 allow_active=true。
+    """
     _guard()
     body = _body()
+    _row = C.get_account(account_id)
+    if _row:
+        _eff = C.get_effective_account(_row['acct_type'], use_cache=False)
+        if _eff and _eff.get('id') == account_id and not body.get('allow_active'):
+            return err('拒绝：这是当前正在生效的%s账号。要模拟它失败请显式传 allow_active=true'
+                       % ('小程序' if _row['acct_type'] == 'mp' else '公众号'))
     times = int(body.get('times') or 1)
     detail = body.get('detail') or '模拟失败(errcode 43004 require subscribe)'
     results = [C.mark_health(account_id, False, detail) for _ in range(max(1, min(times, 20)))]

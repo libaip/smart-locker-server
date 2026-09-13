@@ -138,7 +138,6 @@ def api_account_create():
             d['acct_type'], d['name'], d['appid'], d.get('secret', ''),
             token=d.get('token', ''), aes_key=d.get('aes_key', ''),
             subject=d.get('subject', ''), mch_relation=d.get('mch_relation', 'none'),
-              openid_prefix=d.get('openid_prefix', ''),
             priority=d.get('priority', 100), is_active=d.get('is_active', False),
             note=d.get('note', ''))
     except Exception as e:
@@ -152,7 +151,7 @@ def api_account_update(account_id):
     d = _body()
     fields = {k: v for k, v in d.items() if k in (
         'name', 'appid', 'secret', 'token', 'aes_key', 'subject',
-        'mch_relation', 'priority', 'note', 'openid_prefix')}
+        'mch_relation', 'priority', 'note')}
     if not fields:
         return err('没有可更新的字段')
     C.update_account(account_id, **fields)

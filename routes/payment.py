@@ -8,6 +8,7 @@ import json
 import random
 import string
 from datetime import datetime
+from wx_config import mp_openid_prefix, oa_openid_prefix   # [CFG-STEP2D] openid 前缀改成跟着当前生效账号走（缺省仍是 ooTcRx / oLhbm2）
 from wx_config import template_id as _wx_tpl   # [CFG-STEP2] 模板ID改从配置中心读，读不到自动用第三个参数的兜底值(原写死值)
 from flask import Blueprint, request
 from database import get_db
@@ -347,12 +348,12 @@ def pay_notify():
         if we_updated and (trade_state == 'SUCCESS' or result.get('result_code') == 'SUCCESS'):
             try:
                 openid = order.get('mp_openid') or ''
-                if not (openid and openid.startswith('ooTcRx')):
+                if not (openid and openid.startswith(mp_openid_prefix())):
                     openid = order.get('openid') or ''
-                if not (openid and openid.startswith('ooTcRx')):
+                if not (openid and openid.startswith(mp_openid_prefix())):
                     try:
                         cur = conn.cursor()
-                        cur.execute("SELECT mp_openid, unionid FROM users WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE 'ooTcRx%%' LIMIT 1", (order['user_phone'],))
+                        cur.execute("SELECT mp_openid, unionid FROM users WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE %s LIMIT 1", (order['user_phone'], mp_openid_prefix() + '%'))
                         r = cur.fetchone()
                         if r:
                             openid = r['mp_openid'] or ''
@@ -362,7 +363,7 @@ def pay_notify():
                         _pay_unionid = ''
                 else:
                     _pay_unionid = order.get('unionid') or ''
-                if openid and openid.startswith('ooTcRx'):
+                if openid and openid.startswith(mp_openid_prefix()):
                     from helpers import send_wx_subscribe_message
                     location_name = _open_lock_info.get('location_name', '智能寄存柜') if _open_lock_info else '智能寄存柜'
                     cabinet_name = _open_lock_info.get('cabinet_name', '') if _open_lock_info else ''

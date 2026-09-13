@@ -14,6 +14,7 @@ import base64
 from datetime import datetime, timedelta
 from wx_config import (mp_appid as _wx_mp_id, mp_secret as _wx_mp_secret,
                      oa_appid as _wx_oa_id, oa_secret as _wx_oa_secret)   # [CFG-STEP2B] 账号凭据改从配置中心读，读不到自动用 config.py 原值
+from wx_config import mp_openid_prefix, oa_openid_prefix   # [CFG-STEP2D] openid 前缀改成跟着当前生效账号走（缺省仍是 ooTcRx / oLhbm2）
 from wx_config import template_id as _wx_tpl   # [CFG-STEP2] 模板ID改从配置中心读，读不到自动用第三个参数的兜底值(原写死值)
 from flask import Blueprint, request, jsonify, send_from_directory, redirect, send_file
 from database import get_db
@@ -2472,7 +2473,7 @@ def user_check_follow():
     带 5 秒内存缓存, 避免前端轮询把微信接口打爆。"""
     import time as _t
     openid = (request.args.get('openid') or '').strip()
-    if not openid or not openid.startswith('oLhbm2'):
+    if not openid or not openid.startswith(oa_openid_prefix()):
         return json_response({'follow': False, 'known': False})
     _ck = getattr(user_check_follow, '_cache', None)
     if _ck is None:

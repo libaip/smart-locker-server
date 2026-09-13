@@ -10,6 +10,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from wx_config import (h5_base as _wx_h5b, h5_store as _wx_h5s, oauth_callback as _wx_oauthcb,
                      ws_base as _wx_ws, pay_notify_url as _wx_payurl)   # [CFG-STEP2C] 域名改从配置中心读，读不到自动用 config.py 原值
+from wx_config import mp_openid_prefix, oa_openid_prefix   # [CFG-STEP2D] openid 前缀改成跟着当前生效账号走（缺省仍是 ooTcRx / oLhbm2）
 from wx_config import (mp_appid as _wx_mp_id, mp_secret as _wx_mp_secret,
                      oa_appid as _wx_oa_id, oa_secret as _wx_oa_secret)   # [CFG-STEP2B] 账号凭据改从配置中心读，读不到自动用 config.py 原值
 from functools import wraps
@@ -42,7 +43,7 @@ def is_mp_openid(v):
     """判断是否为(新)小程序 openid：新 appid(伧置 wxcabd4cbdb3096c4b) 前缀 ooTcRx。
     公众号 openid(oLhbm2) 发不了订阅消息，会在此返回 False。
     """
-    return bool(v) and str(v).startswith('ooTcRx')
+    return bool(v) and str(v).startswith(mp_openid_prefix())
 
 
 def signal_pending_command(device_id):
@@ -2800,11 +2801,11 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
                 # [FIX-20260716] 必须查 mp_openid（小程序openid），禁止查 openid（可能是公众号openid会导致40003）
                 # ???? oLhbm2 ??????openid????? ooTcRx ??????openid
                 _ub_row = find_user_balance_row(_cur, phone=phone, unionid=unionid or '')
-                if _ub_row and _ub_row.get('mp_openid') and _ub_row['mp_openid'] not in ('', None) and not _ub_row['mp_openid'].startswith('oLhbm2'):
+                if _ub_row and _ub_row.get('mp_openid') and _ub_row['mp_openid'] not in ('', None) and not _ub_row['mp_openid'].startswith(oa_openid_prefix()):
                     openid = _ub_row['mp_openid']
                 if not openid:
                     _po_rows = phone_openid_rows(_cur, phone=phone, unionid=unionid or '')
-                    if len(_po_rows) == 1 and _po_rows[0].get('mp_openid') and not _po_rows[0]['mp_openid'].startswith('oLhbm2'):
+                    if len(_po_rows) == 1 and _po_rows[0].get('mp_openid') and not _po_rows[0]['mp_openid'].startswith(oa_openid_prefix()):
                         openid = _po_rows[0]['mp_openid']
                     elif len(_po_rows) > 1 and not unionid:
                         logger.warning(f'[subscribe_msg] 手机号绑定多个微信，缺少unionid，不猜测: phone={phone}')
@@ -2813,9 +2814,9 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
                     _cur.execute("""
                         SELECT mp_openid, unionid FROM phone_openids
                         WHERE phone = %s AND NULLIF(mp_openid,'') IS NOT NULL
-                          AND mp_openid NOT LIKE 'oLhbm2%%'
+                          AND mp_openid NOT LIKE %s
                         ORDER BY id ASC
-                    """, (phone,))
+                    """, (phone, oa_openid_prefix() + '%'))
                     _po2 = _cur.fetchall()
                     if _po2:
                         _uniqs = {r['unionid'] for r in _po2 if r['unionid']}
@@ -2832,26 +2833,26 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
         # 保险：公众号openid不能发小程序订阅消息，按手机号反查正确小程序openid
                 # ★ 若 openid 还是旧小程序(科莱智 oWrA8 前缀) 或 公众号(oLhbm2)，换到同 unionid 的新小程序(伧置 ooTcRx) openid；
         #   换不到（说明该用户还未用新小程序登录/授权）则跳过，避免微信返回 40003 invalid openid。
-        if openid and phone and not openid.startswith('ooTcRx'):
+        if openid and phone and not openid.startswith(mp_openid_prefix()):
             try:
                 _conn4 = get_db()
                 _cur4 = _conn4.cursor()
                 _r4 = None
                 _ub4 = find_user_balance_row(_cur4, phone=phone, unionid=unionid or '')
-                if _ub4 and _ub4.get('mp_openid') and str(_ub4['mp_openid']).startswith('ooTcRx'):
+                if _ub4 and _ub4.get('mp_openid') and str(_ub4['mp_openid']).startswith(mp_openid_prefix()):
                     _r4 = (_ub4['mp_openid'],)
                 if not _r4:
                     _po4 = phone_openid_rows(_cur4, phone=phone, unionid=unionid or '')
                     for _rr4 in _po4:
-                        if _rr4.get('mp_openid') and str(_rr4['mp_openid']).startswith('ooTcRx'):
+                        if _rr4.get('mp_openid') and str(_rr4['mp_openid']).startswith(mp_openid_prefix()):
                             _r4 = (_rr4['mp_openid'],)
                             break
                 if not _r4:
                     _cur4.execute("""
                         SELECT mp_openid FROM phone_openids
-                        WHERE phone = %s AND NULLIF(mp_openid,'') IS NOT NULL AND mp_openid LIKE 'ooTcRx%%'
+                        WHERE phone = %s AND NULLIF(mp_openid,'') IS NOT NULL AND mp_openid LIKE %s
                         ORDER BY id ASC LIMIT 1
-                    """, (phone,))
+                    """, (phone, mp_openid_prefix() + '%'))
                     _rr = _cur4.fetchone()
                     if _rr and _rr.get('mp_openid'):
                         _r4 = (_rr['mp_openid'],)
@@ -2862,9 +2863,9 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
                     #   实例: 测试号 18888889999(unionid oTGtk2e5...) 的新 openid 记在 18867642312 那一行。
                     _cur4.execute("""
                         SELECT mp_openid FROM phone_openids
-                        WHERE unionid = %s AND NULLIF(mp_openid,'') IS NOT NULL AND mp_openid LIKE 'ooTcRx%%'
+                        WHERE unionid = %s AND NULLIF(mp_openid,'') IS NOT NULL AND mp_openid LIKE %s
                         ORDER BY id ASC LIMIT 1
-                    """, (unionid,))
+                    """, (unionid, mp_openid_prefix() + '%'))
                     _rru = _cur4.fetchone()
                     if _rru and _rru.get('mp_openid'):
                         _r4 = (_rru['mp_openid'],)
@@ -2875,24 +2876,24 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
             except Exception as _e4:
                 logger.warning(f'[subscribe_msg] 旧openid换新失败: {_e4}')
         # 保险：公众号openid不能发小程序订阅消息，按手机号反查正确小程序openid
-        if openid and openid.startswith('oLhbm2') and phone:
+        if openid and openid.startswith(oa_openid_prefix()) and phone:
             try:
                 _conn3 = get_db()
                 _cur3 = _conn3.cursor()
                 _r3 = None
                 _ub3 = find_user_balance_row(_cur3, phone=phone, unionid=unionid or '')
-                if _ub3 and _ub3.get('mp_openid') and _ub3['mp_openid'].startswith('ooTcRx'):
+                if _ub3 and _ub3.get('mp_openid') and _ub3['mp_openid'].startswith(mp_openid_prefix()):
                     _r3 = (_ub3['mp_openid'],)
                 if not _r3:
                     _po3 = phone_openid_rows(_cur3, phone=phone, unionid=unionid or '')
-                    if len(_po3) == 1 and _po3[0].get('mp_openid') and _po3[0]['mp_openid'].startswith('ooTcRx'):
+                    if len(_po3) == 1 and _po3[0].get('mp_openid') and _po3[0]['mp_openid'].startswith(mp_openid_prefix()):
                         _r3 = (_po3[0]['mp_openid'],)
                 _conn3.close()
                 if _r3 and _r3[0]:
                     openid = _r3[0]
             except Exception as _e3:
                 logger.warning(f'[subscribe_msg] 纠正openid失败: {_e3}')
-        if openid and not openid.startswith('ooTcRx'):
+        if openid and not openid.startswith(mp_openid_prefix()):
             logger.warning(f'[subscribe_msg] 跳过公众号openid: openid={openid[:8]}..., phone={phone}')
             return False
         if not openid:

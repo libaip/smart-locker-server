@@ -37,7 +37,6 @@ DEFAULTS = {
     'mp': {
         'name': '伧置(兜底config.py)',
         'appid': 'wxcabd4cbdb3096c4b',
-        'openid_prefix': 'ooTcRx',
         'secret': 'f8d9d68772401f4fdda4a2d2d6143988',
         'token': 'smartlocker2024',
         'aes_key': '',
@@ -46,7 +45,6 @@ DEFAULTS = {
     'oa': {
         'name': '智能寄存柜(兜底config.py)',
         'appid': 'wxd85204d0ec930d46',
-        'openid_prefix': 'oLhbm2',
         'secret': '552e27fa9a260a6640bf6983bd3470f5',
         'token': 'smartlocker2024',
         'aes_key': '',
@@ -225,7 +223,6 @@ def clear_cache(acct_type=None):
 # ============================================================
 _ACCOUNT_COLS = [
     'acct_type', 'name', 'appid', 'secret', 'token', 'aes_key', 'subject',
-    'openid_prefix',
     'mch_relation', 'is_active', 'priority', 'auto_disabled', 'fail_count',
     'health_status', 'health_detail', 'last_check_at', 'last_used_at',
     'note', 'created_at', 'updated_at',
@@ -244,7 +241,6 @@ def ddl(kind):
             token VARCHAR(64) DEFAULT '',
             aes_key VARCHAR(64) DEFAULT '',
             subject VARCHAR(128) DEFAULT '',
-            openid_prefix VARCHAR(16) DEFAULT '',
             mch_relation VARCHAR(16) DEFAULT 'none',
             is_active INTEGER DEFAULT 0,
             priority INTEGER DEFAULT 100,
@@ -302,12 +298,6 @@ def init_db(verbose=False):
                     print('  [ddl] %s -> %s' % (type(e).__name__, e))
                 # 已存在/索引重名之类的，忽略（SQLite 老版本不支持 IF NOT EXISTS 索引才会走到这里）
                 continue
-    # [CFG-STEP2D] 老库补列（幂等）：openid_prefix。新库由建表语句直接带上。
-    with _conn() as (conn, kind):
-        try:
-            _exec(conn, kind, "ALTER TABLE wx_accounts ADD COLUMN openid_prefix VARCHAR(16) DEFAULT ''")
-        except Exception:
-            pass          # 已经有了 / 老版本不支持 IF NOT EXISTS，都当"已存在"
     clear_cache()
     return True
 
@@ -338,7 +328,6 @@ def create_account(acct_type, name, appid, secret='', **kw):
         'acct_type': acct_type, 'name': name, 'appid': appid, 'secret': secret,
         'token': kw.get('token', ''), 'aes_key': kw.get('aes_key', ''),
         'subject': kw.get('subject', ''), 'mch_relation': kw.get('mch_relation', 'none'),
-        'openid_prefix': kw.get('openid_prefix', ''),
         'is_active': 1 if kw.get('is_active') else 0,
         'priority': int(kw.get('priority', 100)),
         'auto_disabled': 0, 'fail_count': 0,
@@ -362,7 +351,7 @@ def create_account(acct_type, name, appid, secret='', **kw):
 
 def update_account(account_id, **kw):
     allowed = {'name', 'appid', 'secret', 'token', 'aes_key', 'subject',
-               'mch_relation', 'priority', 'note', 'openid_prefix'}
+               'mch_relation', 'priority', 'note'}
     if 'is_active' in kw:                 # 生效开关走 set_active，保证"同类只有一个生效"
         set_active(account_id, bool(kw.pop('is_active')))
     sets, params = [], []
@@ -536,33 +525,6 @@ def resolve_all():
 # 为什么要单独做这四个：业务代码里很多地方是 f-string，形如 f'...appid={WX_APP_ID}&...'
 # 如果替换成 appid('oa')（带引号）就会把 f-string 的引号搞乱（实测踩过：app.py 语法错误）。
 # 这四个包装函数调用时**不带任何引号**，可以安全地塞进任何引号环境里。
-def openid_prefix(acct_type='mp'):
-    """[CFG-STEP2D] 当前生效账号的 openid 前缀。
-
-    干嘛用的：微信的 openid 是"跟着某一个号"的（同一个人在小程序A和小程序B里的
-    openid 完全不同），代码要靠前缀判断"这个 openid 是不是当前这个号下面的"。
-    以前前缀写死在代码里 -> 换号就得改代码；现在挪到 wx_accounts.openid_prefix。
-
-    读不到（库没连上/字段空/老库没这列）就回落 DEFAULTS，也就是**现在写死的值**，
-    保证行为与改造前完全一致。
-    """
-    row = get_effective_account(acct_type)
-    p = str((row or {}).get('openid_prefix') or '').strip()
-    if p:
-        return p
-    return str((DEFAULTS.get(acct_type) or {}).get('openid_prefix') or '')
-
-
-def mp_openid_prefix():
-    """当前小程序的 openid 前缀（缺省 ooTcRx）"""
-    return openid_prefix('mp')
-
-
-def oa_openid_prefix():
-    """当前公众号的 openid 前缀（缺省 oLhbm2）"""
-    return openid_prefix('oa')
-
-
 def mp_appid():
     return resolve('mp').get('appid') or ''
 

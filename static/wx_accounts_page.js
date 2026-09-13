@@ -53,7 +53,7 @@ Vue.component('page-wx-accounts', {
 
   <table>
     <thead><tr>
-      <th>ID</th><th>名称</th><th>appid</th><th>主体</th><th>优先级</th><th>状态</th>
+      <th>ID</th><th>名称</th><th>appid</th><th>识别前缀</th><th>主体</th><th>优先级</th><th>状态</th>
       <th>健康</th><th>失败</th><th>最后使用</th><th class="wx-nowrap">操作</th>
     </tr></thead>
     <tbody>
@@ -61,6 +61,7 @@ Vue.component('page-wx-accounts', {
         <td>{{a.id}}</td>
         <td>{{a.name}}</td>
         <td class="wx-mono">{{a.appid}}<span v-if="a.usable===false" class="wx-tag off" :title="a.usable_reason" style="margin-left:4px">未配好</span></td>
+        <td class="wx-mono" title="判断某个 openid 是不是这个号下面的（换号后要改这里）">{{a.openid_prefix||'-'}}</td>
         <td>{{a.subject||'-'}}</td>
         <td>{{a.priority}}</td>
         <td>
@@ -80,7 +81,7 @@ Vue.component('page-wx-accounts', {
           <button class="btn-text red" @click="removeAccount(a)">删除</button>
         </td>
       </tr>
-      <tr v-if="!accounts.length"><td colspan="10" class="empty-row">暂无账号，点右上角添加</td></tr>
+      <tr v-if="!accounts.length"><td colspan="11" class="empty-row">暂无账号，点右上角添加</td></tr>
     </tbody>
   </table>
 
@@ -142,6 +143,7 @@ Vue.component('page-wx-accounts', {
         <div class="form-row">
           <div class="form-group"><label>AppID</label><input v-model="form.appid" placeholder="wx..."></div>
           <div class="form-group"><label>AppSecret</label><input v-model="form.secret" placeholder="换号必填"></div>
+          <div class="form-group"><label>openid 识别前缀（换号必填）</label><input v-model="form.openid_prefix" placeholder="例：ooTcRx / oLhbm2 —— 新号第一次授权后，看日志或库里的 openid 前 6 位"></div>
         </div>
         <div class="form-row">
           <div class="form-group"><label>主体（决定 unionid 是否共享）</label><input v-model="form.subject" placeholder="例：重庆科莱维科技有限公司"></div>
@@ -250,7 +252,7 @@ Vue.component('page-wx-accounts', {
     /* ---------- 账号操作 ---------- */
     openAdd: function (type) {
       this.form = { acct_type: type || 'mp', name: '', appid: '', secret: '', subject: '',
-                    mch_relation: 'pending', priority: 100, token: '', note: '' };
+                    mch_relation: 'pending', priority: 100, token: '', note: '', openid_prefix: '' };
       this.formTitle = '添加' + (this.form.acct_type === 'mp' ? '小程序' : '公众号');
       this.modal = true;
     },
@@ -266,7 +268,7 @@ Vue.component('page-wx-accounts', {
       var body = {
         acct_type: f.acct_type, name: f.name, appid: f.appid, secret: f.secret,
         subject: f.subject, mch_relation: f.mch_relation, priority: f.priority,
-        token: f.token, note: f.note
+        token: f.token, note: f.note, openid_prefix: f.openid_prefix
       };
       var p = isNew ? this._api('/wx-config/accounts', body, 'POST')
                     : this._api('/wx-config/accounts/' + f.id, body, 'POST');

@@ -13,6 +13,7 @@ from wx_config import (h5_base as _wx_h5b, h5_store as _wx_h5s, oauth_callback a
                      ws_base as _wx_ws, pay_notify_url as _wx_payurl)   # [CFG-STEP2C] 域名改从配置中心读，读不到自动用 config.py 原值
 from wx_config import (mp_appid as _wx_mp_id, mp_secret as _wx_mp_secret,
                      oa_appid as _wx_oa_id, oa_secret as _wx_oa_secret)   # [CFG-STEP2B] 账号凭据改从配置中心读，读不到自动用 config.py 原值
+from wx_config import mp_openid_prefix, oa_openid_prefix   # [CFG-STEP2D] openid 前缀改成跟着当前生效账号走（缺省仍是 ooTcRx / oLhbm2）
 from wx_config import template_id as _wx_tpl   # [CFG-STEP2] 模板ID改从配置中心读，读不到自动用第三个参数的兜底值(原写死值)
 from flask import Blueprint, request, session, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -1239,19 +1240,19 @@ def admin_order_close():
         # 发送寄存结束订阅消息
         # 只认小程序 mp_openid（ooTcRx 前缀）；公众号 openid(oLhbm2) 发不了订阅消息
         def _is_mp_openid(v):
-            return bool(v) and str(v).startswith('ooTcRx')
+            return bool(v) and str(v).startswith(mp_openid_prefix())
         ntf_openid = order_dict.get('mp_openid') or ''
         if not _is_mp_openid(ntf_openid):
             ntf_openid = order_dict.get('openid') or ''
         if not _is_mp_openid(ntf_openid) and order_dict.get('user_phone'):
             try:
                 c2 = conn.cursor(cursor_factory=RealDictCursor)
-                c2.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE 'ooTcRx%%' LIMIT 1", (order_dict['user_phone'],))
+                c2.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE %s LIMIT 1", (order_dict['user_phone'], mp_openid_prefix() + '%'))
                 _r = c2.fetchone()
                 if _r and _r['mp_openid']:
                     ntf_openid = _r['mp_openid']
                 if not ntf_openid:
-                    c2.execute("SELECT mp_openid FROM users WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE 'ooTcRx%%' ORDER BY updated_at DESC LIMIT 1", (order_dict['user_phone'],))
+                    c2.execute("SELECT mp_openid FROM users WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE %s ORDER BY updated_at DESC LIMIT 1", (order_dict['user_phone'], mp_openid_prefix() + '%'))
                     _r = c2.fetchone()
                     if _r and _r['mp_openid']:
                         ntf_openid = _r['mp_openid']
@@ -5270,7 +5271,7 @@ def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid='', unionid='
         }
         # 只认小程序 mp_openid（ooTcRx 前缀）；公众号 openid(oLhbm2) 发不了订阅消息
         _ok = openid or ''
-        if not (str(_ok).startswith('ooTcRx')):
+        if not (str(_ok).startswith(mp_openid_prefix())):
             _ok = ''
         send_wx_subscribe_message(_ok, _auto_withdraw_tpl(), wd_data, phone=phone, page='pages/mine/mine', unionid=unionid)
     except Exception as e:

@@ -9,6 +9,8 @@ import os
 import logging
 import time
 from datetime import datetime, timedelta
+from wx_config import (mp_appid as _wx_mp_id, mp_secret as _wx_mp_secret,
+                     oa_appid as _wx_oa_id, oa_secret as _wx_oa_secret)   # [CFG-STEP2B] 账号凭据改从配置中心读，读不到自动用 config.py 原值
 from wx_config import template_id as _wx_tpl   # [CFG-STEP2] 模板ID改从配置中心读，读不到自动用第三个参数的兜底值(原写死值)
 from flask import Blueprint, request, session, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -3815,8 +3817,8 @@ def admin_channel_save():
                     if r.returncode == 0:
                         cert_serial = r.stdout.strip().replace('serial=', '')
             c.execute('''INSERT INTO payment_channels (name,channel_type,app_id,mch_id,api_key,app_secret,cert_name,cert_serial_no,is_active,rotation_index) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
-                      (data.get('name'), data.get('channel_type'), data.get('app_id') or WX_APP_ID,
-                       data.get('mch_id'), data.get('api_key'), data.get('app_secret') or WX_APP_SECRET, data.get('cert_name'), cert_serial, data.get('status',1), data.get('rotation_index', 0)))
+                      (data.get('name'), data.get('channel_type'), data.get('app_id') or _wx_oa_id(),
+                       data.get('mch_id'), data.get('api_key'), data.get('app_secret') or _wx_oa_secret(), data.get('cert_name'), cert_serial, data.get('status',1), data.get('rotation_index', 0)))
         conn.commit()
         conn.close()
         # 商户号保存成功后自动配置投诉通知URL(新增/编辑都触发, 幂等)

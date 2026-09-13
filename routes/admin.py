@@ -7,6 +7,8 @@ def generate_random_password(length=6):
     return ''.join(random.choices(string.digits, k=length))
 
 from login_guard import check_rate, fail, ok, left
+from wx_config import (mp_appid as _wx_mp_id, mp_secret as _wx_mp_secret,
+                     oa_appid as _wx_oa_id, oa_secret as _wx_oa_secret)   # [CFG-STEP2B] 账号凭据改从配置中心读，读不到自动用 config.py 原值
 from wx_config import template_id as _wx_tpl   # [CFG-STEP2] 模板ID改从配置中心读，读不到自动用第三个参数的兜底值(原写死值)
 """
 管理后台API - Blueprint
@@ -666,7 +668,7 @@ def get_cabinet_public_info(cabinet_id):
         # 补充小程序跳转信息
         if result.get('allow_h5_to_mp'):
             import config
-            result['mp_appid'] = config.WX_MP_APP_ID
+            result['mp_appid'] = _wx_mp_id()
             result['mp_path'] = 'pages/subscribe/subscribe'
         # 计算在线状态
         if result.get('last_heartbeat'):
@@ -821,7 +823,7 @@ def get_cabinet_by_mainboard(mainboard_id):
             loc_row = cursor.fetchone()
             if loc_row:
                 result['allow_h5_to_mp'] = loc_row['allow_h5_to_mp'] or 0
-                result['mp_appid'] = config.WX_MP_APP_ID  # 用户端小程序AppID
+                result['mp_appid'] = _wx_mp_id()  # 用户端小程序AppID
                 result['mp_path'] = 'pages/subscribe/subscribe'
                 result['h5_url'] = loc_row['h5_url'] or ''
                 result['allow_mid_retrieve'] = 1 if loc_row['allow_mid_retrieve'] else 0

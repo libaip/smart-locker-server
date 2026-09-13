@@ -8,6 +8,8 @@ import json
 import hashlib
 import sqlite3
 from datetime import datetime, timedelta
+from wx_config import (mp_appid as _wx_mp_id, mp_secret as _wx_mp_secret,
+                     oa_appid as _wx_oa_id, oa_secret as _wx_oa_secret)   # [CFG-STEP2B] 账号凭据改从配置中心读，读不到自动用 config.py 原值
 from functools import wraps
 import time
 from flask import session, jsonify, request
@@ -751,7 +753,7 @@ def get_channel_wxpay(channel, use_mp_appid=False):
     from wxpay import WxPay, ThirdPartyPay as TPP
     channel_type = channel.get('channel_type', 'wechat')
     if channel_type == 'wechat':
-        app_id = channel.get('app_id') or (WX_MP_APP_ID if use_mp_appid else WX_APP_ID)
+        app_id = channel.get('app_id') or (_wx_mp_id() if use_mp_appid else _wx_oa_id())
         cert_name = channel.get('cert_name', '')
         if cert_name:
             cert_path = f'/home/ubuntu/smart-locker/cert/{cert_name}_cert.pem'
@@ -775,7 +777,7 @@ def get_wxpay(use_mp_appid=False):
     mode = get_setting('pay_mode', 'mock')
     if mode == 'mock':
         return MockWxPay()
-    app_id = WX_MP_APP_ID if use_mp_appid else WX_APP_ID
+    app_id = _wx_mp_id() if use_mp_appid else _wx_oa_id()
     return WxPay(mch_id=WX_MCH_ID, api_key=WX_API_KEY, app_id=app_id,
                  cert_path=WX_CERT_PATH, key_path=WX_KEY_PATH)
 
@@ -1838,7 +1840,7 @@ def get_access_token(force_refresh=False):
                     pass
         import requests as _r
         url = 'https://api.weixin.qq.com/cgi-bin/stable_token'
-        payload = dict(grant_type='client_credential', appid=WX_MP_APP_ID, secret=WX_MP_APP_SECRET, force_refresh=force_refresh)
+        payload = dict(grant_type='client_credential', appid=_wx_mp_id(), secret=_wx_mp_secret(), force_refresh=force_refresh)
         resp = _r.post(url, json=payload, timeout=5)
         result = resp.json()
         if 'access_token' in result:

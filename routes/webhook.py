@@ -6,6 +6,8 @@ import json
 import urllib.request
 import urllib.parse
 from flask import Blueprint, request, redirect, jsonify
+from wx_config import (mp_appid as _wx_mp_id, mp_secret as _wx_mp_secret,
+                     oa_appid as _wx_oa_id, oa_secret as _wx_oa_secret)   # [CFG-STEP2B] 账号凭据改从配置中心读，读不到自动用 config.py 原值
 from config import WX_APP_ID as WX_OA_ID, WX_APP_SECRET as WX_OA_SECRET, WX_MP_APP_ID, WX_MP_APP_SECRET, WX_MP_TOKEN
 from database import get_db
 from helpers import json_response, logger, get_access_token
@@ -21,7 +23,7 @@ def wx_oauth():
         code = request.args.get('code', '')
 
         if code:
-            url = f'https://api.weixin.qq.com/sns/oauth2/access_token?appid={WX_OA_ID}&secret={WX_OA_SECRET}&code={code}&grant_type=authorization_code'
+            url = f'https://api.weixin.qq.com/sns/oauth2/access_token?appid={_wx_oa_id()}&secret={_wx_oa_secret()}&code={code}&grant_type=authorization_code'
             try:
                 req = urllib.request.Request(url)
                 with urllib.request.urlopen(req, timeout=10) as resp:
@@ -71,7 +73,7 @@ def wx_oauth():
             if not redirect_uri:
                 return json_response(message='缺少redirect_uri', code=400)
             oauth_callback = 'https://locker.cqdyxl.com/api/wx/oauth'
-            oauth_redirect = f'https://open.weixin.qq.com/connect/oauth2/authorize?appid={WX_OA_ID}&redirect_uri={urllib.parse.quote(oauth_callback + "?redirect_uri=" + urllib.parse.quote(redirect_uri, safe=""))}&response_type=code&scope=snsapi_userinfo&state=locker#wechat_redirect'
+            oauth_redirect = f'https://open.weixin.qq.com/connect/oauth2/authorize?appid={_wx_oa_id()}&redirect_uri={urllib.parse.quote(oauth_callback + "?redirect_uri=" + urllib.parse.quote(redirect_uri, safe=""))}&response_type=code&scope=snsapi_userinfo&state=locker#wechat_redirect'
             return redirect(oauth_redirect)
     except Exception as e:
         logger.error(f'[wx_oauth] {e}')
@@ -165,7 +167,7 @@ def wechat_message():
             if not _phone:
                 try:
                     import urllib.request as _urllib_req, json as _json, logging as _logging
-                    _token_url = "https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s" % (WX_OA_ID, WX_OA_SECRET)
+                    _token_url = "https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s" % (_wx_oa_id(), _wx_oa_secret())
                     _token_resp = _urllib_req.urlopen(_token_url, timeout=5)
                     _token_data = _json.loads(_token_resp.read().decode())
                     _oa_token = _token_data.get("access_token", "")

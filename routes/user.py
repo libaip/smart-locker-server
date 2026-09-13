@@ -12,6 +12,8 @@ import qrcode
 import io
 import base64
 from datetime import datetime, timedelta
+from wx_config import (mp_appid as _wx_mp_id, mp_secret as _wx_mp_secret,
+                     oa_appid as _wx_oa_id, oa_secret as _wx_oa_secret)   # [CFG-STEP2B] 账号凭据改从配置中心读，读不到自动用 config.py 原值
 from wx_config import template_id as _wx_tpl   # [CFG-STEP2] 模板ID改从配置中心读，读不到自动用第三个参数的兜底值(原写死值)
 from flask import Blueprint, request, jsonify, send_from_directory, redirect, send_file
 from database import get_db
@@ -2483,7 +2485,7 @@ def user_check_follow():
     try:
         import urllib.request as _u, json as _j
         import config as _c
-        _tok = _j.loads(_u.urlopen('https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s' % (_c.WX_APP_ID, _c.WX_APP_SECRET), timeout=6).read().decode()).get('access_token', '')
+        _tok = _j.loads(_u.urlopen('https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s' % (_wx_oa_id(), _wx_oa_secret()), timeout=6).read().decode()).get('access_token', '')
         if not _tok:
             return json_response({'follow': False, 'known': False})
         _d = _j.loads(_u.urlopen('https://api.weixin.qq.com/cgi-bin/user/info?access_token=%s&openid=%s&lang=zh_CN' % (_tok, openid), timeout=6).read().decode())
@@ -2760,8 +2762,8 @@ def wx_login():
             return json_response(message='code不能为空', code=400)
         import requests
         import config
-        appid = config.WX_MP_APP_ID
-        secret = config.WX_MP_APP_SECRET
+        appid = _wx_mp_id()
+        secret = _wx_mp_secret()
         url = f'https://api.weixin.qq.com/sns/jscode2session?appid={appid}&secret={secret}&js_code={code}&grant_type=authorization_code'
         resp = requests.get(url, timeout=10)
         result = resp.json()
@@ -2955,8 +2957,8 @@ def wx_login_phone():
             # 模式2：code换session_key
             import requests as _req
             import config
-            appid = config.WX_MP_APP_ID
-            secret = config.WX_MP_APP_SECRET
+            appid = _wx_mp_id()
+            secret = _wx_mp_secret()
             url = f'https://api.weixin.qq.com/sns/jscode2session?appid={appid}&secret={secret}&js_code={code}&grant_type=authorization_code'
             resp = _req.get(url, timeout=10)
             result = resp.json()
@@ -3754,8 +3756,8 @@ def link_mp_openid_from_mini():
             return json_response(message='code不能为空', code=400)
         import requests as req
         import config
-        appid = config.WX_MP_APP_ID
-        secret = config.WX_MP_APP_SECRET
+        appid = _wx_mp_id()
+        secret = _wx_mp_secret()
         url = f'https://api.weixin.qq.com/sns/jscode2session?appid={appid}&secret={secret}&js_code={code}&grant_type=authorization_code'
         resp = req.get(url, timeout=10)
         result = resp.json()

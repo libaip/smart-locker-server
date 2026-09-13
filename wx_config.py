@@ -480,6 +480,26 @@ def resolve_all():
     return {t: resolve(t) for t in ACCT_TYPES}
 
 
+# ---- 给业务用的"无引号"取值函数 -------------------------------------------------
+# 为什么要单独做这四个：业务代码里很多地方是 f-string，形如 f'...appid={WX_APP_ID}&...'
+# 如果替换成 appid('oa')（带引号）就会把 f-string 的引号搞乱（实测踩过：app.py 语法错误）。
+# 这四个包装函数调用时**不带任何引号**，可以安全地塞进任何引号环境里。
+def mp_appid():
+    return resolve('mp').get('appid') or ''
+
+
+def mp_secret():
+    return resolve('mp').get('secret') or ''
+
+
+def oa_appid():
+    return resolve('oa').get('appid') or ''
+
+
+def oa_secret():
+    return resolve('oa').get('secret') or ''
+
+
 def touch_used(acct_type):
     """记录一次使用（便于后台看"最后使用时间"）"""
     row = get_effective_account(acct_type)

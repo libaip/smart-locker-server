@@ -9,6 +9,8 @@ import json
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 
 from werkzeug.middleware.proxy_fix import ProxyFix
+from wx_config import (mp_appid as _wx_mp_id, mp_secret as _wx_mp_secret,
+                     oa_appid as _wx_oa_id, oa_secret as _wx_oa_secret)   # [CFG-STEP2B] 账号凭据改从配置中心读，读不到自动用 config.py 原值
 from wx_config import template_id as _wx_tpl   # [CFG-STEP2] 模板ID改从配置中心读，读不到自动用第三个参数的兜底值(原写死值)
 from flask import Flask, send_from_directory, redirect, request, jsonify
 from flask_socketio import SocketIO
@@ -511,7 +513,7 @@ def _oa_force_follow_qr(cabinet_id='', device=''):
         if _row and _row[0]:
             _conn.close()
             return _row[0]
-        _tok = _json.loads(_u.urlopen('https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s' % (_c.WX_APP_ID, _c.WX_APP_SECRET), timeout=8).read().decode()).get('access_token', '')
+        _tok = _json.loads(_u.urlopen('https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s' % (_wx_oa_id(), _wx_oa_secret()), timeout=8).read().decode()).get('access_token', '')
         if not _tok:
             _conn.close(); return ''
         _body = _json.dumps({'action_name': 'QR_LIMIT_STR_SCENE', 'action_info': {'scene': {'scene_str': scene}}}).encode()
@@ -581,7 +583,7 @@ def store_page():
                     _ssr["force_follow_qr"] = ""
             if row["allow_h5_to_mp"]:
                 import config as _cfg
-                _ssr["mp_appid"] = _cfg.WX_MP_APP_ID
+                _ssr["mp_appid"] = _wx_mp_id()
                 _ssr["mp_path"] = "pages/subscribe/subscribe"
 #            # 每次有人扫码加载存包页面就刷新心跳
 #            try:
@@ -836,7 +838,7 @@ def wx_jsapi_signature():
         token_data = getattr(app, '_wx_jsapi_token', None)
         if not token_data or time.time() - token_data.get('ts', 0) > 7000:
             import urllib.request
-            token_url = f'https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid={WX_APP_ID}&secret={WX_APP_SECRET}'
+            token_url = f'https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid={_wx_oa_id()}&secret={_wx_oa_secret()}'
             with urllib.request.urlopen(token_url, timeout=10) as resp:
                 token_json = json.loads(resp.read().decode())
             access_token = token_json.get('access_token', '')
@@ -870,7 +872,7 @@ def wx_jsapi_signature():
         return jsonify({
             'code': 200,
             'data': {
-                'appId': WX_APP_ID,
+                'appId': _wx_oa_id(),
                 'timestamp': timestamp,
                 'nonceStr': nonce_str,
                 'signature': signature
@@ -884,7 +886,8 @@ def wx_jsapi_signature():
 def wx_generate_scheme():
     try:
         import json as _json, urllib.request as _urllib, time as _time, logging as _logging
-        from config import WX_MP_APP_ID as _appid, WX_MP_APP_SECRET as _secret
+        from wx_config import mp_appid as _wx_mp_id, mp_secret as _wx_mp_secret
+        _appid, _secret = _wx_mp_id(), _wx_mp_secret()
         try:
             _raw = request.get_json(force=True, silent=True) or {}
         except:

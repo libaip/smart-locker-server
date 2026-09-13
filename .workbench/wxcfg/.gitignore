@@ -1,0 +1,4 @@
+# 这两个是 run_tests.sh 运行时从线上拷过来的副本，不进仓库（避免和线上文件混淆）
+wx_config.py
+wx_config_api.py
+__pycache__/

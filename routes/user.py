@@ -3197,7 +3197,9 @@ def get_subscribe_templates():
     """返回订阅消息模板ID列表（动态下发，前端不写死）"""
     _withdraw = _wx_tpl('subscribe_refund', 'mp', 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c')   # 退款成功
     _general = _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA')     # 押金退还
-    _deposit = _wx_tpl('subscribe_deposit', 'mp', 'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk')     # 寄存成功
+    # [2026-09-14] 弹窗不再请求"寄存成功"（老板要求：把用户的一次性授权集中在跟钱相关的两条上）
+    # 字段名保留、指向"押金退还"，避免前端按旧字段名取到空值把弹窗搞挂（实验已验证这样弹窗正常显示 2 条）
+    _deposit = _general
     return json_response(data={
         'templates': [_withdraw, _general, _deposit],
         'withdraw_notify': _withdraw,

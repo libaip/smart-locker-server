@@ -376,7 +376,11 @@ def pay_notify():
                         'character_string9': {'value': str(order.get('order_no') or order.get('orderNo') or '')}
                     }
                     # S119 2026-09-06: 启用寄存成功通知(新模板已加入小程序订阅授权列表)
-                    send_wx_subscribe_message(openid, _wx_tpl('subscribe_deposit', 'mp', 'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk'), subscribe_data, phone=order.get('user_phone'), page='pages/mine/mine', unionid=_pay_unionid)
+                    # [2026-09-14] 弹窗已不再请求该模板 -> 用户没有额度, 发送必然 43101(白打接口+刷日志) -> 默认关闭
+                    # 想恢复发送: 把下面这行改成 True 即可
+                    _SEND_STORAGE_SUCCESS_NOTIFY = False
+                    if _SEND_STORAGE_SUCCESS_NOTIFY:
+                        send_wx_subscribe_message(openid, _wx_tpl('subscribe_deposit', 'mp', 'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk'), subscribe_data, phone=order.get('user_phone'), page='pages/mine/mine', unionid=_pay_unionid)
             except Exception as e:
                 logger.error(f'[支付回调发送订阅消息失败] {e}')
         

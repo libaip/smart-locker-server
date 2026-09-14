@@ -2520,6 +2520,29 @@ def user_oa_subscribe_log():
         return json_response(message=str(e), code=500)
 
 
+@bp.route('/user/oa-subscribe-status', methods=['GET'])
+def user_oa_subscribe_status():
+    """[2026-09-14] 查该手机号是否已经订阅过公众号通知（供 H5 决定要不要再弹订阅层）。
+
+    口径：oa_subscribe_log 里最近若干条 detail 中出现 accept 即视为已订阅。
+    读不到/出错一律返回 subscribed=False（宁可多弹一次，也不能把用户卡住）。
+    """
+    try:
+        phone = str(request.args.get('phone') or '')[:20]
+        if not phone:
+            return json_response(data={'subscribed': False})
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT detail FROM oa_subscribe_log WHERE phone = %s ORDER BY id DESC LIMIT 5", (phone,))
+        rows = cur.fetchall() or []
+        conn.close()
+        subscribed = any('accept' in str((r.get('detail') if isinstance(r, dict) else r[0]) or '') for r in rows)
+        return json_response(data={'subscribed': bool(subscribed)})
+    except Exception as e:
+        logger.warning('[oa_subscribe_status] 查询失败(按未订阅处理): %s', e)
+        return json_response(data={'subscribed': False})
+
+
 @bp.route('/user/info', methods=['GET'])
 def get_user_info():
     """获取用户信息（个人中心页）"""

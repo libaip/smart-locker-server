@@ -489,17 +489,21 @@
             </div>
             <div style="position:relative">
                 <button id="oaOrigBtn" class="next-btn" onclick="onStep1Next()">下一步</button>
-                <div id="oaSubWrap" style="opacity:0;pointer-events:none;position:absolute;left:0;top:0;right:0;bottom:0;z-index:9">
+            </div>
+            <!-- [2026-09-14] 公众号订阅弹层：只在"没跳进小程序、继续走 H5 支付"时弹一次 -->
+            <div id="oaSubWrap" style="display:none;position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.55);z-index:99998;align-items:center;justify-content:center;padding:22px;box-sizing:border-box">
+                <div style="background:#fff;border-radius:16px;padding:22px 20px;max-width:340px;width:100%;box-sizing:border-box;text-align:center">
+                    <div style="font-size:19px;font-weight:700;color:#1a1a1a;margin-bottom:8px">订阅通知</div>
+                    <div style="font-size:13px;color:#666;line-height:1.7;margin-bottom:14px">订阅后，“押金退还 / 退款到账”会用微信“服务通知”提醒你<br>只点这一次，以后不再打扰</div>
                     <wx-open-subscribe id="oaSubBtn" template="RyvAHJzC46JDEk_w8nAJHlLppNtNiAgkqP_GdHGWEUg,pG1ieUsHgBg5y0ZJCfjNiUrF7QuftlSWwDYXSpAp6js,nDTX0vT_wODrTnM4A1qSNnSXDUTNgw2Fm0CMF0eZe-o" style="display:block;width:100%">
                         <script type="text/wxtag-template">
-                            <style>.oa-hit{display:block;width:100%;padding:14px;background:#FFC107;color:#1a1a1a;border:0;border-radius:24px;font-size:17px;font-weight:700;margin-top:6px;text-align:center;box-sizing:border-box}</style>
-                            <button class="oa-hit">下一步</button>
+                            <style>.oa-hit{display:block;width:100%;padding:14px;background:#FFC107;color:#1a1a1a;border:0;border-radius:24px;font-size:17px;font-weight:700;text-align:center;box-sizing:border-box}</style>
+                            <button class="oa-hit">订阅通知</button>
                         </script>
                     </wx-open-subscribe>
+                    <div id="oaSubSkip" style="font-size:13px;color:#999;margin-top:16px;text-decoration:underline">暂不订阅，继续支付</div>
                 </div>
             </div>
-            <div id="oaSubEsc" style="display:none;font-size:13px;color:#576b95;text-align:center;margin-top:4px;text-decoration:underline" onclick="onStep1Next()">点不动？点这里继续存包</div>
-            <div id="oaSubHint" style="display:none;font-size:12px;color:#999;text-align:center;margin-top:6px;line-height:1.5">点“下一步”即同时订阅寄存通知（首次会提示，建议勾选“总是保持以上选择”，以后不再打扰）</div>
         </div>
         <!-- 存取包说明 -->
         <div class="usage-tips">
@@ -1078,7 +1082,7 @@
         if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); mpGiveupTimer = null; }
         if (mpRescueTimer) { clearTimeout(mpRescueTimer); mpRescueTimer = null; }
         mpOpenedTime = 0;
-        goToStep2Direct();
+        oaSubPrompt(goToStep2Direct);   // [2026-09-14] 用户选了"继续H5存包" -> 先问一次公众号订阅
     }
 
     // ===== [FIX-20260912] H5→小程序跳转加固(救 iPhone) =====
@@ -1149,7 +1153,7 @@
         if (el) { el.classList.add('show'); }
         mpPrefetchScheme();
         if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); }
-        mpGiveupTimer = setTimeout(function() { mpGiveupTimer = null; goToStep2Direct(); }, 25000);
+        mpGiveupTimer = setTimeout(function() { mpGiveupTimer = null; oaSubPrompt(goToStep2Direct); }, 25000);
     }
 
     function mpAutoJump() {
@@ -2238,10 +2242,8 @@
     }
     function oaSubHide(reason) {
         var w = document.getElementById('oaSubWrap');
-        var h = document.getElementById('oaSubHint');
-        if (w) { w.style.opacity = '0'; w.style.pointerEvents = 'none'; }
-        if (h) { h.style.display = 'none'; }
-        console.log('[oa-subscribe] 覆盖层关闭:', reason || '');
+        if (w) { w.style.display = 'none'; }
+        console.log('[oa-subscribe] 订阅弹层关闭:', reason || '');
     }
     function oaSubReport(detail) {
         try {
@@ -2258,13 +2260,40 @@
     function oaSubProceed(detail) {
         if (_oaSubBusy) { return; }
         _oaSubBusy = true;
-        oaSubHide('已交互');
         oaSubReport(detail);
         oaSubDiag('interact');
-        try { onStep1Next(); } catch (e) {
-            console.log('[oa-subscribe] onStep1Next 异常', e); _oaSubBusy = false; return;
-        }
+        oaSubFinish();
         setTimeout(function() { _oaSubBusy = false; }, 1500);
+    }
+    // ===== [2026-09-14] 公众号订阅弹层（只给走 H5 支付的用户） =====
+    var _oaSubCb = null, _oaSubShown = false;
+    function oaSubFinish() {
+        var w = document.getElementById('oaSubWrap');
+        if (w) { w.style.display = 'none'; }
+        var cb = _oaSubCb; _oaSubCb = null;
+        if (cb) { try { cb(); } catch (e) { console.log('[oa-subscribe] 继续异常', e); } }
+    }
+    function oaSubPrompt(cb) {
+        // 开关关着 / 已经弹过 / 标签不在 -> 直接继续，绝不影响存包
+        try {
+            if (typeof OA_SUBSCRIBE_ENABLED === 'undefined' || !OA_SUBSCRIBE_ENABLED || _oaSubShown) { cb(); return; }
+            var w = document.getElementById('oaSubWrap');
+            var tag = document.getElementById('oaSubBtn');
+            if (!w || !tag) { cb(); return; }
+            _oaSubShown = true; _oaSubCb = cb;
+            var sk = document.getElementById('oaSubSkip');
+            if (sk && !sk._bound) { sk._bound = 1; sk.onclick = function () { oaSubDiag('skip'); oaSubFinish(); }; }
+            var phone = (currentPhone || (document.getElementById('userPhone') ? document.getElementById('userPhone').value : '') || '');
+            // 已经订阅过的（服务端 oa_subscribe_log 里有 accept）就不弹了
+            fetch('/api/user/oa-subscribe-status?phone=' + encodeURIComponent(phone))
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                  if (d && d.data && d.data.subscribed) { oaSubDiag('already_subscribed'); oaSubFinish(); return; }
+                  w.style.display = 'flex';
+                  oaSubDiag('prompt_show');
+              })
+              .catch(function () { w.style.display = 'flex'; oaSubDiag('prompt_show_nochk'); });
+        } catch (e) { try { cb(); } catch (e2) {} }
     }
     function oaSubscribeInit() {
         oaSubDiag('init');
@@ -2273,14 +2302,10 @@
         var tag = document.getElementById('oaSubBtn');
         if (!tag) { oaSubDiag('no_tag_el'); return; }
         tag.addEventListener('ready', function() {
+            // [2026-09-14] 标签不再盖在"下一步"按钮上：只在走 H5 支付时才弹订阅层
             var w = document.getElementById('oaSubWrap');
             var h = document.getElementById('oaSubHint');
-            if (w) { w.style.opacity = '1'; w.style.pointerEvents = 'auto'; }
-            if (h) { h.style.display = 'block'; }
-            var _esc = document.getElementById('oaSubEsc');
-            if (_esc) { _esc.style.display = 'block'; }
             var ob = document.getElementById('oaOrigBtn');
-            if (ob) { ob.style.display = 'none'; }   // 关键: 藏掉原按钮, 用户只能点到订阅标签
             function _rc(el) { if (!el) { return 'null'; } var r = el.getBoundingClientRect(); return Math.round(r.left) + ',' + Math.round(r.top) + ',' + Math.round(r.width) + 'x' + Math.round(r.height); }
             oaSubDiag('tag_ready', 'tag=' + _rc(tag) + ' wrap=' + _rc(w) + ' origBtn=' + _rc(ob) + ' innerH=' + window.innerHeight);
         });

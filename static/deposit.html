@@ -737,6 +737,9 @@
             <div class="modal-btns">
                 <button id="mpOpenBtn" class="modal-btn modal-btn-confirm" onclick="launchMp()">去小程序</button>
             </div>
+            <div id="mpEscLine" style="display:none;text-align:center;margin-top:14px">
+                <span id="mpEscBtn" style="font-size:13px;color:#576b95;text-decoration:underline">一直跳不过去？点这里用网页支付</span>
+            </div>
         </div>
     </div>
 
@@ -832,6 +835,8 @@
     var params = new URLSearchParams(window.location.search);
     var _oaForceH5 = params.get('h5only') === '1';    // [测试] 跳过跳小程序, 强制走 H5
     var _oaTestOnly = params.get('oatest') === '1';   // [测试] 只弹订阅层, 不创建订单
+    // [A1-b] 跳小程序最多点几次（后台设置 mp_jump_max_retry；没注入时按 3）
+    var MP_RETRY_LIMIT = parseInt("{mp_retry_limit}", 10) || 3;
     if (params.get("page") === "profile") {
         var _oidList = params.getAll("openid");
         var _hasOid = false;
@@ -1138,6 +1143,8 @@
         // [CFG-STEP2E] 编号由服务端下发（读配置中心）；拿不到就别跳，绝不能跳旧号
         if (!mpAppId) { showToast('小程序编号没拿到，请退出重新进入'); return; }
         try { mpSavePendingJump(); } catch (e) {}   // [A1] 点"去小程序"也存档：回来/页面被重载都能接上订单
+        var _mpTryN = mpTryInc();                    // [A1-b] 记一次点击
+        console.log('[mp-gate] 第 ' + _mpTryN + ' 次尝试跳小程序 (上限 ' + MP_RETRY_LIMIT + ')');
         var el = document.getElementById('mpTipModal');
         if (el) { el.classList.remove('show'); }
         if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); mpGiveupTimer = null; }
@@ -1148,7 +1155,7 @@
         mpRescueTimer = setTimeout(function() {
             mpRescueTimer = null;
             if (mpOpenedTime === 0) { return; }
-            if (document.hidden === false) { showMpTipModal(); }   // [A1] 又没跳过去 -> 弹层再出来，让他再点
+            if (document.hidden === false) { mpGateOrEscape(); }   // [A1-b] 又没跳过去 -> 点够了就放行，否则弹层再出来
         }, 2000);
         if (mpScheme) { window.location.href = mpScheme; return; }
         showToast('正在打开小程序…');
@@ -1162,6 +1169,18 @@
         var el = document.getElementById('mpTipModal');
         var hint = document.getElementById('mpRetryHint');
         if (hint) { hint.style.display = 'block'; }
+        // [A1-b] 第 2 次起给用户一个"用网页支付"的出口；点够次数会自动放行
+        try {
+            var _esc = document.getElementById('mpEscLine');
+            var _escBtn = document.getElementById('mpEscBtn');
+            if (_esc && _escBtn) {
+                if (mpTryCount() >= 2) {
+                    _esc.style.display = 'block';
+                    _escBtn.textContent = '一直跳不过去？点这里用网页支付（已试 ' + mpTryCount() + ' 次）';
+                    if (!_escBtn._bound) { _escBtn._bound = 1; _escBtn.onclick = function () { mpGateEscape(); }; }
+                } else { _esc.style.display = 'none'; }
+            }
+        } catch (e) {}
         if (el) { el.classList.add('show'); }
         mpPrefetchScheme();
         if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); mpGiveupTimer = null; }   // [A1] 取消"25 秒自动放行"
@@ -1295,14 +1314,49 @@
         try { localStorage.removeItem(MP_JUMP_KEY); } catch (e) {}
     }
 
+    // ===== [A1-b 2026-09-14] 点够次数还跳不过去 -> 放行进网页支付（防卡死） =====
+    function mpTryKey() {
+        var oid = currentOrderId || '';
+        if (!oid) {
+            try { var _o = mpReadPendingJump(15 * 60 * 1000); if (_o) { oid = _o.order_id; } } catch (e) {}
+        }
+        return 'locker_mp_try_' + (oid || 'x');
+    }
+    function mpTryCount() { try { return parseInt(localStorage.getItem(mpTryKey()) || '0', 10) || 0; } catch (e) { return 0; } }
+    function mpTryInc() { try { var n = mpTryCount() + 1; localStorage.setItem(mpTryKey(), String(n)); return n; } catch (e) { return 1; } }
+    function mpTryClear() { try { localStorage.removeItem(mpTryKey()); } catch (e) {} }
+    function mpGateEscapeReport(tries) {
+        try {
+            fetch('/api/user/oa-subscribe-log', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    phone: (currentPhone || (document.getElementById('userPhone') || {}).value || ''),
+                    detail: JSON.stringify({stage: 'mp_gate_escape', tries: tries})
+                })
+            }).catch(function () {});
+        } catch (e) {}
+    }
+    function mpGateEscape() {
+        var _n = mpTryCount();
+        mpTryClear();
+        mpGateEscapeReport(_n);
+        try { showToast('多次未能跳转，已为你切换到网页支付'); } catch (e) {}
+        try { goToStep2Direct(); } catch (e) {}
+    }
+    // 该拦还是该放：点够次数就放行，否则弹回"请跳转小程序"
+    function mpGateOrEscape() {
+        try { if (mpTryCount() >= MP_RETRY_LIMIT) { mpGateEscape(); return; } } catch (e) {}
+        showMpTipModal();
+    }
+
     // ===== [A1-20260914] 回来时先问服务端"到底进没进小程序" =====
     // 背景：微信跳小程序会弹它自己的确认框，用户点"取消"时页面也会"隐藏一下又回来"，
     //       光看"页面可见了"会把取消误判成成功 -> 直接进支付页（老板真机抓到的 bug）。
     // 做法：小程序进去后会 POST /api/user/mp-exit-log（已落库）-> 问 /api/user/mp-entered。
     function mpProceedOrGate() {
         var _done = false;
-        function _yes() { if (_done) { return; } _done = true; try { goToStep2Direct(); } catch (e) {} }
-        function _no() { if (_done) { return; } _done = true; try { showMpTipModal(); } catch (e) {} }
+        function _yes() { if (_done) { return; } _done = true; try { mpTryClear(); } catch (e) {} try { goToStep2Direct(); } catch (e) {} }
+        function _no() { if (_done) { return; } _done = true; try { mpGateOrEscape(); } catch (e) {} }
         function _oid() {
             var oid = currentOrderId || '';
             if (!oid) {

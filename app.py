@@ -630,6 +630,16 @@ def store_page():
         with open(tpl_path, 'r', encoding='utf-8') as f:
             html = f.read().replace("{device}", device).replace("{openid}", openid).replace("{_ver}", _ver).replace("{ssr_cabinet}", _ssr_json).replace("{cabinet_id}", _cabinet_id).replace("{deposit_amount}", str(int(_ssr["deposit_amount"]) if _ssr["deposit_amount"] and _ssr["deposit_amount"] == int(_ssr["deposit_amount"]) else _ssr["deposit_amount"]))
         html = html.replace("{oa_sub_on}", ("true" if _oa_sub_on else "false"))
+        # [A1-b 2026-09-14] 跳小程序最多点几次（点够了还进不去就放行网页支付），后台设置 mp_jump_max_retry
+        try:
+            _mp_try_limit = int(str(_get_setting('mp_jump_max_retry', '3') or '3').strip() or '3')
+        except Exception:
+            _mp_try_limit = 3
+        if _mp_try_limit < 1:
+            _mp_try_limit = 1
+        if _mp_try_limit > 10:
+            _mp_try_limit = 10
+        html = html.replace("{mp_retry_limit}", str(_mp_try_limit))
         from flask import make_response as _mr
         resp = _mr(html)
         resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'

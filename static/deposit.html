@@ -729,14 +729,13 @@
     </div>
 
     <!-- ========== 小程序跳转提示 ========== -->
-    <div id="mpTipModal" class="modal-overlay">
+    <div id="mpTipModal" class="modal-overlay" onclick="if(event.target===this){closeMpTipModal()}">
         <div class="modal-box">
-            <div class="modal-title">存包提示</div>
-            <p id="mpTipDesc" style="text-align:center;font-size:14px;color:#666;margin-bottom:10px">建议使用小程序完成存包，可收到微信通知；打不开请点“继续H5存包”</p>
-            <p id="mpRetryHint" style="display:none;text-align:center;font-size:13px;color:#e6a23c;margin-bottom:10px">没跳过去？点下面“打开小程序”再试一次</p>
+            <div class="modal-title">请跳转小程序进行下一步</div>
+            <p id="mpTipDesc" style="text-align:center;font-size:14px;color:#666;margin-bottom:10px">跳转后请允许“订阅通知”，这样才能收到押金退还 / 退款到账的微信提醒</p>
+            <p id="mpRetryHint" style="display:none;text-align:center;font-size:13px;color:#e6a23c;margin-bottom:10px">没跳过去？再点一次【去小程序】就行（点几次都可以）</p>
             <div class="modal-btns">
-                <button class="modal-btn modal-btn-cancel" onclick="closeMpTipModal()">继续H5存包</button>
-                <button id="mpOpenBtn" class="modal-btn modal-btn-confirm" onclick="launchMp()">打开小程序</button>
+                <button id="mpOpenBtn" class="modal-btn modal-btn-confirm" onclick="launchMp()">去小程序</button>
             </div>
         </div>
     </div>
@@ -1064,7 +1063,7 @@
                 document.getElementById('payDoorNum').textContent = (d.data.compartment_number || '') + '号';
                 console.log("[DEBUG] allowH5ToMp:", allowH5ToMp, "mpAppId:", mpAppId);
                 if (_oaForceH5) {
-                    oaSubPrompt(goToStep2Direct);   // [测试] 强制走 H5: 先问公众号订阅, 再进支付页
+                    showMpTipModal();   // [测试] 强制走 H5: 直接看到 A1 的拦截弹层(请跳转小程序)
                 } else if (allowH5ToMp === 1) {
                     mpSavePendingJump();      // FIX-20260912b 跳转前存档，回来才能接着付
                     mpAutoJump();
@@ -1082,11 +1081,11 @@
     }
 
     function closeMpTipModal() {
+        // [A1-20260914] 只是关掉提示层，人留在第 1 步；**没有"跳过"出口**：不跳小程序就不进支付页
         document.getElementById('mpTipModal').classList.remove('show');
         if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); mpGiveupTimer = null; }
         if (mpRescueTimer) { clearTimeout(mpRescueTimer); mpRescueTimer = null; }
         mpOpenedTime = 0;
-        oaSubPrompt(goToStep2Direct);   // [2026-09-14] 用户选了"继续H5存包" -> 先问一次公众号订阅
     }
 
     // ===== [FIX-20260912] H5→小程序跳转加固(救 iPhone) =====
@@ -1142,6 +1141,13 @@
         if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); mpGiveupTimer = null; }
         if (mpRescueTimer) { clearTimeout(mpRescueTimer); mpRescueTimer = null; }
         mpOpenedTime = Date.now();
+        mpStartReturnWatch();
+        if (mpRescueTimer) { clearTimeout(mpRescueTimer); }
+        mpRescueTimer = setTimeout(function() {
+            mpRescueTimer = null;
+            if (mpOpenedTime === 0) { return; }
+            if (document.hidden === false) { showMpTipModal(); }   // [A1] 又没跳过去 -> 弹层再出来，让他再点
+        }, 2000);
         if (mpScheme) { window.location.href = mpScheme; return; }
         showToast('正在打开小程序…');
         mpPrefetchScheme(function() {
@@ -1156,8 +1162,9 @@
         if (hint) { hint.style.display = 'block'; }
         if (el) { el.classList.add('show'); }
         mpPrefetchScheme();
-        if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); }
-        mpGiveupTimer = setTimeout(function() { mpGiveupTimer = null; oaSubPrompt(goToStep2Direct); }, 25000);
+        if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); mpGiveupTimer = null; }   // [A1] 取消"25 秒自动放行"
+        // [A1] 跳不过去就退回第 1 步（订单保留复用，不会多占柜门），不放行进支付页
+        try { goToStoreStep1(); } catch (e) {}
     }
 
     function mpAutoJump() {
@@ -1304,8 +1311,7 @@
             if (pel && !pel.value) { pel.value = o.phone; }
         }
         mpOpenedTime = 0;
-        // [2026-09-14 老板要求] 从小程序回来、继续在 H5 支付的，也要问一次公众号订阅
-        try { oaSubPrompt(goToStep2Direct); } catch (e) {}
+        try { goToStep2Direct(); } catch (e) {}
         return true;
     }
 
@@ -1314,8 +1320,7 @@
         if (resumeFromMpJump()) { return true; }
         if (mpOpenedTime > 0 && Date.now() - mpOpenedTime > 2000) {
             mpOpenedTime = 0;
-            // [2026-09-14 老板要求] 同上：从跳转返回 -> 也弹一次公众号订阅
-            try { oaSubPrompt(goToStep2Direct); } catch (e) {}
+            try { goToStep2Direct(); } catch (e) {}
             return true;
         }
         return false;

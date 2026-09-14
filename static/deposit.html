@@ -1189,8 +1189,14 @@
     }
 
     function mpAutoJump() {
-        // [CFG-STEP2E] 同上：编号由服务端下发，拿不到就走人工兜底弹窗，不跳旧号
-        if (!mpAppId) { showMpTipModal(); return; }
+        // [CFG-STEP2E] 同上：编号由服务端下发，拿不到就不跳旧号
+        // [A1-b 修正] 编号拿不到时**直接放行到网页支付**：这种情况用户点多少次都跳不了（按钮不计数），
+        //             再拦就是把单子白扔掉（原来会弹拦截层 -> 把人卡死在第一步）
+        if (!mpAppId) {
+            try { mpGateEscapeReport(0); } catch (e) {}
+            try { goToStep2Direct(); } catch (e) {}
+            return;
+        }
         mpPrefetchScheme();
         mpPrefetchScheme(function() {
             if (!mpScheme) { showMpTipModal(); return; }
@@ -1315,6 +1321,7 @@
     }
 
     // ===== [A1-b 2026-09-14] 点够次数还跳不过去 -> 放行进网页支付（防卡死） =====
+    var _mpEscaped = false;   // ★一旦放行过，就不再拦（否则 2 秒兜底/再次返回会把用户从支付页弹回第一步）
     function mpTryKey() {
         var oid = currentOrderId || '';
         if (!oid) {
@@ -1337,14 +1344,17 @@
         } catch (e) {}
     }
     function mpGateEscape() {
+        _mpEscaped = true;                                              // ★放行后不再拦
+        if (mpRescueTimer) { clearTimeout(mpRescueTimer); mpRescueTimer = null; }
+        if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); mpGiveupTimer = null; }
         var _n = mpTryCount();
-        mpTryClear();
-        mpGateEscapeReport(_n);
+        mpGateEscapeReport(_n);                                         // 计数不清零：留证据、也避免和兜底逻辑打架
         try { showToast('多次未能跳转，已为你切换到网页支付'); } catch (e) {}
         try { goToStep2Direct(); } catch (e) {}
     }
     // 该拦还是该放：点够次数就放行，否则弹回"请跳转小程序"
     function mpGateOrEscape() {
+        if (_mpEscaped) { try { goToStep2Direct(); } catch (e) {} return; }   // ★已放行过 -> 直接进支付页，绝不再弹
         try { if (mpTryCount() >= MP_RETRY_LIMIT) { mpGateEscape(); return; } } catch (e) {}
         showMpTipModal();
     }
@@ -1354,6 +1364,7 @@
     //       光看"页面可见了"会把取消误判成成功 -> 直接进支付页（老板真机抓到的 bug）。
     // 做法：小程序进去后会 POST /api/user/mp-exit-log（已落库）-> 问 /api/user/mp-entered。
     function mpProceedOrGate() {
+        if (_mpEscaped) { try { goToStep2Direct(); } catch (e) {} return; }   // ★已放行过 -> 不查、不拦
         var _done = false;
         function _yes() { if (_done) { return; } _done = true; try { mpTryClear(); } catch (e) {} try { goToStep2Direct(); } catch (e) {} }
         function _no() { if (_done) { return; } _done = true; try { mpGateOrEscape(); } catch (e) {} }

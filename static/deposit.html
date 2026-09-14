@@ -1063,7 +1063,8 @@
                 document.getElementById('payDoorNum').textContent = (d.data.compartment_number || '') + '号';
                 console.log("[DEBUG] allowH5ToMp:", allowH5ToMp, "mpAppId:", mpAppId);
                 if (_oaForceH5) {
-                    showMpTipModal();   // [测试] 强制走 H5: 直接看到 A1 的拦截弹层(请跳转小程序)
+                    mpSavePendingJump();   // [测试] 存档，回来才能接着付
+                    showMpTipModal();      // [测试] 强制走 H5: 直接看到 A1 的拦截弹层(请跳转小程序)
                 } else if (allowH5ToMp === 1) {
                     mpSavePendingJump();      // FIX-20260912b 跳转前存档，回来才能接着付
                     mpAutoJump();

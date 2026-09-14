@@ -1137,6 +1137,7 @@
     function launchMp() {
         // [CFG-STEP2E] 编号由服务端下发（读配置中心）；拿不到就别跳，绝不能跳旧号
         if (!mpAppId) { showToast('小程序编号没拿到，请退出重新进入'); return; }
+        try { mpSavePendingJump(); } catch (e) {}   // [A1] 点"去小程序"也存档：回来/页面被重载都能接上订单
         var el = document.getElementById('mpTipModal');
         if (el) { el.classList.remove('show'); }
         if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); mpGiveupTimer = null; }
@@ -1294,6 +1295,38 @@
         try { localStorage.removeItem(MP_JUMP_KEY); } catch (e) {}
     }
 
+    // ===== [A1-20260914] 回来时先问服务端"到底进没进小程序" =====
+    // 背景：微信跳小程序会弹它自己的确认框，用户点"取消"时页面也会"隐藏一下又回来"，
+    //       光看"页面可见了"会把取消误判成成功 -> 直接进支付页（老板真机抓到的 bug）。
+    // 做法：小程序进去后会 POST /api/user/mp-exit-log（已落库）-> 问 /api/user/mp-entered。
+    function mpProceedOrGate() {
+        var _done = false;
+        function _yes() { if (_done) { return; } _done = true; try { goToStep2Direct(); } catch (e) {} }
+        function _no() { if (_done) { return; } _done = true; try { showMpTipModal(); } catch (e) {} }
+        function _oid() {
+            var oid = currentOrderId || '';
+            if (!oid) {
+                try { var _o = mpReadPendingJump(15 * 60 * 1000); if (_o) { oid = _o.order_id; } } catch (e) {}
+            }
+            return oid;
+        }
+        function _ask(cb) {
+            try {
+                fetch('/api/user/mp-entered?order_id=' + encodeURIComponent(_oid()))
+                  .then(function (r) { return r.json(); })
+                  .then(function (d) { cb(!!(d && d.data && d.data.entered)); })
+                  .catch(function () { cb(true); });      // 接口异常 -> 放行，别把真进去的人卡住
+            } catch (e) { cb(true); }
+        }
+        _ask(function (ok1) {
+            if (ok1) { _yes(); return; }
+            setTimeout(function () {                        // 小程序上报可能慢半拍，再问一次
+                _ask(function (ok2) { if (ok2) { _yes(); } else { _no(); } });
+            }, 1500);
+        });
+        setTimeout(function () { if (!_done) { _done = true; try { goToStep2Direct(); } catch (e) {} } }, 6000);
+    }
+
     // 读档恢复到支付页；成功返回 true
     function resumeFromMpJump() {
         var o = mpReadPendingJump();
@@ -1312,7 +1345,8 @@
             if (pel && !pel.value) { pel.value = o.phone; }
         }
         mpOpenedTime = 0;
-        try { goToStep2Direct(); } catch (e) {}
+        // [A1] 不直接进支付页：先确认"真的进过小程序"（取消跳转的会被拦回"请跳转小程序"）
+        try { mpProceedOrGate(); } catch (e) {}
         return true;
     }
 
@@ -1321,7 +1355,8 @@
         if (resumeFromMpJump()) { return true; }
         if (mpOpenedTime > 0 && Date.now() - mpOpenedTime > 2000) {
             mpOpenedTime = 0;
-            try { goToStep2Direct(); } catch (e) {}
+            // [A1] 同上：先确认真的进过小程序，否则弹回拦截层
+            try { mpProceedOrGate(); } catch (e) {}
             return true;
         }
         return false;

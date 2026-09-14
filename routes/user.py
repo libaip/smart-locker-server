@@ -2712,10 +2712,44 @@ def user_mp_exit_log():
             'sdk_version': str(data.get('sdk_version') or '')[:50]
         }
         logger.info('[mp_exit_log] ' + json.dumps(payload, ensure_ascii=False))
+        # [A1-20260914] 把"用户真的进了小程序"落库：H5 用它区分"取消跳转"和"真的进去了"
+        try:
+            if payload.get('order_id'):
+                _mc = get_db()
+                _mcur = _mc.cursor()
+                _mcur.execute("INSERT INTO mp_enter_log (order_id, phone, phase) VALUES (%s, %s, %s)",
+                              (payload.get('order_id'), payload.get('phone') or '', payload.get('phase') or ''))
+                _mc.commit()
+                _mc.close()
+        except Exception as _me:
+            logger.warning('[mp_exit_log] 落库失败(不影响主流程): %s' % _me)
         return json_response(message='ok')
     except Exception as e:
         logger.error(f'[mp_exit_log] 错误: {e}')
         return json_response(message=str(e), code=500)
+
+
+@bp.route('/user/mp-entered', methods=['GET'])
+def user_mp_entered():
+    """[A1-20260914] 这个订单刚才有没有真的进过小程序（区分"取消跳转"与"真的进去了"）。
+
+    小程序每次进入都会 POST /api/user/mp-exit-log（phase=attempt），那条会落库；
+    H5 从"跳转返回"时先问这里：entered=true 才放行进支付页，否则弹回"请跳转小程序"。
+    查库出错时返回 entered=true（宁可放行，也不把真的进去了的人卡住）。
+    """
+    try:
+        order_id = str(request.args.get('order_id') or '')[:40]
+        if not order_id:
+            return json_response(data={'entered': False})
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM mp_enter_log WHERE order_id = %s AND created_at >= NOW() - INTERVAL '30 minutes' LIMIT 1", (order_id,))
+        r = cur.fetchone()
+        conn.close()
+        return json_response(data={'entered': bool(r)})
+    except Exception as e:
+        logger.warning('[mp_entered] 查询失败(按已进入放行): %s', e)
+        return json_response(data={'entered': True})
 # ============================================
 # 设备串口配置（APK查询用）
 # ============================================

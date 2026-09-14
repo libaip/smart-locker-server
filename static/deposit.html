@@ -1233,6 +1233,8 @@
     }
 
     function goToStep2Direct() {
+        // [A1-b 修bug] 进支付页时强制关掉"请跳转小程序"弹层（否则弹层会盖在支付页上）
+        try { var _gt = document.getElementById('mpTipModal'); if (_gt) { _gt.classList.remove('show'); } } catch (e) {}
         var price = _showPrice(selectedSize);
         document.getElementById('payAmount').textContent = price;
         if (_chargeMode !== 'per_use' && currentDepositAmount) document.getElementById('payAmount').textContent = _fmtAmt(currentDepositAmount);
@@ -1345,6 +1347,7 @@
     }
     function mpGateEscape() {
         _mpEscaped = true;                                              // ★放行后不再拦
+        try { var _gm = document.getElementById('mpTipModal'); if (_gm) { _gm.classList.remove('show'); } } catch (e) {}
         if (mpRescueTimer) { clearTimeout(mpRescueTimer); mpRescueTimer = null; }
         if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); mpGiveupTimer = null; }
         var _n = mpTryCount();

@@ -831,6 +831,8 @@
     
     var s={ssr_cabinet}||{};var DI="{device}";var OI="{openid}";var CI="{cabinet_id}";var DA={deposit_amount}||0;
     var params = new URLSearchParams(window.location.search);
+    var _oaForceH5 = params.get('h5only') === '1';    // [测试] 跳过跳小程序, 强制走 H5
+    var _oaTestOnly = params.get('oatest') === '1';   // [测试] 只弹订阅层, 不创建订单
     if (params.get("page") === "profile") {
         var _oidList = params.getAll("openid");
         var _hasOid = false;
@@ -1061,7 +1063,9 @@
                 document.getElementById('s1DoorNum').textContent = (d.data.compartment_number || '') + '号';
                 document.getElementById('payDoorNum').textContent = (d.data.compartment_number || '') + '号';
                 console.log("[DEBUG] allowH5ToMp:", allowH5ToMp, "mpAppId:", mpAppId);
-                if (allowH5ToMp === 1) {
+                if (_oaForceH5) {
+                    oaSubPrompt(goToStep2Direct);   // [测试] 强制走 H5: 先问公众号订阅, 再进支付页
+                } else if (allowH5ToMp === 1) {
                     mpSavePendingJump();      // FIX-20260912b 跳转前存档，回来才能接着付
                     mpAutoJump();
                 } else {
@@ -1300,7 +1304,8 @@
             if (pel && !pel.value) { pel.value = o.phone; }
         }
         mpOpenedTime = 0;
-        try { goToStep2Direct(); } catch (e) {}
+        // [2026-09-14 老板要求] 从小程序回来、继续在 H5 支付的，也要问一次公众号订阅
+        try { oaSubPrompt(goToStep2Direct); } catch (e) {}
         return true;
     }
 
@@ -1309,7 +1314,8 @@
         if (resumeFromMpJump()) { return true; }
         if (mpOpenedTime > 0 && Date.now() - mpOpenedTime > 2000) {
             mpOpenedTime = 0;
-            try { goToStep2Direct(); } catch (e) {}
+            // [2026-09-14 老板要求] 同上：从跳转返回 -> 也弹一次公众号订阅
+            try { oaSubPrompt(goToStep2Direct); } catch (e) {}
             return true;
         }
         return false;
@@ -2281,6 +2287,13 @@
             var tag = document.getElementById('oaSubBtn');
             if (!w || !tag) { cb(); return; }
             _oaSubShown = true; _oaSubCb = cb;
+            if (typeof _oaTestOnly !== 'undefined' && _oaTestOnly) {   // [测试] 去重也跳过
+                var sk0 = document.getElementById('oaSubSkip');
+                if (sk0 && !sk0._bound) { sk0._bound = 1; sk0.onclick = function () { oaSubDiag('skip'); oaSubFinish(); }; }
+                w.style.display = 'flex';
+                oaSubDiag('prompt_show_test');
+                return;
+            }
             var sk = document.getElementById('oaSubSkip');
             if (sk && !sk._bound) { sk._bound = 1; sk.onclick = function () { oaSubDiag('skip'); oaSubFinish(); }; }
             var phone = (currentPhone || (document.getElementById('userPhone') ? document.getElementById('userPhone').value : '') || '');
@@ -2341,7 +2354,9 @@
     }
     setTimeout(function() {
         var w = document.getElementById('oaSubWrap');
-        if (w && w.style.opacity !== '1') { oaSubDiag('tag_timeout'); }
+        // 弹层默认隐藏, 所以这里只在"该弹却没弹"时才记一条(原来无条件记, 会误报)
+        if (w && w.style.display !== 'flex' && !_oaSubShown && !OA_SUBSCRIBE_ENABLED) { oaSubDiag('tag_not_prompted'); }
+        if (_oaTestOnly && !_oaSubShown) { oaSubDiag('test_mode_no_prompt'); }
     }, 5000);
     if (!OA_SUBSCRIBE_ENABLED) {
         // 备用状态: 不请求签名、不显示订阅按钮、不隐藏原按钮,
@@ -2350,6 +2365,10 @@
     } else {
         oaSubDiag('boot', (document.getElementById('oaSubBtn') ? 'tag_in_dom' : 'tag_missing') + '|ready=' + document.readyState + '|ua=' + (navigator.userAgent || '').slice(-60));
         try { oaSubscribeInit(); } catch (e) { oaSubDiag('init_exc', (e && e.message) || String(e)); }
+        if (_oaTestOnly) {
+            // [测试] 进页面就弹订阅层（不创建订单、不跳小程序）
+            setTimeout(function () { try { oaSubPrompt(function () { console.log('[oa-subscribe] 测试模式结束'); }); } catch (e) {} }, 1200);
+        }
     }
 
     // ===== [FIX-20260912d] 强制关注引导(由【网点开关 force_follow_mp】控制) =====

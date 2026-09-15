@@ -4404,6 +4404,27 @@ def blacklist_reban():
 
 # ============ 8. 报警记录 ============
 
+@bp.route('/alarms/pending-count', methods=['GET'])
+@require_auth
+def alarms_pending_count():
+    """[S188 2026-09-15] 未处理告警数(后台首页红点用).
+
+    提现退款失败告警(withdraw_refund_failed)曾积压 849 条无人处理, 后台没有任何提醒,
+    这里给首页/菜单提供一个未处理计数, 前端做红色角标.
+    """
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM alarms WHERE status='0'")
+        row = c.fetchone()
+        conn.close()
+        total = int(row[0]) if row and row[0] is not None else 0
+        return json_response(data={'count': total})
+    except Exception as e:
+        logger.error(f'[alarms_pending_count] {e}')
+        return json_response(message=str(e), code=500)
+
+
 @bp.route('/alarms/list', methods=['GET', 'POST'])
 @require_auth
 def alarms_list():
@@ -7670,8 +7691,11 @@ def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id="", p
             # S93 2026-08-29: 补建提现记录(此前投诉自动退款只改余额明细漏建提现记录, 导致用户提现记录空白)
             try:
                 _wr_phone = order.get('user_phone') or ''
-                # 已有待处理/处理中的提现记录 -> 直接置为已通过(投诉退款已完成)
-                c.execute("UPDATE withdrawal_records SET status=2, approver='投诉自动退款', approve_time=CURRENT_TIMESTAMP WHERE order_id=%s AND status IN (0,1)", (order_id,))
+                # [S188 2026-09-15] 原来按单个 order_id 把整张提现单置为已通过 -> 合并提现单只退了一部分却整张标通过,
+                #   剩余押金被隐藏(用户看不到也提不出). 改为逐单扣减, 全退完才置通过(与订单退款 S102/S111 一致)
+                from helpers import settle_withdrawal_for_order
+                logger.info('[auto_refund_complaint] 提现单结算 %s order_id=%s',
+                            settle_withdrawal_for_order(c, order_id, refund_amount, '投诉自动退款', _wr_phone), order_id)
                 # 没有则补建一条已通过记录(dedup_key+NOT EXISTS防重复)
                 c.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, approver, approve_time, openid, order_ids, dedup_key) SELECT %s, %s, %s, 2, '投诉自动退款', CURRENT_TIMESTAMP, %s, %s, %s WHERE NOT EXISTS (SELECT 1 FROM withdrawal_records WHERE order_id=%s)",
                           (order_id, _wr_phone, refund_amount, '', '["%s"]' % order_id, 'C:%s:%s' % (_wr_phone, order_id), order_id))
@@ -8746,7 +8770,16 @@ def _complaint_scheduler():
                             try:
                                 _wa2_conn = get_db()
                                 _wa2_cur = _wa2_conn.cursor()
-                                _wa2_cur.execute("""UPDATE withdrawal_records SET status=2, approver='投诉自动退款', approve_time=CURRENT_TIMESTAMP WHERE order_id=(SELECT id FROM orders WHERE order_no=%s LIMIT 1) AND status='0'""", (ono2,))
+                                # [S188 2026-09-15] 改为逐单扣减(原来整张标已通过, 会吞掉同单其它订单的押金)
+                                from helpers import settle_withdrawal_for_order
+                                _wa2_cur.execute("SELECT id, deposit_amount, user_phone FROM orders WHERE order_no=%s ORDER BY id DESC LIMIT 1", (ono2,))
+                                _sr2 = _wa2_cur.fetchone()
+                                if _sr2:
+                                    _sid2 = _sr2[0] if not hasattr(_sr2, 'get') else _sr2.get('id')
+                                    _samt2 = float((_sr2[1] if not hasattr(_sr2, 'get') else _sr2.get('deposit_amount')) or 0)
+                                    _sph2 = (_sr2[2] if not hasattr(_sr2, 'get') else _sr2.get('user_phone')) or ''
+                                    logger.info("[complaint_scheduler] 提现单结算(订单已退) %s order=%s",
+                                                settle_withdrawal_for_order(_wa2_cur, _sid2, _samt2, '投诉自动退款', _sph2), ono2)
                                 _wa2_conn.commit()
                                 _wa2_conn.close()
                             except Exception:
@@ -8804,10 +8837,18 @@ def _complaint_scheduler():
                             try:
                                 _wa_conn = get_db()
                                 _wa_cur = _wa_conn.cursor()
-                                _wa_cur.execute("""UPDATE withdrawal_records SET status=2, approver='投诉自动退款', approve_time=CURRENT_TIMESTAMP WHERE order_id=(SELECT id FROM orders WHERE order_no=%s LIMIT 1) AND status='0'""", (ono2,))
+                                # [S188 2026-09-15] 改为逐单扣减(幂等, _auto_refund_complaint_order 已结算过则空转)
+                                from helpers import settle_withdrawal_for_order
+                                _wa_cur.execute("SELECT id, deposit_amount, user_phone FROM orders WHERE order_no=%s ORDER BY id DESC LIMIT 1", (ono2,))
+                                _sr3 = _wa_cur.fetchone()
+                                if _sr3:
+                                    _sid3 = _sr3[0] if not hasattr(_sr3, 'get') else _sr3.get('id')
+                                    _samt3 = float((_sr3[1] if not hasattr(_sr3, 'get') else _sr3.get('deposit_amount')) or 0)
+                                    _sph3 = (_sr3[2] if not hasattr(_sr3, 'get') else _sr3.get('user_phone')) or ''
+                                    logger.info("[complaint_scheduler] 提现单结算 %s order=%s id=%s",
+                                                settle_withdrawal_for_order(_wa_cur, _sid3, _samt3, '投诉自动退款', _sph3), ono2, cid2)
                                 _wa_conn.commit()
                                 _wa_conn.close()
-                                logger.info("[complaint_scheduler] pending withdrawal auto-approved order=%s id=%s", ono2, cid2)
                             except Exception as _we:
                                 logger.error("[complaint_scheduler] auto approve withdrawal error: %s", _we)
                         logger.info("[complaint_scheduler] non-wechat refund ok id=%s order=%s msg=%s", cid2, ono2, refund_msg2)

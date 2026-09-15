@@ -1754,6 +1754,103 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
         return False, '', str(e)
 
 
+def settle_withdrawal_for_order(cur, order_id, amount, approver='投诉自动退款', phone=''):
+    """[S188 2026-09-15] 投诉/客服自动退款后, 按"逐单扣减"结算包含该订单的提现单.
+
+    背景: 原来这条路径是 `UPDATE withdrawal_records SET status=2 WHERE order_id=%s`,
+    只按单个 order_id 匹配, 而"合并提现单"的 order_id 只是批次里的第一个订单;
+    于是"只退了一部分却整张单标记已通过", 剩余押金既没退给用户、余额明细又被隐藏(pending),
+    用户看不到也提不出来. 现在改成与 routes/admin_v2.py 订单退款(S102/S111)一致的做法:
+      - 从所有待处理(status 0/1)且包含该订单的单里移除该订单并扣减金额;
+      - 扣减后还有别的订单 -> 保持待处理, 只更新金额/订单列表(若移除的正好是单里的 order_id, 换成剩余第一个);
+      - 全部订单都退完 -> 置为已通过;
+      - 并补一条该订单自己的已通过记录, 保证用户提现记录里有这笔退款流水.
+    幂等: 重复调用不会重复扣减、也不会重复补记录. 不提交事务, 由调用方 commit.
+    返回统计 dict 供日志使用.
+    """
+    import json as _json_s
+    stat = {'matched': 0, 'deducted': 0, 'approved': 0, 'inserted': False}
+    try:
+        oid = int(order_id)
+    except Exception:
+        return stat
+    amt = float(amount or 0)
+
+    def _g(row, key, idx):
+        try:
+            if hasattr(row, 'get'):
+                return row.get(key)
+            return row[idx]
+        except Exception:
+            return None
+
+    if not phone:
+        try:
+            cur.execute('SELECT user_phone FROM orders WHERE id=%s', (oid,))
+            _r = cur.fetchone()
+            if _r:
+                phone = _g(_r, 'user_phone', 0) or ''
+        except Exception:
+            phone = ''
+
+    # 1) 包含该订单的待处理提现单
+    # 用文本 LIKE 预筛(避免 order_ids 里若有非 JSON 脏数据时 ::jsonb 强转报错), 命中后再由 Python 精确判断
+    cur.execute("""SELECT id, amount, order_ids, order_id FROM withdrawal_records
+                   WHERE status IN (0,1) AND (order_id=%s OR order_ids LIKE %s)
+                   ORDER BY id""",
+                (oid, '%' + str(oid) + '%'))
+    for row in cur.fetchall():
+        _id = _g(row, 'id', 0)
+        _amt = float(_g(row, 'amount', 1) or 0)
+        _oids_raw = _g(row, 'order_ids', 2) or '[]'
+        _cur_oid = _g(row, 'order_id', 3)
+        try:
+            _oids = _json_s.loads(_oids_raw)
+        except Exception:
+            _oids = []
+        _contains = str(oid) in [str(x) for x in _oids]
+        _is_own = (str(_cur_oid) == str(oid))
+        if not (_contains or _is_own):
+            continue          # LIKE 预筛的误命中, 跳过
+        stat['matched'] += 1
+        if _contains:
+            _oids = [x for x in _oids if str(x) != str(oid)]
+            _new_amt = max(0.0, _amt - amt)
+        else:
+            _new_amt = _amt
+        if _oids:
+            _next_oid = _cur_oid
+            if str(_cur_oid) == str(oid):
+                try:
+                    _next_oid = int(_oids[0])
+                except Exception:
+                    _next_oid = _oids[0]
+            cur.execute("""UPDATE withdrawal_records SET amount=%s, order_ids=%s, order_id=%s,
+                           error_msg=NULL, retry_count=0 WHERE id=%s""",
+                        (round(_new_amt, 2), _json_s.dumps(_oids), _next_oid, _id))
+            stat['deducted'] += 1
+        else:
+            cur.execute("""UPDATE withdrawal_records SET status=2, amount=%s, order_ids=%s,
+                           approver=%s, approve_time=CURRENT_TIMESTAMP, error_msg=NULL WHERE id=%s""",
+                        (round(_new_amt, 2), _json_s.dumps([]), approver, _id))
+            stat['approved'] += 1
+
+    # 2) 补一条该订单自己的已通过记录(保证用户提现记录里能看到这笔退款)
+    cur.execute('SELECT 1 FROM withdrawal_records WHERE order_id=%s LIMIT 1', (oid,))
+    if not cur.fetchone():
+        try:
+            cur.execute("""INSERT INTO withdrawal_records
+                           (order_id, user_phone, amount, status, approver, order_ids, approve_time, error_msg, dedup_key, created_at)
+                           VALUES (%s, %s, %s, 2, %s, %s, CURRENT_TIMESTAMP, %s, %s, CURRENT_TIMESTAMP)
+                           ON CONFLICT DO NOTHING""",
+                        (oid, phone, round(amt, 2), approver, _json_s.dumps([oid]),
+                         '%s(原提现单已联动扣减)' % approver, 'C:%s:%s' % (phone, oid)))
+            stat['inserted'] = True
+        except Exception as _ie:
+            logger.warning('[settle_withdrawal] 补建提现记录失败 order_id=%s err=%s', oid, _ie)
+    return stat
+
+
 def do_balance_transfer(phone, amount, openid=None, user_id=0):
     """Transfer balance to user WeChat wallet. Returns (success, payment_no, message)"""
     try:

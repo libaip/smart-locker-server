@@ -4172,7 +4172,14 @@ def _auto_process_self_complaint(complaint_id, phone, openid_val, order_no=''):
         if success:
             cur.execute("UPDATE orders SET refund_status='refunded', status=4, refund_id=%s, refund_amount=%s, refund_time=CURRENT_TIMESTAMP, refund_mark=1 WHERE id=%s", (refund_id or '', order[2], order[0]))
             cur.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order[0],))
-            cur.execute("UPDATE withdrawal_records SET status=2, approver='投诉自动退款', approve_time=CURRENT_TIMESTAMP WHERE order_id=%s AND status='0'", (order[0],))
+            # [S188 2026-09-15] 原来是按单个 order_id 把整张提现单置为已通过 -> 合并提现单只退了一部分却整张标通过,
+            #   剩余押金被隐藏(用户看不到也提不出). 改为逐单扣减(与 admin_v2 订单退款 S102/S111 一致)
+            try:
+                from helpers import settle_withdrawal_for_order
+                logger.info('[self_complaint] 提现单结算 %s order_id=%s',
+                            settle_withdrawal_for_order(cur, order[0], float(order[2] or 0), '投诉自动退款'), order[0])
+            except Exception as _st_e:
+                logger.warning('[self_complaint] 提现单结算失败 order_id=%s err=%s', order[0], _st_e)
             _finish('已自动原路退款')
         else:
             fail_text = str(msg)

@@ -64,6 +64,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hira
 .menu-item{padding:10px 20px 10px 36px;color:rgba(255,255,255,.65);cursor:pointer;font-size:13px;transition:all .2s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .menu-item:hover{color:#fff;background:rgba(255,255,255,.08)}
 .menu-item.active{color:#fff;background:#667eea}
+.menu-item .menu-badge{display:inline-block;min-width:18px;height:18px;line-height:18px;padding:0 5px;margin-left:6px;border-radius:9px;background:#f56c6c;color:#fff;font-size:11px;text-align:center;vertical-align:middle;font-weight:600}
+.shrink .menu-item .menu-badge{display:none}
 .shrink .menu-group-title{padding:10px 0;text-align:center;justify-content:center}
 .shrink .menu-group-title span,.shrink .menu-group-title .arrow,.shrink .menu-item-text{display:none}
 .shrink .menu-item{padding:10px 0;text-align:center;font-size:18px}
@@ -988,7 +990,7 @@ tr:hover td.action-col{background:#f5f7fa}
 <script>
 var menuGroupsData=[
 {key:'workbench',title:'工作台',defaultOpen:true,items:[{key:'dashboard',label:'主控台'}]},
-{key:'dev-mgr',title:'设备管理',defaultOpen:true,items:[{key:'machine-list',label:'机器列表'},{key:'pending-cmds',label:'待执行命令'},{key:'alert-mgr',label:'告警管理'}]},
+{key:'dev-mgr',title:'设备管理',defaultOpen:true,items:[{key:'machine-list',label:'机器列表'},{key:'pending-cmds',label:'待执行命令'},{key:'alert-mgr',label:'告警管理',alarmBadge:true}]},
 {key:'loc-mgr',title:'网点管理',defaultOpen:true,items:[{key:'location-list',label:'网点列表'}]},
 {key:'order-mgr',title:'订单管理',defaultOpen:true,items:[{key:'online-order',label:'在线订单'},{key:'offline-orders',label:'离线订单'},{key:'remote-open-logs',label:'远程开门日志'}]},
 {key:'member-mgr',title:'会员管理',defaultOpen:false,items:[{key:'member-list',label:'会员管理'},{key:'member-withdraw',label:'会员提现'},{key:'member-recharge',label:'会员充值记录'}]},
@@ -999,7 +1001,7 @@ var menuGroupsData=[
 {key:'stat-mgr',title:'统计分析',defaultOpen:false,items:[{key:'biz-stat',label:'业务统计'},{key:'merchant-share',label:'商家分成'},{key:'agent-settlement',label:'代理商分成结算'}]},
 {key:'company-mgr',title:'公司管理',defaultOpen:false,items:[{key:'company-list',label:'公司管理'}]},
 {key:'personal-mgr',title:'个人中心',defaultOpen:false,items:[{key:'personal-info',label:'个人信息'},{key:'change-pwd',label:'修改密码'}]},
-{key:'after-mgr',title:'售后管理',defaultOpen:false,items:[{key:'store-record',label:'寄存记录'},{key:'blacklist',label:'黑名单'},{key:'alarm-record',label:'告警记录'},{key:'location-alarm',label:'网点告警'}]},
+{key:'after-mgr',title:'售后管理',defaultOpen:false,items:[{key:'store-record',label:'寄存记录'},{key:'blacklist',label:'黑名单'},{key:'alarm-record',label:'告警记录',alarmBadge:true},{key:'location-alarm',label:'网点告警'}]},
 {key:'apk-mgr',title:'远程升级',defaultOpen:true,items:[{key:'apk-version',label:'APK版本管理'}]},
 {key:'sys-mgr',title:'系统管理',defaultOpen:false,items:[{key:'system-settings',label:'系统设置'},{key:'payment-channels',label:'支付渠道'},{key:'wx-accounts',label:'微信账号'},{key:'user-manage',label:'用户管理'},{key:'role-manage',label:'角色权限'},{key:'data-reset',label:'数据重置'}]}
 ];
@@ -1018,7 +1020,7 @@ Vue.component('sidebar',{template:'\
 <div v-for="g in menuGroupsData" class="menu-group">\
 <div class="menu-group-title" @click="toggleGroup(g.key)"><span>{{g.title}}</span><span class="arrow" :class="{open:$parent.openGroups[g.key]}">▶</span></div>\
 <template v-if="$parent.openGroups[g.key]">\
-<div v-for="it in g.items" class="menu-item" :class="{active:$parent.activeMenu===it.key}" @click="$parent.switchMenu(it.key)"><span class="menu-item-text">{{it.label}}</span></div>\
+<div v-for="it in g.items" class="menu-item" :class="{active:$parent.activeMenu===it.key}" @click="$parent.switchMenu(it.key)"><span class="menu-item-text">{{it.label}}</span><span v-if="it.alarmBadge&&$parent.alarmPending>0" class="menu-badge">{{$parent.alarmPending}}</span></div>\
 </template>\
 </div>\
 </div>\
@@ -1995,7 +1997,7 @@ var app=new Vue({
 el:'#app',
 data:{
 showLogin:true,loginForm:{username:'',password:'',captcha:''},loginLoading:false,loginError:'',captchaCode:'',
-isShrink:false,isMobile:window.innerWidth<=768,sidebarOpen:false,activeMenu:'dashboard',menuRefKey:0,pageLoading:false,_apiLoadingCount:0,tabs:[{key:'dashboard',label:'控制台'}],activeTab:'dashboard',adminUser:'管理员',openGroups:{},menuGroupsData:[],
+isShrink:false,isMobile:window.innerWidth<=768,sidebarOpen:false,activeMenu:'dashboard',menuRefKey:0,pageLoading:false,_apiLoadingCount:0,tabs:[{key:'dashboard',label:'控制台'}],activeTab:'dashboard',adminUser:'管理员',openGroups:{},menuGroupsData:[],alarmPending:0,
 stats:{},dailyTrend:[],freeUseEnabled:'false',oaSubscribeEnabled:'false',
 // Machines
 machines:[],machineTotal:0,machinePage:1,machineSearch:{keyword:'',status:'',location_id:'',agent_id:'',device_id:''},machineMoreOpen:null,
@@ -2250,8 +2252,9 @@ deleteCompany:function(id){var self=this;if(!confirm('确认删除?'))return;thi
 loadBlacklist:function(p){var self=this;var params={};if(self.blackPhoneFilter)params.phone=self.blackPhoneFilter;if(self.blackReasonFilter)params.reason=self.blackReasonFilter;if(self.blackStatusFilter!=='')params.status=self.blackStatusFilter;this.api('/blacklist/list',params,'GET').then(function(d){self.blackList=d.data.list||[];}).catch(function(){});},
 saveBlack:function(){var self=this;this.api('/blacklist/save',this.blackForm).then(function(){self.toast('保存成功');self.blackModal=false;self.loadBlacklist();}).catch(function(e){self.toast(e.message||'保存失败','error');});},
 deleteBlack:function(id){var self=this;if(!confirm('确认临时解除该用户?'))return;this.api('/blacklist/delete',{id:id}).then(function(){self.toast('已临时解除');self.loadBlacklist();}).catch(function(e){self.toast(e.message||'操作失败','error');});},rebanBlack:function(id){var self=this;if(!confirm('确认重新封禁该用户?'))return;this.api('/blacklist/re-ban',{id:id}).then(function(){self.toast('已重新封禁');self.loadBlacklist();}).catch(function(e){self.toast(e.message||'操作失败','error');});},
+loadAlarmPending:function(){var self=this;this.api('/alarms/pending-count',{},'GET').then(function(d){self.alarmPending=(d.data&&d.data.count)||0;}).catch(function(){});},
 loadAlarms:function(p){var self=this;if(p)this.alarmPage=p;this.api('/alarms/list',{page:this.alarmPage,status:this.alarmFilter.status}).then(function(d){self.alarmList=d.data.list||[];self.alarmTotal=d.data.total||0;}).catch(function(){});},
-resolveAlarm:function(id){var self=this;this.api('/alarms/resolve',{id:id}).then(function(){self.toast('处理成功');self.loadAlarms();}).catch(function(e){self.toast(e.message||'操作失败','error');});},
+resolveAlarm:function(id){var self=this;this.api('/alarms/resolve',{id:id}).then(function(){self.toast('处理成功');self.loadAlarms();self.loadAlarmPending();}).catch(function(e){self.toast(e.message||'操作失败','error');});},
 loadLocAlarms:function(){var self=this;this.api('/location-alarms/list').then(function(d){self.locAlarmList=d.data.list||[];}).catch(function(){});},
 loadRoles:function(){var self=this;this.api('/roles/list').then(function(d){self.roleList=d.data.list||[];}).catch(function(){});},
 saveRole:function(){var self=this;this.api('/roles/save',this.roleForm).then(function(){self.toast('保存成功');self.roleModal=false;self.loadRoles();}).catch(function(e){self.toast(e.message||'保存失败','error');});},
@@ -2341,6 +2344,7 @@ else if(v==='data-reset'){this.loadResetStats();}
 
 created:function(){var d=new Date();var s=new Date(d);s.setDate(d.getDate()-30);this.complaint_start_date=s.toISOString().slice(0,10);this.complaint_end_date=d.toISOString().slice(0,10);this.orderSearch.start_date=s.toISOString().slice(0,10);this.orderSearch.end_date=d.toISOString().slice(0,10);this.statsFilter.start_date=s.toISOString().slice(0,10);this.statsFilter.end_date=d.toISOString().slice(0,10);this.shareFilter.start_date=s.toISOString().slice(0,10);this.shareFilter.end_date=d.toISOString().slice(0,10);},activated:function(){var d=new Date();var s=new Date(d);s.setDate(d.getDate()-30);this.orderSearch.end_date=d.toISOString().slice(0,10);this.orderSearch.start_date=s.toISOString().slice(0,10);this.statsFilter.end_date=d.toISOString().slice(0,10);this.statsFilter.start_date=s.toISOString().slice(0,10);this.shareFilter.end_date=d.toISOString().slice(0,10);this.shareFilter.start_date=s.toISOString().slice(0,10);},mounted:function(){
 var og={};menuGroupsData.forEach(function(g){og[g.key]=g.defaultOpen;});this.openGroups=og;this.menuGroupsData=menuGroupsData;
+this.loadAlarmPending();setInterval(function(){app.loadAlarmPending();},60000);
 if(localStorage.getItem('admin_token')){this.showLogin=false;this.$nextTick(function(){var sm=localStorage.getItem('admin_activeMenu');var st=localStorage.getItem('admin_tabs');var sta=localStorage.getItem('admin_activeTab');if(st){try{var t=JSON.parse(st);if(t.length>0){app.tabs=t;app.activeTab=sta||'dashboard';app.activeMenu=sm||'dashboard';return;}}catch(e){}}app.loadDashboard();});}
 else{this.$nextTick(function(){setTimeout(function(){app.drawCaptcha();},100);});}
 window.addEventListener('resize',function(){app.isMobile=window.innerWidth<=768;});

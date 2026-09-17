@@ -3277,7 +3277,12 @@ def get_subscribe_templates():
         logger.warning('[subscribe_templates] 跳转意图判断失败(按非落地页处理): %s', _te)
     # [2026-09-14] 弹窗不再请求"寄存成功"；字段名保留、指向"账户余额"，避免前端按旧字段名取到空值把弹窗搞挂
     _deposit = _general
-    _tpls = [_general] if _landing else [_withdraw, _general]
+    # [S232-20260917] 其它位置（提现页等）也只要一个：「退款成功」
+    # 老板实测：一次弹窗两个模板，用户往往只勾一个 -> 另一个永远没额度(今天 43101 达 1270 次)。
+    # 两条模板各自的触点：存包落地页给「账户余额」、提现页给「退款成功」。
+    # 注意：小程序存包页(deposit.js)读的是下面三个具名字段(仍是 2 条)，不受这行影响 ——
+    #       万一真有人在小程序内直接存包，他照样能拿到「账户余额」授权。
+    _tpls = [_general] if _landing else [_withdraw]
     return json_response(data={
         'templates': _tpls,
         'withdraw_notify': _withdraw,

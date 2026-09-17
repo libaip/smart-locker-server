@@ -3890,16 +3890,13 @@ def link_mp_openid_from_mini():
         # H5 判"进没进小程序"只看 mp_enter_log，而那张表原先只有点「返回网页」时才有记录 ->
         # "进去了却用 叉/返回键关掉小程序"的人被判成"没进过"而弹回设置页(当天 8 个逃生用户里 7 个如此)。
         # 补一条 phase='mp_page'：H5 的 /api/user/mp-entered 只查有无记录，立刻认账。
-        # 用独立连接写，避免污染本接口主事务；失败只告警，不影响绑定主流程。
+        # [S230] 改为复用本接口已有的连接：database.py 的连接是 autocommit=True（每条语句独立提交），
+        #        写失败只打一条告警、不会污染后面的语句；原来每次新开一个连接（每天约 1900 次）。
         try:
             if order_id or phone:
-                _mep_conn = get_db()
-                _mep_cur = _mep_conn.cursor()
-                _mep_cur.execute(
+                cursor.execute(
                     "INSERT INTO mp_enter_log (order_id, phone, phase) VALUES (%s, %s, %s)",
                     (str(order_id or '')[:40], str(phone or '')[:20], 'mp_page'))
-                _mep_conn.commit()
-                _mep_conn.close()
         except Exception as _mep_e:
             logger.warning('[link_mp_openid] mp_enter_log 落库失败(不影响主流程): %s' % _mep_e)
 

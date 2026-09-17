@@ -3028,6 +3028,15 @@ def send_oa_subscribe_notify(mp_template_id, data, phone='', unionid='', reason=
         return False
 
 
+# ============================================
+# [S231-20260917] "押金退还通知" -> "账户余额通知" 换模板过渡用的两个 ID
+# 换模板后老用户手里只有旧模板的授权（微信按模板 ID 记账），新模板会被拒(43101 无额度)，
+# 所以发送失败时用旧模板再发一次，过渡期一条通知都不丢。
+# ============================================
+_TPL_ACCOUNT_NEW = 'ax-O5Qa05IWt7bbhRVk9Pb9A_SbXfIMfbhm0Hoh4gYc'   # 账户余额通知（新）
+_TPL_DEPOSIT_OLD = 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'   # 押金退还通知（旧，仅作过渡回退）
+
+
 def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, unionid=None):
     """发送微信订阅消息（仅支持小程序mp_openid）"""
     try:
@@ -3168,6 +3177,20 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
             return True
         else:
             logger.error(f'[subscribe_msg] 发送失败: openid={openid[:8]}..., phone={phone}, template={template_id}, result={result}')
+            # [S231] 过渡期回退：换成新"账户余额"模板后，老用户只有旧"押金退还"模板的授权 ->
+            #        新模板必然被拒(43101)，这里用旧模板再发一次；过渡期结束(大家都重新授权过)可去掉这段。
+            if template_id == _TPL_ACCOUNT_NEW:
+                try:
+                    _p2 = {'touser': openid, 'template_id': _TPL_DEPOSIT_OLD, 'data': data}
+                    if page:
+                        _p2['page'] = page
+                    _r2 = requests.post(send_url, json=_p2, timeout=5).json()
+                    if _r2.get('errcode') == 0:
+                        logger.info(f'[subscribe_msg] 新模板失败->旧模板发送成功: openid={openid[:8]}...')
+                        return True
+                    logger.error(f'[subscribe_msg] 旧模板也失败: openid={openid[:8]}..., result={_r2}')
+                except Exception as _e2:
+                    logger.error(f'[subscribe_msg] 旧模板回退异常: {_e2}')
             send_oa_subscribe_notify(template_id, data, phone=phone or '', unionid=unionid, reason='errcode=%s' % result.get('errcode'))
             return False
     except Exception as e:

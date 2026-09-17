@@ -1140,10 +1140,23 @@
         });
     }
 
+    // ===== [S231-20260917] 跳小程序前"打招呼"：让服务端知道接下来几秒的模板请求来自存包落地页 =====
+    // 用途：存包落地页只请求"账户余额"一个订阅模板；提现页/小程序存包页仍请求两个。
+    // 为什么用 sendBeacon：它由浏览器在页面卸载时也保证发出，跳走不会丢。
+    // 失败无所谓：服务端收不到就当"非落地页"处理（退回两个模板，与改动前一致）。
+    function mpJumpIntent() {
+        try {
+            if (!navigator.sendBeacon) { return; }
+            var _body = JSON.stringify({ order_id: currentOrderId || '', phone: currentPhone || '' });
+            navigator.sendBeacon('/api/user/mp-jump-intent', new Blob([_body], { type: 'application/json' }));
+        } catch (e) {}
+    }
+
     function launchMp() {
         // [CFG-STEP2E] 编号由服务端下发（读配置中心）；拿不到就别跳，绝不能跳旧号
         if (!mpAppId) { showToast('小程序编号没拿到，请退出重新进入'); return; }
         try { mpSavePendingJump(); } catch (e) {}   // [A1] 点"去小程序"也存档：回来/页面被重载都能接上订单
+        try { mpJumpIntent(); } catch (e) {}        // [S231] 打招呼：这一次是"存包落地页"
         var _mpTryN = mpTryInc();                    // [A1-b] 记一次点击
         console.log('[mp-gate] 第 ' + _mpTryN + ' 次尝试跳小程序 (上限 ' + MP_RETRY_LIMIT + ')');
         var el = document.getElementById('mpTipModal');
@@ -1199,6 +1212,7 @@
             mpOpenedTime = Date.now();
             mpStartReturnWatch();
             mpStartEnterPoll();   // [S228] 不再用"2 秒还可见"猜跳失败(iPhone 必误判)，改成盯服务端
+            try { mpJumpIntent(); } catch (e) {}       // [S231] 打招呼：这一次是"存包落地页"
             window.location.href = mpScheme;
         });
     }

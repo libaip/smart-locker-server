@@ -1045,6 +1045,7 @@
 
     function reserveDoorAndProceed() {
         mpClearPendingJump();             // FIX-20260912b 新下单，先清掉上一次的存档
+        try { if (mpEnterPoll) { clearInterval(mpEnterPoll); mpEnterPoll = null; } } catch (e) {}   // [S228] 新单开始，旧轮询作废
         var phone = currentPhone || document.getElementById('userPhone').value.trim();
         var code = currentAccessCode || document.getElementById('accessCode').value.trim();
         var btn = document.querySelector('.next-btn');
@@ -1151,12 +1152,7 @@
         if (mpRescueTimer) { clearTimeout(mpRescueTimer); mpRescueTimer = null; }
         mpOpenedTime = Date.now();
         mpStartReturnWatch();
-        if (mpRescueTimer) { clearTimeout(mpRescueTimer); }
-        mpRescueTimer = setTimeout(function() {
-            mpRescueTimer = null;
-            if (mpOpenedTime === 0) { return; }
-            if (document.hidden === false) { mpGateOrEscape(); }   // [A1-b] 又没跳过去 -> 点够了就放行，否则弹层再出来
-        }, 2000);
+        mpStartEnterPoll();   // [S228] 同上：盯着服务端，不再靠"2 秒还可见"猜
         if (mpScheme) { window.location.href = mpScheme; return; }
         showToast('正在打开小程序…');
         mpPrefetchScheme(function() {
@@ -1202,13 +1198,8 @@
             if (!mpScheme) { showMpTipModal(); return; }
             mpOpenedTime = Date.now();
             mpStartReturnWatch();
+            mpStartEnterPoll();   // [S228] 不再用"2 秒还可见"猜跳失败(iPhone 必误判)，改成盯服务端
             window.location.href = mpScheme;
-            if (mpRescueTimer) { clearTimeout(mpRescueTimer); }
-            mpRescueTimer = setTimeout(function() {
-                mpRescueTimer = null;
-                if (mpOpenedTime === 0) { return; }
-                if (document.hidden === false) { showMpTipModal(); }
-            }, 2000);
         });
     }
 
@@ -1235,6 +1226,7 @@
     function goToStep2Direct() {
         // [A1-b 修bug] 进支付页时强制关掉"请跳转小程序"弹层（否则弹层会盖在支付页上）
         try { var _gt = document.getElementById('mpTipModal'); if (_gt) { _gt.classList.remove('show'); } } catch (e) {}
+        try { if (mpEnterPoll) { clearInterval(mpEnterPoll); mpEnterPoll = null; } } catch (e) {}   // [S228] 到支付页就停轮询
         var price = _showPrice(selectedSize);
         document.getElementById('payAmount').textContent = price;
         if (_chargeMode !== 'per_use' && currentDepositAmount) document.getElementById('payAmount').textContent = _fmtAmt(currentDepositAmount);
@@ -1393,6 +1385,61 @@
             }, 1500);
         });
         setTimeout(function () { if (!_done) { _done = true; try { goToStep2Direct(); } catch (e) {} } }, 6000);
+    }
+
+    // ===== [S228-20260917] iPhone 跳转加固：不再用"2 秒还可见 = 跳失败"猜，改成盯服务端 =====
+    // 背景(2026-09-17 实测当日 1300 单)：iPhone 上 H5 跳走小程序后自己仍报"前台可见"，
+    //   而"订单创建 → 小程序点返回"实测中位数 11 秒(没有一单能在 2 秒内回来)，
+    //   于是那句 2 秒判断对 iPhone 订单几乎必然误报"跳失败" -> 把正在小程序里订阅的用户
+    //   弹回设置页并挂上"请跳转小程序"提示（当天 iPhone 86.5% 被迫多跳一次，安卓仅 8%）。
+    // 现在：跳出去后每 2 秒问一次 /api/user/mp-entered，服务端说"进过"就直接进支付页；
+    //   仍然只有"人回到 H5、服务端说没进过"才拦（取消跳转的照旧拦住，A1 规矩不变）；
+    //   60 秒还没进过也没返回信号，才兜底弹一次提示；3 分钟自动停。
+    var mpEnterPoll = null;
+    function mpStartEnterPoll() {
+        if (mpEnterPoll) { clearInterval(mpEnterPoll); mpEnterPoll = null; }
+        var t0 = Date.now();
+        var gated = 0;
+        mpEnterPoll = setInterval(function () {
+            if (_mpEscaped) { clearInterval(mpEnterPoll); mpEnterPoll = null; return; }
+            if (mpOpenedTime === 0) { clearInterval(mpEnterPoll); mpEnterPoll = null; return; }
+            var el = Date.now() - t0;
+            if (el > 180000) { clearInterval(mpEnterPoll); mpEnterPoll = null; return; }
+            var oid = currentOrderId || '';
+            if (!oid) { try { var _p = mpReadPendingJump(15 * 60 * 1000); if (_p) { oid = _p.order_id; } } catch (e) {} }
+            if (!oid) { return; }
+            fetch('/api/user/mp-entered?order_id=' + encodeURIComponent(oid))
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                  if (d && d.data && d.data.entered) {
+                      if (mpEnterPoll) { clearInterval(mpEnterPoll); mpEnterPoll = null; }
+                      try { mpEnterPollReport('mp_enter_poll_ok', Math.round(el / 1000), 0); } catch (e) {}
+                      try { mpTryClear(); } catch (e) {}
+                      mpOpenedTime = 0;
+                      try { goToStep2Direct(); } catch (e) {}
+                      return;
+                  }
+                  // 60 秒还没"进过"、也没有"回到 H5"的信号 -> 兜底弹一次提示
+                  // (人还在小程序里也不影响：一旦有了进店记录，上面那条照样放行)
+                  if (el > 60000 && !gated) {
+                      gated = 1;
+                      try { mpEnterPollReport('mp_failsafe_gate', 0, 60); } catch (e) {}
+                      try { mpGateOrEscape(); } catch (e) {}
+                  }
+              })
+              .catch(function () {});
+        }, 2000);
+    }
+    function mpEnterPollReport(stage, sec, limit) {
+        try {
+            fetch('/api/user/oa-subscribe-log', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    phone: (currentPhone || (document.getElementById('userPhone') || {}).value || ''),
+                    detail: JSON.stringify({ stage: stage, sec: sec, tries: mpTryCount(), limit: limit })
+                })
+            }).catch(function () {});
+        } catch (e) {}
     }
 
     // 读档恢复到支付页；成功返回 true

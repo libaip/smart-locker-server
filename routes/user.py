@@ -3885,7 +3885,24 @@ def link_mp_openid_from_mini():
             else:
                 cursor.execute("UPDATE users SET nickname = %s WHERE phone = %s AND (nickname IS NULL OR nickname = chr(39)||chr(39))", (nickname, phone))
 
-        
+        # ===== [S229-20260917] 把"用户真的进了小程序"记进 mp_enter_log =====
+        # 本接口是小程序 subscribe 页 onLoad 调的(带 order_id)，等于"小程序页面一打开"就到这。
+        # H5 判"进没进小程序"只看 mp_enter_log，而那张表原先只有点「返回网页」时才有记录 ->
+        # "进去了却用 叉/返回键关掉小程序"的人被判成"没进过"而弹回设置页(当天 8 个逃生用户里 7 个如此)。
+        # 补一条 phase='mp_page'：H5 的 /api/user/mp-entered 只查有无记录，立刻认账。
+        # 用独立连接写，避免污染本接口主事务；失败只告警，不影响绑定主流程。
+        try:
+            if order_id or phone:
+                _mep_conn = get_db()
+                _mep_cur = _mep_conn.cursor()
+                _mep_cur.execute(
+                    "INSERT INTO mp_enter_log (order_id, phone, phase) VALUES (%s, %s, %s)",
+                    (str(order_id or '')[:40], str(phone or '')[:20], 'mp_page'))
+                _mep_conn.commit()
+                _mep_conn.close()
+        except Exception as _mep_e:
+            logger.warning('[link_mp_openid] mp_enter_log 落库失败(不影响主流程): %s' % _mep_e)
+
         conn.commit()
         conn.close()
         logger.info(f'[link_mp_openid] 成功绑定 mp_openid={mp_openid[:8]}... phone={phone}')

@@ -1378,13 +1378,21 @@
                   .catch(function () { cb(true); });      // 接口异常 -> 放行，别把真进去的人卡住
             } catch (e) { cb(true); }
         }
-        _ask(function (ok1) {
-            if (ok1) { _yes(); return; }
-            setTimeout(function () {                        // 小程序上报可能慢半拍，再问一次
-                _ask(function (ok2) { if (ok2) { _yes(); } else { _no(); } });
-            }, 1500);
-        });
-        setTimeout(function () { if (!_done) { _done = true; try { goToStep2Direct(); } catch (e) {} } }, 6000);
+        // [S229] 原来只问 2 次(间隔 1.5 秒)：iPhone 上小程序上报晚一两秒就两次全空 -> 误拦回设置页。
+        //        改成最多问 4 次(约 4.5 秒)，兜底放行从 6 秒挪到 9 秒，把这一两秒的时差吃掉。
+        var _tries = 0;
+        function _askLoop() {
+            if (_done) { return; }
+            _tries++;
+            _ask(function (ok) {
+                if (_done) { return; }
+                if (ok) { _yes(); return; }
+                if (_tries >= 4) { _no(); return; }
+                setTimeout(_askLoop, 1500);
+            });
+        }
+        _askLoop();
+        setTimeout(function () { if (!_done) { _done = true; try { goToStep2Direct(); } catch (e) {} } }, 9000);
     }
 
     // ===== [S228-20260917] iPhone 跳转加固：不再用"2 秒还可见 = 跳失败"猜，改成盯服务端 =====
@@ -1402,7 +1410,9 @@
         var gated = 0;
         mpEnterPoll = setInterval(function () {
             if (_mpEscaped) { clearInterval(mpEnterPoll); mpEnterPoll = null; return; }
-            if (mpOpenedTime === 0) { clearInterval(mpEnterPoll); mpEnterPoll = null; return; }
+            // [S229] 这里原来还有一句 `if (mpOpenedTime === 0) 停表`：用户带回 H5 时
+            // resumeFromMpJump() 会把 mpOpenedTime 清零，轮询当场被掐死 —— iPhone 误拦就是这么来的。
+            // 现在只认"已放行/已到支付页/新单/3 分钟超时"这几种停法(都在别处显式 clear)。
             var el = Date.now() - t0;
             if (el > 180000) { clearInterval(mpEnterPoll); mpEnterPoll = null; return; }
             var oid = currentOrderId || '';

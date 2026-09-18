@@ -2743,7 +2743,11 @@ def user_mp_entered():
             return json_response(data={'entered': False})
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("SELECT 1 FROM mp_enter_log WHERE order_id = %s AND created_at >= NOW() - INTERVAL '30 minutes' LIMIT 1", (order_id,))
+        # [S233-20260917] 排除 H5 自己写的"跳转意图"记录：那只是"用户点了跳转"，不等于进了小程序。
+        # 之前把 jump_intent 也算作"已进入" -> 用户在微信"即将打开小程序"上点取消也会被放行，削弱了 A1 拦截。
+        cur.execute("SELECT 1 FROM mp_enter_log WHERE order_id = %s "
+                    "AND phase NOT IN ('jump_intent','jump_intent_used') "
+                    "AND created_at >= NOW() - INTERVAL '30 minutes' LIMIT 1", (order_id,))
         r = cur.fetchone()
         conn.close()
         return json_response(data={'entered': bool(r)})

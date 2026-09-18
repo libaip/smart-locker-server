@@ -1174,7 +1174,9 @@
         });
     }
 
-    function showMpTipModal() {
+    function showMpTipModal(reason) {
+        // [S233] 埋点：弹层是被哪条路弹出来的（no_scheme=没拿到跳转串 / gate=服务端判定没进过 / failsafe=60秒兜底 / test=测试开关）
+        try { mpEnterPollReport('mp_modal_show', Math.round((Date.now() - (mpOpenedTime || Date.now())) / 1000), 0, { reason: reason || 'unknown' }); } catch (e) {}
         var el = document.getElementById('mpTipModal');
         var hint = document.getElementById('mpRetryHint');
         if (hint) { hint.style.display = 'block'; }
@@ -1208,7 +1210,7 @@
         }
         mpPrefetchScheme();
         mpPrefetchScheme(function() {
-            if (!mpScheme) { showMpTipModal(); return; }
+            if (!mpScheme) { showMpTipModal('no_scheme'); return; }
             mpOpenedTime = Date.now();
             mpStartReturnWatch();
             mpStartEnterPoll();   // [S228] 不再用"2 秒还可见"猜跳失败(iPhone 必误判)，改成盯服务端
@@ -1365,7 +1367,7 @@
     function mpGateOrEscape() {
         if (_mpEscaped) { try { goToStep2Direct(); } catch (e) {} return; }   // ★已放行过 -> 直接进支付页，绝不再弹
         try { if (mpTryCount() >= MP_RETRY_LIMIT) { mpGateEscape(); return; } } catch (e) {}
-        showMpTipModal();
+        showMpTipModal('gate');
     }
 
     // ===== [A1-20260914] 回来时先问服务端"到底进没进小程序" =====
@@ -1376,7 +1378,7 @@
         if (_mpEscaped) { try { goToStep2Direct(); } catch (e) {} return; }   // ★已放行过 -> 不查、不拦
         var _done = false;
         function _yes() { if (_done) { return; } _done = true; try { mpTryClear(); } catch (e) {} try { goToStep2Direct(); } catch (e) {} }
-        function _no() { if (_done) { return; } _done = true; try { mpGateOrEscape(); } catch (e) {} }
+        function _no() { if (_done) { return; } _done = true; try { mpEnterPollReport('mp_gate_no', 0, 0, { asks: _askLog.join(''), oid2: _oid() }); } catch (e) {} try { mpGateOrEscape(); } catch (e) {} }
         function _oid() {
             var oid = currentOrderId || '';
             if (!oid) {
@@ -1384,13 +1386,15 @@
             }
             return oid;
         }
+        var _askLog = [];      // [S233] 记录每次询问结果: 1=进过 0=没进过 E=网络错 N=订单号为空
         function _ask(cb) {
+            if (!_oid()) { _askLog.push('N'); }
             try {
                 fetch('/api/user/mp-entered?order_id=' + encodeURIComponent(_oid()))
                   .then(function (r) { return r.json(); })
-                  .then(function (d) { cb(!!(d && d.data && d.data.entered)); })
-                  .catch(function () { cb(true); });      // 接口异常 -> 放行，别把真进去的人卡住
-            } catch (e) { cb(true); }
+                  .then(function (d) { var _ok = !!(d && d.data && d.data.entered); _askLog.push(_ok ? '1' : '0'); cb(_ok); })
+                  .catch(function () { _askLog.push('E'); cb(true); });      // 接口异常 -> 放行，别把真进去的人卡住
+            } catch (e) { _askLog.push('X'); cb(true); }
         }
         // [S229] 原来只问 2 次(间隔 1.5 秒)：iPhone 上小程序上报晚一两秒就两次全空 -> 误拦回设置页。
         //        改成最多问 4 次(约 4.5 秒)，兜底放行从 6 秒挪到 9 秒，把这一两秒的时差吃掉。
@@ -1422,6 +1426,7 @@
         if (mpEnterPoll) { clearInterval(mpEnterPoll); mpEnterPoll = null; }
         var t0 = Date.now();
         var gated = 0;
+        var _firstLogged = 0, _noOidLogged = 0;      // [S233] 诊断埋点只各报一次
         mpEnterPoll = setInterval(function () {
             if (_mpEscaped) { clearInterval(mpEnterPoll); mpEnterPoll = null; return; }
             // [S229] 这里原来还有一句 `if (mpOpenedTime === 0) 停表`：用户带回 H5 时
@@ -1431,10 +1436,14 @@
             if (el > 180000) { clearInterval(mpEnterPoll); mpEnterPoll = null; return; }
             var oid = currentOrderId || '';
             if (!oid) { try { var _p = mpReadPendingJump(15 * 60 * 1000); if (_p) { oid = _p.order_id; } } catch (e) {} }
-            if (!oid) { return; }
+            if (!oid) {
+                if (!_noOidLogged) { _noOidLogged = 1; try { mpEnterPollReport('mp_poll_no_oid', Math.round(el / 1000), 0); } catch (e) {} }
+                return;
+            }
             fetch('/api/user/mp-entered?order_id=' + encodeURIComponent(oid))
               .then(function (r) { return r.json(); })
               .then(function (d) {
+                  if (!_firstLogged) { _firstLogged = 1; try { mpEnterPollReport('mp_poll_first', Math.round(el / 1000), 0, { res: (d && d.data && d.data.entered) ? 1 : 0 }); } catch (e) {} }
                   if (d && d.data && d.data.entered) {
                       if (mpEnterPoll) { clearInterval(mpEnterPoll); mpEnterPoll = null; }
                       try { mpEnterPollReport('mp_enter_poll_ok', Math.round(el / 1000), 0); } catch (e) {}
@@ -1454,13 +1463,16 @@
               .catch(function () {});
         }, 2000);
     }
-    function mpEnterPollReport(stage, sec, limit) {
+    function mpEnterPollReport(stage, sec, limit, extra) {
+        // [S233] 多带 oid 和自定义字段，便于定位"多余的弹层"是哪条路弹的
         try {
+            var _d = { stage: stage, sec: sec, tries: mpTryCount(), limit: limit, oid: (currentOrderId || '') };
+            if (extra) { for (var _k in extra) { try { _d[_k] = extra[_k]; } catch (e2) {} } }
             fetch('/api/user/oa-subscribe-log', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     phone: (currentPhone || (document.getElementById('userPhone') || {}).value || ''),
-                    detail: JSON.stringify({ stage: stage, sec: sec, tries: mpTryCount(), limit: limit })
+                    detail: JSON.stringify(_d)
                 })
             }).catch(function () {});
         } catch (e) {}

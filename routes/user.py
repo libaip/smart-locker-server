@@ -3286,7 +3286,29 @@ def get_subscribe_templates():
     # 两条模板各自的触点：存包落地页给「账户余额」、提现页给「退款成功」。
     # 注意：小程序存包页(deposit.js)读的是下面三个具名字段(仍是 2 条)，不受这行影响 ——
     #       万一真有人在小程序内直接存包，他照样能拿到「账户余额」授权。
-    _tpls = [_general] if _landing else [_withdraw]
+    # [S244-20260918] A/B：弹窗请求 1 条 还是 2 条模板
+    #   背景：09-17 改成"一个页面只请求一条"后，两条模板成功率从 ~67-77% 掉到 ~57-70%（43101 涨）。
+    #   本接口不带身份，无法按用户分流 -> 用"分钟奇偶"随机分流（同一小时内均匀混合，抵消时段偏差）。
+    #   开关：system_settings.mp_subscribe_ab = '1'(现状:一条) / '2'(总是两条) / 'ab'(分钟奇偶,默认)
+    _ab_mode = 'ab'
+    try:
+        _abc = get_db()
+        _abcu = _abc.cursor()
+        _abcu.execute("SELECT setting_value FROM system_settings WHERE setting_key='mp_subscribe_ab'")
+        _abr = _abcu.fetchone()
+        if _abr:
+            _abv = (_abr.get('setting_value') if isinstance(_abr, dict) else _abr[0]) or ''
+            if _abv in ('1', '2', 'ab'):
+                _ab_mode = _abv
+        _abc.close()
+    except Exception as _abe:
+        logger.warning('[subscribe_templates] 读 A/B 开关失败: %s', _abe)
+    _ab_group = 'B_1tpl'
+    if _ab_mode == '2' or (_ab_mode == 'ab' and datetime.now().minute % 2 == 0):
+        _tpls = [_general, _withdraw]
+        _ab_group = 'A_2tpl'
+    else:
+        _tpls = [_general] if _landing else [_withdraw]
     return json_response(data={
         'templates': _tpls,
         'withdraw_notify': _withdraw,
@@ -3296,7 +3318,50 @@ def get_subscribe_templates():
         'general': _general,
         'deposit': _deposit,
         'landing': _landing,
+        'ab_mode': _ab_mode,
+        'ab_group': _ab_group,
+        'requested_count': len(_tpls),
     })
+
+
+@bp.route('/user/subscribe-report', methods=['POST'])
+def user_subscribe_report():
+    """[S244-20260918] 小程序 wx.requestSubscribeMessage 结果上报
+    统计"弹窗要了几条 / 用户勾了几条"，用于评估 A-B 分流与订阅授权率。
+    小程序侧调用样例见文档 S244_订阅AB实验_20260918.md。任何异常都吞掉，绝不影响下单/支付。
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        _phone = str(data.get('phone') or '')[:20]
+        _openid = str(data.get('openid') or data.get('mp_openid') or '')[:64]
+        _unionid = str(data.get('unionid') or '')[:64]
+        _req = data.get('requested') or []
+        _acc = data.get('accepted') or []
+        if isinstance(_req, str):
+            _req = [x for x in _req.split(',') if x]
+        if isinstance(_acc, str):
+            _acc = [x for x in _acc.split(',') if x]
+        _req = [str(x)[:96] for x in _req][:8]
+        _acc = [str(x)[:96] for x in _acc][:8]
+        _scene = str(data.get('scene') or '')[:40]
+        _platform = str(data.get('platform') or '')[:20]
+        _ver = str(data.get('wechat_version') or '')[:20]
+        _abg = str(data.get('ab_group') or '')[:16]
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO mp_subscribe_report (phone, openid, unionid, requested, accepted, "
+            "n_requested, n_accepted, scene, platform, wechat_version, ab_group, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())",
+            (_phone, _openid, _unionid, ','.join(_req), ','.join(_acc), len(_req), len(_acc),
+             _scene, _platform, _ver, _abg))
+        conn.commit()
+        conn.close()
+        logger.info('[subscribe_report] phone=%s req=%d acc=%d group=%s', _phone, len(_req), len(_acc), _abg)
+        return json_response(message='ok')
+    except Exception as e:
+        logger.error(f'[subscribe_report] {e}')
+        return json_response(message=str(e), code=500)
 
 
 @bp.route('/user/mp-jump-intent', methods=['POST'])

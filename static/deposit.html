@@ -743,6 +743,13 @@
         </div>
     </div>
 
+    <!-- ========== [S245] 软提醒条：不阻塞，仅提示"没进小程序、通知可能收不到" ========== -->
+    <div id="mpSoftBar" style="display:none;position:fixed;left:0;right:0;top:0;z-index:9999;background:#FFF8E7;border-top:1px solid #F5D9A0;padding:10px 12px;font-size:13px;color:#8a6d3b;box-shadow:0 -2px 8px rgba(0,0,0,.08);line-height:1.6">
+        <span>刚才没进小程序，<b>通知可能收不到</b>（取件/退款提醒）。</span>
+        <span onclick="mpSoftRejump()" style="color:#576b95;text-decoration:underline;margin-left:6px">再去一次小程序</span>
+        <span onclick="mpSoftDismiss()" style="color:#999;text-decoration:underline;margin-left:10px">继续支付</span>
+    </div>
+
     <!-- ========== 预付款协议弹窗 ========== -->
     <div id="agreementOverlay" class="agreement-overlay" onclick="if(event.target===this)closeAgreement()">
         <div class="agreement-box">
@@ -1199,6 +1206,21 @@
         try { goToStoreStep1(); } catch (e) {}
     }
 
+    // [S245-20260918] 软提醒：不拦、不踢回第一步，只在页面底部提示"还没进小程序，通知可能收不到"
+    function mpSoftRemind(reason) {
+        try { mpEnterPollReport('mp_soft_remind', Math.round((Date.now() - (mpOpenedTime || Date.now())) / 1000), MP_RETRY_LIMIT, { reason: reason || 'unknown' }); } catch (e) {}
+        try { var _b = document.getElementById('mpSoftBar'); if (_b) { _b.style.display = 'block'; } } catch (e) {}
+        try { document.body.style.paddingTop = '58px'; } catch (e) {}
+    }
+    function mpSoftDismiss() {
+        try { var _b = document.getElementById('mpSoftBar'); if (_b) { _b.style.display = 'none'; } } catch (e) {}
+        try { document.body.style.paddingTop = ''; } catch (e) {}
+    }
+    function mpSoftRejump() {
+        try { mpSoftDismiss(); } catch (e) {}
+        try { launchMp(); } catch (e) {}
+    }
+
     function mpAutoJump() {
         // [CFG-STEP2E] 同上：编号由服务端下发，拿不到就不跳旧号
         // [A1-b 修正] 编号拿不到时**直接放行到网页支付**：这种情况用户点多少次都跳不了（按钮不计数），
@@ -1366,7 +1388,7 @@
     // 该拦还是该放：点够次数就放行，否则弹回"请跳转小程序"
     function mpGateOrEscape() {
         if (_mpEscaped) { try { goToStep2Direct(); } catch (e) {} return; }   // ★已放行过 -> 直接进支付页，绝不再弹
-        try { if (mpTryCount() >= MP_RETRY_LIMIT) { mpGateEscape(); return; } } catch (e) {}
+        try { if (mpTryCount() >= MP_RETRY_LIMIT) { mpSoftRemind('retry_limit'); try { goToStep2Direct(); } catch (e2) {} return; } } catch (e) {}
         showMpTipModal('gate');
     }
 
@@ -1377,7 +1399,7 @@
     function mpProceedOrGate() {
         if (_mpEscaped) { try { goToStep2Direct(); } catch (e) {} return; }   // ★已放行过 -> 不查、不拦
         var _done = false;
-        function _yes() { if (_done) { return; } _done = true; try { mpTryClear(); } catch (e) {} try { goToStep2Direct(); } catch (e) {} }
+        function _yes() { if (_done) { return; } _done = true; try { mpTryClear(); } catch (e) {} try { mpSoftDismiss(); } catch (e) {} try { goToStep2Direct(); } catch (e) {} }
         function _no() { if (_done) { return; } _done = true; try { mpEnterPollReport('mp_gate_no', 0, 0, { asks: _askLog.join(''), oid2: _oid() }); } catch (e) {} try { mpGateOrEscape(); } catch (e) {} }
         function _oid() {
             var oid = currentOrderId || '';
@@ -1393,7 +1415,7 @@
                 fetch('/api/user/mp-entered?order_id=' + encodeURIComponent(_oid()))
                   .then(function (r) { return r.json(); })
                   .then(function (d) { var _ok = !!(d && d.data && d.data.entered); _askLog.push(_ok ? '1' : '0'); cb(_ok); })
-                  .catch(function () { _askLog.push('E'); cb(true); });      // 接口异常 -> 放行，别把真进去的人卡住
+                  .catch(function () { _askLog.push('E'); try { mpSoftRemind('api_error'); } catch (e2) {} cb(true); });      // 接口异常 -> 放行，别把真进去的人卡住
             } catch (e) { _askLog.push('X'); cb(true); }
         }
         // [S229] 原来只问 2 次(间隔 1.5 秒)：iPhone 上小程序上报晚一两秒就两次全空 -> 误拦回设置页。
@@ -1410,7 +1432,7 @@
             });
         }
         _askLoop();
-        setTimeout(function () { if (!_done) { _done = true; try { goToStep2Direct(); } catch (e) {} } }, 9000);
+        setTimeout(function () { if (!_done) { _done = true; try { mpSoftRemind('failsafe'); } catch (e) {} try { goToStep2Direct(); } catch (e) {} } }, 9000);
     }
 
     // ===== [S228-20260917] iPhone 跳转加固：不再用"2 秒还可见 = 跳失败"猜，改成盯服务端 =====
@@ -1447,7 +1469,7 @@
                   if (d && d.data && d.data.entered) {
                       if (mpEnterPoll) { clearInterval(mpEnterPoll); mpEnterPoll = null; }
                       try { mpEnterPollReport('mp_enter_poll_ok', Math.round(el / 1000), 0); } catch (e) {}
-                      try { mpTryClear(); } catch (e) {}
+                      try { mpTryClear(); } catch (e) {} try { mpSoftDismiss(); } catch (e) {}
                       mpOpenedTime = 0;
                       try { goToStep2Direct(); } catch (e) {}
                       return;

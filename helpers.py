@@ -827,7 +827,7 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
         wxpay, ch_type = get_channel_wxpay(current_channel, use_mp_appid=False)
         if ch_type == 'third_party' and wxpay:
             third_party_type = 'alipay' if not is_wechat_browser() else 'wechat'
-            result = wxpay.unifiedorder(trade_type=third_party_type, body='若预付款未退回，可进入下方公众号提现或拨打客服电话400-698-1080',
+            result = wxpay.unifiedorder(trade_type=third_party_type, body='使用储物柜预付款',
                                          total_fee=int(deposit_amount * 100), out_trade_no=order_no)
             if result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS':
                 # 更新渠道统计（用于轮转）
@@ -844,7 +844,7 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
     total_fee = int(deposit_amount * 100)
     time_expire = (datetime.now() + timedelta(minutes=15)).strftime('%Y%m%d%H%M%S')
 
-    result = wxpay.unifiedorder(trade_type=trade_type, body='若预付款未退回，可进入下方公众号提现或拨打客服电话400-698-1080',
+    result = wxpay.unifiedorder(trade_type=trade_type, body='使用储物柜预付款',
                                  total_fee=total_fee, out_trade_no=order_no,
                                  notify_url=_wx_payurl(), openid=openid,
                                  scene_info=scene_info, time_expire=time_expire)

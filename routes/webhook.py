@@ -90,18 +90,33 @@ def generate_wx_scheme():
         import json as json_lib
         req_data = request.get_json() or {}
         path = req_data.get('path', 'pages/deposit/deposit')
-        token = get_access_token()
-        if not token:
-            return jsonify({'code': 500, 'message': 'token failed'})
-        scheme_url = 'https://api.weixin.qq.com/wxa/generatescheme?access_token=' + token
         body = json_lib.dumps({
             'jump_wxa': {'path': path, 'query': req_data.get('query', '')},
             'expire_type': 1,
             'expire_interval': 365
         }).encode()
-        req = urllib.request.Request(scheme_url, data=body, headers={'Content-Type': 'application/json'})
-        resp = urllib.request.urlopen(req, timeout=10)
-        result = json_lib.loads(resp.read().decode())
+
+        def _do_scheme(_tk):
+            _url = 'https://api.weixin.qq.com/wxa/generatescheme?access_token=' + (_tk or '')
+            _rq = urllib.request.Request(_url, data=body, headers={'Content-Type': 'application/json'})
+            _rs = urllib.request.urlopen(_rq, timeout=10)
+            return json_lib.loads(_rs.read().decode())
+
+        token = get_access_token()
+        if not token:
+            return jsonify({'code': 500, 'message': 'token failed'})
+        result = _do_scheme(token)
+        # [S240-20260918] 令牌被挤失效(40001/42001)时强制刷新令牌重试一次：
+        #   以前失效后会一直失败到缓存过期(最长2小时)，H5 拿不到跳转串只能走
+        #   appid 兜底跳转，用户表现为"点多少次都跳不过小程序"。
+        if result.get('errcode') in (40001, 42001):
+            try:
+                logger.warning('[generate-scheme] token 失效(%s)，刷新后重试' % result.get('errcode'))
+            except Exception:
+                pass
+            _tk2 = get_access_token(force_refresh=True)
+            if _tk2:
+                result = _do_scheme(_tk2)
         if result.get('errcode') == 0:
             return jsonify({'code': 200, 'data': {'scheme': result.get('openlink', '')}})
         else:

@@ -732,7 +732,7 @@
     <div id="mpTipModal" class="modal-overlay" onclick="if(event.target===this){closeMpTipModal()}">
         <div class="modal-box">
             <div class="modal-title">请跳转小程序进行下一步</div>
-            <p id="mpTipDesc" style="text-align:center;font-size:14px;color:#666;margin-bottom:10px">跳转后请允许“订阅通知”，这样才能收到押金退还 / 退款到账的微信提醒</p>
+            <p id="mpTipDesc" style="text-align:center;font-size:14px;color:#666;margin-bottom:10px">请在弹出的“即将打开小程序”里点【允许】；进入后再允许“订阅通知”，这样才能收到押金退还 / 退款到账的微信提醒</p>
             <p id="mpRetryHint" style="display:none;text-align:center;font-size:13px;color:#e6a23c;margin-bottom:10px">没跳过去？再点一次【去小程序】就行（点几次都可以）</p>
             <div class="modal-btns">
                 <button id="mpOpenBtn" class="modal-btn modal-btn-confirm" onclick="launchMp()">去小程序</button>
@@ -1185,7 +1185,7 @@
             var _esc = document.getElementById('mpEscLine');
             var _escBtn = document.getElementById('mpEscBtn');
             if (_esc && _escBtn) {
-                if (mpTryCount() >= 2) {
+                if (mpTryCount() >= 1) {
                     _esc.style.display = 'block';
                     _escBtn.textContent = '一直跳不过去？点这里用网页支付（已试 ' + mpTryCount() + ' 次）';
                     if (!_escBtn._bound) { _escBtn._bound = 1; _escBtn.onclick = function () { mpGateEscape(); }; }

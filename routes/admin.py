@@ -1926,6 +1926,17 @@ def get_settings():
         from helpers import is_wechat_browser, is_mobile_browser
         settings_dict['_is_wechat'] = is_wechat_browser()
         settings_dict['_is_mobile'] = is_mobile_browser()
+        # [S240-20260918] mp_appid/mp_path 动态取"当前生效的小程序"：
+        #   以前只读 system_settings 表，换小程序后表里的旧值会让 H5 的
+        #   兜底跳转指向已停用的小程序（用户点多少次"去小程序"都进不去）。
+        try:
+            _dyn_mp = _wx_mp_id()
+            if _dyn_mp:
+                settings_dict['mp_appid'] = _dyn_mp
+        except Exception:
+            pass
+        if not settings_dict.get('mp_path'):
+            settings_dict['mp_path'] = 'pages/subscribe/subscribe'
         return json_response(settings_dict)
     except Exception as e:
         logger.error(f'[get_settings] {e}')

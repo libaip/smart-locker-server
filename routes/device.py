@@ -3,6 +3,7 @@
 竞品模式：APK只需输入设备ID即可完成激活
 """
 import logging
+import json
 from datetime import datetime
 from wx_config import (h5_base as _wx_h5b, h5_store as _wx_h5s, oauth_callback as _wx_oauthcb,
                      ws_base as _wx_ws, pay_notify_url as _wx_payurl)   # [CFG-STEP2C] 域名改从配置中心读，读不到自动用 config.py 原值
@@ -11,6 +12,175 @@ from flask import Blueprint, request, jsonify
 logger = logging.getLogger(__name__)
 
 bp = Blueprint('device', __name__)
+
+# ============================================
+# [S235-20260918] 设备"假离线"根治：请求级 + 长连接级 双重心跳刷新
+# 在线判定 = cabinets.last_heartbeat 在 120 秒内。只走长连接、不轮询 HTTP 的柜机
+# 心跳会永远停在"上次长连接建立"那一刻 -> 能远程开门、能扫码下单，后台却显示离线。
+#   1) before_request：任何带 device_id 的设备请求都刷一次（30 秒/台节流）
+#   2) 后台协程：每 60 秒问 ws_proxy(5004) /api/devices/online，给真正连着长连接的设备批量刷
+# 失败只告警，绝不影响业务请求。
+# ============================================
+_hb_touch_cache = {}
+_HB_TOUCH_INTERVAL = 30
+_hb_keeper_flag = {'started': False}
+
+
+def _touch_heartbeat(device_id):
+    if not device_id:
+        return
+    try:
+        import time as _t
+        _did = str(device_id).strip()
+        if not _did:
+            return
+        _now = _t.time()
+        if _now - _hb_touch_cache.get(_did, 0) < _HB_TOUCH_INTERVAL:
+            return
+        _hb_touch_cache[_did] = _now
+        from database import get_db
+        _db = get_db()
+        try:
+            _db.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (_did,))
+            _db.commit()
+        finally:
+            try:
+                _db.close()
+            except Exception:
+                pass
+    except Exception as _e:
+        try:
+            logger.warning('[S235] 刷新心跳失败: device=%s, %s' % (device_id, _e))
+        except Exception:
+            pass
+
+
+def _ws_proxy_online_ids():
+    """问 ws_proxy：当前真正连着长连接的设备 id 列表"""
+    try:
+        import urllib.request as _rq
+        _resp = _rq.urlopen('http://127.0.0.1:5004/api/devices/online', timeout=3)
+        try:
+            _body = _resp.read().decode('utf-8', 'ignore')
+        finally:
+            try:
+                _resp.close()
+            except Exception:
+                pass
+        import json as _json
+        _d = _json.loads(_body)
+        _ids = _d.get('devices') or []
+        return [str(x).strip() for x in _ids if str(x).strip()]
+    except Exception:
+        return []
+
+
+def _batch_touch_heartbeat(ids):
+    if not ids:
+        return 0
+    try:
+        from database import get_db
+        _db = get_db()
+        try:
+            _db.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id = ANY(%s)", (list(ids),))
+            _db.commit()
+            return len(ids)
+        finally:
+            try:
+                _db.close()
+            except Exception:
+                pass
+    except Exception as _e:
+        try:
+            logger.warning('[S235] 批量刷新心跳失败: %s' % (_e,))
+        except Exception:
+            pass
+        return 0
+
+
+def _heartbeat_keeper_loop():
+    """每 60 秒：给所有连着 ws_proxy 长连接的柜机刷一次心跳"""
+    import gevent
+    _fail = 0
+    while True:
+        try:
+            gevent.sleep(60)
+            _ids = set(_ws_proxy_online_ids())
+            try:
+                # app 内还有一条 raw WS 通道，一并算作在线
+                from helpers import connected_devices as _cd
+                for _k in list(_cd.keys()):
+                    _s = str(_k).strip()
+                    if _s:
+                        _ids.add(_s)
+            except Exception:
+                pass
+            _ids = sorted(_ids)
+            if _ids:
+                _n = _batch_touch_heartbeat(_ids)
+                _fail = 0
+                if _n and _n != _last_keeper_count.get('n'):
+                    _last_keeper_count['n'] = _n
+                    logger.info('[S235] 长连接心跳已刷新: %d 台' % _n)
+            else:
+                _fail += 1
+                if _fail in (3, 30):
+                    logger.warning('[S235] ws_proxy 未返回在线设备(连续 %d 次)' % _fail)
+        except Exception as _e:
+            _fail += 1
+            try:
+                logger.warning('[S235] 心跳守护异常: %s' % (_e,))
+            except Exception:
+                pass
+
+
+_last_keeper_count = {'n': -1}
+
+
+def _ensure_hb_keeper():
+    """确保每个 worker 进程只起一个心跳守护协程"""
+    if _hb_keeper_flag['started']:
+        return
+    _hb_keeper_flag['started'] = True
+    try:
+        import gevent
+        gevent.spawn(_heartbeat_keeper_loop)
+        logger.info('[S235] 长连接心跳守护已启动')
+    except Exception as _e:
+        try:
+            logger.warning('[S235] 心跳守护启动失败: %s' % (_e,))
+        except Exception:
+            pass
+
+
+@bp.before_request
+def _device_request_touch_heartbeat():
+    """任何带 device_id 的设备请求 -> 刷一次心跳（绝不影响业务）"""
+    try:
+        _ensure_hb_keeper()
+        _did = None
+        try:
+            _did = request.args.get('device_id')
+        except Exception:
+            _did = None
+        if not _did:
+            try:
+                _va = request.view_args or {}
+                _did = _va.get('device_id') or _va.get('id')
+            except Exception:
+                _did = None
+        if not _did and request.method in ('POST', 'PUT'):
+            try:
+                _j = request.get_json(silent=True)
+                if isinstance(_j, dict):
+                    _did = _j.get('device_id') or _j.get('deviceId') or _j.get('mainboard_device_id')
+            except Exception:
+                _did = None
+        if _did:
+            _touch_heartbeat(_did)
+    except Exception:
+        pass
+
 
 # 主板类型 → 串口映射
 BOARD_SERIAL_MAP = {

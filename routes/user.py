@@ -560,7 +560,7 @@ def store_init():
             try:
                 from helpers import send_open_lock as _fu_sol3
                 _fu_sol3(str(cab0['mainboard_device_id']), slot.get('board_no') or 1, slot.get('lock_no') or 1,
-                         protocol=(cab0.get('mainboard_source') or 'YBM'), order_id=order_no,
+                         protocol=None, order_id=order_no,
                          slot_number=slot.get('slot_number'), skip_dedup=True)
                 logger.info(f'[store_init] 免押模式开门指令已发送: order={order_id}')
             except Exception as _se3:
@@ -606,7 +606,7 @@ def get_pay_params_api():
                 _fu_ci = _fu_cur.fetchone()
                 if _fu_ci and _fu_ci['mainboard_device_id']:
                     _fu_sol(str(_fu_ci['mainboard_device_id']), _fu_ci['board_no'] or 1, _fu_ci['lock_no'] or 1,
-                            protocol=(_fu_ci['mainboard_source'] or 'YBM'), order_id=order['order_no'],
+                            protocol=None, order_id=order['order_no'],
                             slot_number=_fu_ci['slot_number'], skip_dedup=True)
                     logger.info(f'[get-pay-params] 免押单开门指令已发送: order={order["id"]}')
             except Exception as _fue:
@@ -987,7 +987,7 @@ def retrieve_confirm():
                 order['mainboard_device_id'],
                 order.get('board_no') or 1,
                 order.get('lock_no') or 1,
-                protocol=order.get('mainboard_source') or 'YBM',
+                protocol=None,
                 order_id=order.get('order_no', str(order_id)),
                 slot_number=order.get('slot_number') or order.get('compartment_number'),
                 skip_dedup=True,
@@ -1275,7 +1275,7 @@ def store_pay():
                 _fu_ci2 = _fu_c2.fetchone()
                 if _fu_ci2 and _fu_ci2['mainboard_device_id']:
                     _fu_sol2(str(_fu_ci2['mainboard_device_id']), _fu_ci2['board_no'] or 1, _fu_ci2['lock_no'] or 1,
-                             protocol=(_fu_ci2['mainboard_source'] or 'YBM'), order_id=order['order_no'],
+                             protocol=None, order_id=order['order_no'],
                              slot_number=_fu_ci2['slot_number'], skip_dedup=True)
                     logger.info(f'[store_pay] 免押单开门指令已发送: order={order["id"]}')
             except Exception as _fue2:
@@ -1315,7 +1315,7 @@ def store_pay():
                     _dr_exists2 = _dr_cur2.fetchone()
                     _dr_cur2.connection.close()
                     if not _dr_exists2:
-                        send_open_lock(str(cab_info['mainboard_device_id']), cab_info['board_no'] or 1, cab_info['lock_no'] or 1, cab_info['mainboard_source'] or 'YBM', order['order_no'], skip_dedup=True)
+                        send_open_lock(str(cab_info['mainboard_device_id']), cab_info['board_no'] or 1, cab_info['lock_no'] or 1, None, order['order_no'], skip_dedup=True)
             except Exception as e:
                 logger.error(f'[Mock支付开锁失败] {e}')
             conn.close()
@@ -1368,7 +1368,7 @@ def store_pay():
                             _dr_exists2 = _dr_cur2.fetchone()
                             _dr_cur2.connection.close()
                             if not _dr_exists2:
-                                send_open_lock(str(cab_info['mainboard_device_id']), cab_info['board_no'] or 1, cab_info['lock_no'] or 1, cab_info['mainboard_source'] or 'YBM', order['order_no'], skip_dedup=True)
+                                send_open_lock(str(cab_info['mainboard_device_id']), cab_info['board_no'] or 1, cab_info['lock_no'] or 1, None, order['order_no'], skip_dedup=True)
                     except Exception as e:
                         logger.error(f'[WechatPay开锁失败] {e}')
                 conn.close()
@@ -1837,7 +1837,7 @@ def deposit_end_storage():
             try:
                 from helpers import send_open_lock
                 device_id = order['mainboard_device_id']
-                send_open_lock(device_id, order['board_no'] or 1, order['lock_no'] or 1, order_id=str(order_id), protocol=order.get('mainboard_source') or 'YBM', slot_number=order.get('compartment_number'), skip_dedup=True, require_online=True, manual=True)
+                send_open_lock(device_id, order['board_no'] or 1, order['lock_no'] or 1, order_id=str(order_id), protocol=None, slot_number=order.get('compartment_number'), skip_dedup=True, require_online=True, manual=True)
                 logger.info(f'[end_storage] send_open_lock called: device={device_id}, board={order["board_no"]}, lock={order["lock_no"]}')
             except Exception as we:
                 logger.error(f'[end_storage] send_open_lock失败: {we}')
@@ -2032,7 +2032,7 @@ def deposit_mid_retrieve():
             try:
                 from helpers import send_open_lock
                 device_id = order['mainboard_device_id']
-                _open_ok = send_open_lock(device_id, order['board_no'] or 1, order['lock_no'] or 1, order_id=str(order_id), protocol=order.get('mainboard_source') or 'YBM', slot_number=order.get('compartment_number'), skip_dedup=True, require_online=True, manual=True)
+                _open_ok = send_open_lock(device_id, order['board_no'] or 1, order['lock_no'] or 1, order_id=str(order_id), protocol=None, slot_number=order.get('compartment_number'), skip_dedup=True, require_online=True, manual=True)
                 if not _open_ok:
                     conn.close()
                     return json_response(message='开门指令发送失败，请稍后再试', code=400)

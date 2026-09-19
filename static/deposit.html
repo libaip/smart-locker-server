@@ -1078,7 +1078,7 @@
                 if (_oaForceH5) {
                     mpSavePendingJump();   // [测试] 存档，回来才能接着付
                     showMpTipModal();      // [测试] 强制走 H5: 直接看到 A1 的拦截弹层(请跳转小程序)
-                } else if (allowH5ToMp === 1) {
+                } else if (allowH5ToMp === 1 && !isAlipayEnv()) {   // [S257] 支付宝里没有微信小程序，直接进支付页
                     mpSavePendingJump();      // FIX-20260912b 跳转前存档，回来才能接着付
                     mpAutoJump();
                 } else {
@@ -1690,6 +1690,34 @@
         .catch(function() { alert('网络错误'); btn.disabled = false; });
     }
 
+    // ===== [S257-20260919] 支付宝（手机网站支付）支持 =====
+    function isAlipayEnv() {
+        try { return /AlipayClient/i.test(navigator.userAgent || ''); } catch (e) { return false; }
+    }
+    function submitAlipayForm(p) {
+        // 存档，回来自动接着查支付结果（复用页面已有的 pendingOrderId 恢复逻辑）
+        try {
+            sessionStorage.setItem('pendingOrderId', String(currentOrderId || ''));
+            sessionStorage.setItem('pendingCabinetId', String(currentCabinetId || ''));
+            sessionStorage.setItem('pendingOrderNo', currentOrderNo || '');
+            sessionStorage.setItem('pendingCompartment', currentCompartmentNumber || '');
+            sessionStorage.setItem('pendingAccessCode', currentAccessCode || '');
+        } catch (e) {}
+        // 官方要求：页面跳转类接口必须提交表单（不能 location.href 拼串）
+        try {
+            if (p && p.form) {
+                var holder = document.createElement('div');
+                holder.style.display = 'none';
+                holder.innerHTML = p.form;
+                document.body.appendChild(holder);
+                var f = holder.querySelector('form');
+                if (f) { f.submit(); return; }
+            }
+        } catch (e) {}
+        if (p && p.pay_url) { window.location.href = p.pay_url; return; }
+        alert('支付宝支付跳转失败，请重试');
+    }
+
     function payDeposit() {
         var agreeCheck = document.getElementById('agreementCheck');
         if (agreeCheck && !agreeCheck.checked) { alert('请先阅读并同意《用户预付款协议》'); return; }
@@ -1741,6 +1769,7 @@
         if (currentCompartmentNumber) document.getElementById('payDoorNum').textContent = currentCompartmentNumber + '号';
         var payParams = data.pay_params;
         if (payParams) {
+            if (payParams.mode === 'alipay') { submitAlipayForm(payParams); return; }   // [S257] 支付宝 H5 支付
             if (payParams.mode === 'jsapi' && payParams.jsapi_params) { callWxPay(payParams.jsapi_params); }
             else if (payParams.mode === 'h5' && payParams.mweb_url) {
                 sessionStorage.setItem('pendingOrderId', String(currentOrderId));

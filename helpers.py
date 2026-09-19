@@ -158,6 +158,32 @@ def is_alipay_browser():
     return 'AlipayClient' in user_agent
 
 
+def get_alipay_mp_client():
+    """[S272] 支付宝【小程序应用】的客户端（登录 / 订阅消息用）
+
+    与支付通道无关：支付宝小程序是独立应用，用它自己的 appid + 密钥。
+    密钥文件：cert/alipay_mp_private_key.pem、cert/alipay_mp_alipay_public_key.pem
+    appid 可用环境变量 ALIPAY_MP_APPID 覆盖。
+    """
+    import os
+    from alipay import AlipayClient, PROD_GATEWAY, SANDBOX_GATEWAY
+    appid = (os.environ.get('ALIPAY_MP_APPID') or '').strip() or '2021006199688688'
+    cert_dir = os.environ.get('SMART_LOCKER_CERT_DIR') or '/home/ubuntu/smart-locker/cert'
+    priv_path = os.path.join(cert_dir, 'alipay_mp_private_key.pem')
+    pub_path = os.path.join(cert_dir, 'alipay_mp_alipay_public_key.pem')
+    if not (os.path.exists(priv_path) and os.path.exists(pub_path)):
+        logger.error('[get_alipay_mp_client] 密钥文件不存在: %s / %s' % (priv_path, pub_path))
+        return None
+    try:
+        priv = open(priv_path, 'r').read()
+        pub = open(pub_path, 'r').read()
+    except Exception as e:
+        logger.error('[get_alipay_mp_client] 读密钥失败: %s' % (e,))
+        return None
+    gw = SANDBOX_GATEWAY if str(appid).startswith('9021') else PROD_GATEWAY
+    return AlipayClient(app_id=appid, private_key=priv, alipay_public_key=pub, gateway=gw)
+
+
 def is_mobile_browser():
     """检查是否在移动端浏览器中"""
     from flask import request
@@ -677,8 +703,13 @@ def send_open_lock_list(device_id, doors, protocol=None, order_id='', require_on
 # ============================================
 # 支付相关 - 延迟导入避免循环
 # ============================================
-def _get_payment_channel(channel_id=None, exclude_channel_id=None):
-    """获取支付渠道（支持严格轮转和加权随机）"""
+def _get_payment_channel(channel_id=None, exclude_channel_id=None, channel_type=None):
+    """获取支付渠道（支持严格轮转和加权随机）
+
+    [S317] channel_type: 限定渠道类型（'wechat' / 'alipay'）。
+           微信支付和支付宝支付【绝不能相互轮询】—— 选错类型会直接导致付款失败。
+           传 None = 不限定（兼容旧调用）。
+    """
     conn = get_db()
     cursor = conn.cursor()
     if channel_id:
@@ -688,6 +719,13 @@ def _get_payment_channel(channel_id=None, exclude_channel_id=None):
         return dict(ch) if ch else None
     cursor.execute('SELECT * FROM payment_channels WHERE is_active = 1')
     channels = cursor.fetchall()
+    # [S317] 先按渠道类型过滤（channel_type 为空的历史数据按 wechat 处理）
+    if channel_type:
+        channels = [ch for ch in channels if (ch.get('channel_type') or 'wechat') == channel_type]
+        if not channels:
+            conn.close()
+            logger.warning('[channel] 没有可用的 %s 渠道', channel_type)
+            return None
     if not channels:
         conn.close()
         return None
@@ -710,10 +748,16 @@ def _get_payment_channel(channel_id=None, exclude_channel_id=None):
     # ====== Sequential mode: one at a time, failover on block ======
     if rotation_mode == 'sequential':
         if exclude_channel_id:
-            cursor.execute('SELECT * FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0) AND id != %s ORDER BY rotation_index ASC LIMIT 1', (exclude_channel_id,))
+            cursor.execute('SELECT * FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0) AND id != %s ORDER BY rotation_index ASC', (exclude_channel_id,))
         else:
-            cursor.execute('SELECT * FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0) ORDER BY rotation_index ASC LIMIT 1')
-        ch = cursor.fetchone()
+            cursor.execute('SELECT * FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0) ORDER BY rotation_index ASC')
+        _seq_rows = cursor.fetchall()
+        # [S317] 按渠道类型挑第一个（原来 SQL 带 LIMIT 1，会越过类型过滤）
+        ch = None
+        for _r in _seq_rows:
+            if not channel_type or ((_r.get('channel_type') or 'wechat') == channel_type):
+                ch = _r
+                break
         conn.close()
         if ch:
             selected = dict(ch)
@@ -738,11 +782,12 @@ def _get_payment_channel(channel_id=None, exclude_channel_id=None):
     return dict(selected)
 
 
-def select_payment_channel(exclude_channel_id=None):
+def select_payment_channel(exclude_channel_id=None, channel_type=None):
     """选择支付渠道（加权随机轮换）
     exclude_channel_id: 排除的渠道ID，用于故障切换时跳过当前失败的渠道
+    [S317] channel_type: 限定渠道类型（'wechat'/'alipay'），不传=不限定
     """
-    return _get_payment_channel(exclude_channel_id=exclude_channel_id)
+    return _get_payment_channel(exclude_channel_id=exclude_channel_id, channel_type=channel_type)
 
 
 def update_channel_stats(channel_id, amount):
@@ -853,7 +898,8 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
     elif payment_channel:
         current_channel = payment_channel
     else:
-        current_channel = _get_payment_channel()  # 自动选活跃渠道，避免fallback到硬编码默认商户
+        # [S317] 这里是要【发起微信支付】，必须只在 wechat 渠道里选，绝不能选到支付宝渠道
+        current_channel = _get_payment_channel(channel_type='wechat')  # 自动选活跃的微信渠道
 
     if current_channel:
         wxpay, ch_type = get_channel_wxpay(current_channel, use_mp_appid=False)
@@ -965,6 +1011,273 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
     return {'mode': 'error', 'error_msg': '交易失败，请重新支付'}
 
 
+# ============================================
+# [S319] 小程序支付参数（微信 JSAPI for 小程序）
+# ============================================
+def _mp_pick_wechat_channel(channel_id=None):
+    """只挑 channel_type='wechat' 的通道；挑不到返回 None。
+
+    故意不复用 select_payment_channel() 的自动选择：那个会连支付宝通道一起轮询，
+    而【小程序 JSAPI 支付必须用微信通道】。兼容两版 helpers：
+      · 175 版：_get_payment_channel(channel_id, exclude_channel_id, channel_type)
+      · 106 版：_get_payment_channel(channel_id, exclude_channel_id)  ← 没有 channel_type
+    """
+    if channel_id:
+        _ch = _get_payment_channel(channel_id)
+        if _ch and (_ch.get('channel_type') or 'wechat') == 'wechat':
+            return _ch
+        return None
+    _ch = None
+    try:
+        _ch = _get_payment_channel(channel_type='wechat')
+    except TypeError:
+        _ch = None   # 老版本没有 channel_type 参数
+    except Exception as _e:
+        logger.error('[mp-jsapi] 选微信通道异常: %s', _e)
+        _ch = None
+    if _ch and (_ch.get('channel_type') or 'wechat') == 'wechat':
+        return _ch
+    # 老版本兜底：自己查库挑第一个活跃微信通道（按 rotation_index 顺序，与 sequential 模式一致）
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0) ORDER BY rotation_index ASC, id ASC")
+        rows = cursor.fetchall()
+        conn.close()
+        for _r in rows:
+            if (_r.get('channel_type') or 'wechat') == 'wechat':
+                return dict(_r)
+    except Exception as _e:
+        logger.error('[mp-jsapi] 查库挑微信通道失败: %s', _e)
+    return None
+
+
+def _mp_openid_prefix_of(app_id):
+    """取某个 appid 对应的 openid 前缀（wx_accounts.openid_prefix），取不到返回 ''。
+
+    注意：不能走 wx_config.resolve_by_appid() —— 它返回的字典里没有 openid_prefix
+    （只有 appid/secret/token/aes_key/name/account_id/subject/source/mch_relation），
+    照那样写会永远拿到 ''，等于把 openid 校验静默关掉。这里直接查库。
+    """
+    app_id = (app_id or '').strip()
+    if not app_id:
+        return ''
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT openid_prefix FROM wx_accounts WHERE appid=%s LIMIT 1", (app_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row and row.get('openid_prefix'):
+            return row['openid_prefix']
+        logger.warning('[mp-jsapi] wx_accounts 里没查到 appid=%s 的 openid_prefix，跳过前缀校验', app_id)
+        return ''
+    except Exception as _e:
+        logger.error('[mp-jsapi] 取 openid 前缀失败: %s', _e)
+        return ''
+
+
+# ============================================================
+# [S320] 多小程序身份隔离：新小程序只认 openid，不做"按手机号找回老账号"
+# ============================================================
+# 背景：老小程序(ooTcRx/科莱维)、公众号 与 新小程序(重庆清域智, oQXFs3) 在库里
+#   共用 users / user_balances / phone_openids。老体系里同一个自然人的手机号/unionid
+#   会通过"手机号 -> unionid -> users"这条桥把新小程序用户认成老账号
+#   (实测：新 openid + 13667618419 -> 老 uid 97336)。
+#   老板决策：新小程序不做老用户找回，新用户就是全新用户(余额 0、无老订单)。
+#
+# 判定原则（白名单式，绝不"看到陌生前缀就当新小程序"）：
+#   1) 客户端带了 appid -> 只按 appid 判定：等于新小程序 appid 才是新体系；
+#      其它已登记 appid 与 未登记 appid 一律按老体系处理(保持原行为)。
+#   2) 没带 appid       -> 用 openid 前缀兜底：前缀不属于任何【已知老体系账号】
+#      才算新体系。已知老体系前缀从 wx_accounts 实时取(除新小程序外的全部账号)，
+#      取不到库时退回内置常量，宁可多算老前缀(不启用严格模式)，也不漏判。
+#   3) 什么身份信息都没有 -> 返回 False(不改变任何现有行为)。
+NEW_MP_APPID = 'wx0be09d4de1417e01'      # 新小程序(另一主体 重庆清域智)，见 wx_accounts.id=9
+_NEW_MP_PREFIX_FALLBACK = 'oQXFs3'       # 新小程序 openid 前缀(2026-09-19 实测)，读不到库时兜底
+_LEGACY_PREFIX_FALLBACK = ('ooTcRx', 'oWrA8', 'oLhbm2', 'ov47M3')
+_legacy_prefix_cache = {'ts': 0.0, 'prefixes': None}
+_new_prefix_cache = {'ts': 0.0, 'prefix': None}
+_LEGACY_PREFIX_TTL = 300
+
+
+def legacy_openid_prefixes():
+    """老体系(科莱维/景钧达)已知的 openid 前缀集合。
+
+    = wx_accounts 里【除新小程序外的全部账号】的 openid_prefix，
+      **同时包含 mp(小程序) 与 oa(公众号)** —— 故意不加 acct_type 过滤：
+      mp 给 ooTcRx(老小程序)/oWrA8(科莱智)，oa 给 oLhbm2(智能寄存柜)/ov47M3(景钧达)。
+      客户端会把公众号 openid(oLhbm2…/ov47M3…)一起带上来，那正是老账号 users.openid 的值，
+      必须算作"老体系"，否则新小程序的 strict 判定会漏。
+    读不到库时用内置常量兜底（宁可多算老前缀→不启用严格模式，也不漏判）。
+    """
+    now = time.time()
+    cached = _legacy_prefix_cache.get('prefixes')
+    if cached is not None and (now - _legacy_prefix_cache.get('ts', 0.0)) < _LEGACY_PREFIX_TTL:
+        return cached
+    out = set(_LEGACY_PREFIX_FALLBACK)
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        # 注意：这里【不能】加 acct_type 过滤 —— mp + oa 的 prefix 都要算老体系。
+        cursor.execute(
+            "SELECT DISTINCT openid_prefix FROM wx_accounts "
+            "WHERE NULLIF(openid_prefix,'') IS NOT NULL AND appid <> %s",
+            (NEW_MP_APPID,))
+        for row in cursor.fetchall():
+            p = row['openid_prefix'] if isinstance(row, dict) else row[0]
+            if p:
+                out.add(p)
+        conn.close()
+    except Exception as _e:
+        logger.warning('[S320] 取老体系前缀失败，用内置兜底: %s', _e)
+    _legacy_prefix_cache['prefixes'] = out
+    _legacy_prefix_cache['ts'] = now
+    return out
+
+
+def new_mp_openid_prefix():
+    """新小程序自己的 mp openid 前缀 —— strict 模式下【唯一被承认】的身份前缀。"""
+    now = time.time()
+    cached = _new_prefix_cache.get('prefix')
+    if cached and (now - _new_prefix_cache.get('ts', 0.0)) < _LEGACY_PREFIX_TTL:
+        return cached
+    p = ''
+    try:
+        p = _mp_openid_prefix_of(NEW_MP_APPID) or ''
+    except Exception:
+        p = ''
+    if not p:
+        p = _NEW_MP_PREFIX_FALLBACK
+    _new_prefix_cache['prefix'] = p
+    _new_prefix_cache['ts'] = now
+    return p
+
+
+def is_new_mp_identity(appid='', openid='', mp_openid=''):
+    """[S320] 本次身份是否属于"新小程序"(需要只认 openid、不按手机号找老用户)。
+
+    只有能【确定】不是老体系时才返回 True；无法判断一律 False(保持原行为)。
+    """
+    _appid = (appid or '').strip()
+    if _appid:
+        # 客户端带了 appid：只信 appid，不做前缀猜测
+        if _appid == NEW_MP_APPID:
+            return True
+        _p = _mp_openid_prefix_of(_appid)
+        if _p:
+            return _p not in legacy_openid_prefixes()
+        return False        # 未登记的 appid -> 不认识 -> 不改变行为
+    _oid = (openid or mp_openid or '').strip()
+    if not _oid:
+        return False
+    for _p in legacy_openid_prefixes():
+        if _p and _oid.startswith(_p):
+            return False
+    logger.warning('[S320] 未登记的 openid 前缀，按新小程序隔离处理: %s...', _oid[:8])
+    return True
+
+
+def get_mp_jsapi_params(order_id, order_no, amount, mp_openid,
+                        payment_channel_id=None, body='使用储物柜预付款'):
+    """[S319] 取【微信小程序】wx.requestPayment 需要的支付参数（统一下单 JSAPI + 签名）。
+
+    为什么不复用 get_payment_params()：
+      那个函数是给 H5 用的，里面有 UA 嗅探（is_mobile_browser / is_wechat_browser）和
+      MWEB / H5 / 第三方 / 支付宝 一堆分支。小程序支付要的是**确定的一次 JSAPI 下单**，
+      且绝不能选到支付宝通道 —— 所以单独一条函数，H5 的既有行为一个字都不动。
+
+    返回 dict：
+      成功    {'ok': True,  'mode': 'jsapi', 'timeStamp','nonceStr','package','signType','paySign', ...}
+      失败    {'ok': False, 'mode': 'error', 'error_msg': '...'}
+      模拟支付 {'ok': True,  'mode': 'mock',  ...}（pay_mode=mock 时没有真实支付）
+    """
+    try:
+        amount = float(amount or 0)
+        mp_openid = (mp_openid or '').strip()
+        if amount <= 0:
+            return {'ok': False, 'mode': 'error', 'error_msg': '订单金额异常，无法支付'}
+        if not mp_openid:
+            return {'ok': False, 'mode': 'error', 'error_msg': '缺少小程序 openid，请先在小程序内登录'}
+
+        total_fee = int(round(amount * 100))
+        if is_mock_mode():
+            return {'ok': True, 'mode': 'mock', 'order_id': order_id, 'order_no': order_no,
+                    'total_fee': total_fee}
+
+        channel = _mp_pick_wechat_channel(payment_channel_id)
+        if not channel and payment_channel_id:
+            # 订单挂的渠道不是可用微信通道（真实存在：orders 134273/134274 挂的是支付宝 113）：
+            # 不报错，记一条告警改选活跃微信通道，否则用户直接付不了钱。
+            logger.warning('[mp-jsapi] 订单渠道 %s 不是可用微信通道，改选活跃微信通道 order=%s',
+                           payment_channel_id, order_no)
+            channel = _mp_pick_wechat_channel(None)
+        if not channel:
+            logger.error('[mp-jsapi] 无可用微信通道 order=%s 指定渠道=%s', order_no, payment_channel_id)
+            return {'ok': False, 'mode': 'error', 'error_msg': '无可用微信支付商户，请联系管理员'}
+
+        wxpay, ch_type = get_channel_wxpay(channel, use_mp_appid=False)
+        if wxpay is None or ch_type != 'wechat':
+            logger.error('[mp-jsapi] 微信通道实例化失败 channel=%s type=%s', channel.get('id'), ch_type)
+            return {'ok': False, 'mode': 'error', 'error_msg': '微信支付渠道配置异常'}
+
+        # openid 必须是【这个 appid 的】小程序 openid（传公众号 openid 会 OPENID_MISMATCH）
+        _prefix = _mp_openid_prefix_of(wxpay.app_id)
+        if _prefix and not mp_openid.startswith(_prefix):
+            logger.error('[mp-jsapi] openid 与支付 appid 不匹配: appid=%s expect_prefix=%s got=%s...',
+                         wxpay.app_id, _prefix, mp_openid[:8])
+            return {'ok': False, 'mode': 'error',
+                    'error_msg': '支付账号不匹配：请用当前小程序登录后再试（openid 应以 %s 开头）' % _prefix}
+
+        time_expire = (datetime.now() + timedelta(minutes=15)).strftime('%Y%m%d%H%M%S')
+        result = wxpay.unifiedorder(trade_type='JSAPI', body=body,
+                                    total_fee=total_fee, out_trade_no=order_no,
+                                    notify_url=_wx_payurl(), openid=mp_openid,
+                                    scene_info=None, time_expire=time_expire)
+        if not (result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS'):
+            logger.error('[mp-jsapi] 统一下单失败 order=%s channel=%s ret=%s/%s err=%s/%s',
+                         order_no, channel.get('id'), result.get('return_code'), result.get('return_msg'),
+                         result.get('err_code'), result.get('err_code_des'))
+            # 故意【不】自动禁用商户：H5 那套遇到 MCH_NOT_EXIST 会顺手 is_active=0，
+            # 而小程序支付当前只有 114 一个通道，误禁用会让全站无法收款。只记日志，人工处理。
+            return {'ok': False, 'mode': 'error',
+                    'error_msg': result.get('err_code_des') or result.get('return_msg') or '微信下单失败'}
+
+        prepay_id = result.get('prepay_id')
+        # [S319] 这里【故意不做任何写库】。原本设想是把订单的收款渠道写成真正下单的这个
+        #   通道（支付回调要按 orders.payment_channel_id 取密钥验签），但按老板要求：
+        #   先保持只读，等小程序端到端确认链路 OK 之后再开回写，避免探测期污染真实订单。
+        #   要开回写时，把下面这段只读检查换成：
+        #     UPDATE orders SET payment_channel_id=<channel['id']> WHERE id=<order_id>
+        if order_id:
+            try:
+                from database import get_db as _gdbmp
+                _dbc = _gdbmp()
+                _curc = _dbc.cursor()
+                _curc.execute('SELECT payment_channel_id FROM orders WHERE id=%s', (order_id,))
+                _rowc = _curc.fetchone()
+                _dbc.close()
+                _old_ch = _rowc.get('payment_channel_id') if _rowc else None
+                if _rowc and _old_ch != channel['id']:
+                    logger.warning('[mp-jsapi] 订单渠道与下单渠道不一致(当前未回写): order=%s 订单=%s 下单=%s',
+                                   order_id, _old_ch, channel['id'])
+            except Exception as _e:
+                logger.error('[mp-jsapi] 渠道一致性检查失败: %s', _e)
+
+        jsapi = wxpay.get_jsapi_params(prepay_id) or {}
+        out = {'ok': True, 'mode': 'jsapi', 'order_id': order_id, 'order_no': order_no,
+               'total_fee': total_fee, 'prepay_id': prepay_id, 'channel_id': channel['id']}
+        for _k in ('appId', 'timeStamp', 'nonceStr', 'package', 'signType', 'paySign'):
+            if jsapi.get(_k) is not None:
+                out[_k] = jsapi.get(_k)
+        logger.info('[mp-jsapi] 下单成功 order=%s channel=%s openid=%s...',
+                    order_no, channel.get('id'), mp_openid[:8])
+        return out
+    except Exception as _e:
+        logger.error('[mp_jsapi_params] 异常: %s', _e)
+        return {'ok': False, 'mode': 'error', 'error_msg': '获取支付参数异常，请重试'}
+
+
 def process_auto_refund(order, cursor, conn):
     """自动退款（防测试场景）- 调用真正的微信退款API"""
     order_id = order['id']
@@ -1060,12 +1373,32 @@ def phone_openid_rows(cursor, phone='', openid='', mp_openid='', unionid=''):
     return [dict(r) for r in cursor.fetchall()]
 
 
-def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='', user_id=0):
+def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='', user_id=0,
+                          strict_openid=False):
     """Resolve one WeChat identity instead of blindly trusting phone_openids.user_id.
 
     Returns a dict with user_id/unionid/mp_openid/phone/ambiguous. When ambiguous,
     user_id is 0 so callers must not guess another account.
+
+    strict_openid=True（[S320] 新小程序专用）：
+      认人范围**严格限制为新小程序自己的 mp_openid**（前缀 == 新小程序前缀），并且：
+        * **丢掉客户端带上来的公众号 openid**（oLhbm2…/ov47M3… 这类，正是老账号
+          users.openid 的值，会让第 1 步直接命中老账号 97336 —— 是能串号的关键）；
+        * **丢掉客户端带上来的 unionid**（同一个人的老身份）；
+        * 完全不用手机号兜底：跳过两段"没有强键时按 phone 查 users"，
+          以及 user_balances 回退里的 phone = ? 条件。
+      于是"新 mp_openid 查不到"时返回 user_id=0，交给调用方新建全新用户。
+      默认 False -> 现有调用（含 H5、老小程序）行为一字不变。
     """
+    if strict_openid:
+        # [S320] 只承认"新小程序自己的 mp_openid"
+        _np = new_mp_openid_prefix()
+        if not (_clean(mp_openid) and _np and str(mp_openid).startswith(_np)):
+            if mp_openid:
+                logger.warning('[S320] strict_openid 下丢弃非新小程序的 mp_openid: %s...', str(mp_openid)[:8])
+            mp_openid = ''
+        openid = ''      # 丢掉公众号 openid（老账号 users.openid 的值）
+        unionid = ''     # 丢掉客户端 unionid（同一个人的老身份）
     out = {
         'user_id': 0,
         'unionid': unionid or '',
@@ -1119,7 +1452,7 @@ def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='',
         out['phone'] = row['phone'] or phone or ''
         return out
 
-    if not strong_keys and phone:
+    if not strong_keys and phone and not strict_openid:
         try:
             cursor.execute(
                 "SELECT id, unionid, phone, openid, mp_openid FROM users WHERE phone = %s AND id > 0 ORDER BY id",
@@ -1190,7 +1523,7 @@ def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='',
                     po_candidates.append(dict(row))
             except Exception:
                 pass
-    if not strong_keys and phone:
+    if not strong_keys and phone and not strict_openid:
         try:
             cursor.execute("SELECT * FROM users WHERE phone = %s ORDER BY id", (phone,))
             po_candidates = [dict(r) for r in cursor.fetchall()]
@@ -1226,7 +1559,9 @@ def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='',
             if openid:
                 _ucond.append('openid = %s')
                 _uparams.append(openid)
-            if phone:
+            # [S320] strict_openid(新小程序) 时绝不把 phone 当身份条件 ——
+            #   这一步正是"新 openid 查不到 -> 用手机号捞出老 unionid -> 认成老账号"的桥。
+            if phone and not strict_openid:
                 _ucond.append('phone = %s')
                 _uparams.append(phone)
             if _ucond:
@@ -1254,8 +1589,14 @@ def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='',
     return out
 
 
-def find_user_balance_row(cursor, phone='', openid='', mp_openid='', unionid='', user_id=0):
-    """Find the balance row belonging to one identity. Returns dict or None."""
+def find_user_balance_row(cursor, phone='', openid='', mp_openid='', unionid='', user_id=0,
+                          strict_identity=False):
+    """Find the balance row belonging to one identity. Returns dict or None.
+
+    strict_identity=True（[S320] 新小程序专用）：跳过"最后按 phone 兜底认行"那一段，
+      否则新小程序用户会按手机号命中老账号的 user_balances 行，余额/身份被串。
+      默认 False -> 现有调用（含 H5、老小程序）行为一字不变。
+    """
     uid = int(user_id or 0)
     if uid:
         try:
@@ -1309,7 +1650,8 @@ def find_user_balance_row(cursor, phone='', openid='', mp_openid='', unionid='',
                     return rows[0]
         except Exception:
             pass
-    if phone:
+    # [S320] strict_identity(新小程序) 时不做"按手机号认余额行"的兜底
+    if phone and not strict_identity:
         try:
             cursor.execute("SELECT * FROM user_balances WHERE phone = %s ORDER BY id", (phone,))
             rows = [dict(r) for r in cursor.fetchall()]
@@ -1325,8 +1667,14 @@ def find_user_balance_row(cursor, phone='', openid='', mp_openid='', unionid='',
 
 
 def upsert_user_balance_row(cursor, phone='', openid='', unionid='', mp_openid='', wechat_name='',
-                            balance=0.0, total_deposited=0.0, total_withdrawn=0.0, user_id=0):
-    """Add balance to the identity's own user_balances row; never merge phones blindly."""
+                            balance=0.0, total_deposited=0.0, total_withdrawn=0.0, user_id=0,
+                            strict_identity=False):
+    """Add balance to the identity's own user_balances row; never merge phones blindly.
+
+    strict_identity=True（[S320] 新小程序专用）：不采信客户端带来的老 unionid，
+      且认行时不按手机号兜底（见 find_user_balance_row）。
+      默认 False -> 现有调用（含 H5、老小程序）行为一字不变。
+    """
     phone = _clean(phone)
     openid = _clean(openid)
     unionid = _clean(unionid)
@@ -1336,7 +1684,11 @@ def upsert_user_balance_row(cursor, phone='', openid='', unionid='', mp_openid='
     total_deposited = float(total_deposited or 0)
     total_withdrawn = float(total_withdrawn or 0)
     user_id = int(user_id or 0)
-    existing = find_user_balance_row(cursor, phone=phone, openid=openid, mp_openid=mp_openid, unionid=unionid, user_id=user_id)
+    if strict_identity:
+        # [S320] 新小程序：不采信客户端带来的老 unionid，也不按手机号认老余额行
+        unionid = ''
+    existing = find_user_balance_row(cursor, phone=phone, openid=openid, mp_openid=mp_openid,
+                                    unionid=unionid, user_id=user_id, strict_identity=strict_identity)
     if existing:
         row_id = existing['id']
         cursor.execute(
@@ -1419,8 +1771,14 @@ def upsert_user_balance_row(cursor, phone='', openid='', unionid='', mp_openid='
     return row['id'] if row else None
 
 
-def upsert_phone_openid_row(cursor, phone='', openid='', mp_openid='', unionid='', wechat_name='', gzh_openid='', user_id=0):
+def upsert_phone_openid_row(cursor, phone='', openid='', mp_openid='', unionid='', wechat_name='', gzh_openid='', user_id=0, strict_identity=False):
     """Insert or update a phone_openids row keyed by identity, not by phone alone.
+
+    strict_identity=True（[S320] 新小程序专用）：只按本身份的 openid/mp_openid 认行，
+      且**不采信客户端带来的 unionid**（那通常是同一个人的老账号 unionid）。
+      否则会按 phone+unionid 命中老账号那一行，再把新小程序的 openid 覆盖进去
+      —— 实测事故：phone_openids.id=144664 的 openid 被写成 oQXFs3...
+      默认 False -> 现有调用（含 H5、老小程序）行为一字不变。
 
     [FIX-20260912] mp_openid 的写入统一走数据库函数 keep_new_mp_openid(旧值, 新值):
     禁止用旧小程序的 openid 覆盖已经存在的【新小程序(ooTcRx) openid】。
@@ -1437,6 +1795,10 @@ def upsert_phone_openid_row(cursor, phone='', openid='', mp_openid='', unionid='
     wechat_name = _clean(wechat_name)
     gzh_openid = _clean(gzh_openid)
     user_id = int(user_id or 0)
+    if strict_identity:
+        # [S320] 新小程序：客户端会把同一个人的老 unionid 一起带上来，一律不采信。
+        #   采信了就会按 unionid 命中老账号那一行(见上面的 144664 事故)。
+        unionid = ''
     if not phone:
         return None
     if unionid:
@@ -1477,7 +1839,9 @@ def upsert_phone_openid_row(cursor, phone='', openid='', mp_openid='', unionid='
             _r = cursor.fetchone()
             if _r:
                 _existing_id = _r['id']
-        if not _existing_id:
+        # [S320] strict_identity(新小程序) 时不按 unionid 认行：unionid 已被清空，
+        #   再按"phone + 空 unionid"去认行反而会挂到别的老行上。此时只按 openid/mp_openid 认。
+        if not _existing_id and (unionid or not strict_identity):
             cursor.execute("SELECT id FROM phone_openids WHERE phone = %s AND unionid = %s LIMIT 1", (phone, unionid))
             _r = cursor.fetchone()
             if _r:
@@ -3090,8 +3454,123 @@ _TPL_ACCOUNT_NEW = 'ax-O5Qa05IWt7bbhRVk9Pb9A_SbXfIMfbhm0Hoh4gYc'   # 账户余�
 _TPL_DEPOSIT_OLD = 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'   # 押金退还通知（旧，仅作过渡回退）
 
 
+def get_access_token_for(appid, secret, force_refresh=False):
+    """[S307] 按【指定小程序】拿 access_token（多小程序并存用）
+
+    与 get_access_token() 的区别：那个用"当前生效账号"，这个用传入的 appid/secret。
+    缓存分开（setting_key 按 appid 加后缀），互不干扰。
+    """
+    from datetime import datetime, timedelta
+    appid = (appid or '').strip()
+    if not appid or not secret:
+        return None
+    cache_key = 'wx_mp_access_token_' + appid
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        if not force_refresh:
+            cur.execute("SELECT setting_value FROM system_settings WHERE setting_key = %s", (cache_key,))
+            row = cur.fetchone()
+            if row and row.get('setting_value'):
+                try:
+                    import json as _j
+                    _d = _j.loads(row['setting_value'])
+                    _ea = datetime.fromisoformat(_d['expires_at'])
+                    if datetime.now() < _ea - timedelta(seconds=600):
+                        conn.close()
+                        return _d['token']
+                except Exception:
+                    pass
+        import requests as _r
+        resp = _r.post('https://api.weixin.qq.com/cgi-bin/stable_token',
+                       json=dict(grant_type='client_credential', appid=appid, secret=secret,
+                                 force_refresh=force_refresh), timeout=5)
+        result = resp.json()
+        if 'access_token' in result:
+            _tok = result['access_token']
+            _ea2 = (datetime.now() + timedelta(seconds=result.get('expires_in', 7200))).isoformat()
+            import json as _j2
+            cur.execute("INSERT OR REPLACE INTO system_settings (setting_key, setting_value) VALUES (%s, %s)",
+                        (cache_key, _j2.dumps(dict(token=_tok, expires_at=_ea2))))
+            conn.commit(); conn.close()
+            return _tok
+        logger.error('[get_access_token_for] fail appid=%s: %s', appid, result)
+        conn.close()
+        return None
+    except Exception as e:
+        logger.error('[get_access_token_for] err appid=%s: %s', appid, e)
+        return None
+
+
+def _send_subscribe_for_account(account_id, openid, template_id, data, page, phone=None, unionid=None):
+    """[S307] 用【指定账号】的身份发订阅消息（新小程序走这条）
+
+    与老逻辑的区别：token 和模板都按该账号取，且不做"往老小程序换 openid"的迁移。
+    """
+    import requests
+    import wx_config as _wc
+    try:
+        with _wc._conn() as (_c2, _k2):
+            _acc = _wc._row(_c2, _k2, "SELECT * FROM wx_accounts WHERE id=?", (account_id,))
+    except Exception as e:
+        logger.error('[subscribe_msg] 取账号失败 id=%s: %s', account_id, e)
+        return False
+    if not _acc or not _acc.get('appid') or not _acc.get('secret'):
+        logger.error('[subscribe_msg] 账号缺 appid/secret: id=%s', account_id)
+        return False
+    _tok = get_access_token_for(_acc['appid'], _acc['secret'])
+    if not _tok:
+        logger.error('[subscribe_msg] 拿不到 token: %s', _acc.get('name'))
+        return False
+    _tpl = template_id
+    try:
+        _biz = _wc.biz_by_template_id(template_id)
+        if _biz:
+            _row = _wc.get_template(_biz, 'mp', account_id=account_id)
+            if _row and _row.get('template_id'):
+                _tpl = _row['template_id']
+    except Exception as _e:
+        logger.warning('[subscribe_msg] 换模板失败(用原ID): %s', _e)
+    body = {'touser': openid, 'template_id': _tpl, 'data': data}
+    if page:
+        body['page'] = page
+    try:
+        r = requests.post('https://api.weixin.qq.com/cgi-bin/message/subscribe/send?access_token=%s' % _tok,
+                          json=body, timeout=8)
+        _res = r.json()
+        if _res.get('errcode') == 0:
+            logger.info('[subscribe_msg] OK 账号=%s openid=%s...', _acc.get('name'), (openid or '')[:10])
+            return True
+        logger.warning('[subscribe_msg] 失败 账号=%s errcode=%s errmsg=%s',
+                       _acc.get('name'), _res.get('errcode'), _res.get('errmsg'))
+        return False
+    except Exception as e:
+        logger.error('[subscribe_msg] 异常: %s', e)
+        return False
+
+
 def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, unionid=None):
-    """发送微信订阅消息（仅支持小程序mp_openid）"""
+    """发送微信订阅消息（仅支持小程序mp_openid）
+
+    [S307] 多小程序分流：先按 openid 前缀判断用户属于哪个小程序。
+      若属于"非当前生效账号"（= 新小程序），走 _send_subscribe_for_account（用该小程序的 token + 模板）。
+      否则（= 老小程序 / 判断不出）走下面原有的全部逻辑，行为一字不变。
+    """
+    try:
+        import wx_config as _wc0
+        _aid = 0
+        try:
+            _aid = _wc0.account_id_by_openid(openid or '')
+            _eff = _wc0.get_effective_account('mp') or {}
+            _eff_id = _eff.get('id') or 0
+        except Exception:
+            _aid, _eff_id = 0, 0
+        if _aid and _eff_id and _aid != _eff_id:
+            logger.info('[subscribe_msg] openid 属于其它小程序(账号id=%s, 当前生效=%s)，走新路径', _aid, _eff_id)
+            return _send_subscribe_for_account(_aid, openid, template_id, data, page, phone, unionid)
+    except Exception as _e0:
+        logger.warning('[subscribe_msg] 小程序分流判断失败(按原逻辑): %s', _e0)
+
     try:
         import requests
         import config
@@ -3296,6 +3775,9 @@ def calc_balance(user_id=None, phone=None, openid=None, mp_openid=None, unionid=
             "SELECT COALESCE(SUM(bd.amount), 0) FROM user_balance_details bd "
             "JOIN orders o ON bd.order_id = o.id "
             "WHERE bd.status = 'available' AND o.status = 3 AND (" + where + ") "
+            # [S273] 渠道隔离(方案B)：支付宝渠道付的押金【不进】微信余额。
+            #   用"排除支付宝"而非"只算微信"，这样 payment_channel_id 为空的老订单行为完全不变。
+            "AND NOT EXISTS (SELECT 1 FROM payment_channels pc WHERE pc.id = o.payment_channel_id AND pc.channel_type = 'alipay') "
             "AND NOT EXISTS (SELECT 1 FROM withdrawal_records w WHERE w.order_id = o.id AND w.status IN (0, 1, 2))"
         )
         c.execute(sql, params)

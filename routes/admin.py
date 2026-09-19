@@ -1028,7 +1028,35 @@ def cabinet_slots(cabinet_id):
         cursor.execute('SELECT cs.*, o.user_phone, o.access_code, o.store_time FROM cabinet_slots cs LEFT JOIN orders o ON cs.id = o.slot_id AND o.status IN (2, 3, 5) WHERE cs.cabinet_id = %s ORDER BY cs.slot_number', (cabinet_id,))
         slots = cursor.fetchall()
         conn.close()
-        return json_response([dict(s) for s in slots])
+        rows = [dict(s) for s in slots]
+        # [S311] 兼容小程序端字段（修"柜格全部显示已满"）
+        #   小程序存包页读的是 slot.size('S'/'M'/'L') + slot.status === 'available'，
+        #   而本接口给的是 slot_size('medium') + status 数字(1/2)。
+        #   为不让小程序重新提审，这里【只对来自小程序的请求】补上它期望的字段；
+        #   后台页面(admin.html)等其它调用方完全不受影响。
+        try:
+            _ref = request.headers.get('Referer', '') or ''
+            if 'servicewechat.com' in _ref:
+                # 去重：LEFT JOIN orders 会让"一个柜格有多个历史订单"返回多行，
+                #   小程序按行计数会严重虚高（实测 96 格返回 429 行）。按柜格 id 只留第一条。
+                _seen, _uniq = set(), []
+                for _r in rows:
+                    _sid = _r.get('id')
+                    if _sid in _seen:
+                        continue
+                    _seen.add(_sid)
+                    _uniq.append(_r)
+                _dup = len(rows) - len(_uniq)
+                rows = _uniq
+                _szmap = {'S': 'S', 'SMALL': 'S', 'M': 'M', 'MEDIUM': 'M', 'L': 'L', 'LARGE': 'L'}
+                for _s in rows:
+                    _k = _szmap.get(str(_s.get('slot_size') or '').upper(), '')
+                    _s['size'] = _k
+                    _s['status'] = 'available' if _s.get('status') == 1 else 'occupied'
+                logger.info('[cabinet_slots] 小程序请求 cabinet=%s 去重%d行 -> %s格', cabinet_id, _dup, len(rows))
+        except Exception as _e:
+            logger.warning('[cabinet_slots] 兼容字段处理失败(返回原格式): %s', _e)
+        return json_response(rows)
     except Exception as e:
         logger.error(f'[cabinet_slots] {e}')
         return json_response(message=str(e), code=500)
@@ -1913,6 +1941,17 @@ def get_member_withdrawals():
 # 系统设置
 # ============================================
 
+# [S262-20260919] 安全修复：本接口(/api/settings)是【公开无鉴权】的，
+#   下列 key 属于凭据/内部数据，绝不允许对外返回。
+#   修复前直接 SELECT * 全量返回，导致小程序 access_token 被公开泄露
+#   （任何人访问 https://<域名>/api/settings 即可拿到，可用于冒名发订阅消息、
+#     生成小程序码、查询用户数据）。管理后台走 /api/settings/admin（有鉴权），不受影响。
+_SENSITIVE_SETTING_KEYS = (
+    'wx_mp_access_token',   # 小程序全局 access_token
+    'test_key',             # 遗留测试密钥（全仓库已无引用）
+)
+
+
 @bp.route('/settings', methods=['GET'])
 def get_settings():
     try:
@@ -1921,7 +1960,9 @@ def get_settings():
         cursor.execute('SELECT * FROM system_settings')
         settings = cursor.fetchall()
         conn.close()
-        settings_dict = {s['setting_key']: s['setting_value'] for s in settings}
+        # [S262-20260919] 过滤敏感项后再返回（本接口无鉴权）
+        settings_dict = {s['setting_key']: s['setting_value'] for s in settings
+                         if s['setting_key'] not in _SENSITIVE_SETTING_KEYS}
         settings_dict['_pay_mode'] = 'mock' if is_mock_mode() else 'wechat'
         from helpers import is_wechat_browser, is_mobile_browser
         settings_dict['_is_wechat'] = is_wechat_browser()

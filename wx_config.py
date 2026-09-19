@@ -546,6 +546,81 @@ def resolve(acct_type):
     return d
 
 
+def resolve_by_appid(appid):
+    """[S278] 按 appid 精确取凭据 —— 多个小程序并存时用
+
+    与 resolve() 的区别：
+      resolve()           取"当前生效的那一个"（受 is_active / priority 影响）
+      resolve_by_appid()  按调用方给的 appid 精确匹配，不受 is_active 影响
+
+    场景：老小程序与新小程序（异主体）同时在线，各自的 js_code
+          必须用它自己的 appid+secret 去换 openid，混用必然失败。
+
+    ⚠️ 找不到时返回 None，【不静默回落】—— 回落会用错密钥，
+       调用方必须显式处理（返回明确错误），否则会误导排查。
+    """
+    appid = (appid or '').strip()
+    if not appid:
+        return None
+    row = None
+    try:
+        with _conn() as (conn, kind):
+            row = _row(conn, kind,
+                       "SELECT * FROM wx_accounts WHERE appid=? LIMIT 1", (appid,))
+    except Exception:
+        row = None
+    if not row or not row.get('appid'):
+        return None
+    return {
+        'appid': row.get('appid') or '',
+        'secret': row.get('secret') or '',
+        'token': row.get('token') or '',
+        'aes_key': row.get('aes_key') or '',
+        'name': row.get('name') or '',
+        'account_id': row.get('id') or 0,
+        'subject': row.get('subject') or '',
+        'source': 'db-by-appid',
+        'mch_relation': row.get('mch_relation') or 'none',
+    }
+
+
+def account_id_by_openid(openid, acct_type='mp'):
+    """[S307] 按 openid 前缀反查账号 id —— 判断"这个用户属于哪个小程序"
+
+    找不到返回 0（调用方按原逻辑处理，行为与改造前一致）。
+    """
+    openid = (openid or '').strip()
+    if not openid:
+        return 0
+    try:
+        with _conn() as (conn, kind):
+            rows = _rows(conn, kind,
+                         "SELECT id, openid_prefix FROM wx_accounts "
+                         "WHERE acct_type=? AND COALESCE(openid_prefix,'') <> ''",
+                         (acct_type,))
+    except Exception:
+        return 0
+    for r in rows:
+        p = (r.get('openid_prefix') or '').strip()
+        if p and openid.startswith(p):
+            return r.get('id') or 0
+    return 0
+
+
+def biz_by_template_id(template_id):
+    """[S307] 按模板 ID 反查业务名（biz），用于"给新账号换同业务的专属模板" """
+    template_id = (template_id or '').strip()
+    if not template_id:
+        return ''
+    try:
+        with _conn() as (conn, kind):
+            row = _row(conn, kind, "SELECT biz FROM wx_templates WHERE template_id=? LIMIT 1",
+                       (template_id,))
+        return (row or {}).get('biz') or ''
+    except Exception:
+        return ''
+
+
 def resolve_all():
     return {t: resolve(t) for t in ACCT_TYPES}
 

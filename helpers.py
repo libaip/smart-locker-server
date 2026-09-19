@@ -151,6 +151,13 @@ def is_wechat_browser():
     return 'MicroMessenger' in user_agent
 
 
+def is_alipay_browser():
+    """[S255] 是否在支付宝客户端内置浏览器中"""
+    from flask import request
+    user_agent = request.headers.get('User-Agent', '')
+    return 'AlipayClient' in user_agent
+
+
 def is_mobile_browser():
     """检查是否在移动端浏览器中"""
     from flask import request
@@ -771,6 +778,31 @@ def get_channel_wxpay(channel, use_mp_appid=False):
         return TPP(appid=channel['mch_id'], appsecret=channel['api_key'],
                     notify_url=_wx_payurl().replace('/api/pay/notify', '/api/pay/notify/third-party'),
                     return_url=extra.get('return_url', '')), 'third_party'
+    elif channel_type == 'alipay':
+        # [S255] 支付宝（手机网站支付）
+        from alipay import AlipayClient, PROD_GATEWAY, SANDBOX_GATEWAY
+        try:
+            extra = json.loads(channel.get('extra_config') or '{}')
+        except Exception:
+            extra = {}
+        cert_name = channel.get('cert_name') or channel.get('app_id') or str(channel.get('mch_id') or '')
+        priv_path = extra.get('private_key_path') or '/home/ubuntu/smart-locker/cert/%s_private_key.pem' % cert_name
+        pub_path = extra.get('alipay_public_key_path') or '/home/ubuntu/smart-locker/cert/%s_alipay_public_key.pem' % cert_name
+        try:
+            _priv = open(priv_path, encoding='utf-8').read()
+        except Exception as _e:
+            logger.error('[支付宝] 私钥读取失败 %s: %s', priv_path, _e)
+            return None, 'alipay'
+        _pub = ''
+        try:
+            _pub = open(pub_path, encoding='utf-8').read()
+        except Exception as _e:
+            logger.warning('[支付宝] 支付宝公钥读取失败(回调将走查单核对) %s: %s', pub_path, _e)
+        _appid = str(channel.get('app_id') or '')
+        _gw = extra.get('gateway') or (SANDBOX_GATEWAY if _appid.startswith('9021') else PROD_GATEWAY)
+        return AlipayClient(app_id=_appid, private_key=_priv, alipay_public_key=_pub, gateway=_gw,
+                            notify_url=_wx_payurl().replace('/api/pay/notify', '/api/pay/notify/alipay'),
+                            return_url=_wx_h5b() + '/store'), 'alipay'
     return None, None
 
 
@@ -836,6 +868,27 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
                 return {'mode': 'third_party', 'channel_type': third_party_type, 'order_id': order_id,
                         'order_no': order_no, 'pay_url': result.get('url', ''), 'url_qrcode': result.get('url_qrcode', '')}
             return {'mode': 'error', 'error_msg': result.get('return_msg', '第三方下单失败')}
+        if ch_type == 'alipay' and wxpay:
+            # [S255] 支付宝手机网站支付：生成跳转链接与自动提交表单（无需预下单接口）
+            try:
+                _pay = wxpay.wap_pay(out_trade_no=order_no, total_amount=deposit_amount,
+                                     subject='储物柜预付款', quit_url=_wx_h5b() + '/store')
+            except Exception as _e:
+                logger.error('[支付宝] 下单失败: %s', _e)
+                return {'mode': 'error', 'error_msg': '支付宝下单失败'}
+            try:
+                from database import get_db as _gdb4
+                _db4 = _gdb4()
+                _db4.execute("UPDATE orders SET payment_channel_id=%s WHERE id=%s", (current_channel['id'], order_id))
+                _db4.commit()
+                _db4.close()
+            except Exception as _e:
+                logger.error('[支付宝渠道更新] 失败: %s', _e)
+            if current_channel:
+                update_channel_stats(current_channel['id'], deposit_amount)
+            logger.info('[支付宝] 已生成支付跳转: order=%s channel=%s', order_no, current_channel.get('name'))
+            return {'mode': 'alipay', 'order_id': order_id, 'order_no': order_no,
+                    'pay_url': _pay.get('url', ''), 'form': _pay.get('form', '')}
         if wxpay is None:
             return {'mode': 'error', 'error_msg': '支付渠道配置异常'}
     else:

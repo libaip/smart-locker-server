@@ -441,6 +441,107 @@ def refund_notify():
         return 'fail', 500
 
 
+@bp.route('/pay/notify/alipay', methods=['POST', 'GET'])
+def alipay_pay_notify():
+    """[S255] 支付宝支付结果异步通知：先验签；验签失败则用主动查单核对（查单由我们发起，结果可信）"""
+    try:
+        params = dict(request.form) if request.form else dict(request.args)
+        out_trade_no = str(params.get('out_trade_no') or '')
+        logger.info('[支付宝回调] 收到通知 out_trade_no=%s trade_status=%s total_amount=%s 有签名=%s',
+                    out_trade_no, params.get('trade_status'), params.get('total_amount'), bool(params.get('sign')))
+        if not out_trade_no:
+            return 'fail', 400
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM orders WHERE order_no = %s', (out_trade_no,))
+        order = cursor.fetchone()
+        if not order:
+            conn.close()
+            logger.error('[支付宝回调] 订单不存在: %s', out_trade_no)
+            return 'fail', 400
+        if order['status'] in (2, 3, 4):
+            conn.close()
+            return 'success'
+        ch = None
+        if order.get('payment_channel_id'):
+            cursor.execute('SELECT * FROM payment_channels WHERE id = %s', (order['payment_channel_id'],))
+            ch = cursor.fetchone()
+        if not ch:
+            cursor.execute("SELECT * FROM payment_channels WHERE channel_type='alipay' AND is_active=1 ORDER BY id ASC LIMIT 1")
+            ch = cursor.fetchone()
+        conn.close()
+        if not ch:
+            logger.error('[支付宝回调] 找不到可用的支付宝渠道')
+            return 'fail', 500
+        client, ch_type = get_channel_wxpay(dict(ch))
+        if client is None or ch_type != 'alipay':
+            logger.error('[支付宝回调] 支付宝渠道实例创建失败: id=%s', ch.get('id'))
+            return 'fail', 500
+        verified_by = ''
+        if params.get('sign') and client.verify_notify(params):
+            verified_by = 'sign'
+            if str(params.get('trade_status')) not in ('TRADE_SUCCESS', 'TRADE_FINISHED'):
+                logger.info('[支付宝回调] 验签通过但交易状态非成功: %s', params.get('trade_status'))
+                return 'success'
+        else:
+            q = client.query(out_trade_no=out_trade_no)
+            if str(q.get('code')) == '10000' and str(q.get('trade_status')) in ('TRADE_SUCCESS', 'TRADE_FINISHED'):
+                verified_by = 'query'
+                params = {'trade_no': q.get('trade_no'), 'total_amount': q.get('total_amount')}
+            else:
+                logger.warning('[支付宝回调] 验签失败且查单未确认: code=%s sub_code=%s', q.get('code'), q.get('sub_code'))
+                return 'fail', 400
+        try:
+            expect = float(order['deposit_amount'] or 0) + float(order.get('per_use_price') or 0)
+            got = float(params.get('total_amount') or 0)
+            if abs(expect - got) > 0.01:
+                logger.error('[支付宝回调] 金额不匹配 order=%s expect=%.2f got=%.2f', out_trade_no, expect, got)
+                return 'fail', 400
+        except Exception:
+            pass
+        trade_no = str(params.get('trade_no') or '')
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM orders WHERE order_no = %s FOR UPDATE', (out_trade_no,))
+        order = cursor.fetchone()
+        if not order:
+            conn.close()
+            return 'fail', 400
+        if order['status'] in (2, 3, 4):
+            conn.close()
+            return 'success'
+        amount = float(order['deposit_amount'] or 0) + float(order.get('per_use_price') or 0)
+        cursor.execute("UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s AND status = 1",
+                       (trade_no, datetime.now(), order['id']))
+        updated = cursor.rowcount > 0
+        if updated and order.get('slot_id'):
+            cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
+        if updated:
+            # [S255] 记账失败不能让回调失败：订单已置为已支付，用 SAVEPOINT 隔离，失败只告警
+            try:
+                # 注意：database.py 的连接是 autocommit，每条语句独立提交，所以记账失败不会影响上面的改单
+                cursor.execute("SELECT id FROM payments WHERE order_id=%s AND type=1 AND transaction_id=%s LIMIT 1",
+                               (order['id'], trade_no))
+                if not cursor.fetchone():
+                    cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
+                                   (order['id'], amount, trade_no))
+                    logger.info('[支付宝回调] 已记 payments: order=%s amount=%.2f', order['id'], amount)
+            except Exception as _pe:
+                logger.error('[支付宝回调] 记账失败(不影响订单已支付): order=%s err=%s', order['id'], _pe)
+            if order.get('payment_channel_id'):
+                try:
+                    update_channel_stats(order['payment_channel_id'], amount)
+                except Exception:
+                    pass
+        conn.commit()
+        conn.close()
+        logger.info('[支付宝回调] 订单已置为已支付 order=%s trade_no=%s 校验方式=%s', out_trade_no, trade_no, verified_by)
+        return 'success'
+    except Exception as e:
+        logger.error('[支付宝回调] 异常: %s', e)
+        return 'fail', 500
+
+
 @bp.route('/pay/notify/third-party', methods=['POST', 'GET'])
 def third_party_pay_notify():
     """第三方支付回调"""

@@ -1278,6 +1278,142 @@ def get_mp_jsapi_params(order_id, order_no, amount, mp_openid,
         return {'ok': False, 'mode': 'error', 'error_msg': '获取支付参数异常，请重试'}
 
 
+# ============================================
+# [S334] 支付宝小程序支付参数（alipay.trade.create → 前端 my.tradePay）
+# ============================================
+def _mp_pick_alipay_channel(channel_id=None):
+    """只挑 channel_type='alipay' 的通道；挑不到返回 None。
+
+    为什么单独一条：微信/支付宝通道【绝不能相互轮询】（选错类型直接付款失败），
+    而 select_payment_channel() 会连微信通道一起算。
+
+    现状（2026-09-19）：payment_channels.id=113（app_id=2021006199688688，cert_name=alipay_mp）
+    就是本项目的支付宝【小程序应用】，但 is_active=0 —— 老板要求先别改库。而
+    _get_payment_channel(channel_type='alipay') 只认 is_active=1，所以这里：
+      1) 先按官方口径选【活跃】的支付宝通道；
+      2) 一个都没有时，退回查库拿未启用的支付宝通道（只为把链路先跑通，日志明确告警）；
+         一旦老板把 113 置成 is_active=1，第 2 步就永远不会触发。
+    """
+    if channel_id:
+        _ch = _get_payment_channel(channel_id)
+        if _ch and (_ch.get('channel_type') or '') == 'alipay':
+            return _ch
+        return None
+    _ch = None
+    try:
+        _ch = _get_payment_channel(channel_type='alipay')
+    except TypeError:
+        _ch = None   # 老版本 helpers 没有 channel_type 参数
+    except Exception as _e:
+        logger.error('[alipay-mp] 选支付宝通道异常: %s', _e)
+        _ch = None
+    if _ch and (_ch.get('channel_type') or '') == 'alipay':
+        return _ch
+    # 兜底：查库直接找 alipay 通道（包含 is_active=0 的 113，仅告警不拦）
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM payment_channels WHERE channel_type='alipay' "
+                       "ORDER BY is_active DESC, auto_disabled ASC, rotation_index ASC, id ASC")
+        rows = cursor.fetchall()
+        conn.close()
+        for _r in rows:
+            if (_r.get('channel_type') or '') == 'alipay':
+                logger.warning('[alipay-mp] 没有 is_active=1 的支付宝通道，退回使用未启用通道 id=%s '
+                               '（老板要求暂不改库；置 is_active=1 后本告警消失）', _r.get('id'))
+                return dict(_r)
+    except Exception as _e:
+        logger.error('[alipay-mp] 查库挑支付宝通道失败: %s', _e)
+    return None
+
+
+def get_alipay_mp_trade_params(order_id, order_no, amount, alipay_uid,
+                               payment_channel_id=None, subject='储物柜预付款',
+                               timeout_express='15m'):
+    """[S334] 支付宝【小程序】支付：服务端 alipay.trade.create + 前端 my.tradePay({tradeNO})
+
+    为什么不复用 get_payment_params()：那个是给 H5 用的（里面有 UA 嗅探 + wap_pay 表单），
+    小程序要的是"确定的一次 alipay.trade.create"，并且只能选支付宝通道。
+
+    返回 dict：
+      成功      {'ok': True,  'mode': 'alipay_trade', 'trade_no': '2026...', ...}
+      交易已付  {'ok': False, 'mode': 'paid',  'error_msg': '交易已被支付'}
+      模拟支付  {'ok': True,  'mode': 'mock',  ...}（pay_mode=mock 时没有真实支付）
+      失败      {'ok': False, 'mode': 'error', 'error_msg': '...'}
+    """
+    try:
+        amount = float(amount or 0)
+        alipay_uid = (alipay_uid or '').strip()
+        if amount <= 0:
+            return {'ok': False, 'mode': 'error', 'error_msg': '订单金额异常，无法支付'}
+        if not alipay_uid:
+            return {'ok': False, 'mode': 'error', 'error_msg': '缺少支付宝用户标识，请先在小程序内登录'}
+
+        if is_mock_mode():
+            return {'ok': True, 'mode': 'mock', 'order_id': order_id, 'order_no': order_no,
+                    'total_fee': int(round(amount * 100))}
+
+        channel = _mp_pick_alipay_channel(payment_channel_id)
+        if not channel and payment_channel_id:
+            # 订单挂的渠道不是支付宝（真实场景：store/init 走 select_payment_channel 选了微信 114）：
+            # 不报错，记一条告警改选支付宝通道，否则用户付不了钱。
+            logger.warning('[alipay-mp] 订单渠道 %s 不是可用支付宝通道，改选支付宝通道 order=%s',
+                           payment_channel_id, order_no)
+            channel = _mp_pick_alipay_channel(None)
+        if not channel:
+            logger.error('[alipay-mp] 无可用支付宝通道 order=%s 指定渠道=%s', order_no, payment_channel_id)
+            return {'ok': False, 'mode': 'error', 'error_msg': '无可用支付宝商户，请联系管理员'}
+
+        client, ch_type = get_channel_wxpay(channel)
+        if client is None or ch_type != 'alipay':
+            logger.error('[alipay-mp] 支付宝通道实例化失败 channel=%s type=%s', channel.get('id'), ch_type)
+            return {'ok': False, 'mode': 'error', 'error_msg': '支付宝渠道配置异常'}
+
+        resp = client.trade_create(out_trade_no=order_no, total_amount=amount,
+                                   subject=subject, buyer_id=alipay_uid,
+                                   timeout_express=timeout_express)
+        if str(resp.get('code')) != '10000':
+            sub_code = str(resp.get('sub_code') or '')
+            sub_msg = str(resp.get('sub_msg') or resp.get('msg') or '')
+            logger.error('[alipay-mp] trade.create 失败 order=%s channel=%s sub_code=%s sub_msg=%s',
+                         order_no, channel.get('id'), sub_code, sub_msg)
+            if sub_code in ('ACQ.TRADE_HAS_SUCCESS', 'ACQ.TRADE_STATUS_ERROR'):
+                return {'ok': False, 'mode': 'paid', 'error_msg': '交易已被支付'}
+            return {'ok': False, 'mode': 'error', 'error_msg': sub_msg or '支付宝下单失败'}
+
+        trade_no = str(resp.get('trade_no') or '').strip()
+        if not trade_no:
+            logger.error('[alipay-mp] trade.create 未返回 trade_no order=%s resp=%s',
+                         order_no, str(resp.get('_raw_body'))[:300])
+            return {'ok': False, 'mode': 'error', 'error_msg': '支付宝未返回交易号，请重试'}
+
+        # 回写订单收款渠道：支付宝异步通知 /api/pay/notify/alipay 要按 orders.payment_channel_id
+        #   取密钥验签。不回写时订单挂的是微信通道，回调会拿到微信实例 → 直接 return fail。
+        #   与 H5 支付宝分支（get_payment_params 里 UPDATE orders SET payment_channel_id）同一口径。
+        if order_id:
+            try:
+                from database import get_db as _gdbap
+                _dbap = _gdbap()
+                _curap = _dbap.cursor()
+                _curap.execute('UPDATE orders SET payment_channel_id=%s WHERE id=%s',
+                               (channel['id'], order_id))
+                _dbap.commit()
+                _dbap.close()
+            except Exception as _e:
+                logger.error('[alipay-mp] 回写订单渠道失败: %s', _e)
+
+        logger.info('[alipay-mp] trade.create 成功 order=%s channel=%s trade_no=%s buyer=%s...',
+                    order_no, channel.get('id'), trade_no, alipay_uid[:8])
+        return {'ok': True, 'mode': 'alipay_trade', 'order_id': order_id, 'order_no': order_no,
+                'trade_no': trade_no,
+                'out_trade_no': str(resp.get('out_trade_no') or order_no),
+                'total_amount': '%.2f' % amount, 'total_fee': int(round(amount * 100)),
+                'channel_id': channel['id']}
+    except Exception as _e:
+        logger.error('[get_alipay_mp_trade_params] 异常: %s', _e)
+        return {'ok': False, 'mode': 'error', 'error_msg': '获取支付参数异常，请重试'}
+
+
 def process_auto_refund(order, cursor, conn):
     """自动退款（防测试场景）- 调用真正的微信退款API"""
     order_id = order['id']

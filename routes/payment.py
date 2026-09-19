@@ -535,6 +535,42 @@ def alipay_pay_notify():
                     pass
         conn.commit()
         conn.close()
+        # [S334] 支付宝支付成功也要【开门】：原来这里只改单/记账，没有发开锁指令，
+        #   于是支付宝付完钱柜门不动（微信回调 pay_notify 里有这段，支付宝这条漏了）。
+        #   口径与微信回调一致：先 commit 释放 DB 锁，再查 door_records 去重后发指令。
+        if updated:
+            try:
+                _al_dev = ''
+                _al_info = None
+                _al_c = get_db()
+                _al_cur = _al_c.cursor()
+                _al_cur.execute('''SELECT c.mainboard_device_id, c.mainboard_source,
+                                          cs.board_no, cs.lock_no
+                                   FROM cabinets c LEFT JOIN cabinet_slots cs ON cs.id = %s
+                                   WHERE c.id = %s''', (order.get('slot_id'), order.get('cabinet_id')))
+                _al_info = _al_cur.fetchone()
+                _al_c.close()
+                if _al_info:
+                    _al_dev = str(_al_info.get('mainboard_device_id') or '')
+                if _al_dev:
+                    _dr_c = get_db()
+                    _dr_cur = _dr_c.cursor()
+                    _dr_cur.execute('SELECT id FROM door_records WHERE order_id=%s AND device_id=%s LIMIT 1',
+                                    (out_trade_no, _al_dev))
+                    _dr_exists = _dr_cur.fetchone()
+                    _dr_c.close()
+                    if _dr_exists:
+                        logger.info('[支付宝回调] door_records已有记录，跳过开门: order_id=%s', out_trade_no)
+                    else:
+                        send_open_lock(_al_dev, _al_info.get('board_no') or 1, _al_info.get('lock_no') or 1,
+                                       _al_info.get('mainboard_source') or None, out_trade_no,
+                                       slot_number=order.get('compartment_number'), skip_dedup=True)
+                        logger.info('[支付宝回调] 开门指令已发送 order=%s device=%s', out_trade_no, _al_dev)
+                else:
+                    logger.error('[支付宝回调] 未取到主板号，无法开门 order=%s slot=%s',
+                                 out_trade_no, order.get('slot_id'))
+            except Exception as _ale:
+                logger.error('[支付宝回调] 开锁失败: %s', _ale)
         logger.info('[支付宝回调] 订单已置为已支付 order=%s trade_no=%s 校验方式=%s', out_trade_no, trade_no, verified_by)
         return 'success'
     except Exception as e:

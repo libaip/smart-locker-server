@@ -2549,6 +2549,99 @@ def order_pay_params(order_id):
         return json_response(message=str(e), code=500)
 
 
+@bp.route('/order/<int:order_id>/alipay-pay-params', methods=['POST'])
+def order_alipay_pay_params(order_id):
+    """[S334] 支付宝小程序支付参数（给前端 my.tradePay({tradeNO}) 拉起收银台）
+
+    入参(JSON): {"alipay_uid": "支付宝 user_id(必填，即 users.alipay_uid)",
+                 "phone": 可选（归属校验用）, "cabinet_id": 可选}
+    返回: {"code":200,"message":"success","data":{trade_no, out_trade_no, total_amount, mode, ...}}
+    链路: alipay.trade.create（服务端） → 前端 my.tradePay({tradeNO}) → resultCode 9000 为成功
+          → 支付宝异步通知 /api/pay/notify/alipay 把订单置为已支付并开门
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        alipay_uid = str(data.get('alipay_uid') or '').strip()
+        phone = str(data.get('phone') or data.get('user_phone') or '').strip()
+        cabinet_id = data.get('cabinet_id')
+        if not alipay_uid:
+            return json_response(message='缺少 alipay_uid，请先在小程序内登录', code=400)
+
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM orders WHERE id = %s', (order_id,))
+        order = cursor.fetchone()
+        _uid_user_id = 0
+        _uid_phone = ''
+        try:
+            cursor.execute('SELECT id, phone FROM users WHERE alipay_uid = %s LIMIT 2', (alipay_uid,))
+            _urows = cursor.fetchall()
+            if _urows:
+                _uid_user_id = _urows[0].get('id') or 0
+                _uid_phone = (_urows[0].get('phone') or '').strip()
+        except Exception as _ue:
+            logger.warning('[alipay-pay-params] 查 alipay_uid 失败: %s', _ue)
+        conn.close()
+
+        if not order:
+            return json_response(message='订单不存在', code=404)
+
+        # 归属校验：订单 user_id / 手机号 任一与调用方一致即放行
+        #   （支付宝用户的 order.user_id 由 store/init 按手机号解析，可能不等于
+        #     users.alipay_uid 那一行，所以手机号一致也放行，口径与 /pay-params 一致）
+        _o_user_id = int(order.get('user_id') or 0)
+        _o_phone = (order.get('user_phone') or '').strip()
+        _ok_owner = False
+        if _o_user_id and _uid_user_id and _o_user_id == int(_uid_user_id):
+            _ok_owner = True
+        if not _ok_owner and _o_phone and ((phone and phone == _o_phone) or (_uid_phone and _uid_phone == _o_phone)):
+            _ok_owner = True
+        if not _ok_owner and not _o_user_id and not _o_phone:
+            _ok_owner = True
+        if not _ok_owner:
+            logger.warning('[alipay-pay-params] 身份与订单不匹配 order=%s alipay_uid=%s...', order_id, alipay_uid[:8])
+            return json_response(message='订单不属于当前用户', code=403)
+        if cabinet_id and str(cabinet_id) != str(order.get('cabinet_id')):
+            return json_response(message='柜体与订单不匹配', code=400)
+
+        # 免押单：无需支付（与 /store/pay、/pay-params 的免押分支口径一致）
+        if order.get('free_use'):
+            return json_response({'order_id': order['id'], 'order_no': order['order_no'],
+                                  'mode': 'free_use', 'free_use': 1, 'message': '免押使用，无需支付'})
+        # 已支付：让前端直接进入开门流程，不要重复下单
+        if order['status'] == 2:
+            return json_response({'order_id': order['id'], 'order_no': order['order_no'],
+                                  'mode': 'paid', 'already_paid': True, 'status': 2,
+                                  'message': '订单已支付'})
+        if order['status'] != 1:
+            return json_response(message='订单已超时或状态异常，请重新下单', code=400)
+
+        amount = float(order.get('deposit_amount') or 0) + float(order.get('per_use_price') or 0)
+        from helpers import get_alipay_mp_trade_params
+        res = get_alipay_mp_trade_params(order['id'], order['order_no'], amount, alipay_uid,
+                                         payment_channel_id=order.get('payment_channel_id'))
+        if not res.get('ok'):
+            if res.get('mode') == 'mock':
+                return json_response({'order_id': order['id'], 'order_no': order['order_no'],
+                                      'mode': 'mock', 'total_fee': res.get('total_fee')},
+                                     message='当前为模拟支付模式，请走 /api/store/pay 完成模拟支付')
+            if res.get('mode') == 'paid':
+                return json_response({'order_id': order['id'], 'order_no': order['order_no'],
+                                      'mode': 'paid', 'already_paid': True, 'status': 2,
+                                      'message': res.get('error_msg') or '订单已支付'})
+            return json_response(message=res.get('error_msg') or '获取支付参数失败', code=502)
+
+        out = {'order_id': order['id'], 'order_no': order['order_no'],
+               'deposit_amount': order.get('deposit_amount'), 'total_fee': res.get('total_fee')}
+        for _k in ('mode', 'trade_no', 'out_trade_no', 'total_amount', 'channel_id'):
+            if res.get(_k) is not None:
+                out[_k] = res.get(_k)
+        return json_response(out)
+    except Exception as e:
+        logger.error(f'[order_alipay_pay_params] 错误: {e}')
+        return json_response(message=str(e), code=500)
+
+
 @bp.route('/cabinet/screen-info', methods=['GET'])
 def cabinet_screen_info():
     """柜体屏幕显示信息"""

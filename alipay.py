@@ -133,7 +133,10 @@ class AlipayClient(object):
 
     def build_params(self, method, biz_content, notify_url=None, return_url=None):
         p = self._common_params(method, notify_url, return_url)
-        p['biz_content'] = json.dumps(biz_content, ensure_ascii=False, separators=(',', ':'))
+        # [S287] 必须 ensure_ascii=True：中文若原样发出，requests 会把它 URL 编码，
+        #   而签名用的是原始中文字符串，两边对不上 → 支付宝报 isv.invalid-signature。
+        #   转成 \uXXXX（纯 ASCII）后，签名内容与实际传输完全一致。
+        p['biz_content'] = json.dumps(biz_content, ensure_ascii=True, separators=(',', ':'))
         p['sign'] = self.sign(self._sign_content(p, exclude=('sign',)))
         return p
 
@@ -216,6 +219,38 @@ class AlipayClient(object):
             'form': self.build_page_form('alipay.trade.wap.pay', biz, notify_url, return_url),
         }
 
+    def trade_create(self, out_trade_no, total_amount, subject, buyer_id,
+                     body='', timeout_express='15m', product_code='', op_app_id=''):
+        """[S334] 支付宝【小程序支付】创建交易：alipay.trade.create
+
+        与 alipay.trade.wap.pay（H5 手机网站支付）的区别：
+          · 小程序支付是「服务端创建交易 → 客户端 my.tradePay({tradeNO}) 拉起收银台」，
+            不跳转页面、不需要 form/url；
+          · buyer_id 必传 = 买家的支付宝 user_id（本项目 = users.alipay_uid）；
+          · 返回的 trade_no 交给前端；真正的付款结果以异步通知
+            /api/pay/notify/alipay 为准（未配置回调时可用 alipay.trade.query 核对）。
+
+        注意：biz_content 的 JSON 序列化在 build_params() 里已强制 ensure_ascii=True
+              （中文转成反斜杠 u 形式的纯 ASCII 转义）。若改成 ensure_ascii=False，
+              requests 会把中文 URL 编码，签名内容与实际传输对不上 →
+              支付宝报 isv.invalid-signature（S287 修过的坑）。
+        """
+        biz = {
+            'out_trade_no': str(out_trade_no),
+            'total_amount': '%.2f' % float(total_amount),
+            'subject': (subject or '储物柜预付款')[:256],
+            'buyer_id': str(buyer_id),
+        }
+        if product_code:
+            biz['product_code'] = str(product_code)
+        if op_app_id:
+            biz['op_app_id'] = str(op_app_id)
+        if body:
+            biz['body'] = str(body)[:128]
+        if timeout_express:
+            biz['timeout_express'] = timeout_express
+        return self._post('alipay.trade.create', biz)
+
     def query(self, out_trade_no=None, trade_no=None):
         biz = {}
         if out_trade_no:
@@ -264,6 +299,57 @@ class AlipayClient(object):
         if remark:
             biz['remark'] = str(remark)[:200]
         return self._post('alipay.fund.trans.uni.transfer', biz)
+
+    # ---------------- 小程序登录（authCode → user_id）----------------
+    def oauth_token(self, code, grant_type='authorization_code'):
+        """支付宝小程序 authCode 换 user_id
+
+        接口：alipay.system.oauth.token
+        注意：本接口的参数是【顶层参数】（grant_type / code），不放在 biz_content，
+              所以不能复用 _post。
+        返回：{'user_id': '2088...', 'access_token': ..., 'code': '10000', ...}
+              出错时返回 {'code': '40004', 'sub_code': ..., 'sub_msg': ...}
+        """
+        p = self._common_params('alipay.system.oauth.token')
+        p['grant_type'] = grant_type
+        p['code'] = code
+        p['sign'] = self.sign(self._sign_content(p, exclude=('sign',)))
+        r = requests.post(self.gateway, data=p, timeout=self.timeout)
+        raw = r.text
+        try:
+            body = json.loads(raw)
+        except Exception:
+            raise RuntimeError('支付宝返回非 JSON: %s' % raw[:200])
+        node = 'alipay_system_oauth_token_response'
+        if node not in body:
+            for k in body:
+                if k.endswith('_response'):
+                    node = k
+                    break
+        data = body.get(node) or {}
+        data['_raw_body'] = raw
+        data['_node'] = node
+        # 响应验签（失败只记录，不阻断）
+        try:
+            sign = body.get('sign')
+            if sign and self._pub:
+                idx = raw.find('"%s"' % node)
+                if idx >= 0:
+                    start = raw.find('{', idx)
+                    depth, end = 0, -1
+                    for i in range(start, len(raw)):
+                        if raw[i] == '{':
+                            depth += 1
+                        elif raw[i] == '}':
+                            depth -= 1
+                            if depth == 0:
+                                end = i
+                                break
+                    if end > start:
+                        data['_sign_ok'] = self.verify(raw[start:end + 1], sign)
+        except Exception:
+            pass
+        return data
 
     # ---------------- 通知验签 ----------------
     def verify_notify(self, params):

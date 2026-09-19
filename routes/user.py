@@ -2692,7 +2692,9 @@ def get_user_info():
         phone = request.args.get('phone', '')
         openid = request.args.get('openid', '')
         mp_openid = request.args.get('mp_openid', '')
-        if not phone and not mp_openid:
+        # [S333] 客户端只传 openid 时也要放行：原来只认 phone/mp_openid，
+        #   新小程序传的是 openid 参数 -> 被判"请先登录"400（个人中心余额/资料都拿不到）。
+        if not phone and not mp_openid and not openid:
             return json_response(message='请先登录', code=400)
         conn = get_db()
         cur = conn.cursor()

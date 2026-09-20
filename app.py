@@ -591,9 +591,18 @@ def _oa_follow_qr_readonly(cabinet_id='', device=''):
     # ---- 3) 用当前启用的公众号生成【永久带参码】 ----
     try:
         import urllib.request as _u, urllib.parse as _up, json as _json
-        _tok = _json.loads(_u.urlopen(
-            'https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s'
-            % (_appid, _wx_oa_secret()), timeout=8).read().decode()).get('access_token', '')
+        # [S413-20260921] 收敛：走 helpers 里那个稳定版(stable_token) + 带缓存的获取函数，
+        #   避免这里每次生成关注码都刷一个新 token 把其他进程的顶失效。
+        _tok = ''
+        try:
+            from helpers import get_oa_access_token as _goat413
+            _tok = _goat413() or ''
+        except Exception:
+            _tok = ''
+        if not _tok:
+            _tok = _json.loads(_u.urlopen(
+                'https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s'
+                % (_appid, _wx_oa_secret()), timeout=8).read().decode()).get('access_token', '')
         if not _tok:
             return ''
         if scene:

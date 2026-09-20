@@ -2276,6 +2276,19 @@ def _oa_tplmsg_token(appid, secret):
     if hit and now < hit[1]:
         return hit[0]
     try:
+        # [S413-20260921] 收敛：公众号自己那个 appid 一律走 get_oa_access_token()
+        #   （已切稳定版 stable_token，并发返回同一个 token，不会把别人顶失效）。
+        #   其它账号（多公众号场景）才用下面的老接口。
+        _tok = ''
+        try:
+            from wx_config import oa_appid as _oai413
+            if (appid or '') and appid == (_oai413() or ''):
+                _tok = get_oa_access_token() or ''
+        except Exception:
+            _tok = ''
+        if _tok:
+            _OA_TPLMSG_TOKEN[appid] = (_tok, now + 6000)
+            return _tok
         import requests
         _r = requests.get('https://api.weixin.qq.com/cgi-bin/token',
                           params={'grant_type': 'client_credential', 'appid': appid, 'secret': secret},

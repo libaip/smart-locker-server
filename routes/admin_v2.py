@@ -4714,6 +4714,33 @@ def get_settings():
         except Exception:
             pass
 
+# [S388-20260921] 用户入口模式（微信里扫柜机码进来以后怎么走）——老板自己在后台切，不用找人改库
+@bp.route('/admin/entry-mode-setting', methods=['GET', 'POST'])
+@require_auth
+def admin_entry_mode_setting():
+    """GET 查当前入口模式；POST {mode: mp|h5|oa|alipay} 切换。
+    值存在 wx_config_items.entry_mode；配置中心 set_config 会主动清缓存 -> 立刻生效，不用重启。"""
+    try:
+        import entry_mode as _em
+        import wx_config as _wc
+        if request.method == 'POST':
+            data = request.get_json(silent=True) or {}
+            mode = str(data.get('mode') or '').strip().lower()
+            if mode not in _em.VALID_MODES:
+                return json_response(message='不支持的入口模式：%s' % (mode or '(空)'), code=400)
+            _wc.set_config('entry_mode', mode, 'entry', 'S388 后台可改：H5 用户入口模式')
+            logger.info('[entry_mode_setting] 入口模式改为 %s', mode)
+            return json_response({'code': 0, 'mode': mode,
+                                  'message': '已切换为「%s」，30 秒内生效' % _em.MODE_LABELS.get(mode, mode)})
+        _cur = _em.normalize_mode(_em.get_raw_entry_mode(default='mp'))
+        return json_response({'code': 0, 'mode': _cur,
+                              'label': _em.MODE_LABELS.get(_cur, _cur),
+                              'options': [{'value': m, 'label': _em.MODE_LABELS.get(m, m)} for m in _em.VALID_MODES]})
+    except Exception as e:
+        logger.error('[entry_mode_setting] %s', e)
+        return json_response(message=str(e), code=500)
+
+
 @bp.route('/admin/free-use-setting', methods=['GET', 'POST'])
 @require_auth
 def admin_free_use_setting():

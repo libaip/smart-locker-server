@@ -1883,6 +1883,13 @@ Vue.component('page-system-settings',{template:`
 <div class="form-group"><label>白名单手机号</label><textarea v-model="$parent.settingsData.order_hide_whitelist.value" rows="3" placeholder="多个手机号用逗号分隔"></textarea></div>
 </div>
 </div>
+<div style="border-bottom:1px solid #ebeef5;padding-bottom:20px;margin-bottom:20px">
+<h4 style="margin:0 0 12px;font-size:15px;color:#303133">用户入口模式</h4>
+<div style="max-width:500px">
+<div class="form-group"><label>入口模式</label><select v-model="$parent.entryMode" @change="$parent.saveEntryMode($event.target.value)"><option value="mp">纯小程序（微信里进 H5 后跳小程序）</option><option value="h5">H5 跳小程序（与"纯小程序"完全相同）</option><option value="oa">纯公众号（引导关注 → 留在 H5 网页存包）</option><option value="alipay">纯支付宝（微信里扫码 → 提示用支付宝）</option></select></div>
+<div style="font-size:12px;color:#909399;line-height:1.6;margin:-6px 0 6px">用户扫柜机上的二维码进来以后怎么走。<b>改完 30 秒内生效，不用重启</b>。<br>注意：「纯小程序」和「H5 跳小程序」在代码里是同一套行为（都会进小程序）；真正不同的只有「纯公众号」。<br>切「纯公众号」前请确认：关注引导二维码、以及该公众号 appid 已关联微信支付商户号，否则用户在 H5 里付不了款。</div>
+</div>
+</div>
 <div class="form-group" style="display:flex;align-items:center;gap:12px;margin-top:16px;padding-top:16px;border-top:1px dashed #ebeef5">
 <label style="flex:0 0 auto;font-weight:600">免押模式</label>
 <label class="switch">
@@ -1895,7 +1902,7 @@ Vue.component('page-system-settings',{template:`
 <button class="btn btn-blue" @click="$parent.saveSettings()">保存设置</button>
 </div>
 </div>
-</div>`,created(){this.$parent.loadSettings();this.$parent.loadFreeUse();this.$parent.loadOaSubscribe();}});
+</div>`,created(){this.$parent.loadSettings();this.$parent.loadFreeUse();this.$parent.loadOaSubscribe();this.$parent.loadEntryMode();}});
 
 Vue.component('page-cabinet-groups',{template:`
 <div class="page-box">
@@ -2001,7 +2008,7 @@ el:'#app',
 data:{
 showLogin:true,loginForm:{username:'',password:'',captcha:''},loginLoading:false,loginError:'',captchaCode:'',
 isShrink:false,isMobile:window.innerWidth<=768,sidebarOpen:false,activeMenu:'dashboard',menuRefKey:0,pageLoading:false,_apiLoadingCount:0,tabs:[{key:'dashboard',label:'控制台'}],activeTab:'dashboard',adminUser:'管理员',openGroups:{},menuGroupsData:[],alarmPending:0,
-stats:{},dailyTrend:[],freeUseEnabled:'false',oaSubscribeEnabled:'false',
+stats:{},dailyTrend:[],freeUseEnabled:'false',oaSubscribeEnabled:'false',entryMode:'mp',
 // Machines
 machines:[],machineTotal:0,machinePage:1,machineSearch:{keyword:'',status:'',location_id:'',agent_id:'',device_id:''},machineMoreOpen:null,
 cabinetModal:false,cabinetForm:{},cabinetFormTitle:'',cabinetEditTab:'basic',deviceDetailModal:false,deviceDetail:null,doorStatusLoading:false,doorStatusResult:null,addSlotModal:false,addSlotForm:{slot_size:'medium',board_no:1,slot_count:1},deviceQrcodeModal:false,deviceQrcode:null,deviceQrcodeModal:false,deviceQrcode:null,
@@ -2268,6 +2275,8 @@ loadOaSubscribe:function(){var self=this;this.api('/admin/oa-subscribe-setting')
 toggleOaSubscribe:function(checked){var self=this;this.api('/admin/oa-subscribe-setting',{enabled:checked?'true':'false'},'POST').then(function(d){self.oaSubscribeEnabled=checked?'true':'false';self.toast((d&&d.message)||'已保存');}).catch(function(){self.oaSubscribeEnabled=checked?'false':'true';self.toast('保存失败');});},
 loadFreeUse:function(){var self=this;this.api('/admin/free-use-setting').then(function(d){self.freeUseEnabled=(d&&d.data&&d.data.enabled)?'true':'false';}).catch(function(){});},
 toggleFreeUse:function(checked){var self=this;this.api('/admin/free-use-setting',{enabled:checked?'true':'false'},'POST').then(function(d){self.freeUseEnabled=checked?'true':'false';self.toast(d.message||'已保存');}).catch(function(e){self.toast(e.message||'操作失败','error');});},
+loadEntryMode:function(){var self=this;this.api('/admin/entry-mode-setting').then(function(d){var x=(d&&d.data)||{};if(x.mode)self.entryMode=x.mode;}).catch(function(){});},
+saveEntryMode:function(mode){var self=this;if(!mode)return;this.api('/admin/entry-mode-setting',{mode:mode},'POST').then(function(d){self.entryMode=mode;self.toast((d&&d.data&&d.data.message)||(d&&d.message)||'已保存');}).catch(function(e){self.toast(e.message||'切换失败','error');self.loadEntryMode();});},
 loadSettings:function(){var self=this;this.api('/settings').then(function(d){var sd={};var src=(d&&d.data&&typeof d.data==='object')?d.data:(Array.isArray(d)?d:[]);if(Array.isArray(src)){src.forEach(function(r){sd[r.setting_key]={value:r.setting_value,desc:r.description||r.setting_key};});}else{Object.keys(src).forEach(function(k){sd[k]={value:(src[k]&&src[k].value!==undefined)?src[k].value:'',desc:(src[k]&&src[k].desc)||k};});}if(!sd.whitelist_daily_use_limit)sd.whitelist_daily_use_limit={value:'3',desc:'当天投诉用户今日可用次数'};if(!sd.complaint_blacklist_limit)sd.complaint_blacklist_limit={value:'3',desc:'累计投诉禁止使用次数'};self.settingsData=sd;}).catch(function(e){self.toast(e.message||'加载失败','error');});},
 saveSettings:function(){var self=this;var arr=[];for(var k in this.settingsData){arr.push({setting_key:k,setting_value:this.settingsData[k].value});}this.api('/settings/save',{settings:arr}).then(function(){self.toast('保存成功');}).catch(function(e){self.toast(e.message||'保存失败','error');});},
 loadOfflineOrders:function(){var self=this;this.api('/admin/offline-orders',{page:this.offlineOrdersPage},'GET').then(function(d){self.offlineOrders=d.data&&d.data.list||[];self.offlineOrdersTotal=d.data&&d.data.total||0;}).catch(function(e){self.toast(e.message||'加载失败','error');});},

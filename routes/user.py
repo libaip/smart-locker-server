@@ -19,6 +19,7 @@ from wx_config import template_id as _wx_tpl   # [CFG-STEP2] 模板ID改从配�
 from flask import Blueprint, request, jsonify, send_from_directory, redirect, send_file
 from database import get_db
 from helpers import (json_response, get_setting, is_mock_mode, is_wechat_browser, select_payment_channel,
+                     _mp_pick_wechat_channel,
                      is_mobile_browser, send_open_lock, is_device_online, is_heartbeat_online, update_channel_stats, get_payment_params,
                      generate_order_no, generate_access_code, generate_sms_code,
                      logger,
@@ -91,11 +92,23 @@ def _resolve_user(cursor, openid='', mp_openid='', phone='', unionid='', strict_
         #   也绝不能把公众号 openid 写进新建用户行（否则 users 里会出现两行同 openid，
         #   H5 按 openid 回查时又可能把老账号捞回来）。
         unionid = ''
+        # [S338-FIX] 关键修正：不能再【无条件】丢掉 openid。
+        #   新小程序的正式版客户端把"新小程序 openid"就放在 openid 字段里传上来，
+        #   无条件丢会导致 strict 下彻底没有身份 -> 拒绝建用户 -> 订单 user_id=0
+        #   （2026-09-20 07:3x 生产已发生，小程序里看不到自己的订单）。
+        #   改成【按前缀判断】：属于新小程序的 -> 归一化成 mp_openid；老体系前缀才丢。
+        try:
+            _newp = new_mp_openid_prefix()
+        except Exception:
+            _newp = ''
+        if openid and _newp and str(openid).startswith(_newp):
+            if not mp_openid:
+                mp_openid = openid
+            logger.info('[_resolve_user] strict 下把新小程序 openid 归一化为 mp_openid: %s...', str(openid)[:10])
         openid = ''
-        # 没有 mp_openid 就不认人、也不新建，否则会退化成"按手机号新建一个手机号用户"，
-        # 每次调用都造一个新用户。
+        # 仍然没有新小程序的 mp_openid 时，才拒绝（避免退化成按手机号建号）
         if not mp_openid:
-            logger.warning('[_resolve_user] strict_openid 下没有 mp_openid，拒绝按手机号认人/新建 phone=%s', phone)
+            logger.warning('[_resolve_user] strict_openid 下没有新小程序身份，拒绝按手机号认人/新建 phone=%s', phone)
             return 0
     ident = resolve_user_identity(cursor, openid=openid, mp_openid=mp_openid, phone=phone,
                                   unionid=unionid, strict_openid=strict_openid)
@@ -263,10 +276,17 @@ def _resolve_order_identity(cursor, phone, openid='', unionid='', mp_openid='', 
     """
     if strict_identity:
         _np = new_mp_openid_prefix()
+        # [S338-FIX2] 与 _resolve_user 同样的修正：新小程序的【正式版客户端】把
+        #   "新小程序 openid"放在 openid 字段里传上来（mp_openid 为空），
+        #   原来这里只看 mp_openid -> 判定"没有身份" -> 返回空 -> 订单 user_id=0。
+        #   改成按前缀归一化：属于新小程序的 openid 就当作 mp_openid。
+        if not mp_openid and openid and _np and str(openid).startswith(_np):
+            mp_openid = openid
+            logger.info('[_resolve_order_identity] strict 下把新小程序 openid 归一化为 mp_openid: %s...', str(openid)[:10])
         if mp_openid and _np and str(mp_openid).startswith(_np):
             # 只认自己的 mp_openid：不补、不写、不带公众号 openid/unionid
             return '', '', mp_openid
-        logger.warning('[_resolve_order_identity] strict 下没有新小程序 mp_openid，跳过按手机号补身份 phone=%s', phone)
+        logger.warning('[_resolve_order_identity] strict 下没有新小程序身份，跳过按手机号补身份 phone=%s', phone)
         return '', '', ''
     try:
         rows = phone_openid_rows(cursor, phone=phone, unionid=unionid)
@@ -409,8 +429,8 @@ def deposit_pay_order():
         if order['status'] != 1:
             return json_response(message='订单状态异常，无法支付', code=400)
 
-        from helpers import select_payment_channel
-        payment_channel = select_payment_channel()
+        # [S337] 同 store/init：只挑微信通道，避免订单被记成支付宝
+        payment_channel = _mp_pick_wechat_channel()
         payment_channel_id = payment_channel['id'] if payment_channel else None
 
         openid = data.get('openid')
@@ -579,7 +599,10 @@ def store_init():
         compartment_display = slot['slot_label'] if 'slot_label' in slot.keys() and slot['slot_label'] else (slot['display_number'] if slot['display_number'] else slot['slot_number'])
 
         # 选择支付渠道（轮转）
-        payment_channel = select_payment_channel()
+        # [S337] 原来是全局轮转的 select_payment_channel()（会连支付宝一起轮），
+        #   导致创建订单时 orders.payment_channel_id 被写成支付宝 113。
+        #   小程序微信支付必须用微信通道，这里只挑 channel_type=wechat。
+        payment_channel = _mp_pick_wechat_channel()
         payment_channel_id = payment_channel['id'] if payment_channel else None
 
         # 免押模式: 商户号全部封停时, 用户免押使用, 订单不计入商家业绩
@@ -1283,9 +1306,8 @@ def create_deposit_order():
         if _dep_min is not None and _dep_max is not None and float(_dep_max) > float(_dep_min) >= 0:
             deposit_amount = round(random.uniform(float(_dep_min), float(_dep_max)), 2)
         group_id = cab_row.get('group_id') if cab_row else None
-        # 选择支付渠道
-        from helpers import select_payment_channel
-        payment_channel = select_payment_channel()
+        # [S337] 同 /store/init：只挑微信通道，避免订单被记成支付宝
+        payment_channel = _mp_pick_wechat_channel()
         payment_channel_id = payment_channel['id'] if payment_channel else None
         compartment_display = slot['slot_label'] if 'slot_label' in slot.keys() and slot['slot_label'] else (slot['display_number'] if slot['display_number'] else slot['slot_number'])
         _wn2 = chr(39)+chr(39)

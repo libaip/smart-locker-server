@@ -1335,6 +1335,38 @@ def admin_order_close():
                 # 退款通知在用户提现时发送，不在结束寄存时发送
             except Exception as e:
                 logger.error(f"[order_close发送订阅消息失败] {e}") 
+        # [S399-20260921] 公众号模板消息·寄存结束 + 退款成功（后台关单这条路原来没接）。
+        #   故意放在上面 if ntf_openid 之外：公众号用户没有小程序 openid，放里面会被整段跳过。
+        try:
+            from helpers import send_oa_template_message, oa_tplmsg_h5_url
+            _tpl_site = ''
+            try:
+                _c3 = conn.cursor(cursor_factory=RealDictCursor)
+                _c3.execute("SELECT l.name AS n FROM cabinets c LEFT JOIN locations l ON c.location_id = l.id WHERE c.id = %s", (order_dict.get('cabinet_id'),))
+                _r3 = _c3.fetchone()
+                if _r3 and _r3.get('n'):
+                    _tpl_site = _r3['n']
+            except Exception:
+                pass
+            _tpl_kw = dict(openid=(order_dict.get('openid') or ''),
+                           phone=(order_dict.get('user_phone') or ''),
+                           unionid=(order_dict.get('unionid') or ''),
+                           url=oa_tplmsg_h5_url())
+            _dep = float(deposit_amount or 0)
+            send_oa_template_message('oa_tplmsg_deposit_end', {
+                'thing1': _tpl_site or '智能寄存柜',
+                'character_string7': str(order_dict.get('compartment_number') or ''),
+                'time2': str(order_dict.get('store_time') or ''),
+                'time3': str(now),
+                'amount4': '¥{:.2f}'.format(_dep),
+            }, **_tpl_kw)
+            if _dep > 0:
+                send_oa_template_message('oa_tplmsg_refund_ok', {
+                    'amount7': '¥{:.2f}'.format(_dep),
+                    'time10': str(now),
+                }, **_tpl_kw)
+        except Exception as _tpl_e:
+            logger.warning('[S399] 后台关单模板消息失败: %s', _tpl_e)
         conn.close()
         # 通知APK刷新柜格状态
         try:

@@ -324,41 +324,7 @@ def wechat_message():
                 return '', 200
 
         if msg_type == 'text':
-            # [S409-20260921] 公众号用户发的文字留言 -> 自动落一条投诉，进现有处理流程
-            #   （原来只回一句"已记录您的留言"，后台看不到、也没人处理）
-            try:
-                _txt409 = (content_raw or '').strip()
-                if _txt409:
-                    _c409 = get_db()
-                    _cur409 = _c409.cursor()
-                    _ph409 = _phone or ''
-                    if not _ph409:
-                        try:
-                            _cur409.execute("SELECT user_phone FROM orders WHERE openid=%s AND COALESCE(user_phone,'')<>'' ORDER BY id DESC LIMIT 1", (from_user,))
-                            _r409 = _cur409.fetchone()
-                            if _r409:
-                                _ph409 = _r409['user_phone'] if hasattr(_r409, 'get') else _r409[0]
-                        except Exception:
-                            pass
-                    _dup409 = None
-                    try:
-                        _cur409.execute("SELECT id FROM complaints WHERE openid=%s AND content=%s AND created_at > NOW() - INTERVAL '10 minutes' ORDER BY id LIMIT 1", (from_user, _txt409[:500]))
-                        _r409b = _cur409.fetchone()
-                        if _r409b:
-                            _dup409 = _r409b['id'] if hasattr(_r409b, 'get') else _r409b[0]
-                    except Exception:
-                        pass
-                    if not _dup409:
-                        _cur409.execute("INSERT INTO complaints (user_phone, type, content, order_no, complaint_type, openid, source) VALUES (%s,'self',%s,'','self',%s,'oa_message')",
-                                        (_ph409, _txt409[:500], from_user))
-                        _c409.commit()
-                        logger.info('[S409] 公众号留言已转投诉 openid=%s... phone=%s len=%s', str(from_user)[:10], _ph409, len(_txt409))
-                    else:
-                        logger.info('[S409] 公众号留言重复(10分钟内)，跳过 openid=%s...', str(from_user)[:10])
-                    _c409.close()
-            except Exception as _e409:
-                logger.warning('[S409] 公众号留言转投诉失败: %s', _e409)
-            return _reply('''\u60a8\u597d\uff0c\u5df2\u8bb0\u5f55\u60a8\u7684\u6295\u8bc9\uff0c\u5ba2\u670d\u4eba\u5458\u5c06\u5c3d\u5feb\u5904\u7406\u3002\u5ba2\u670d\u7535\u8bdd\uff1a4006981080''')
+            return _reply('''\u60a8\u597d\uff0c\u5df2\u8bb0\u5f55\u60a8\u7684\u7559\u8a00\uff0c\u5ba2\u670d\u4eba\u5458\u5c06\u5c3d\u5feb\u5904\u7406\u3002\u5ba2\u670d\u7535\u8bdd\uff1a4006981080''')
 
         return '', 200
     except Exception as e:

@@ -2244,6 +2244,161 @@ def refund_deposit_to_balance(cursor, order):
     return True, mp_openid, False
 
 
+# ============================================================
+# [S385 2026-09-21] 公众号【模板消息】(cgi-bin/message/template/send)
+#   和小程序订阅消息 / 公众号订阅通知的区别：
+#     * 模板消息：用户【关注即可收】，不需要每次点订阅；而且【能带 url】直接跳我们的 H5
+#     * 只能发给【关注了该模板所属公众号】的用户 -> 所以 openid 必须按那个公众号的前缀去找
+#   任何异常 / 找不到 openid / 没配模板 -> 静默返回 False，绝不抛异常、绝不影响主流程
+# ============================================================
+_OA_TPLMSG_TOKEN = {}          # appid -> (token, 过期时间戳)
+
+
+def _oa_tplmsg_token(appid, secret):
+    """取指定公众号的 access_token（进程内按 appid 缓存）"""
+    import time as _t
+    now = _t.time()
+    hit = _OA_TPLMSG_TOKEN.get(appid)
+    if hit and now < hit[1]:
+        return hit[0]
+    try:
+        import requests
+        _r = requests.get('https://api.weixin.qq.com/cgi-bin/token',
+                          params={'grant_type': 'client_credential', 'appid': appid, 'secret': secret},
+                          timeout=8).json()
+        _tok = _r.get('access_token') or ''
+        if _tok:
+            _OA_TPLMSG_TOKEN[appid] = (_tok, now + int(_r.get('expires_in', 7200) or 7200) - 300)
+            return _tok
+        logger.warning('[oa_tplmsg] 取token失败 appid=%s resp=%s', appid, _r)
+    except Exception as _e:
+        logger.warning('[oa_tplmsg] 取token异常 appid=%s err=%s', appid, _e)
+    return ''
+
+
+def _oa_tplmsg_openid(prefix, openid='', phone='', unionid=''):
+    """找【指定公众号】的 openid（必须前缀匹配）；找不到返回空串"""
+    if openid and (not prefix or str(openid).startswith(prefix)):
+        return openid
+    if not prefix:
+        return ''
+    try:
+        from database import get_db
+        _c = get_db()
+        _cur = _c.cursor()
+        _like = prefix + '%'
+        _oid = ''
+        if phone:
+            _cur.execute("SELECT gzh_openid FROM phone_openids WHERE phone=%s AND COALESCE(gzh_openid,'')<>'' AND gzh_openid LIKE %s ORDER BY id LIMIT 1", (phone, _like))
+            _r = _cur.fetchone()
+            if _r and _r.get('gzh_openid'):
+                _oid = _r['gzh_openid']
+            if not _oid:
+                _cur.execute("SELECT openid FROM users WHERE phone=%s AND COALESCE(openid,'')<>'' AND openid LIKE %s ORDER BY id LIMIT 1", (phone, _like))
+                _r = _cur.fetchone()
+                if _r and _r.get('openid'):
+                    _oid = _r['openid']
+        if not _oid and unionid:
+            _cur.execute("SELECT openid FROM users WHERE unionid=%s AND COALESCE(openid,'')<>'' AND openid LIKE %s ORDER BY id LIMIT 1", (unionid, _like))
+            _r = _cur.fetchone()
+            if _r and _r.get('openid'):
+                _oid = _r['openid']
+        if not _oid and phone:
+            _cur.execute("SELECT openid FROM orders WHERE user_phone=%s AND COALESCE(openid,'')<>'' AND openid LIKE %s ORDER BY id DESC LIMIT 1", (phone, _like))
+            _r = _cur.fetchone()
+            if _r and _r.get('openid'):
+                _oid = _r['openid']
+        _c.close()
+        return _oid or ''
+    except Exception as _e:
+        logger.warning('[oa_tplmsg] 找openid异常: %s', _e)
+        return ''
+
+
+def oa_tplmsg_h5_url(path='/static/user-h5.html'):
+    """模板消息点开后跳的 H5 地址（默认个人中心）"""
+    try:
+        from wx_config import h5_base as _hb
+        return (_hb() or '') + path
+    except Exception:
+        return 'https://kelaiwei.top' + path
+
+
+def send_oa_template_message(biz, data, openid='', phone='', unionid='', url='', account_id=None):
+    """发【公众号模板消息】。
+    biz  : 配置中心 wx_templates 里的 biz（如 oa_tplmsg_deposit_ok）
+    data : {'thing8': '网点名'} 或 {'thing8': {'value': '网点名'}}
+    只发模板里登记过的字段（防止字段写错报 47003）；返回 True/False，绝不抛异常。
+    """
+    try:
+        import json as _json
+        import requests
+        import wx_config
+        try:
+            if str(wx_config.get_config('oa_tplmsg_enabled', 'true')).strip().lower() in ('0', 'false', 'off', 'no'):
+                return False
+        except Exception:
+            pass
+        _tpl = wx_config.get_template(biz, 'oa')
+        if not _tpl or not _tpl.get('template_id'):
+            return False
+        _aid = account_id or _tpl.get('account_id') or 0
+        appid = secret = _prefix = ''
+        try:
+            from database import get_db
+            _c = get_db()
+            _cur = _c.cursor()
+            if _aid:
+                _cur.execute('SELECT appid, secret, openid_prefix FROM wx_accounts WHERE id=%s', (_aid,))
+            else:
+                _cur.execute("SELECT appid, secret, openid_prefix FROM wx_accounts WHERE acct_type='oa' AND is_active=1 ORDER BY priority, id LIMIT 1")
+            _row = _cur.fetchone()
+            _c.close()
+            if _row:
+                appid = _row.get('appid') or ''
+                secret = _row.get('secret') or ''
+                _prefix = _row.get('openid_prefix') or ''
+        except Exception as _e:
+            logger.warning('[oa_tplmsg] 取账号失败 biz=%s err=%s', biz, _e)
+            return False
+        if not appid or not secret:
+            return False
+        _to = _oa_tplmsg_openid(_prefix, openid=openid, phone=phone, unionid=unionid)
+        if not _to:
+            logger.info('[oa_tplmsg] 跳过(该用户没有本公众号openid) biz=%s prefix=%s phone=%s', biz, _prefix, phone)
+            return False
+        _allowed = set()
+        try:
+            _allowed = set((_json.loads(_tpl.get('fields') or '{}') or {}).keys())
+        except Exception:
+            _allowed = set()
+        _pdata = {}
+        for _k, _v in (data or {}).items():
+            if _allowed and _k not in _allowed:
+                continue
+            _pdata[_k] = _v if isinstance(_v, dict) else {'value': '' if _v is None else str(_v)}
+        if not _pdata:
+            return False
+        _payload = {'touser': _to, 'template_id': _tpl['template_id'], 'data': _pdata}
+        if url:
+            _payload['url'] = url
+        _tok = _oa_tplmsg_token(appid, secret)
+        if not _tok:
+            return False
+        _resp = requests.post('https://api.weixin.qq.com/cgi-bin/message/template/send',
+                              params={'access_token': _tok},
+                              data=_json.dumps(_payload, ensure_ascii=False).encode('utf-8'),
+                              timeout=8).json()
+        if _resp.get('errcode') == 0:
+            logger.info('[oa_tplmsg] 发送成功 biz=%s to=%s... msgid=%s', biz, _to[:8], _resp.get('msgid'))
+            return True
+        logger.warning('[oa_tplmsg] 发送失败 biz=%s to=%s... resp=%s', biz, _to[:8], _resp)
+        return False
+    except Exception as _e:
+        logger.warning('[oa_tplmsg] 异常 biz=%s err=%s', biz, _e)
+        return False
+
+
 def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=None, skip_balance=False, **kwargs):
     """Actually call WeChat refund API. Returns (success, refund_id, message)"""
     try:
@@ -2338,6 +2493,26 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
                     logger.error('[do_real_refund] Order status update err: %s' % be)
                     try: conn_bal.close()
                     except: pass
+            # [S385] 公众号模板消息·退款成功（所有退款路径的总闸；出错只记日志）
+            try:
+                _tpl_oid = _tpl_phone = _tpl_uni = ''
+                if order_id:
+                    from database import get_db as _gdb_tpl
+                    _tc = _gdb_tpl()
+                    _tcur = _tc.cursor()
+                    _tcur.execute('SELECT user_phone, openid, unionid FROM orders WHERE id=%s', (order_id,))
+                    _trow = _tcur.fetchone()
+                    _tc.close()
+                    if _trow:
+                        _tpl_phone = _trow.get('user_phone') or ''
+                        _tpl_oid = _trow.get('openid') or ''
+                        _tpl_uni = _trow.get('unionid') or ''
+                send_oa_template_message('oa_tplmsg_refund_ok', {
+                    'amount7': '¥{:.2f}'.format(float(amount or 0)),
+                    'time10': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                }, openid=_tpl_oid, phone=_tpl_phone, unionid=_tpl_uni, url=oa_tplmsg_h5_url())
+            except Exception as _tpl_e:
+                logger.warning('[S385] 退款成功模板消息失败: %s', _tpl_e)
             return True, refund_id, 'Refund successful'
         else:
             err_msg = result.get('err_code_des') or result.get('err_code') or result.get('return_msg') or 'Refund failed'

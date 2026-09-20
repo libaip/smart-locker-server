@@ -381,6 +381,18 @@ def pay_notify():
                     _SEND_STORAGE_SUCCESS_NOTIFY = False
                     if _SEND_STORAGE_SUCCESS_NOTIFY:
                         send_wx_subscribe_message(openid, _wx_tpl('subscribe_deposit', 'mp', 'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk'), subscribe_data, phone=order.get('user_phone'), page='pages/mine/mine', unionid=_pay_unionid)
+                    # [S385] 公众号模板消息·寄存成功（关注即可收，不需要订阅；点进去就是 H5 个人中心）
+                    try:
+                        from helpers import send_oa_template_message, oa_tplmsg_h5_url
+                        send_oa_template_message('oa_tplmsg_deposit_ok', {
+                            'thing8': location_name,
+                            'character_string7': str(order.get('compartment_number') or door_label or ''),
+                            'amount9': str(order.get('deposit_amount')) + '元',
+                            'time1': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        }, openid=(order.get('openid') or ''), phone=(order.get('user_phone') or ''),
+                           unionid=(_pay_unionid or ''), url=oa_tplmsg_h5_url())
+                    except Exception as _tpl_e:
+                        logger.warning('[S385] 寄存成功模板消息失败: %s', _tpl_e)
             except Exception as e:
                 logger.error(f'[支付回调发送订阅消息失败] {e}')
         

@@ -3729,9 +3729,19 @@ def get_oa_access_token():
         return _oa_token_cache['token']
     try:
         import requests
-        _r = requests.get(
-            'https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s'
-            % (_wx_oa_id(), _wx_oa_secret()), timeout=8).json()
+        # [S411-20260921] 改用官方【稳定版】stable_token：
+        #   老的 /cgi-bin/token 每次调用都发新 token 并把旧的顶失效；本项目有 8~10 个进程、
+        #   多处代码各自刷新 -> 互相顶 -> 公众号模板消息大面积 40001（6h 内 52 失败/26 成功）。
+        #   stable_token 在同一 appid 上并发/重复调用都返回同一个 token，不会互顶。
+        _r = requests.post(
+            'https://api.weixin.qq.com/cgi-bin/stable_token',
+            json={'grant_type': 'client_credential', 'appid': _wx_oa_id(),
+                  'secret': _wx_oa_secret(), 'force_refresh': False}, timeout=8).json()
+        if not _r.get('access_token'):
+            # 兜底：稳定版失败时退回老接口，保证不因为改造把通知彻底打断
+            _r = requests.get(
+                'https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s'
+                % (_wx_oa_id(), _wx_oa_secret()), timeout=8).json()
         _tok = _r.get('access_token', '') or ''
         if _tok:
             _oa_token_cache['token'] = _tok

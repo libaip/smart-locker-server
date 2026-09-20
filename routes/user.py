@@ -2814,7 +2814,16 @@ def user_check_follow():
     try:
         import urllib.request as _u, json as _j
         import config as _c
-        _tok = _j.loads(_u.urlopen('https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s' % (_wx_oa_id(), _wx_oa_secret()), timeout=6).read().decode()).get('access_token', '')
+        # [S411-20260921] 原来这里【每次缓存未命中都刷一个新 token】，而它被存包页高频调用
+        #   （今天 463 次）-> 每刷一次就把其他进程手里的 token 顶失效 -> 模板消息大面积 40001。
+        #   改成用 helpers 里那个带缓存、且已切稳定版的 token 获取函数。
+        try:
+            from helpers import get_oa_access_token as _goat411
+            _tok = _goat411() or ''
+        except Exception:
+            _tok = ''
+        if not _tok:
+            _tok = _j.loads(_u.urlopen('https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s' % (_wx_oa_id(), _wx_oa_secret()), timeout=6).read().decode()).get('access_token', '')
         if not _tok:
             return json_response({'follow': False, 'known': False})
         _d = _j.loads(_u.urlopen('https://api.weixin.qq.com/cgi-bin/user/info?access_token=%s&openid=%s&lang=zh_CN' % (_tok, openid), timeout=6).read().decode())

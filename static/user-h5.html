@@ -128,7 +128,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
         <span v-else>👤</span>
       </div>
       <div class="user-info">
-        <div class="phone">{{ phone || '未登录' }}</div>
+        <div class="phone">{{ phone || (openid ? '已绑定微信' : '未登录') }}</div>
         <div class="user-sub">{{ nickname || '已绑定微信' }}</div>
       </div>
     </div>
@@ -345,7 +345,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
   //   后端 /user/balance、/user/orders、/user/wallet/transactions、/user/wallet/withdrawals、
   //   /user/withdraw、/user/info 全都支持 openid 认人；其中交易明细/提现记录【必须】传 openid。
   var OPENID = q('openid') || ls('openid') || '';
-  var NICK = ls('locker_wx_name') || '';
+  // 昵称：微信 OAuth 回跳时带在 URL 上的 wechat_name（昵称里生僻字会被微信变成 ？？？，那就当没有）
+  var NICK = q('wechat_name') || ls('locker_wx_name') || '';
+  if (/^[?？\s]+$/.test(NICK)) { NICK = ''; }
+  if (NICK) { try { localStorage.setItem('locker_wx_name', NICK); } catch (e) {} }
   if (OPENID) { try { localStorage.setItem('openid', OPENID); } catch (e) {} }
 
   new Vue({
@@ -402,6 +405,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
         this.api('/api/user/orders' + this.qs()).then(function (d) {
           var l = (d && d.data) || [];
           th.orderCount = l.filter(function (o) { return o.status == 2; }).length;
+          // 顶部要显示手机号：openid 反查不到手机号，但订单里每条都带 user_phone
+          if (!th.phone) {
+            for (var i = 0; i < l.length; i++) {
+              if (l[i].user_phone) { th.phone = l[i].user_phone; break; }
+            }
+          }
         }).catch(function () {});
       },
       goWallet: function () { this.page = 'wallet'; this.loadUserData(); },

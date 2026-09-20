@@ -2615,7 +2615,26 @@
             if (!_oaPfx) { _oaPfx = (typeof _oaPrefix !== 'undefined' && _oaPrefix) ? String(_oaPrefix) : ''; }
             if (!_oaPfx) { _oaPfx = 'oLhbm2'; }
             if (!_oid || _oid.indexOf(_oaPfx) !== 0) { console.log('[follow] 非微信环境或拿不到公众号openid, 不拦 (prefix=' + _oaPfx + ')'); return; }
-            var MP_PROFILE = 'https://mp.weixin.qq.com/mp/profile_ext?action=home&__biz=MzYzODk1NzYxNA==&scene=110#wechat_redirect';
+            // [S367] 换成本公众号（重庆卓蓝时 wx9d559811f476d9d5）的 __biz。
+            //   原来这里的 __biz 是老公众号的；本变量此前定义了却从未被使用（死代码）。
+            //   现在启用了：未关注 -> 页面【自动跳转】到关注页，用户不需要长按识别二维码。
+            var _OA_BIZ = 'MzY4MjQ1NjQzNA==';
+            var MP_PROFILE = 'https://mp.weixin.qq.com/mp/profile_ext?action=home&__biz=' + _OA_BIZ + '&scene=110#wechat_redirect';
+            // 备选入口（兼容性更好）：第一个被拦截、页面没跳走时自动再试这个
+            var MP_PROFILE2 = 'https://mp.weixin.qq.com/mp/getmasssendmsg?__biz=' + _OA_BIZ + '#wechat_redirect';
+            var _FOLLOW_JUMPED_KEY = 'locker_oa_follow_jumped';
+            var _oaJumping = false;
+            function oaAutoFollowJump() {
+                if (_oaJumping) { return; }
+                _oaJumping = true;
+                try { sessionStorage.setItem(_FOLLOW_JUMPED_KEY, '1'); } catch (e) {}
+                console.log('[follow] 自动跳转关注页...');
+                try { location.href = MP_PROFILE; } catch (e) {}
+                // 如果没跳走(被拦截/页面还在)，2.5 秒后自动试备选链接
+                setTimeout(function () {
+                    try { console.log('[follow] 首次跳转未生效, 试备选入口'); location.href = MP_PROFILE2; } catch (e) {}
+                }, 2500);
+            }
             var QR_URL = ((typeof s !== 'undefined' && s && s.force_follow_qr) ? s.force_follow_qr : 'https://mp.weixin.qq.com/cgi-bin/showqrcode?ticket=gQFI8TwAAAAAAAAAAS5odHRwOi8vd2V4aW4ucXEuY29tL3EvMDJIQ0VwMFBLbWZDbzEwMDAwdzAzdUFBZ1RNTnFWcUF3UUFBQUFB');
             try {
                 if (typeof _oaNoSkip !== 'undefined' && _oaNoSkip && _oaFollowQr && /^https:\/\/mp\.weixin\.qq\.com\/cgi-bin\/showqrcode\?ticket=/.test(_oaFollowQr)) { QR_URL = _oaFollowQr; }
@@ -2645,6 +2664,7 @@
             function stop(reason) {
                 if (timer) { clearInterval(timer); timer = null; }
                 mask.style.display = 'none';
+                try { sessionStorage.removeItem(_FOLLOW_JUMPED_KEY); } catch (e) {}
                 console.log('[follow] 已放行:', reason || '');
             }
             function start() {
@@ -2669,7 +2689,22 @@
             fetch('/api/user/check-follow?openid=' + encodeURIComponent(_oid))
               .then(function (r) { return r.json(); })
               .then(function (d) {
-                  if (!isFollow(d)) { start(); } else { console.log('[follow] 已关注, 不显示'); }
+                  if (isFollow(d)) {
+                      try { sessionStorage.removeItem(_FOLLOW_JUMPED_KEY); } catch (e) {}
+                      console.log('[follow] 已关注, 不显示');
+                      return;
+                  }
+                  // [S367] 未关注：先【自动】跳到关注页；不再让用户长按识别
+                  var _jumped = '';
+                  try { _jumped = sessionStorage.getItem(_FOLLOW_JUMPED_KEY) || ''; } catch (e) {}
+                  if (!_jumped) {
+                      oaAutoFollowJump();
+                      // 兜底：万一跳不过去 / 用户返回，1.2 秒后把二维码遮罩显示出来
+                      setTimeout(function () { try { start(); } catch (e) {} }, 1200);
+                      return;
+                  }
+                  console.log('[follow] 已自动跳过一次, 显示兜底遮罩');
+                  start();
               })
               .catch(function (e) { console.log('[follow] 检查失败, 不拦', e); });
         } catch (e) { console.log('[follow] 异常, 不拦', e); }

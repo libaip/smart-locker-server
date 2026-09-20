@@ -535,32 +535,51 @@ def _oa_force_follow_qr(cabinet_id='', device=''):
 
 
 
-# [S350 2026-09-20] 模式②(oa) 关注引导二维码 —— **只读取号，绝不写库**。
-#   与 _oa_force_follow_qr() 的区别：那个函数在没有缓存时会 INSERT 进 system_settings
-#   （老板本次红线：不许写库），这里改成：
-#     1) system_settings.oa_qr_scene_* 里已有人工配好的带参码 → 直接读它（与老函数一致，且优先）
-#     2) 本进程内缓存（30 分钟）→ 直接返回
-#     3) 都没有 → 用**当前生效公众号**调 cgi-bin/qrcode/create 生成一张**临时**二维码
-#        （临时码不落库；带参永久码仍需人工在库里配 oa_qr_scene_*，见交付说明）
-#     4) 任何异常 → 返回 ''（页面回落它自己的兜底串，绝不挡住存包流程）
+# [S389 2026-09-21] 模式②(oa) 关注引导二维码 —— **永远跟着【当前启用的公众号】走**。
+#   老板点出的毛病：库里预存的码只存了图片 URL，没记属于哪个公众号，
+#     换启用账号后死码不跟着变，用户扫了还是关注老号 -> 必须人工重配。
+#   改后规则：
+#     1) 预存码旁边多记一条 oa_qr_scene_<scene>__appid（这码是哪个 appid 生成的）；
+#     2) 读的时候 appid 与当前启用的不一致 -> 用当前启用的公众号**重新生成并覆盖**；
+#     3) 用**永久带参码**(QR_LIMIT_STR_SCENE + scene_str=<scene>)，
+#        这样关注事件带得回 scene（柜机号），关注后回的消息才能把用户接回正确的柜机；
+#        （改前没预存的柜机走临时码 scene_id=1，关注后丢柜机号）
+#     4) 进程内缓存 30 分钟；任何异常 -> 返回 ''，绝不挡住存包流程。
 def _oa_follow_qr_readonly(cabinet_id='', device=''):
     import time          # 本函数定义在 app.py 顶部 `import time` 之前，必须局部 import
     scene = ('c' + str(cabinet_id)) if cabinet_id else (('d' + str(device)) if device else '')
-    if scene:
-        _key = 'oa_qr_scene_' + scene[:40]
+    # [S389] 当前启用的公众号：整条链路的唯一依据
+    try:
+        _appid = _wx_oa_id() or ''
+    except Exception:
+        _appid = ''
+    _key = ('oa_qr_scene_' + scene[:40]) if scene else ''
+    _akey = (_key + '__appid') if _key else ''
+
+    # ---- 1) 读预存码：只有当它属于【当前启用的公众号】才直接用 ----
+    if _key:
         try:
             import psycopg2
             import config as _c
             _conn = psycopg2.connect(_c.DATABASE_URL, connect_timeout=5)
             _cur = _conn.cursor()
-            _cur.execute("SELECT setting_value FROM system_settings WHERE setting_key=%s", (_key,))
-            _row = _cur.fetchone()
+            _cur.execute("SELECT setting_key, setting_value FROM system_settings WHERE setting_key IN (%s,%s)", (_key, _akey))
+            _rows = {}
+            for _r in _cur.fetchall():
+                _rows[_r[0]] = _r[1]
             _conn.close()
-            if _row and _row[0]:
-                return _row[0]
+            _url_cached = _rows.get(_key) or ''
+            _acct_cached = _rows.get(_akey) or ''
+            if _url_cached and _appid and _acct_cached == _appid:
+                return _url_cached
+            if _url_cached:
+                logger.info('[oa_follow_qr] 预存码不属于当前启用公众号(码=%s / 现=%s), 重新生成 scene=%s',
+                            (_acct_cached or '无标记')[:10], _appid[:10], scene)
         except Exception as _e:
             logger.warning('[oa_follow_qr_readonly] 读缓存失败: %s', _e)
-    _ck_scene = scene or '__oa_account__'
+
+    # ---- 2) 进程内缓存：键里带上 appid，换号后自然不命中 ----
+    _ck_scene = (scene or '__oa_account__') + '|' + _appid
     _ck = getattr(_oa_follow_qr_readonly, '_cache', None)
     if _ck is None:
         _ck = {}
@@ -568,30 +587,59 @@ def _oa_follow_qr_readonly(cabinet_id='', device=''):
     _hit = _ck.get(_ck_scene)
     if _hit and (time.time() - _hit[0]) < 1800:
         return _hit[1]
+
+    # ---- 3) 用当前启用的公众号生成【永久带参码】 ----
     try:
         import urllib.request as _u, urllib.parse as _up, json as _json
         _tok = _json.loads(_u.urlopen(
             'https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s'
-            % (_wx_oa_id(), _wx_oa_secret()), timeout=8).read().decode()).get('access_token', '')
+            % (_appid, _wx_oa_secret()), timeout=8).read().decode()).get('access_token', '')
         if not _tok:
             return ''
-        _body = _json.dumps({'action_name': 'QR_SCENE',
-                             'action_info': {'scene': {'scene_id': 1}},
-                             'expire_seconds': 604800}).encode()
+        if scene:
+            _body = _json.dumps({'action_name': 'QR_LIMIT_STR_SCENE',
+                                 'action_info': {'scene': {'scene_str': scene}}}).encode()
+        else:
+            _body = _json.dumps({'action_name': 'QR_SCENE',
+                                 'action_info': {'scene': {'scene_id': 1}},
+                                 'expire_seconds': 604800}).encode()
         _req = _u.Request('https://api.weixin.qq.com/cgi-bin/qrcode/create?access_token=' + _tok,
                           data=_body, headers={'Content-Type': 'application/json'})
         _r = _json.loads(_u.urlopen(_req, timeout=10).read().decode())
         _ticket = _r.get('ticket', '')
         if not _ticket:
-            logger.warning('[oa_follow_qr_readonly] 临时二维码生成失败(未写库): %s', _r)
+            logger.warning('[oa_follow_qr] 生成关注二维码失败: %s', _r)
             return ''
         _url = 'https://mp.weixin.qq.com/cgi-bin/showqrcode?ticket=' + _up.quote(_ticket)
         _ck[_ck_scene] = (time.time(), _url)
-        logger.info('[oa_follow_qr_readonly] 已生成临时关注二维码(未写库) scene=%s', scene or '(account)')
+
+        # ---- 4) 落库：码 + 它属于哪个 appid（下次直接命中；换号后自动重生成） ----
+        if _key and _appid:
+            try:
+                import psycopg2
+                import config as _c
+                _wconn = psycopg2.connect(_c.DATABASE_URL, connect_timeout=5)
+                _wcur = _wconn.cursor()
+                _wcur.execute("INSERT INTO system_settings (setting_key, setting_value, description) VALUES (%s,%s,%s) "
+                              "ON CONFLICT (setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value, description=EXCLUDED.description",
+                              (_key, _url, '关注引导二维码(永久带参, appid=%s)' % _appid))
+                _wcur.execute("INSERT INTO system_settings (setting_key, setting_value, description) VALUES (%s,%s,%s) "
+                              "ON CONFLICT (setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value, description=EXCLUDED.description",
+                              (_akey, _appid, '上面那条关注码属于哪个公众号(换号后自动重生成)'))
+                _wconn.commit()
+                _wconn.close()
+                logger.info('[oa_follow_qr] 已生成并落库 永久带参关注码 scene=%s appid=%s', scene, _appid[:10])
+            except Exception as _we:
+                logger.warning('[oa_follow_qr] 落库失败(不影响本次使用): %s', _we)
+        else:
+            logger.info('[oa_follow_qr] 已生成关注码(无scene不落库) appid=%s', _appid[:10])
         return _url
     except Exception as _e:
         logger.warning('[oa_follow_qr_readonly] %s', _e)
         return ''
+
+
+
 
 # [S347 2026-09-20] 入口模式④(纯支付宝)：微信里扫码 → 纯静态提示页。
 #   约束：不查库、不依赖微信 JS-SDK、不依赖公众号授权；静态文件读不到就用内置字符串兜底。

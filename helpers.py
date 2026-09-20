@@ -803,12 +803,16 @@ def update_channel_stats(channel_id, amount):
         logger.error(f"[渠道统计] 更新失败: {e}")
 
 
-def get_channel_wxpay(channel, use_mp_appid=False):
+def get_channel_wxpay(channel, use_mp_appid=False, openid=None, acct_type=None):
     """根据渠道配置创建支付实例"""
     from wxpay import WxPay, ThirdPartyPay as TPP
     channel_type = channel.get('channel_type', 'wechat')
     if channel_type == 'wechat':
-        app_id = channel.get('app_id') or (_wx_mp_id() if use_mp_appid else _wx_oa_id())
+        # [S357] 谁付钱由【这笔支付的 openid】决定：前缀 = 公众号的用公众号 appid，
+        #   前缀 = 小程序的用小程序 appid。一条通道行只存一个 app_id，降级为【最后兜底】；
+        #   判断不出来（openid 为空 / 前缀没登记 / 读不到库）时行为与改动前完全一致。
+        app_id = (appid_by_openid(openid, acct_type=acct_type) or channel.get('app_id')
+                  or (_wx_mp_id() if use_mp_appid else _wx_oa_id()))
         cert_name = channel.get('cert_name', '')
         if cert_name:
             cert_path = f'/home/ubuntu/smart-locker/cert/{cert_name}_cert.pem'
@@ -902,7 +906,7 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
         current_channel = _get_payment_channel(channel_type='wechat')  # 自动选活跃的微信渠道
 
     if current_channel:
-        wxpay, ch_type = get_channel_wxpay(current_channel, use_mp_appid=False)
+        wxpay, ch_type = get_channel_wxpay(current_channel, use_mp_appid=False, openid=openid)
         if ch_type == 'third_party' and wxpay:
             third_party_type = 'alipay' if not is_wechat_browser() else 'wechat'
             result = wxpay.unifiedorder(trade_type=third_party_type, body='使用储物柜预付款',
@@ -1078,6 +1082,86 @@ def _mp_openid_prefix_of(app_id):
 
 
 # ============================================================
+# [S357] 支付 appid 按 openid 前缀动态取
+# ============================================================
+# 问题：一条通道行只存一个 app_id，但
+#   · 小程序内支付 要用【小程序】的 appid
+#   · H5/公众号支付 要用【公众号】的 appid
+# 两者必然冲突。原来 get_channel_wxpay() 写的是
+#   app_id = channel.get('app_id') or 当前生效账号
+# 「通道行里一填了 app_id 就强制用它」-> 谁付钱都用通道那个 appid，
+# 于是 openid 属于另一个号时微信直接 PARAM_ERROR(appid和openid不匹配)。
+#
+# 改成：谁付钱由【这笔支付的 openid】决定，openid 前缀 -> 对应账号的 appid。
+#   通道行的 app_id 降级为【最后兜底】；当前生效账号兜底不变。
+# 判断不出来（openid 为空 / 前缀没登记 / 前缀不属于要求的 acct_type / 读不到库）
+#   -> 返回 ''，调用方回落原行为（老路径一字不变）。
+_APPID_BY_PREFIX_CACHE = {'ts': 0.0, 'rows': None}
+_APPID_BY_PREFIX_TTL = 60
+
+
+def _appid_rows():
+    """wx_accounts 里所有「有 openid_prefix 且有可用 appid」的账号：(prefix, appid, name, acct_type)。
+
+    读不到库 -> 返回 []，调用方回落到原行为。60 秒缓存，避免支付热路径每次都查库。
+
+    ⚠️ 这里【故意不 conn.close()】：get_db() 在请求上下文里返回的是 flask.g 复用的
+       连接，close() 会把这条连接 putconn 归还池子，而调用链上别处可能还持有同一个
+       conn 对象在用 -> 归还后另一线程可能同时拿到同一条连接 = 串号/竞态。
+       请求结束由 teardown 统一回收；非请求上下文（脚本/巡检）最多每 60 秒漏 1 条，可忽略。
+    """
+    now = time.time()
+    cached = _APPID_BY_PREFIX_CACHE.get('rows')
+    if cached is not None and (now - _APPID_BY_PREFIX_CACHE.get('ts', 0.0)) < _APPID_BY_PREFIX_TTL:
+        return cached
+    rows = []
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT appid, openid_prefix, name, acct_type FROM wx_accounts "
+                       "WHERE COALESCE(openid_prefix,'') <> '' AND COALESCE(appid,'') <> ''")
+        for r in cursor.fetchall():
+            _p = str(r.get('openid_prefix') or '').strip()
+            _a = str(r.get('appid') or '').strip()
+            # 未登记的占位 appid（如 REPLACE_ME_MP_BACKUP）绝不能拿来下单
+            if _p and _a and not _a.startswith('REPLACE_ME'):
+                rows.append((_p, _a, r.get('name') or '', r.get('acct_type') or ''))
+    except Exception as _e:
+        logger.error('[S357] 取 openid 前缀->appid 映射失败，回落原逻辑: %s', _e)
+        rows = []
+    _APPID_BY_PREFIX_CACHE['rows'] = rows
+    _APPID_BY_PREFIX_CACHE['ts'] = now
+    return rows
+
+
+def appid_by_openid(openid, acct_type=None):
+    """[S357] 按 openid 前缀反查这笔支付该用哪个 appid。
+
+    最长前缀优先；判断不出来一律返回 ''（调用方必须回落，保证老路径一字不变）。
+
+    acct_type 给定时只认该类账号（mp=小程序 / oa=公众号）：
+      · H5/公众号支付不传（mp、oa 都合法，H5 也在小程序 webview 里跑过）；
+      · 小程序内支付传 'mp' —— 这样遇到公众号 openid 会返回 ''，回落通道 app_id 后
+        由 get_mp_jsapi_params 的前缀校验报出改动前那句人话错误，而不是拿公众号 appid
+        去统一下单（小程序前端 wx.requestPayment 根本拉不起来）。
+    """
+    _oid = str(openid or '').strip()
+    if not _oid:
+        return ''
+    best_len = -1
+    best = ''
+    for _p, _a, _name, _t in _appid_rows():
+        if acct_type and _t != acct_type:
+            continue
+        if _oid.startswith(_p) and len(_p) > best_len:
+            best_len = len(_p)
+            best = _a
+    if best:
+        logger.info('[S357] appid 按 openid 前缀取: openid=%s... acct_type=%s -> appid=%s',
+                    _oid[:8], acct_type or '-', best)
+    return best
+
+
 # [S320] 多小程序身份隔离：新小程序只认 openid，不做"按手机号找回老账号"
 # ============================================================
 # 背景：老小程序(ooTcRx/科莱维)、公众号 与 新小程序(重庆清域智, oQXFs3) 在库里
@@ -1216,7 +1300,8 @@ def get_mp_jsapi_params(order_id, order_no, amount, mp_openid,
             logger.error('[mp-jsapi] 无可用微信通道 order=%s 指定渠道=%s', order_no, payment_channel_id)
             return {'ok': False, 'mode': 'error', 'error_msg': '无可用微信支付商户，请联系管理员'}
 
-        wxpay, ch_type = get_channel_wxpay(channel, use_mp_appid=False)
+        wxpay, ch_type = get_channel_wxpay(channel, use_mp_appid=False,
+                                          openid=mp_openid, acct_type='mp')
         if wxpay is None or ch_type != 'wechat':
             logger.error('[mp-jsapi] 微信通道实例化失败 channel=%s type=%s', channel.get('id'), ch_type)
             return {'ok': False, 'mode': 'error', 'error_msg': '微信支付渠道配置异常'}
@@ -2432,7 +2517,7 @@ def do_balance_transfer(phone, amount, openid=None, user_id=0):
                 _cur.execute("SELECT * FROM payment_channels WHERE id=%s AND is_active=1", (_row['payment_channel_id'],))
                 _ch_row = _cur.fetchone()
                 if _ch_row:
-                    payer, _ = get_channel_wxpay(dict(_ch_row))
+                    payer, _ = get_channel_wxpay(dict(_ch_row), openid=openid)
                     _cur.close()
             else:
                 _cur.close()
@@ -2445,7 +2530,7 @@ def do_balance_transfer(phone, amount, openid=None, user_id=0):
                 _cur2.execute("SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id ASC LIMIT 1")
                 _ch2 = _cur2.fetchone()
                 if _ch2:
-                    payer, _ = get_channel_wxpay(dict(_ch2))
+                    payer, _ = get_channel_wxpay(dict(_ch2), openid=openid)
                 _cur2.close()
             except:
                 pass

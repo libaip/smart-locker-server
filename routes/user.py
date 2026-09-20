@@ -2000,26 +2000,38 @@ def deposit_end_storage():
                 logger.error(f'[end_storage_notify] lookup failed: {_ne}')
                 pass
         logger.info(f"[end_storage_debug] Found openid={_openid}, sending notification for order={order_id}")
+        # [S387] 公众号模板消息：老板口径 —— 用户【结束订单】这一刻，寄存结束 + 退款成功 两条一起发。
+        #   故意放在下面的 if _openid 之外：那个 _openid 是【小程序】openid，公众号用户可能没有，
+        #   放进去会导致整段被跳过、公众号用户一条都收不到。
+        try:
+            from helpers import send_oa_template_message as _sotm, oa_tplmsg_h5_url as _oth
+            _tpl_site = (loc_row or {}).get('location_name') or ''
+            _sotm('oa_tplmsg_deposit_end', {
+                'thing1': _tpl_site or '智能寄存柜',
+                'character_string7': str(compartment_number or ''),
+                'time2': (order['store_time'].strftime('%Y-%m-%d %H:%M:%S') if order.get('store_time') else datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+                'time3': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'amount4': '¥{:.2f}'.format(float(order.get('deposit_amount') or 0)),
+            }, openid=(order.get('openid') or ''), phone=(order.get('user_phone') or ''),
+               unionid=(order.get('unionid') or ''), url=_oth())
+        except Exception as _tpl_e:
+            logger.warning('[S387] 寄存结束模板消息失败: %s', _tpl_e)
+        if float(refund_amount or 0) > 0:
+            try:
+                from helpers import send_oa_template_message as _sotm2, oa_tplmsg_h5_url as _oth2
+                _sotm2('oa_tplmsg_refund_ok', {
+                    'amount7': '¥{:.2f}'.format(float(refund_amount or 0)),
+                    'time10': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                }, openid=(order.get('openid') or ''), phone=(order.get('user_phone') or ''),
+                   unionid=(order.get('unionid') or ''), url=_oth2())
+            except Exception as _tpl_e2:
+                logger.warning('[S387] 退款成功模板消息失败: %s', _tpl_e2)
         if _openid:
             try:
                 from helpers import send_wx_subscribe_message
                 # 发送押金退还通知
                 _thing7 = "已原路退回支付账户" if _direct_refund else "已退还至小程序用户钱包"
                 _thing2 = "无需提现，请留意微信到账" if _direct_refund else "请自行点击此通知消息跳转“我的钱包”提现"
-                # [S385] 公众号模板消息·寄存结束（关注即可收，不需要订阅；点进去就是 H5 个人中心）
-                try:
-                    from helpers import send_oa_template_message, oa_tplmsg_h5_url
-                    _tpl_site = (loc_row or {}).get('location_name') or ''
-                    send_oa_template_message('oa_tplmsg_deposit_end', {
-                        'thing1': _tpl_site or '智能寄存柜',
-                        'character_string7': str(compartment_number or ''),
-                        'time2': (order['store_time'].strftime('%Y-%m-%d %H:%M:%S') if order.get('store_time') else datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
-                        'time3': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                        'amount4': '¥{:.2f}'.format(float(order.get('deposit_amount') or 0)),
-                    }, openid=(order.get('openid') or ''), phone=(order.get('user_phone') or ''),
-                       unionid=(order.get('unionid') or ''), url=oa_tplmsg_h5_url())
-                except Exception as _tpl_e:
-                    logger.warning('[S385] 寄存结束模板消息失败: %s', _tpl_e)
                 subscribe_data = {"amount1": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))}, "time2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}, "thing4": {"value": _thing7}, "thing3": {"value": _thing2}}
                 _sent = send_wx_subscribe_message(_openid, _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
                 if _sent:

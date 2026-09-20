@@ -2493,26 +2493,6 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
                     logger.error('[do_real_refund] Order status update err: %s' % be)
                     try: conn_bal.close()
                     except: pass
-            # [S385] 公众号模板消息·退款成功（所有退款路径的总闸；出错只记日志）
-            try:
-                _tpl_oid = _tpl_phone = _tpl_uni = ''
-                if order_id:
-                    from database import get_db as _gdb_tpl
-                    _tc = _gdb_tpl()
-                    _tcur = _tc.cursor()
-                    _tcur.execute('SELECT user_phone, openid, unionid FROM orders WHERE id=%s', (order_id,))
-                    _trow = _tcur.fetchone()
-                    _tc.close()
-                    if _trow:
-                        _tpl_phone = _trow.get('user_phone') or ''
-                        _tpl_oid = _trow.get('openid') or ''
-                        _tpl_uni = _trow.get('unionid') or ''
-                send_oa_template_message('oa_tplmsg_refund_ok', {
-                    'amount7': '¥{:.2f}'.format(float(amount or 0)),
-                    'time10': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                }, openid=_tpl_oid, phone=_tpl_phone, unionid=_tpl_uni, url=oa_tplmsg_h5_url())
-            except Exception as _tpl_e:
-                logger.warning('[S385] 退款成功模板消息失败: %s', _tpl_e)
             return True, refund_id, 'Refund successful'
         else:
             err_msg = result.get('err_code_des') or result.get('err_code') or result.get('return_msg') or 'Refund failed'

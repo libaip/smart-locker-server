@@ -3642,9 +3642,9 @@ def get_user_orders():
                 LIMIT 50
         """, params)
         orders = [dict(row) for row in cur.fetchall()]
-        if not orders:
-            conn.close()
-            return json_response(message='请先登录', code=400)
+        # [S379] 修复：原来"查不到订单"被当成"未登录"返回 400，
+        #   导致【没有订单的用户】打开个人中心会看到"请先登录"（而不是空列表/暂无订单）。
+        #   身份在上面已经校验过（where_parts 非空），这里只是"没有订单"，必须返回空数组。
         conn.close()
         
         return json_response(data=orders)

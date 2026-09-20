@@ -388,13 +388,20 @@ def pay_notify():
                 try:
                     from helpers import send_oa_template_message, oa_tplmsg_h5_url
                     _tpl_site = ((_open_lock_info.get('location_name') if _open_lock_info else '') or '') or '智能寄存柜'
+                    # [S407-20260921] 不能用 _pay_unionid：它只在上面的小程序分支里被赋值，
+                    #   公众号用户走不到那里 -> NameError -> 通知静默失败（今天 07:03 生产实例）。
+                    _tpl_union = ''
+                    try:
+                        _tpl_union = _pay_unionid or ''
+                    except Exception:
+                        _tpl_union = order.get('unionid') or ''
                     send_oa_template_message('oa_tplmsg_deposit_ok', {
                         'thing8': _tpl_site,
                         'character_string7': str(order.get('compartment_number') or ''),
                         'amount9': str(order.get('deposit_amount')) + '元',
                         'time1': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     }, openid=(order.get('openid') or ''), phone=(order.get('user_phone') or ''),
-                       unionid=(_pay_unionid or ''), url=oa_tplmsg_h5_url())
+                       unionid=_tpl_union, url=oa_tplmsg_h5_url())
                 except Exception as _tpl_e:
                     logger.warning('[S393] 寄存成功模板消息失败: %s', _tpl_e)
             except Exception as e:

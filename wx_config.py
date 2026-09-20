@@ -607,6 +607,30 @@ def account_id_by_openid(openid, acct_type='mp'):
     return 0
 
 
+# ============================================================
+# [S342] 「写死模板ID -> biz」兜底映射表（只在查库为空时生效）
+#   干嘛用的：业务代码里大量形如
+#       _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_...')
+#   的调用，第三个参数是"读不到配置库时的兜底值"。一旦 wx_templates 读不到 /
+#   通用那条被停用或删掉，传进发送函数的就正是这些写死的旧 ID；而这些旧 ID
+#   并不在 wx_templates 里，biz_by_template_id() 查库必然为空 ->
+#   helpers._send_subscribe_for_account() 反查不到 biz，就换不到该小程序的专属
+#   模板 -> 拿旧模板 ID 发给新小程序用户 -> 微信 40037，用户收不到通知。
+#   放在这里（而不是逐个调用方）是为了让所有调用方一起受益；且**只**在查库
+#   为空/读不到时作为回退，库里有值时行为一字不变。
+#   !! 这里只映射【小程序 mp】的 biz。公众号那套（oa_sub_deposit / oa_sub_general
+#      / oa_sub_refund）在 helpers.py 的 _OA_SUB_TPL 里，语义不同，切勿混用。
+# ============================================================
+_TPL_ID_BIZ_FALLBACK = {
+    'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA': 'subscribe_general',   # 押金退还/账户余额（旧写死值）
+    'ax-O5Qa05IWt7bbhRVk9Pb9A_SbXfIMfbhm0Hoh4gYc': 'subscribe_general',   # 账户余额（当前库内通用值）
+    'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c': 'subscribe_refund',    # 退款成功
+    'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk': 'subscribe_deposit',   # 寄存成功
+    'ReaKJobHOusye1cCDzOPJ0HB3rZrwQadplL-Qf0js3M': 'subscribe_general',   # 新小程序·账户余额
+    'sKHQzRCcaxWWn9Qx54gx28GmaE2rMGG6PRPnIGJLuxU': 'subscribe_refund',    # 新小程序·退款成功
+}
+
+
 def biz_by_template_id(template_id):
     """[S307] 按模板 ID 反查业务名（biz），用于"给新账号换同业务的专属模板" """
     template_id = (template_id or '').strip()
@@ -616,9 +640,13 @@ def biz_by_template_id(template_id):
         with _conn() as (conn, kind):
             row = _row(conn, kind, "SELECT biz FROM wx_templates WHERE template_id=? LIMIT 1",
                        (template_id,))
-        return (row or {}).get('biz') or ''
+        _biz = (row or {}).get('biz') or ''
     except Exception:
-        return ''
+        _biz = ''
+    if _biz:
+        return _biz
+    # [S342] 查库为空 / 读不到 -> 回退写死ID映射表（见上方 _TPL_ID_BIZ_FALLBACK 说明）
+    return _TPL_ID_BIZ_FALLBACK.get(template_id, '')
 
 
 def resolve_all():

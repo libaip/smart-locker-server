@@ -3638,6 +3638,67 @@ def get_access_token_for(appid, secret, force_refresh=False):
         return None
 
 
+# ============================================================
+# [S343-20260920] 多小程序"模板字段名"映射
+#   老模板与新小程序(账号9)模板的字段名不同，调用方一律按老字段名构造 data，
+#   直接发给新模板会 47003（data.thing5.value is empty / data.time6.value is empty）。
+#   目标字段名来自微信官方 wxaapi/newtmpl/gettemplate 的 content（2026-09-20 实测 errcode=0）：
+#     账号9 subscribe_general ReaKJobHOusye1cCDzOPJ0HB3rZrwQadplL-Qf0js3M
+#         剩余金额:amount1  时间:time2  变动原因:thing5  备注:thing4
+#     账号9 subscribe_refund  sKHQzRCcaxWWn9Qx54gx28GmaE2rMGG6PRPnIGJLuxU
+#         退款金额:amount8  退款时间:time6  退款方式:thing10  备注:thing2
+#   只对表内列出的 (账号id, biz) 生效；不在表里的账号(含老小程序账号1) data 一字不动。
+# ============================================================
+_SUBSCRIBE_FIELD_MAP = {
+    (9, 'subscribe_general'): {
+        'amount1': 'amount1', 'time2': 'time2',
+        'thing4': 'thing5',      # 老:变动原因(短状态) -> 新:变动原因
+        'thing3': 'thing4',      # 老:温馨提示(长提示) -> 新:备注
+    },
+    (9, 'subscribe_refund'): {
+        'amount2': 'amount8', 'time5': 'time6',
+        'thing4': 'thing10',     # 老:退款方式 -> 新:退款方式
+        'thing3': 'thing2',      # 老:备注 -> 新:备注
+    },
+}
+_THING_MAX = 20                  # 微信 thing 类关键字上限 20 字，超长截断防 47003
+
+
+def _clip_thing(nk, v):
+    """thing 类关键字上限 20 字，超长截断（防止 47003）"""
+    if nk.startswith('thing') and isinstance(v, dict):
+        _val = v.get('value')
+        if isinstance(_val, str) and len(_val) > _THING_MAX:
+            return {'value': _val[:_THING_MAX]}
+    return v
+
+
+def _remap_subscribe_data(account_id, biz, data):
+    """[S343] 按【目标账号+业务】把老字段名重映射成目标模板的真实字段名。
+
+    拿不到映射（账号不在表里 / biz 认不出）时原样返回，行为与改动前完全一致。
+    两遍处理：先让"已经是目标字段名"的键占位（兼容新式调用方），
+    再把老字段名填进还空着的目标槽；目标槽已被占用时保留先到的值并告警。
+    """
+    m = _SUBSCRIBE_FIELD_MAP.get((int(account_id or 0), biz or ''))
+    if not m:
+        return data
+    data = data or {}
+    out = {}
+    for k, v in data.items():
+        if m.get(k, k) == k:                 # 已是目标字段名 / 本业务不涉及
+            out[k] = _clip_thing(k, v)
+    for k, v in data.items():
+        nk = m.get(k)
+        if nk is None or nk == k:
+            continue
+        if nk in out:
+            logger.warning('[subscribe_msg] 字段映射槽冲突，保留先到的值: %s -> %s', k, nk)
+            continue
+        out[nk] = _clip_thing(nk, v)
+    return out
+
+
 def _send_subscribe_for_account(account_id, openid, template_id, data, page, phone=None, unionid=None):
     """[S307] 用【指定账号】的身份发订阅消息（新小程序走这条）
 
@@ -3659,6 +3720,8 @@ def _send_subscribe_for_account(account_id, openid, template_id, data, page, pho
         logger.error('[subscribe_msg] 拿不到 token: %s', _acc.get('name'))
         return False
     _tpl = template_id
+    _row = None
+    _biz = ''
     try:
         _biz = _wc.biz_by_template_id(template_id)
         if _biz:
@@ -3667,6 +3730,15 @@ def _send_subscribe_for_account(account_id, openid, template_id, data, page, pho
                 _tpl = _row['template_id']
     except Exception as _e:
         logger.warning('[subscribe_msg] 换模板失败(用原ID): %s', _e)
+    # [S343] 调用方按老模板字段名构造 data，这里按目标账号的模板字段重映射一次
+    try:
+        _rdata = _remap_subscribe_data(account_id, _biz, data)
+        if _rdata is not data:
+            logger.info('[subscribe_msg] 字段映射 账号id=%s biz=%s %s -> %s',
+                        account_id, _biz, sorted((data or {}).keys()), sorted(_rdata.keys()))
+            data = _rdata
+    except Exception as _e5:
+        logger.warning('[subscribe_msg] 字段映射失败(原样发送): %s', _e5)
     body = {'touser': openid, 'template_id': _tpl, 'data': data}
     if page:
         body['page'] = page

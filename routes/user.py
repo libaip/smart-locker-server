@@ -1951,7 +1951,7 @@ def deposit_end_storage():
             try:
                 from config import DATABASE_URL as _NURL
                 _nconn = psycopg2.connect(_NURL, connect_timeout=5)
-                _ncur = _nconn.cursor()
+                _ncur = _nconn.cursor(cursor_factory=RealDictCursor)
                 # first check user_balances mp_openid (has correct mini-program openid)
                 # [FIX-20260716] 必须排除 oLhbm2 前缀（公众号openid），只保留 ooTcRx 前缀的小程序openid
                 _nrow = find_user_balance_row(_ncur, phone=order.get('user_phone', ''), unionid=order.get('unionid', '') or '')

@@ -29,6 +29,63 @@ WECHAT_ARRIVAL_NOTICE = '您好，您的退款¥{amount}已原路退回，请注
 WECHAT_MANUAL_REPLY = '您好，您的退款遇到异常，请联系人工客服帮您处理，客服电话4006981080。'
 WECHAT_NO_REFUND = '您好，经核实您的订单已退款或无需退款，如有疑问请拨打客服电话4006981080。'
 WECHAT_FINAL_REPLY = '您好，您的预付款已全额退款，请注意查收。如有疑问请拨打客服电话4006981080。'
+# ============================================================
+# [S343-20260920] "可发送的小程序身份"判定（订单关闭通知 / 自动提现通知共用）
+#   背景：原来多处用"当前生效账号前缀"(mp_openid_prefix()，今天=ooTcRx) 判断，
+#         新小程序 openid(oQXFs3) 被当成非小程序 -> 查不到 / 被清空 -> 用户永远收不到通知。
+#   口径：当前生效账号前缀 或 白名单里的小程序账号(新小程序账号9) 都算"可发送"；
+#         公众号 openid(oLhbm2/ov47M3) 不能发订阅消息，已停用小程序账号3(oWrA8) 也不发
+#         （否则微信 40003 invalid openid / 40037 invalid template_id，白刷日志）。
+#   以后再加小程序：把账号 id 加进 _SENDABLE_MP_ACCOUNT_IDS，或在后台把它切成生效账号。
+# ============================================================
+_SENDABLE_MP_ACCOUNT_IDS = (9,)      # 新小程序「 重庆清域智科技有限公司」wx0be09d4de1417e01
+
+
+def _sendable_mp_prefixes():
+    """[S343] 实时取"可发送的小程序"的 openid 前缀列表。
+
+    不写死 ooTcRx/oQXFs3 —— 按 wx_accounts 现查现用，以后加账号只要账号 id 进白名单即可。
+    """
+    out = []
+    try:
+        _p = mp_openid_prefix()
+        if _p:
+            out.append(_p)
+    except Exception:
+        pass
+    try:
+        import wx_config as _wc343
+        for _a in (_wc343.list_accounts('mp') or []):
+            if _a.get('id') in _SENDABLE_MP_ACCOUNT_IDS:
+                _p = str(_a.get('openid_prefix') or '').strip()
+                if _p and _p not in out:
+                    out.append(_p)
+    except Exception:
+        pass
+    return out
+
+
+def _is_sendable_mp_openid(v):
+    """[S343] v 是否属于"可发送订阅消息的小程序"（老小程序 或 白名单新小程序）。
+
+    公众号 openid / 已停用小程序 openid 一律 False —— 保持"公众号不能发小程序订阅消息"的保护。
+    """
+    v = str(v or '')
+    if not v:
+        return False
+    try:
+        if v.startswith(mp_openid_prefix()):
+            return True
+    except Exception:
+        pass
+    try:
+        import wx_config as _wc343
+        _aid = _wc343.account_id_by_openid(v)
+    except Exception:
+        return False
+    return bool(_aid) and _aid in _SENDABLE_MP_ACCOUNT_IDS
+
+
 def _fmt_time(t):
     """格式化时间: YYYY-MM-DD HH:MM:SS"""
     if not t:
@@ -1238,26 +1295,33 @@ def admin_order_close():
         conn.commit()
         
         # 发送寄存结束订阅消息
-        # 只认小程序 mp_openid（ooTcRx 前缀）；公众号 openid(oLhbm2) 发不了订阅消息
-        def _is_mp_openid(v):
-            return bool(v) and str(v).startswith(mp_openid_prefix())
+        # [S343-20260920] 只认"可发送的小程序身份"（见文件顶部 _is_sendable_mp_openid）：
+        #   老小程序(当前生效前缀 ooTcRx) 与新小程序(白名单账号9 oQXFs3) 都要能查到并保留；
+        #   公众号 openid(oLhbm2/ov47M3) 发不了订阅消息(40003)，已停用账号3(oWrA8) 不发。
+        #   原实现只比"当前生效账号"前缀 -> 新小程序用户永远查不到 openid，结束订单后收不到通知。
         ntf_openid = order_dict.get('mp_openid') or ''
-        if not _is_mp_openid(ntf_openid):
+        if not _is_sendable_mp_openid(ntf_openid):
             ntf_openid = order_dict.get('openid') or ''
-        if not _is_mp_openid(ntf_openid) and order_dict.get('user_phone'):
+        if not _is_sendable_mp_openid(ntf_openid) and order_dict.get('user_phone'):
             try:
                 c2 = conn.cursor(cursor_factory=RealDictCursor)
-                c2.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE %s LIMIT 1", (order_dict['user_phone'], mp_openid_prefix() + '%'))
-                _r = c2.fetchone()
-                if _r and _r['mp_openid']:
-                    ntf_openid = _r['mp_openid']
-                if not ntf_openid:
-                    c2.execute("SELECT mp_openid FROM users WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE %s ORDER BY updated_at DESC LIMIT 1", (order_dict['user_phone'], mp_openid_prefix() + '%'))
+                # [S343] 按"可发送的小程序"实时前缀集合查（老 ooTcRx + 新 oQXFs3），
+                #   不再只查当前生效账号前缀（否则新小程序用户永远查不到）。
+                _mp_pfx343 = _sendable_mp_prefixes()
+                _mp_like343 = ' OR '.join(['mp_openid LIKE %s'] * len(_mp_pfx343))
+                _mp_pat343 = [p + '%' for p in _mp_pfx343]
+                if _mp_like343:
+                    c2.execute("SELECT mp_openid FROM user_balances WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND (" + _mp_like343 + ") LIMIT 1", tuple([order_dict['user_phone']] + _mp_pat343))
+                    _r = c2.fetchone()
+                    if _r and _r['mp_openid']:
+                        ntf_openid = _r['mp_openid']
+                if not ntf_openid and _mp_like343:
+                    c2.execute("SELECT mp_openid FROM users WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND (" + _mp_like343 + ") ORDER BY updated_at DESC LIMIT 1", tuple([order_dict['user_phone']] + _mp_pat343))
                     _r = c2.fetchone()
                     if _r and _r['mp_openid']:
                         ntf_openid = _r['mp_openid']
             except Exception as _e:
-                logger.warning(f"[order_close] ?openid??: {_e}")
+                logger.warning(f'[order_close] 查询小程序openid失败: {_e}')
         if ntf_openid:
             try:
                 from helpers import send_wx_subscribe_message
@@ -4619,6 +4683,16 @@ def data_reset_exec():
 
 # ==================== P0-3: 系统设置管理 ====================
 
+# [S262-20260919] 安全修复：本文件里的 /settings 才是 /api/settings 的【实际生效实现】
+#   （app.py 先注册 admin_v2 蓝图，同路径下先注册者胜），且该接口无鉴权。
+#   下列 key 属于凭据/内部数据，绝不允许对外返回。
+#   修复前直接全量返回，导致小程序 access_token 被公开泄露：
+#   任何人访问 https://<域名>/api/settings 即可拿到，可用于冒名发订阅消息、生成小程序码、查用户数据。
+_SENSITIVE_SETTING_KEYS = (
+    'wx_mp_access_token',   # 小程序全局 access_token
+    'test_key',             # 遗留测试密钥（全仓库已无引用）
+)
+
 @bp.route('/settings', methods=['GET', 'POST'])
 def get_settings():
     try:
@@ -4626,7 +4700,10 @@ def get_settings():
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
         rows = c.execute("SELECT setting_key as key, setting_value as value, description FROM system_settings").fetchall()
-        settings = {row['key']: {'value': row['value'], 'desc': row['description']} for row in rows}
+        # [S262-20260919] 过滤敏感项后再返回（本接口无鉴权）
+        settings = {row['key']: {'value': row['value'], 'desc': row['description']}
+                    for row in rows
+                    if row['key'] not in _SENSITIVE_SETTING_KEYS}
         conn.close()
         return jsonify({'code': 200, 'data': settings})
     except Exception as e:
@@ -5305,15 +5382,24 @@ def _release_auto_claim(wid):
 def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid='', unionid=''):
     try:
         from helpers import send_wx_subscribe_message
+        # [S343-20260920] 字段名按【老模板 lJpnAUiE（退款成功通知）】的真实字段来：
+        #   退款时间:time5 / 退款金额:amount2 / 退款方式:thing4 / 备注:thing3
+        #   原来写的是 amount8/time6/thing3/thing2 —— 第三种组合，老模板(lJpnAUiE)和
+        #   新小程序模板(sKHQzRCc: amount8/time6/thing10/thing2)都不匹配，必然 47003。
+        #   改成老字段名后：老小程序直接正确；新小程序由 helpers._remap_subscribe_data()
+        #   换成 amount8/time6/thing10/thing2，两边都对。
         wd_data = {
-            'amount8': {'value': '¥{:.2f}'.format(float(amount))},
-            'time6': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
-            'thing3': {'value': thing3},
-            'thing2': {'value': thing2}
+            'amount2': {'value': '¥{:.2f}'.format(float(amount))},
+            'time5': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
+            'thing4': {'value': thing3},     # 退款方式（调用方第 3 个参数）
+            'thing3': {'value': thing2},     # 备注（调用方第 4 个参数）
         }
-        # 只认小程序 mp_openid（ooTcRx 前缀）；公众号 openid(oLhbm2) 发不了订阅消息
+        # [S343-20260920] 只认"可发送的小程序身份"（判定函数见文件顶部 _is_sendable_mp_openid）：
+        #   老小程序(当前生效前缀 ooTcRx) 与新小程序(白名单账号9 oQXFs3) 都能发；
+        #   公众号 openid(oLhbm2/ov47M3) 不能发(40003)，已停用账号3(oWrA8) 也不发(否则 40037 刷日志)。
+        #   原实现只比"当前生效账号"前缀 -> 新小程序 openid 被清空 -> 永远不发送。
         _ok = openid or ''
-        if not (str(_ok).startswith(mp_openid_prefix())):
+        if not _is_sendable_mp_openid(_ok):
             _ok = ''
         send_wx_subscribe_message(_ok, _auto_withdraw_tpl(), wd_data, phone=phone, page='pages/mine/mine', unionid=unionid)
     except Exception as e:
@@ -5398,7 +5484,9 @@ def _process_auto_withdrawal_record(wid):
         if not failed:
             c2.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), error_msg=NULL, retry_count=0, next_attempt_at=NULL WHERE id=%s", (wid,))
             conn2.commit()
-            _send_withdraw_subscribe(phone, amount, '????', '??0-3??????', row.get('w_openid') or '', row.get('w_unionid') or '')
+            # [S343] 乱码文案修复：第3个参数=退款方式(老模板 thing4 -> 新模板 thing10)，
+            #   第4个参数=备注(老模板 thing3 -> 新模板 thing2)；本流程是 do_real_refund 原路退回。
+            _send_withdraw_subscribe(phone, amount, '原路退回支付账户', '预计0-3个工作日到账', row.get('w_openid') or '', row.get('w_unionid') or '')
             logger.info('[auto_withdraw] ???? id=%s orders=%s', wid, order_ids)
             done = True
         else:

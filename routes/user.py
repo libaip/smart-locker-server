@@ -1546,6 +1546,14 @@ def h5_store():
         cursor.execute("SELECT l.allow_h5_to_mp FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE c.id = %s", (cabinet_id,))
         _lr = cursor.fetchone()
         need_redirect = bool(_lr and _lr['allow_h5_to_mp'])
+        # [S350-模式② STEP2] entry_mode=oa（纯公众号）→ 不把用户往小程序送。
+        #   非 oa（mp/h5/非法值/读配置异常）→ need_redirect 与改动前完全一致。
+        try:
+            from entry_mode import get_entry_mode as _get_entry_mode_oa
+            if _get_entry_mode_oa() == 'oa':
+                need_redirect = False
+        except Exception:
+            pass
         claimed_slot = None
         for _attempt in range(5):
             cursor.execute('SELECT cs.*, MAX(o.store_time) as last_used_at FROM cabinet_slots cs LEFT JOIN orders o ON o.slot_id = cs.id WHERE cs.cabinet_id = %s AND cs.status = 1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cs.id AND o2.status = 2) GROUP BY cs.id ORDER BY CASE WHEN MAX(o.store_time) IS NULL THEN 0 ELSE 1 END, MAX(o.store_time) ASC, cs.slot_number ASC LIMIT 1', (cabinet_id,))

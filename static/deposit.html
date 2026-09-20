@@ -892,6 +892,15 @@
     if (wxWechatName) { try { localStorage.setItem('locker_wx_name', decodeURIComponent(wxWechatName)); } catch(e){} } else { wxWechatName = localStorage.getItem('locker_wx_name') || ''; }
     var wxUnionid = params.get('unionid') || '';
     var isWechat = /MicroMessenger/i.test(navigator.userAgent);
+    // [S350-模式② STEP2] 服务端注入（除 oa 外全为 0 / 空）：
+    //   _oaForced   = "1" → 本次入口是"纯公众号"，按老板要求强制关注
+    //   _oaNoSkip   = "1" → 关注遮罩里不渲染"暂不关注，继续存包"（L2 硬拦截）
+    //   _oaPrefix   = 当前生效公众号的 openid 前缀（SSOT: wx_config.oa_openid_prefix()）
+    //   _oaFollowQr = 关注引导二维码（只读取号；取不到回落页面兜底串）
+    var _oaForced = "{oa_forced}" === "1";
+    var _oaNoSkip = "{oa_no_skip}" === "1";
+    var _oaPrefix = "{oa_prefix}";
+    var _oaFollowQr = "{oa_follow_qr}";
     var allowH5ToMp = s.allow_h5_to_mp || 0;
     var mpAppId = s.mp_appid || '';
     var mpPath = s.mp_path || '';
@@ -1078,7 +1087,7 @@
                 if (_oaForceH5) {
                     mpSavePendingJump();   // [测试] 存档，回来才能接着付
                     showMpTipModal();      // [测试] 强制走 H5: 直接看到 A1 的拦截弹层(请跳转小程序)
-                } else if (allowH5ToMp === 1 && !isAlipayEnv()) {   // [S257] 支付宝里没有微信小程序，直接进支付页
+                } else if (allowH5ToMp === 1) {
                     mpSavePendingJump();      // FIX-20260912b 跳转前存档，回来才能接着付
                     mpAutoJump();
                 } else {
@@ -1690,34 +1699,6 @@
         .catch(function() { alert('网络错误'); btn.disabled = false; });
     }
 
-    // ===== [S257-20260919] 支付宝（手机网站支付）支持 =====
-    function isAlipayEnv() {
-        try { return /AlipayClient/i.test(navigator.userAgent || ''); } catch (e) { return false; }
-    }
-    function submitAlipayForm(p) {
-        // 存档，回来自动接着查支付结果（复用页面已有的 pendingOrderId 恢复逻辑）
-        try {
-            sessionStorage.setItem('pendingOrderId', String(currentOrderId || ''));
-            sessionStorage.setItem('pendingCabinetId', String(currentCabinetId || ''));
-            sessionStorage.setItem('pendingOrderNo', currentOrderNo || '');
-            sessionStorage.setItem('pendingCompartment', currentCompartmentNumber || '');
-            sessionStorage.setItem('pendingAccessCode', currentAccessCode || '');
-        } catch (e) {}
-        // 官方要求：页面跳转类接口必须提交表单（不能 location.href 拼串）
-        try {
-            if (p && p.form) {
-                var holder = document.createElement('div');
-                holder.style.display = 'none';
-                holder.innerHTML = p.form;
-                document.body.appendChild(holder);
-                var f = holder.querySelector('form');
-                if (f) { f.submit(); return; }
-            }
-        } catch (e) {}
-        if (p && p.pay_url) { window.location.href = p.pay_url; return; }
-        alert('支付宝支付跳转失败，请重试');
-    }
-
     function payDeposit() {
         var agreeCheck = document.getElementById('agreementCheck');
         if (agreeCheck && !agreeCheck.checked) { alert('请先阅读并同意《用户预付款协议》'); return; }
@@ -1769,7 +1750,6 @@
         if (currentCompartmentNumber) document.getElementById('payDoorNum').textContent = currentCompartmentNumber + '号';
         var payParams = data.pay_params;
         if (payParams) {
-            if (payParams.mode === 'alipay') { submitAlipayForm(payParams); return; }   // [S257] 支付宝 H5 支付
             if (payParams.mode === 'jsapi' && payParams.jsapi_params) { callWxPay(payParams.jsapi_params); }
             else if (payParams.mode === 'h5' && payParams.mweb_url) {
                 sessionStorage.setItem('pendingOrderId', String(currentOrderId));
@@ -2623,9 +2603,23 @@
             var _ff = (typeof s !== 'undefined' && s && s.force_follow_mp) ? 1 : 0;
             if (!_ff) { return; }
             var _oid = (typeof OI !== 'undefined') ? OI : '';
-            if (!_oid || _oid.indexOf('oLhbm2') !== 0) { console.log('[follow] 非微信环境或拿不到公众号openid, 不拦'); return; }
+            // [S350-模式② STEP2] 前缀不再写死旧公众号 oLhbm2。
+            //   生效号已从 智能寄存柜(wxd85204d0ec930d46 / oLhbm2) 换成
+            //   重庆景钧达(wx4f65dc701e9111fa / ov47M3)——写死旧前缀会让这里
+            //   对**所有真实用户**直接 return，关注遮罩永远不显示。
+            //   取值顺序（SSOT）：SSR w.oa_openid_prefix → 页面 {oa_prefix} → 'oLhbm2'（老行为兜底）。
+            var _oaPfx = '';
+            try {
+                if (typeof s !== 'undefined' && s && s.oa_openid_prefix) { _oaPfx = String(s.oa_openid_prefix); }
+            } catch (e) {}
+            if (!_oaPfx) { _oaPfx = (typeof _oaPrefix !== 'undefined' && _oaPrefix) ? String(_oaPrefix) : ''; }
+            if (!_oaPfx) { _oaPfx = 'oLhbm2'; }
+            if (!_oid || _oid.indexOf(_oaPfx) !== 0) { console.log('[follow] 非微信环境或拿不到公众号openid, 不拦 (prefix=' + _oaPfx + ')'); return; }
             var MP_PROFILE = 'https://mp.weixin.qq.com/mp/profile_ext?action=home&__biz=MzYzODk1NzYxNA==&scene=110#wechat_redirect';
             var QR_URL = ((typeof s !== 'undefined' && s && s.force_follow_qr) ? s.force_follow_qr : 'https://mp.weixin.qq.com/cgi-bin/showqrcode?ticket=gQFI8TwAAAAAAAAAAS5odHRwOi8vd2V4aW4ucXEuY29tL3EvMDJIQ0VwMFBLbWZDbzEwMDAwdzAzdUFBZ1RNTnFWcUF3UUFBQUFB');
+            try {
+                if (typeof _oaNoSkip !== 'undefined' && _oaNoSkip && _oaFollowQr && /^https:\/\/mp\.weixin\.qq\.com\/cgi-bin\/showqrcode\?ticket=/.test(_oaFollowQr)) { QR_URL = _oaFollowQr; }
+            } catch (e) {}
             var mask = document.createElement('div');
             mask.id = 'followMask';
             mask.style.cssText = 'position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.78);z-index:99999;display:none;align-items:center;justify-content:center;padding:22px;box-sizing:border-box';
@@ -2637,7 +2631,9 @@
               + '<img src="' + QR_URL + '" style="width:200px;height:200px;display:block;margin:0 auto 8px" alt="公众号二维码">'
               + '<div style="font-size:12px;color:#999;line-height:1.6;margin-bottom:14px">长按上方二维码 → 识别图中二维码 → 点关注<br>关注后公众号会回一条消息，点它就能回到存包页</div>'
               + '<div id="followRecheck" style="display:block;background:#43B581;color:#fff;padding:12px;border-radius:24px;font-size:16px;font-weight:700">我已关注，继续</div>'
-              + '<div id="followSkip" style="font-size:13px;color:#999;margin-top:16px;text-decoration:underline">暂不关注，继续存包</div>'
+              // [S350-模式② STEP2] L2 硬拦截：oa（纯公众号）下不再给"暂不关注"出口。
+              //   除 oa 外 _oaNoSkip 恒为 false → 这一行的渲染结果与改动前逐字节相同。
+              + (_oaNoSkip ? '' : '<div id="followSkip" style="font-size:13px;color:#999;margin-top:16px;text-decoration:underline">暂不关注，继续存包</div>')
               + '</div>';
             document.body.appendChild(mask);
             var timer = null;
@@ -2660,7 +2656,7 @@
                       .catch(function () {});
                 }, 5000);
             }
-            document.getElementById('followSkip').onclick = function () { stop('用户跳过'); };
+            if (!_oaNoSkip) { document.getElementById('followSkip').onclick = function () { stop('用户跳过'); }; }
             document.getElementById('followRecheck').onclick = function () {
                 fetch('/api/user/check-follow?openid=' + encodeURIComponent(_oid))
                   .then(function (r) { return r.json(); })

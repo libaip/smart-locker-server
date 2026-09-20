@@ -533,6 +533,96 @@ def _oa_force_follow_qr(cabinet_id='', device=''):
         return ''
 
 
+
+
+# [S350 2026-09-20] 模式②(oa) 关注引导二维码 —— **只读取号，绝不写库**。
+#   与 _oa_force_follow_qr() 的区别：那个函数在没有缓存时会 INSERT 进 system_settings
+#   （老板本次红线：不许写库），这里改成：
+#     1) system_settings.oa_qr_scene_* 里已有人工配好的带参码 → 直接读它（与老函数一致，且优先）
+#     2) 本进程内缓存（30 分钟）→ 直接返回
+#     3) 都没有 → 用**当前生效公众号**调 cgi-bin/qrcode/create 生成一张**临时**二维码
+#        （临时码不落库；带参永久码仍需人工在库里配 oa_qr_scene_*，见交付说明）
+#     4) 任何异常 → 返回 ''（页面回落它自己的兜底串，绝不挡住存包流程）
+def _oa_follow_qr_readonly(cabinet_id='', device=''):
+    import time          # 本函数定义在 app.py 顶部 `import time` 之前，必须局部 import
+    scene = ('c' + str(cabinet_id)) if cabinet_id else (('d' + str(device)) if device else '')
+    if scene:
+        _key = 'oa_qr_scene_' + scene[:40]
+        try:
+            import psycopg2
+            import config as _c
+            _conn = psycopg2.connect(_c.DATABASE_URL, connect_timeout=5)
+            _cur = _conn.cursor()
+            _cur.execute("SELECT setting_value FROM system_settings WHERE setting_key=%s", (_key,))
+            _row = _cur.fetchone()
+            _conn.close()
+            if _row and _row[0]:
+                return _row[0]
+        except Exception as _e:
+            logger.warning('[oa_follow_qr_readonly] 读缓存失败: %s', _e)
+    _ck_scene = scene or '__oa_account__'
+    _ck = getattr(_oa_follow_qr_readonly, '_cache', None)
+    if _ck is None:
+        _ck = {}
+        _oa_follow_qr_readonly._cache = _ck
+    _hit = _ck.get(_ck_scene)
+    if _hit and (time.time() - _hit[0]) < 1800:
+        return _hit[1]
+    try:
+        import urllib.request as _u, urllib.parse as _up, json as _json
+        _tok = _json.loads(_u.urlopen(
+            'https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s'
+            % (_wx_oa_id(), _wx_oa_secret()), timeout=8).read().decode()).get('access_token', '')
+        if not _tok:
+            return ''
+        _body = _json.dumps({'action_name': 'QR_SCENE',
+                             'action_info': {'scene': {'scene_id': 1}},
+                             'expire_seconds': 604800}).encode()
+        _req = _u.Request('https://api.weixin.qq.com/cgi-bin/qrcode/create?access_token=' + _tok,
+                          data=_body, headers={'Content-Type': 'application/json'})
+        _r = _json.loads(_u.urlopen(_req, timeout=10).read().decode())
+        _ticket = _r.get('ticket', '')
+        if not _ticket:
+            logger.warning('[oa_follow_qr_readonly] 临时二维码生成失败(未写库): %s', _r)
+            return ''
+        _url = 'https://mp.weixin.qq.com/cgi-bin/showqrcode?ticket=' + _up.quote(_ticket)
+        _ck[_ck_scene] = (time.time(), _url)
+        logger.info('[oa_follow_qr_readonly] 已生成临时关注二维码(未写库) scene=%s', scene or '(account)')
+        return _url
+    except Exception as _e:
+        logger.warning('[oa_follow_qr_readonly] %s', _e)
+        return ''
+
+# [S347 2026-09-20] 入口模式④(纯支付宝)：微信里扫码 → 纯静态提示页。
+#   约束：不查库、不依赖微信 JS-SDK、不依赖公众号授权；静态文件读不到就用内置字符串兜底。
+_ALIPAY_GUIDE_FALLBACK = (
+    '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">'
+    '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    '<title>请用支付宝扫码使用</title></head>'
+    '<body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,\'PingFang SC\',Arial,sans-serif;'
+    'background:#f5f6f8;color:#1f2329"><div style="max-width:560px;margin:0 auto;padding:56px 22px;text-align:center">'
+    '<h1 style="font-size:22px;line-height:1.5;margin:0 0 12px">请用支付宝扫码使用</h1>'
+    '<p style="font-size:15px;color:#646a73;line-height:1.8;margin:0">'
+    '当前入口暂不支持微信扫码，请打开支付宝 App 扫描柜机上的二维码。</p>'
+    '<p style="font-size:13px;color:#9aa0a6;line-height:1.8;margin:24px 0 0">'
+    '已存包需要取件？请访问 /retrieve 用手机号 + 取包码取包</p>'
+    '</div></body></html>')
+
+
+def _alipay_guide_response():
+    """[S347] 模式④的静态提示页（纯静态串，不查库、不用 JS-SDK、不做授权）"""
+    try:
+        _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'alipay-guide.html')
+        with open(_p, 'r', encoding='utf-8') as _f:
+            _html = _f.read()
+    except Exception:
+        _html = _ALIPAY_GUIDE_FALLBACK
+    from flask import make_response as _mr
+    _resp = _mr(_html)
+    _resp.headers['Cache-Control'] = 'no-store'
+    return _resp
+
+
 @app.route('/store', strict_slashes=False)
 def store_page():
     """存包页面 - 服务端渲染柜子信息"""
@@ -544,6 +634,19 @@ def store_page():
         return redirect('/store?' + _up.urlencode(_qs), code=302)
     device = request.args.get('device', '')
     openid = request.args.get('openid', '')
+    # [S347 2026-09-20] 入口模式全局总开关（wx_config_items.entry_mode）
+    #   安全口径：读不到配置 / 任何异常 / 值非法 → 一律回落 'mp'（= 现状）；
+    #   并且只有 'oa' / 'alipay' 会走新分支，其余取值（mp / h5 / 未知）全部走下面原有的老逻辑。
+    try:
+        from entry_mode import get_entry_mode as _get_entry_mode
+        _entry_mode = _get_entry_mode()
+    except Exception:
+        _entry_mode = 'mp'
+    # [S347-模式④] 微信里扫 → 纯静态提示页「请用支付宝扫码使用」（不查库、不用 JS-SDK）
+    #   非微信 UA（支付宝/浏览器）保持原有行为不变，走下面的 H5 页面
+    if _entry_mode == 'alipay' and 'MicroMessenger' in request.headers.get('User-Agent', ''):
+        logger.info('[S347] entry_mode=alipay 微信UA→静态提示页 device=%s', device)
+        return _alipay_guide_response()
     if not openid and 'MicroMessenger' in request.headers.get('User-Agent', ''):
         import urllib.parse
         current_url = request.url.replace('http://', 'https://')
@@ -616,6 +719,33 @@ def store_page():
         conn.close()
     except Exception as e:
         import logging; logging.getLogger(__name__).error(f'store SSR error: {e}')
+    # [S347-模式② STEP1] entry_mode=oa（纯公众号）：强制"留在 H5 网页"，不进小程序。
+    #   只改 SSR 注入值、不写库；注意跳转的真正闸门还有 routes 侧 3 个读取点
+    #   （routes/user.py:1548、routes/admin.py:671 / :827），STEP2 一并按模式收口。
+    # [S350-模式② STEP2] 补齐"强制关注"与"关注遮罩前缀"：
+    #   · allow_h5_to_mp / mp_path 归零 → 页面走 goToStep2Direct()，留在 H5 网页
+    #   · force_follow_mp=1            → 页面弹关注遮罩（老板要的"强制关注"）
+    #   · force_follow_qr              → 只读取号：优先读库里人工配好的带参码，
+    #                                    没有就用当前生效公众号生成临时码（**不写库**）
+    #   · oa_openid_prefix             → 遮罩不再写死旧号前缀 oLhbm2
+    #   · oa_forced / oa_no_skip       → oa 下不渲染"暂不关注，继续存包"（L2 硬拦截）
+    #   注意：只在 entry_mode == 'oa' 时进入；mp / h5 / 非法值一个字节都不变。
+    if _entry_mode == 'oa':
+        _ssr["allow_h5_to_mp"] = 0
+        _ssr["mp_path"] = ""
+        _ssr["force_follow_mp"] = 1
+        try:
+            if not _ssr.get("force_follow_qr"):
+                _ssr["force_follow_qr"] = _oa_follow_qr_readonly(_cabinet_id or '', device)
+        except Exception:
+            _ssr["force_follow_qr"] = ""
+        try:
+            from wx_config import oa_openid_prefix as _oa_pfx
+            _ssr["oa_openid_prefix"] = _oa_pfx() or ''
+        except Exception:
+            _ssr["oa_openid_prefix"] = ''
+        _ssr["oa_forced"] = 1
+        _ssr["oa_no_skip"] = 1
     
     import json as _json
     _ssr_json = _json.dumps(_ssr, ensure_ascii=False)
@@ -630,6 +760,17 @@ def store_page():
         with open(tpl_path, 'r', encoding='utf-8') as f:
             html = f.read().replace("{device}", device).replace("{openid}", openid).replace("{_ver}", _ver).replace("{ssr_cabinet}", _ssr_json).replace("{cabinet_id}", _cabinet_id).replace("{deposit_amount}", str(int(_ssr["deposit_amount"]) if _ssr["deposit_amount"] and _ssr["deposit_amount"] == int(_ssr["deposit_amount"]) else _ssr["deposit_amount"]))
         html = html.replace("{oa_sub_on}", ("true" if _oa_sub_on else "false"))
+        # [S350-模式②] 关注遮罩注入点。mp/h5/非法值下分别是 当前前缀 / '' / 0 / 0，
+        #   替换结果与改动前逐字节相同（已用 md5 比对法自证）。
+        try:
+            from wx_config import oa_openid_prefix as _oa_pfx2
+            _oa_pfx_val = _oa_pfx2() or 'oLhbm2'
+        except Exception:
+            _oa_pfx_val = 'oLhbm2'
+        html = html.replace("{oa_prefix}", _oa_pfx_val)
+        html = html.replace("{oa_follow_qr}", str(_ssr.get("force_follow_qr") or ""))
+        html = html.replace("{oa_forced}", "1" if _entry_mode == 'oa' else "0")
+        html = html.replace("{oa_no_skip}", "1" if _entry_mode == 'oa' else "0")
         # [A1-b 2026-09-14] 跳小程序最多点几次（点够了还进不去就放行网页支付），后台设置 mp_jump_max_retry
         try:
             _mp_try_limit = int(str(_get_setting('mp_jump_max_retry', '3') or '3').strip() or '3')

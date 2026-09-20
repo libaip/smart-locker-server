@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="format-detection" content="telephone=no">
+<title>请用支付宝扫码使用</title>
+<style>
+  * { -webkit-tap-highlight-color: transparent; }
+  body { margin:0; padding:0; background:#f5f6f8; color:#1f2329;
+         font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif; }
+  .wrap { max-width:560px; margin:0 auto; padding:48px 22px 60px; text-align:center; }
+  .card { background:#fff; border-radius:16px; padding:32px 22px 30px;
+          box-shadow:0 2px 14px rgba(0,0,0,.06); }
+  .icon { width:84px; height:84px; margin:0 auto 18px; display:block; }
+  h1 { font-size:22px; line-height:1.4; margin:0 0 12px; font-weight:600; letter-spacing:.5px; }
+  .sub { font-size:15px; color:#646a73; line-height:1.7; margin:0 0 22px; }
+  .steps { text-align:left; background:#f7f8fa; border-radius:12px; padding:16px 18px; margin:0 0 22px; }
+  .steps p { margin:0; font-size:14px; color:#40454d; line-height:1.9; }
+  .steps b { color:#1677ff; font-weight:600; }
+  .brand { display:inline-block; background:#1677ff; color:#fff; border-radius:22px;
+           padding:8px 20px; font-size:15px; font-weight:600; }
+  .foot { margin-top:22px; font-size:12px; color:#9aa0a6; line-height:1.8; }
+  .foot a { color:#646a73; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <svg class="icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect x="64" y="64" width="896" height="896" rx="200" fill="#1677ff"/>
+      <text x="512" y="640" font-size="380" font-family="Arial,Helvetica,sans-serif"
+            font-weight="bold" fill="#ffffff" text-anchor="middle">支</text>
+    </svg>
+    <h1>请用支付宝扫码使用</h1>
+    <p class="sub">当前入口暂不支持微信扫码<br>请打开 <b>支付宝 App</b> 扫描柜机上的二维码</p>
+    <div class="steps">
+      <p>1. 打开手机上的 <b>支付宝</b></p>
+      <p>2. 点首页 <b>「扫一扫」</b></p>
+      <p>3. 扫描柜机面板上的二维码，即可存包</p>
+    </div>
+    <span class="brand">支付宝 · 扫一扫</span>
+    <p class="foot">
+      已经存过包需要取件？<a href="/retrieve">点这里取包</a>（手机号 + 取包码）<br>
+      如遇问题请联系现场工作人员
+    </p>
+  </div>
+</div>
+</body>
+</html>

@@ -668,6 +668,15 @@ def get_cabinet_public_info(cabinet_id):
             result['mid_retrieve_limit'] = result.get('location_mid_retrieve_limit')
         result['location_mid_retrieve_limit'] = result.get('location_mid_retrieve_limit')
         # 补充小程序跳转信息
+        # [S350-模式② STEP2] entry_mode=oa → H5 不再有"跳小程序"出口：
+        #   allow_h5_to_mp 归零，且不注入 mp_appid / mp_path。
+        try:
+            from entry_mode import get_entry_mode as _get_entry_mode_oa
+            _oa_mode_d1 = (_get_entry_mode_oa() == 'oa')
+        except Exception:
+            _oa_mode_d1 = False
+        if _oa_mode_d1:
+            result['allow_h5_to_mp'] = 0
         if result.get('allow_h5_to_mp'):
             import config
             result['mp_appid'] = _wx_mp_id()
@@ -825,6 +834,14 @@ def get_cabinet_by_mainboard(mainboard_id):
             loc_row = cursor.fetchone()
             if loc_row:
                 result['allow_h5_to_mp'] = loc_row['allow_h5_to_mp'] or 0
+                # [S350-模式② STEP2] entry_mode=oa → 同上，不给小程序出口
+                try:
+                    from entry_mode import get_entry_mode as _get_entry_mode_oa
+                    _oa_mode_d2 = (_get_entry_mode_oa() == 'oa')
+                except Exception:
+                    _oa_mode_d2 = False
+                if _oa_mode_d2:
+                    result['allow_h5_to_mp'] = 0
                 result['mp_appid'] = _wx_mp_id()  # 用户端小程序AppID
                 result['mp_path'] = 'pages/subscribe/subscribe'
                 result['h5_url'] = loc_row['h5_url'] or ''

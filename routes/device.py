@@ -743,6 +743,12 @@ def device_lock_result():
                     if _end_cur.rowcount > 0:
                         db.execute("UPDATE cabinet_slots SET status=1 WHERE id=%s", (slot_id,))
                         logger.info(f"[lock_result] action=end: slot={slot_id} ended (free slot)")
+                        # [S400] 公众号模板消息·寄存结束 + 退款成功
+                        try:
+                            from helpers import oa_notify_order_end as _oa_end3
+                            _oa_end3(order_id=_o2["id"])
+                        except Exception as _tpl_e3:
+                            logger.warning('[S400] 设备侧结束模板消息失败: %s', _tpl_e3)
                     else:
                         logger.warning(f"[lock_result] action=end but order update matched 0 rows: slot={slot_id} order={_o2['id']}, slot NOT released")
                 else:

@@ -226,6 +226,12 @@ def offline_retrieve():
         conn.commit()
         conn.close()
 
+        # [S400] 公众号模板消息·寄存结束 + 退款成功（离线/超时自动结束这条路）
+        try:
+            from helpers import oa_notify_order_end as _oa_end
+            _oa_end(order_id=order['id'], when=str(actual_time))
+        except Exception as _tpl_e:
+            logger.warning('[S400] 离线结束模板消息失败: %s', _tpl_e)
         # 发送结束通知和退款通知
         try:
             _notify_openid = order.get('openid', '') or ''
@@ -311,6 +317,12 @@ def offline_retrieve_batch():
         for _ridx, _rrec in enumerate(results):
             if _rrec['status'] != 'ok':
                 continue
+            # [S400] 公众号模板消息·寄存结束 + 退款成功
+            try:
+                from helpers import oa_notify_order_end as _oa_end2
+                _oa_end2(order_id=_rrec.get('order_id'), when=str(_rrec.get('retrieve_time') or ''))
+            except Exception as _tpl_e2:
+                logger.warning('[S400] 批量结束模板消息失败: %s', _tpl_e2)
             try:
                 _r_order_data = None
                 if _ridx < len(records):

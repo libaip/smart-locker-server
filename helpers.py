@@ -3997,6 +3997,56 @@ def _send_subscribe_for_account(account_id, openid, template_id, data, page, pho
         return False
 
 
+def oa_notify_order_end(order_id=None, amount=None, when=None, openid='', phone='', unionid='', site=''):
+    """[S400-20260921] 订单结束 -> 发公众号模板消息【寄存结束 + 退款成功】。
+    所有"结束订单"的路径共用这一个入口（用户自己结束取物 / 后台关单 / 离线自动结束 / 设备侧结束）。
+    缺的字段按 order_id 自己查；任何异常只记日志，绝不影响业务。
+    """
+    try:
+        from database import get_db as _g
+        _o = {}
+        if order_id:
+            try:
+                _c = _g()
+                _cu = _c.cursor()
+                _cu.execute("""SELECT o.id, o.order_no, o.deposit_amount, o.compartment_number, o.store_time,
+                                      o.openid, o.unionid, o.user_phone, o.cabinet_id,
+                                      COALESCE(l.name, '') AS site_name
+                               FROM orders o
+                               LEFT JOIN cabinets c ON o.cabinet_id = c.id
+                               LEFT JOIN locations l ON c.location_id = l.id
+                               WHERE o.id = %s""", (order_id,))
+                _r = _cu.fetchone()
+                _c.close()
+                if _r:
+                    _o = dict(_r)
+            except Exception as _e:
+                logger.warning('[oa_end] 查订单失败 id=%s: %s', order_id, _e)
+        _dep = float(amount if amount is not None else (_o.get('deposit_amount') or 0))
+        _site = site or (_o.get('site_name') or '') or '智能寄存柜'
+        _oid = openid or (_o.get('openid') or '')
+        _ph = phone or (_o.get('user_phone') or '')
+        _uni = unionid or (_o.get('unionid') or '')
+        _t3 = str(when or datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        _url = oa_tplmsg_h5_url()
+        send_oa_template_message('oa_tplmsg_deposit_end', {
+            'thing1': _site,
+            'character_string7': str(_o.get('compartment_number') or ''),
+            'time2': str(_o.get('store_time') or ''),
+            'time3': _t3,
+            'amount4': '¥{:.2f}'.format(_dep),
+        }, openid=_oid, phone=_ph, unionid=_uni, url=_url)
+        if _dep > 0:
+            send_oa_template_message('oa_tplmsg_refund_ok', {
+                'amount7': '¥{:.2f}'.format(_dep),
+                'time10': _t3,
+            }, openid=_oid, phone=_ph, unionid=_uni, url=_url)
+        return True
+    except Exception as _e:
+        logger.warning('[oa_end] 异常 order_id=%s: %s', order_id, _e)
+        return False
+
+
 def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, unionid=None):
     """发送微信订阅消息（仅支持小程序mp_openid）
 
@@ -4004,6 +4054,15 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
       若属于"非当前生效账号"（= 新小程序），走 _send_subscribe_for_account（用该小程序的 token + 模板）。
       否则（= 老小程序 / 判断不出）走下面原有的全部逻辑，行为一字不变。
     """
+    # [S400-20260921] 总开关：老板要求"小程序订阅消息全部停掉"，通知只走公众号模板消息。
+    #   wx_config_items.mp_subscribe_enabled='false' 即全部停；读不到/异常 -> 保持原样继续发。
+    try:
+        import wx_config as _wc_sw
+        if str(_wc_sw.get_config('mp_subscribe_enabled', 'true')).strip().lower() in ('0', 'false', 'off', 'no'):
+            logger.info('[subscribe_msg] 小程序订阅消息总开关=off，跳过 openid=%s...', str(openid or '')[:8])
+            return False
+    except Exception:
+        pass
     try:
         import wx_config as _wc0
         _aid = 0

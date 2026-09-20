@@ -4742,10 +4742,43 @@ def _auto_process_self_complaint(complaint_id, phone, openid_val, order_no=''):
             _finish(received_msg)
             return
 
-        cur.execute("SELECT id, order_no, deposit_amount, payment_channel_id, refund_status, status, transaction_id FROM orders WHERE order_no=%s LIMIT 1", (order_no,))
+        # [S383-20260921] 归属校验：只有"这张订单确实属于投诉人"才自动退款。
+        #   改前不校验归属 —— 任何人拿到一个订单号 + 随便一个手机号，就能把别人的订单全额原路退掉
+        #   （S383 安全探头实测：假手机号 13000000000 + 别人的订单号，后端照样受理并查了那单）。
+        #   规则与 /order/refund-by-tool 的"校验本人"完全一致，复用同一个 _resolve_canonical_identity。
+        cur.execute("""SELECT id, order_no, deposit_amount, payment_channel_id, refund_status, status,
+                              transaction_id, user_phone, openid, mp_openid, unionid, user_id
+                       FROM orders WHERE order_no=%s LIMIT 1""", (order_no,))
         order = cur.fetchone()
         if not order:
             _finish(received_msg)
+            return
+
+        _c_oid = (openid_val or '').strip()
+        _caller_uid, _caller_unionid, _caller_phone = 0, '', ''
+        if _c_oid or phone:
+            try:
+                _caller_uid, _caller_unionid, _caller_phone = _resolve_canonical_identity(
+                    cur, mp_openid=_c_oid, phone=phone or '')
+            except Exception as _ce:
+                logger.warning('[self_complaint] 归属校验解析身份失败 order_no=%s err=%s', order_no, _ce)
+                _caller_uid, _caller_unionid, _caller_phone = 0, '', ''
+        _owner_ok = False
+        if _caller_uid and order[11] and _caller_uid == order[11]:
+            _owner_ok = True
+        if not _owner_ok and order[7] and _caller_phone and str(order[7]) == str(_caller_phone):
+            _owner_ok = True
+        if not _owner_ok and order[10] and _caller_unionid and str(order[10]) == str(_caller_unionid):
+            _owner_ok = True
+        if not _owner_ok and _c_oid and _c_oid in ((order[8] or ''), (order[9] or '')):
+            _owner_ok = True
+        if not _owner_ok:
+            cur.execute("UPDATE complaints SET status='0', reply=%s, reply_time=CURRENT_TIMESTAMP WHERE id=%s",
+                        ('订单与提交账号不一致，未自动退款，转人工核实', complaint_id))
+            conn.commit()
+            conn.close()
+            logger.warning('[self_complaint] 归属校验不通过，拒绝自动退款 complaint_id=%s order_no=%s 投诉手机=%s 订单手机=%s',
+                           complaint_id, order_no, phone, order[7])
             return
 
         refund_status = order[4] or ''

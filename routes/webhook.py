@@ -231,16 +231,53 @@ def wechat_message():
         def _reply(text):
             return '<xml><ToUserName><![CDATA[' + from_user + ']]></ToUserName><FromUserName><![CDATA[' + to_user + ']]></FromUserName><CreateTime>' + ts + '</CreateTime><MsgType><![CDATA[text]]></MsgType><Content><![CDATA[' + text + ']]></Content></xml>'
 
+        # [S371] 关注/扫码 -> 回一张【图文卡片】，标题就是「存包」，点它进存包页。
+        #   链接带 10 分钟时效签名：过期后 /go 会展示"请重新扫柜机码"的页面。
+        def _reply_news(title, desc, pic, url):
+            return ('<xml><ToUserName><![CDATA[' + from_user + ']]></ToUserName>'
+                    '<FromUserName><![CDATA[' + to_user + ']]></FromUserName>'
+                    '<CreateTime>' + ts + '</CreateTime>'
+                    '<MsgType><![CDATA[news]]></MsgType><ArticleCount>1</ArticleCount>'
+                    '<Articles><item>'
+                    '<Title><![CDATA[' + title + ']]></Title>'
+                    '<Description><![CDATA[' + desc + ']]></Description>'
+                    '<PicUrl><![CDATA[' + pic + ']]></PicUrl>'
+                    '<Url><![CDATA[' + url + ']]></Url>'
+                    '</item></Articles></xml>')
+
+        def _store_card_url(scene):
+            """把带参二维码的 scene 拼成"带 10 分钟时效"的存包链接"""
+            import hmac as _hm, hashlib as _h, time as _t
+            try:
+                from config import SECRET_KEY as _SK
+            except Exception:
+                _SK = 'smart-locker-secret-key-2024'
+            _dev = ''
+            _sc = str(scene or '')
+            if _sc.startswith('c') and _sc[1:].isdigit():
+                _dev = 'c' + _sc[1:]          # 柜机 id 形式，/go 会透传
+            elif _sc.startswith('d') and _sc[1:]:
+                _dev = _sc[1:]
+            _now = int(_t.time())
+            _sig = _hm.new(_SK.encode(), ('%s|%d' % (_dev, _now)).encode(), _h.sha256).hexdigest()[:16]
+            _base = _wx_h5b() or 'https://locker.cqdyxl.com'
+            return '%s/go?d=%s&t=%d&s=%s' % (_base, _dev, _now, _sig)
+
+        def _news_for_scene(scene):
+            _url = _store_card_url(scene)
+            _pic = (_wx_h5b() or 'https://locker.cqdyxl.com') + '/static/locker-avatar.jpg'
+            return _reply_news('存包', '点击进入存包页面（10分钟内有效，过期请重新扫码）', _pic, _url)
+
         if msg_type == 'event':
             if event == 'subscribe':
                 _ek = (msg.get('EventKey') or '')
                 _scene = _ek.split('qrscene_', 1)[-1] if 'qrscene_' in _ek else ''
-                _link = _wx_h5s()
-                if _scene.startswith('c') and _scene[1:].isdigit():
-                    _link += '?cabinet_id=' + _scene[1:]
-                elif _scene.startswith('d') and _scene[1:]:
-                    _link += '?device=' + _scene[1:]
-                return _reply('欢迎关注智能寄存柜！点此继续存包：' + _link + '  客服电话：4006981080')
+                return _news_for_scene(_scene)
+            if event == 'SCAN':
+                # [S371] 已关注的用户再扫带参二维码：微信推的是 SCAN(不是 subscribe)。
+                #   以前这里没处理 -> 老用户扫码一条回复都收不到。
+                _scene = (msg.get('EventKey') or '')
+                return _news_for_scene(_scene)
             elif event == 'unsubscribe':
                 return '', 200
 

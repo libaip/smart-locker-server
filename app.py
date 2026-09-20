@@ -975,6 +975,69 @@ logger.info('[注册] 竞品兼容API注册成功')
 
 
 # ---------- 微信JS-SDK签名API ----------
+# [S371] 公众号那条图文卡片里「存包」的落地入口：带 10 分钟时效。
+#   有效  -> 302 到 /store?device=xxx
+#   过期或签名不对 -> 返回"请重新扫柜机二维码"的页面（该页会调起摄像头）
+_RESCAN_FALLBACK = (
+    '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">'
+    '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    '<title>链接已过期</title></head><body style="margin:0;font-family:-apple-system,'
+    'BlinkMacSystemFont,\'PingFang SC\',Arial,sans-serif;background:#f5f6f8;color:#1f2329">'
+    '<div style="max-width:420px;margin:0 auto;padding:56px 22px;text-align:center">'
+    '<h1 style="font-size:20px">链接已过期</h1>'
+    '<p style="font-size:14px;color:#646a73;line-height:1.8">'
+    '这条存包链接只在 10 分钟内有效。<br>请用微信「扫一扫」扫描柜机屏幕上的二维码继续存包。</p>'
+    '</div></body></html>')
+
+
+@app.route('/go', methods=['GET'])
+def go_with_expiry():
+    """[S371] 带时效的存包入口（10 分钟）。过期/签名不符 -> 提示重新扫柜机码。"""
+    import hmac as _hmac
+    import hashlib as _hl
+    import time as _t
+    from flask import make_response as _mr
+    try:
+        from config import SECRET_KEY as _SK
+    except Exception:
+        _SK = 'smart-locker-secret-key-2024'
+
+    _d = (request.args.get('d') or '').strip()
+    _ts = (request.args.get('t') or '').strip()
+    _s = (request.args.get('s') or '').strip()
+    _ok = False
+    try:
+        if _d and _ts.isdigit() and _s:
+            _want = _hmac.new(_SK.encode(), ('%s|%s' % (_d, _ts)).encode(), _hl.sha256).hexdigest()[:16]
+            _ok = _hmac.compare_digest(_want, _s) and (0 <= int(_t.time()) - int(_ts) <= 600)
+    except Exception:
+        _ok = False
+
+    if _ok:
+        # [S371-c] 修 NameError：app.py 没有 _wx_h5b 这个别名，这里就地取
+        try:
+            from wx_config import h5_base as _h5b
+            _base = (_h5b() or '').rstrip('/')
+        except Exception:
+            _base = ''
+        if not _base:
+            _base = 'https://locker.cqdyxl.com'
+        if _d.startswith('c') and _d[1:].isdigit():
+            return redirect('%s/store?cabinet_id=%s&v=%d' % (_base, _d[1:], int(_t.time())), code=302)
+        return redirect('%s/store?device=%s&v=%d' % (_base, _d, int(_t.time())), code=302)
+
+    logger.info('[S371] /go 过期或签名不符 d=%s t=%s s=%s', _d, _ts, _s[:6])
+    try:
+        _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 're-scan.html')
+        with open(_p, 'r', encoding='utf-8') as _f:
+            _html = _f.read()
+    except Exception:
+        _html = _RESCAN_FALLBACK
+    _resp = _mr(_html)
+    _resp.headers['Cache-Control'] = 'no-store'
+    return _resp
+
+
 @app.route('/api/wx/jsapi-signature', methods=['GET'])
 def wx_jsapi_signature():
     """为H5页面提供微信JS-SDK签名,用于wx-open-launch-weapp开放标签"""

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>链接已过期 · 请重新扫码</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',Arial,sans-serif;
+       background:#f5f6f8;color:#1f2329;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{background:#fff;border-radius:18px;padding:32px 22px;max-width:420px;width:100%;text-align:center;
+        box-shadow:0 6px 24px rgba(0,0,0,.06)}
+  .ico{width:76px;height:76px;margin:0 auto 18px;border-radius:50%;background:#fff4e5;display:flex;align-items:center;
+       justify-content:center;font-size:38px;line-height:1}
+  h1{font-size:20px;margin:0 0 10px;font-weight:700}
+  p{font-size:14px;line-height:1.8;color:#646a73;margin:0 0 8px}
+  .tip{font-size:13px;color:#9aa0a6;margin-top:14px;line-height:1.7}
+  .btn{display:block;width:100%;margin-top:22px;background:#43B581;color:#fff;border:0;border-radius:26px;
+       padding:15px 0;font-size:17px;font-weight:700;cursor:pointer}
+  .btn:active{opacity:.85}
+  .btn.ghost{background:#fff;color:#43B581;border:1PX solid #43B581;margin-top:10px;font-weight:600}
+  .st{font-size:12px;color:#b0b4ba;margin-top:16px;min-height:16px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="ico">⏰</div>
+  <h1>链接已过期</h1>
+  <p>这条存包链接只在 <b>10 分钟内</b>有效，现在已经超时了。</p>
+  <p>请直接扫描<b>柜机上显示的二维码</b>，就能继续存包。</p>
+  <button class="btn" id="scanBtn">扫一扫柜机二维码</button>
+  <button class="btn ghost" id="helpBtn">看不到码？点这里</button>
+  <div class="st" id="st"></div>
+  <div class="tip">如果扫码没反应，也可以打开微信「扫一扫」，对准柜机屏幕上的二维码即可。</div>
+</div>
+
+<script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
+<script>
+(function () {
+  var st = document.getElementById('st');
+  function say(t) { st.textContent = t || ''; }
+  var isWeChat = /MicroMessenger/i.test(navigator.userAgent);
+
+  function go(url) {
+    var u = String(url || '').trim();
+    if (!u) { say('没扫到内容，请重试'); return; }
+    // 扫到的可能就是柜机码里的网址，直接跳过去
+    if (/^https?:\/\//i.test(u)) { location.href = u; return; }
+    say('这个码不是柜机二维码，请扫柜机屏幕上的那张');
+  }
+
+  function manualTip() {
+    alert('请用微信「扫一扫」，扫描柜机屏幕上显示的二维码。\n\n如果还是进不来，请找现场工作人员。');
+  }
+  document.getElementById('helpBtn').onclick = manualTip;
+
+  // 手动扫（用户点按钮触发，最稳）
+  function scanNow() {
+    if (!window.wx || !wx.scanQRCode) {
+      say('当前环境不支持自动扫码，请用微信「扫一扫」');
+      manualTip();
+      return;
+    }
+    wx.scanQRCode({
+      needResult: 1,
+      scanType: ['qrCode', 'barCode'],
+      success: function (res) { go(res.resultStr); },
+      fail: function () { say('已取消扫码'); },
+      complete: function () {}
+    });
+  }
+  document.getElementById('scanBtn').onclick = scanNow;
+
+  if (!isWeChat) { say('请在微信里打开本页面'); return; }
+
+  // 自动调起扫一扫：先拿 JS-SDK 签名（用当前生效公众号）
+  say('正在准备摄像头…');
+  var pageUrl = location.href.split('#')[0];
+  fetch('/api/wx/jsapi-signature?url=' + encodeURIComponent(pageUrl))
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      var c = (d && d.data) ? d.data : null;
+      if (!c || !c.appId || !c.signature) { say('签名获取失败，请点上面的按钮'); return; }
+      wx.config({
+        debug: false,
+        appId: c.appId,
+        timestamp: c.timestamp,
+        nonceStr: c.nonceStr,
+        signature: c.signature,
+        jsApiList: ['scanQRCode']
+      });
+      wx.ready(function () {
+        say('正在打开摄像头…');
+        // 自动调起（多数微信版本可直接调起；不行就用户点按钮）
+        try { scanNow(); } catch (e) { say('请点上面的按钮扫码'); }
+      });
+      wx.error(function (e) {
+        say('JS-SDK 初始化失败，请用微信「扫一扫」');
+        try { console.log('[re-scan] wx.error', e); } catch (x) {}
+      });
+    })
+    .catch(function () { say('网络异常，请点上面的按钮扫码'); });
+})();
+</script>
+</body>
+</html>

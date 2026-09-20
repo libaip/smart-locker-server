@@ -4011,6 +4011,20 @@ def _send_subscribe_for_account(account_id, openid, template_id, data, page, pho
         return False
 
 
+def _oa_tv(v):
+    """[S408] 模板消息里的时间统一成 'YYYY-MM-DD HH:MM:SS'。
+    Python 的 str(datetime) 带微秒 -> 微信 time 类型会报 47003 data.timeN.value invalid。"""
+    try:
+        if hasattr(v, 'strftime'):
+            return v.strftime('%Y-%m-%d %H:%M:%S')
+        s = str(v or '')
+        if len(s) >= 19 and s[4] == '-' and (s[10] == ' ' or s[10] == 'T'):
+            return s[:19]
+        return s
+    except Exception:
+        return ''
+
+
 def oa_notify_order_end(order_id=None, amount=None, when=None, openid='', phone='', unionid='', site=''):
     """[S400-20260921] 订单结束 -> 发公众号模板消息【寄存结束 + 退款成功】。
     所有"结束订单"的路径共用这一个入口（用户自己结束取物 / 后台关单 / 离线自动结束 / 设备侧结束）。
@@ -4041,12 +4055,12 @@ def oa_notify_order_end(order_id=None, amount=None, when=None, openid='', phone=
         _oid = openid or (_o.get('openid') or '')
         _ph = phone or (_o.get('user_phone') or '')
         _uni = unionid or (_o.get('unionid') or '')
-        _t3 = str(when or datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        _t3 = _oa_tv(when) or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         _url = oa_tplmsg_h5_url()
         send_oa_template_message('oa_tplmsg_deposit_end', {
             'thing1': _site,
             'character_string7': str(_o.get('compartment_number') or ''),
-            'time2': str(_o.get('store_time') or ''),
+            'time2': _oa_tv(_o.get('store_time')),
             'time3': _t3,
             'amount4': '¥{:.2f}'.format(_dep),
         }, openid=_oid, phone=_ph, unionid=_uni, url=_url)

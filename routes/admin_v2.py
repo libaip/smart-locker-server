@@ -1338,7 +1338,7 @@ def admin_order_close():
         # [S399-20260921] 公众号模板消息·寄存结束 + 退款成功（后台关单这条路原来没接）。
         #   故意放在上面 if ntf_openid 之外：公众号用户没有小程序 openid，放里面会被整段跳过。
         try:
-            from helpers import send_oa_template_message, oa_tplmsg_h5_url
+            from helpers import send_oa_template_message, oa_tplmsg_h5_url, _oa_tv
             _tpl_site = ''
             try:
                 _c3 = conn.cursor(cursor_factory=RealDictCursor)
@@ -1356,14 +1356,14 @@ def admin_order_close():
             send_oa_template_message('oa_tplmsg_deposit_end', {
                 'thing1': _tpl_site or '智能寄存柜',
                 'character_string7': str(order_dict.get('compartment_number') or ''),
-                'time2': str(order_dict.get('store_time') or ''),
-                'time3': str(now),
+                'time2': _oa_tv(order_dict.get('store_time')),
+                'time3': _oa_tv(now),
                 'amount4': '¥{:.2f}'.format(_dep),
             }, **_tpl_kw)
             if _dep > 0:
                 send_oa_template_message('oa_tplmsg_refund_ok', {
                     'amount7': '¥{:.2f}'.format(_dep),
-                    'time10': str(now),
+                    'time10': _oa_tv(now),
                 }, **_tpl_kw)
         except Exception as _tpl_e:
             logger.warning('[S399] 后台关单模板消息失败: %s', _tpl_e)

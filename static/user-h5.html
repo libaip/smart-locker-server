@@ -82,6 +82,24 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
 .tabs{display:flex;background:#fff;border-bottom:1px solid #f0f0f0}
 .tabs div{flex:1;text-align:center;padding:12px 0;font-size:14px;color:#666;cursor:pointer}
 .tabs div.on{color:#5ec9b4;border-bottom:2px solid #5ec9b4;font-weight:600}
+/* ===== 投诉页：照小程序 pages/complaint/complaint.wxss（rpx×0.5=px） ===== */
+.hero{padding:18px 20px 0}
+.hero-title{display:block;font-size:17px;font-weight:600;color:#1a1a1a;margin-bottom:6px}
+.hero-desc{display:block;font-size:13px;color:#969799;line-height:1.6}
+.card{background:#fff;border-radius:12px;margin:12px 16px;padding:16px;box-shadow:0 1px 6px rgba(0,0,0,.05)}
+.card-title{display:block;font-size:15px;font-weight:600;color:#1a1a1a;margin-bottom:6px}
+.form-item{display:flex;align-items:center;padding:10px 0;border-bottom:1px solid #f5f5f5}
+.form-item:last-child{border-bottom:0}
+.form-item.column{display:block}
+.form-label{width:88px;flex:0 0 auto;font-size:14px;color:#333}
+.form-input,.form-select{flex:1;min-width:0;font-size:14px;border:0;outline:none;background:transparent;color:#333}
+.form-select{appearance:none;-webkit-appearance:none;width:100%;padding:2px 18px 2px 0;text-align:left}
+.select-wrap{flex:1;min-width:0;position:relative}
+.select-wrap::after{content:'▾';position:absolute;right:2px;top:50%;transform:translateY(-50%);color:#c8c9cc;font-size:14px;pointer-events:none}
+.form-textarea{width:100%;height:100px;background:#f7f8fa;border-radius:8px;padding:10px;font-size:14px;border:0;outline:none;font-family:inherit;margin-top:8px;resize:none}
+.char-count{display:block;text-align:right;font-size:12px;color:#c8c9cc;margin-top:4px}
+.btn-submit{display:block;width:calc(100% - 32px);margin:20px 16px 30px;padding:14px 0;background:#5ec9b4;color:#fff;border:0;border-radius:24px;font-size:16px;font-weight:600;cursor:pointer}
+.btn-submit:disabled{opacity:.6}
 .rules-content{padding:20px 16px}
 .rules-title{font-size:18px;font-weight:600;color:#333;margin-bottom:16px;display:block}
 .rules-text{font-size:14px;color:#666;line-height:2;display:block}
@@ -132,7 +150,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
         </div>
       </div>
       <div class="list-section">
-        <div class="list-item" @click="page='complaint'">
+        <div class="list-item" @click="goComplaint()">
           <div class="list-icon">💬</div><span class="label">投诉反馈</span><span class="arrow">›</span>
         </div>
         <div class="list-item" @click="page='service'">
@@ -143,7 +161,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
     </div>
     <div class="floating">
       <div class="float-btn" @click="page='service'"><div class="float-icon robot">📞</div><span class="float-label">联系客服</span></div>
-      <div class="float-btn" @click="page='complaint'"><div class="float-icon complaint">💬</div><span class="float-label">投诉商家</span></div>
+      <div class="float-btn" @click="goComplaint()"><div class="float-icon complaint">💬</div><span class="float-label">投诉商家</span></div>
     </div>
   </template>
 
@@ -248,15 +266,45 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
     </div>
   </template>
 
-  <!-- ================= 投诉 ================= -->
+  <!-- ============ 投诉商家（照小程序 pages/complaint：联系电话 + 扣费订单号 + 描述） ============ -->
   <template v-if="page==='complaint'">
-    <div class="header white"><span class="back" @click="page='main'">‹</span><span class="title black">投诉反馈</span></div>
-    <div class="wrap">
-      <textarea v-model="complaint.content" placeholder="请描述您遇到的问题..."
-        style="width:100%;height:120px;background:#f5f5f5;border-radius:10px;padding:12px;font-size:14px;border:0;outline:none;font-family:inherit"></textarea>
-      <input v-model="complaint.phone" placeholder="请输入手机号"
-        style="width:100%;margin-top:10px;background:#f5f5f5;border-radius:10px;padding:12px;font-size:14px;border:0;outline:none">
-      <button class="btn-main" style="margin-top:16px" :disabled="!complaint.content" @click="submitComplaint()">提交</button>
+    <div class="header white"><span class="back" @click="page='main'">‹</span><span class="title black">投诉商家</span></div>
+    <div v-if="!complaintDone">
+      <div class="hero">
+        <span class="hero-title">非常抱歉给您带来不便</span>
+        <span class="hero-desc">我们重视每一位用户体验，请填写信息帮助我们明确问题。</span>
+      </div>
+      <div class="card">
+        <span class="card-title">投诉人信息</span>
+        <div class="form-item">
+          <span class="form-label">联系电话</span>
+          <input class="form-input" type="tel" inputmode="numeric" maxlength="11" v-model="complaint.phone" placeholder="请输入联系电话">
+        </div>
+      </div>
+      <div class="card">
+        <span class="card-title">投诉内容</span>
+        <div class="form-item">
+          <span class="form-label">扣费订单号</span>
+          <div class="select-wrap">
+            <select class="form-select" v-model="complaint.orderNo">
+              <option value="">请选择</option>
+              <option v-for="o in complaintOrders" :key="o.order_no" :value="o.order_no">{{ o.order_no }}（{{ o.cabinet_name || o.location_name || '未知网点' }}）</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-item column">
+          <span class="form-label">投诉描述</span>
+          <textarea class="form-textarea" maxlength="140" v-model="complaint.content" placeholder="请输入投诉内容"></textarea>
+          <span class="char-count">{{ (complaint.content || '').length }}/140</span>
+        </div>
+      </div>
+      <button class="btn-submit" :disabled="submittingComplaint" @click="submitComplaint()">{{ submittingComplaint ? '提交中...' : '提交' }}</button>
+    </div>
+    <div v-else class="hint" style="padding-top:56px">
+      <div style="font-size:48px">✅</div>
+      <div style="font-size:17px;font-weight:600;color:#1a1a1a;margin:12px 0 6px">投诉已提交</div>
+      我们会尽快处理您的投诉
+      <div><span @click="page='main'" style="display:inline-block;margin-top:22px;padding:12px 40px;background:#5ec9b4;color:#fff;border-radius:22px;cursor:pointer">返回</span></div>
     </div>
   </template>
 
@@ -315,7 +363,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
       withdrawals: [],
       withdrawAmount: '', showWithdrawSuccess: false, lastWithdrawAmount: '0.00',
       withdrawing: false, withdrawBtnText: '立即提现',
-      complaint: { content: '', phone: '' },
+      complaint: { content: '', phone: '', orderNo: '' },
+      complaintOrders: [], complaintDone: false, submittingComplaint: false,
       servicePhone: '4006981080',
       toast: '',
       statusMap: { 0: '审核中', 1: '审核通过', 2: '已到账', 3: '审核驳回', 4: '退款失败' }
@@ -358,6 +407,27 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
       goWallet: function () { this.page = 'wallet'; this.loadUserData(); },
       goOrders: function () { this.page = 'orders'; this.loadOrders(); },
       goTransactions: function () { this.page = 'transactions'; this.loadTransactions(); },
+      goComplaint: function () {
+        // 照小程序：进页面就带出「联系电话」和可选的「扣费订单号」
+        this.page = 'complaint';
+        this.complaintDone = false;
+        this.loadComplaintOrders();
+      },
+      loadComplaintOrders: function () {
+        if (!this.openid) { return; }
+        var th = this;
+        this.api('/api/user/orders' + this.qs()).then(function (d) {
+          var l = (d && d.data) || [];
+          // 照小程序：只列已完成(status=3)的订单；截取最近 20 条
+          th.complaintOrders = l.filter(function (o) { return o.status == 3; }).slice(0, 20);
+          // openid 查不到手机号，但订单里有 user_phone —— 用它把手机号自动匹配上
+          if (!th.complaint.phone) {
+            for (var i = 0; i < l.length; i++) {
+              if (l[i].user_phone) { th.complaint.phone = l[i].user_phone; break; }
+            }
+          }
+        }).catch(function () {});
+      },
       goWithdraw: function () {
         // 照小程序：提现金额固定 = 全部余额，用户不能手输
         this.loadUserData();
@@ -415,15 +485,32 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
         }).catch(function () {});
       },
       submitComplaint: function () {
-        if (!this.complaint.content) { return; }
+        var content = (this.complaint.content || '').trim();
+        var phone = (this.complaint.phone || '').replace(/\s|-/g, '');
+        if (!content) { this.tip('请填写投诉描述'); return; }
+        if (!phone) { this.tip('请填写联系电话'); return; }
+        if (this.submittingComplaint) { return; }
         var th = this;
+        this.submittingComplaint = true;
+        // 照小程序 api.submitComplaint：type/content/order_no/user_phone/openid
+        // 后端 create_complaint 要求 user_phone 非空；_auto_process_self_complaint 只按 order_no 退款
         this.api('/api/complaints', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone: this.complaint.phone || '', openid: this.openid, content: this.complaint.content, type: 'self' })
+          body: JSON.stringify({
+            type: 'self',
+            content: content,
+            order_no: this.complaint.orderNo || '',
+            user_phone: phone,
+            phone: phone,
+            openid: this.openid
+          })
         }).then(function (d) {
-          if (d && (d.code === 0 || d.code === 200)) { th.tip('投诉已提交'); th.page = 'main'; }
-          else { th.tip((d && d.message) || '提交失败'); }
-        }).catch(function () { th.tip('提交失败'); });
+          th.submittingComplaint = false;
+          if (d && (d.code === 0 || d.code === 200)) {
+            th.complaintDone = true;
+            th.complaint = { content: '', phone: phone, orderNo: '' };
+          } else { th.tip((d && d.message) || '提交失败'); }
+        }).catch(function () { th.submittingComplaint = false; th.tip('提交失败'); });
       },
       orderStatusText: function (o) { return o.status == 2 ? '存包中' : '已完成'; }
     }

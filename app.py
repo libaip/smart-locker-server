@@ -1066,7 +1066,8 @@ def go_with_expiry():
         #   卡片链接 d= 空 -> 一发出来就被判过期。改成允许空 d（签名照样要过）。
         if _ts.isdigit() and _s:
             _want = _hmac.new(_SK.encode(), ('%s|%s' % (_d, _ts)).encode(), _hl.sha256).hexdigest()[:16]
-            _ok = _hmac.compare_digest(_want, _s) and (0 <= int(_t.time()) - int(_ts) <= 600)
+            # [S393] 原来 600 秒；卡片一直躺在对话框里，用户过一会儿再点就过期了 -> 放宽到 7 天
+        _ok = _hmac.compare_digest(_want, _s) and (0 <= int(_t.time()) - int(_ts) <= 604800)
     except Exception:
         _ok = False
 

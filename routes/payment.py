@@ -381,18 +381,22 @@ def pay_notify():
                     _SEND_STORAGE_SUCCESS_NOTIFY = False
                     if _SEND_STORAGE_SUCCESS_NOTIFY:
                         send_wx_subscribe_message(openid, _wx_tpl('subscribe_deposit', 'mp', 'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk'), subscribe_data, phone=order.get('user_phone'), page='pages/mine/mine', unionid=_pay_unionid)
-                    # [S385] 公众号模板消息·寄存成功（关注即可收，不需要订阅；点进去就是 H5 个人中心）
-                    try:
-                        from helpers import send_oa_template_message, oa_tplmsg_h5_url
-                        send_oa_template_message('oa_tplmsg_deposit_ok', {
-                            'thing8': location_name,
-                            'character_string7': str(order.get('compartment_number') or door_label or ''),
-                            'amount9': str(order.get('deposit_amount')) + '元',
-                            'time1': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                        }, openid=(order.get('openid') or ''), phone=(order.get('user_phone') or ''),
-                           unionid=(_pay_unionid or ''), url=oa_tplmsg_h5_url())
-                    except Exception as _tpl_e:
-                        logger.warning('[S385] 寄存成功模板消息失败: %s', _tpl_e)
+                # [S393-20260921] 公众号模板消息·寄存成功 —— 必须放在下面那个
+                #   `if openid and openid.startswith(mp_openid_prefix())` 【外面】：
+                #   公众号用户根本没有小程序 openid，放里面会被整段跳过
+                #   （2026-09-21 01:35 生产实例：用户付款成功却没收到寄存成功通知）。
+                try:
+                    from helpers import send_oa_template_message, oa_tplmsg_h5_url
+                    _tpl_site = ((_open_lock_info.get('location_name') if _open_lock_info else '') or '') or '智能寄存柜'
+                    send_oa_template_message('oa_tplmsg_deposit_ok', {
+                        'thing8': _tpl_site,
+                        'character_string7': str(order.get('compartment_number') or ''),
+                        'amount9': str(order.get('deposit_amount')) + '元',
+                        'time1': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    }, openid=(order.get('openid') or ''), phone=(order.get('user_phone') or ''),
+                       unionid=(_pay_unionid or ''), url=oa_tplmsg_h5_url())
+                except Exception as _tpl_e:
+                    logger.warning('[S393] 寄存成功模板消息失败: %s', _tpl_e)
             except Exception as e:
                 logger.error(f'[支付回调发送订阅消息失败] {e}')
         

@@ -344,7 +344,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
   // ===== 身份：全程按【openid】认人（跟小程序一个道理），不碰手机号 =====
   //   后端 /user/balance、/user/orders、/user/wallet/transactions、/user/wallet/withdrawals、
   //   /user/withdraw、/user/info 全都支持 openid 认人；其中交易明细/提现记录【必须】传 openid。
-  var OPENID = q('openid') || ls('openid') || '';
+  // [S393-20260921] 只认 URL 上的 openid，不再信 localStorage 里缓存的：
+  //   换了公众号之后，缓存里还是【旧公众号】的 openid，用它查订单/余额会查不到或查到别人，
+  //   表现就是"个人中心看不到进行中的订单"（2026-09-21 生产实例）。
+  //   没有 openid 时下面会自动走一次网页授权，回来后 URL 上就带上了。
+  var OPENID = q('openid') || '';
   // 昵称：微信 OAuth 回跳时带在 URL 上的 wechat_name（昵称里生僻字会被微信变成 ？？？，那就当没有）
   var NICK = q('wechat_name') || ls('locker_wx_name') || '';
   if (/^[?？\s]+$/.test(NICK)) { NICK = ''; }

@@ -273,8 +273,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
     <div class="header"><span class="title">个人中心</span></div>
     <div class="hint">
       还没识别到你的账号。<br><br>
-      请先扫描柜机上的二维码 <b>存一次包</b>（或从公众号「存包」菜单进入），<br>
-      再回到这里就能看到你的订单和余额了。<br><br>
+      请从公众号菜单 <b>退款&amp;更多 → 个人中心</b> 打开本页（会先让你点一下"允许"授权），<br>
+      或者先扫描柜机上的二维码 <b>存一次包</b>。<br><br>
       <a href="/store" style="display:inline-block;margin-top:8px;padding:12px 36px;background:#5ec9b4;color:#fff;border-radius:22px;text-decoration:none">去存包</a>
     </div>
   </template>
@@ -288,17 +288,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
   function q(k) { try { var m = location.search.match(new RegExp('[?&]' + k + '=([^&]*)')); return m ? decodeURIComponent(m[1]) : ''; } catch (e) { return ''; } }
   function ls(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
 
-  // ===== 真实身份：URL 参数 → localStorage（存包页会写进去）=====
-  var PHONE = q('phone') || ls('locker_saved_phone') || ls('userPhone') || '';
+  // ===== 身份：全程按【openid】认人（跟小程序一个道理），不碰手机号 =====
+  //   后端 /user/balance、/user/orders、/user/wallet/transactions、/user/wallet/withdrawals、
+  //   /user/withdraw、/user/info 全都支持 openid 认人；其中交易明细/提现记录【必须】传 openid。
   var OPENID = q('openid') || ls('openid') || '';
   var NICK = ls('locker_wx_name') || '';
+  if (OPENID) { try { localStorage.setItem('openid', OPENID); } catch (e) {} }
 
   new Vue({
     el: '#app',
     data: {
       page: (location.search.match(/[?&]page=([a-z]+)/i) || [])[1] || 'main',
-      phone: PHONE,
       openid: OPENID,
+      phone: '',
       nickname: NICK,
       avatarUrl: '',
       wallet: { balance: '0.00' },
@@ -307,26 +309,32 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
       transactions: [], transFilter: 'all',
       withdrawals: [],
       withdrawAmount: '', showWithdrawSuccess: false, lastWithdrawAmount: '0.00',
-      complaint: { content: '', phone: PHONE },
+      complaint: { content: '', phone: '' },
       servicePhone: '4006981080',
       toast: '',
       statusMap: { 0: '审核中', 1: '审核通过', 2: '已到账', 3: '审核驳回', 4: '退款失败' }
     },
     mounted: function () {
-      if (!this.phone && !this.openid) { this.page = 'noidentity'; return; }
-      this.loadUserData();
-      this.loadOrderCount();
+      // 没有 openid -> 自动做一次微信网页授权（用户点一下"允许"），之后全程只用 openid
+      if (!this.openid) { this.autoOAuth(); return; }
+      this.start();
     },
     methods: {
       tip: function (m) { var t = this; this.toast = m; setTimeout(function () { t.toast = ''; }, 1800); },
       api: function (u, o) { return fetch(u, o).then(function (r) { return r.json(); }); },
-      qs: function () {
-        var a = [];
-        if (this.phone) a.push('phone=' + encodeURIComponent(this.phone));
-        if (this.openid) a.push('openid=' + encodeURIComponent(this.openid));
-        return a.length ? ('?' + a.join('&')) : '';
+      autoOAuth: function () {
+        // 只试一次，避免反复跳
+        var tried = '';
+        try { tried = sessionStorage.getItem('locker_oauth_tried') || ''; } catch (e) {}
+        if (tried) { this.page = 'noidentity'; return; }
+        try { sessionStorage.setItem('locker_oauth_tried', '1'); } catch (e) {}
+        location.href = '/api/wx/oauth?redirect_uri=' + encodeURIComponent(location.href);
       },
+      start: function () { this.loadUserData(); this.loadOrderCount(); },
+      // 所有查询统一只带 openid
+      qs: function () { return this.openid ? ('?openid=' + encodeURIComponent(this.openid)) : ''; },
       loadUserData: function () {
+        if (!this.openid) { return; }
         var th = this;
         this.api('/api/user/balance' + this.qs()).then(function (d) {
           var x = d && (d.data || d);
@@ -334,9 +342,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
         }).catch(function () {});
       },
       loadOrderCount: function () {
-        if (!this.phone) return;
+        if (!this.openid) { return; }
         var th = this;
-        this.api('/api/user/orders?phone=' + encodeURIComponent(this.phone)).then(function (d) {
+        this.api('/api/user/orders' + this.qs()).then(function (d) {
           var l = (d && d.data) || [];
           th.orderCount = l.filter(function (o) { return o.status == 2; }).length;
         }).catch(function () {});
@@ -347,17 +355,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
       goWithdraw: function () { this.page = 'withdraw'; this.withdrawAmount = ''; },
       goWithdrawals: function () { this.page = 'withdrawals'; this.loadWithdrawals(); },
       loadOrders: function () {
-        if (!this.phone) { this.tip('没有手机号，先存一次包'); return; }
+        if (!this.openid) { this.tip('还没识别到账号'); return; }
         var th = this;
-        this.api('/api/user/orders?phone=' + encodeURIComponent(this.phone)).then(function (d) {
+        this.api('/api/user/orders' + this.qs()).then(function (d) {
           var l = (d && d.data) || [];
           th.orders = (th.orderTab === 'active') ? l.filter(function (o) { return o.status == 2; })
                                                  : l.filter(function (o) { return o.status >= 3; });
         }).catch(function () {});
       },
       loadTransactions: function () {
-        if (!this.phone) return;
-        var th = this, u = '/api/user/wallet/transactions?phone=' + encodeURIComponent(this.phone);
+        if (!this.openid) { return; }
+        var th = this, u = '/api/user/wallet/transactions' + this.qs();
         if (this.transFilter !== 'all') { u += '&type=' + this.transFilter; }
         this.api(u).then(function (d) {
           var x = (d && d.data) || {};
@@ -365,9 +373,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
         }).catch(function () {});
       },
       loadWithdrawals: function () {
-        if (!this.phone) return;
+        if (!this.openid) { return; }
         var th = this;
-        this.api('/api/user/wallet/withdrawals?phone=' + encodeURIComponent(this.phone)).then(function (d) {
+        this.api('/api/user/wallet/withdrawals' + this.qs()).then(function (d) {
           th.withdrawals = (d && d.data) || [];
         }).catch(function () {});
       },
@@ -377,7 +385,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
         var th = this;
         this.api('/api/user/withdraw', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone: this.phone, amount: amt, openid: this.openid })
+          body: JSON.stringify({ openid: this.openid, amount: amt })
         }).then(function (d) {
           if (d && (d.code === 0 || d.code === 200)) {
             th.lastWithdrawAmount = th.withdrawAmount; th.showWithdrawSuccess = true; th.loadUserData();
@@ -395,7 +403,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
         var th = this;
         this.api('/api/complaints', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone: this.complaint.phone || this.phone, content: this.complaint.content, type: 'self' })
+          body: JSON.stringify({ phone: this.complaint.phone || '', openid: this.openid, content: this.complaint.content, type: 'self' })
         }).then(function (d) {
           if (d && (d.code === 0 || d.code === 200)) { th.tip('投诉已提交'); th.page = 'main'; }
           else { th.tip((d && d.message) || '提交失败'); }

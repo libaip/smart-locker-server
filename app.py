@@ -690,6 +690,13 @@ def store_page():
         _entry_mode = _get_entry_mode()
     except Exception:
         _entry_mode = 'mp'
+    # [S392-20260921] 没有柜机号、也没有 cabinet_id（例如从公众号菜单「存包」直接进来）：
+    #   下面查柜体那段有个写死的兜底 `WHERE c.id=8`，而 8 号柜并不存在 ->
+    #   用户填完手机号点"下一步"才报"暂无可用柜格"（2026-09-21 01:29 生产实例）。
+    #   纯公众号模式下直接请他扫柜机上的二维码（re-scan.html 会自动调起微信扫码）。
+    if _entry_mode == 'oa' and not device and not (request.args.get('cabinet_id') or ''):
+        logger.info('[S392] oa 模式无柜机号，引导扫码 device=%r cabinet_id=%r', device, request.args.get('cabinet_id'))
+        return redirect('/static/re-scan.html?from=menu', code=302)
     # [S347-模式④] 微信里扫 → 纯静态提示页「请用支付宝扫码使用」（不查库、不用 JS-SDK）
     #   非微信 UA（支付宝/浏览器）保持原有行为不变，走下面的 H5 页面
     if _entry_mode == 'alipay' and 'MicroMessenger' in request.headers.get('User-Agent', ''):

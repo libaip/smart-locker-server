@@ -32,6 +32,16 @@
   <button class="btn ghost" id="helpBtn">看不到码？点这里</button>
   <div class="st" id="st"></div>
   <div class="tip">如果扫码没反应，也可以打开微信「扫一扫」，对准柜机屏幕上的二维码即可。</div>
+<script>
+/* [S392] 从公众号菜单「存包」进来的（不是链接过期），换一套文案 */
+(function(){try{
+  if(location.search.indexOf("from=menu")<0)return;
+  document.title="请扫描柜机二维码";
+  var h=document.querySelector("h1"); if(h)h.textContent="请扫描柜机二维码";
+  var i=document.querySelector(".ico"); if(i)i.textContent="\ud83d\udcf7";
+  var p=document.querySelector("p"); if(p)p.innerHTML="存包需要先扫描<b>柜机上的二维码</b>，扫完就直接进入存包页。";
+}catch(e){}})();
+</script>
 </div>
 
 <script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>

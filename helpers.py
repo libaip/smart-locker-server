@@ -1611,6 +1611,20 @@ def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='',
       于是"新 mp_openid 查不到"时返回 user_id=0，交给调用方新建全新用户。
       默认 False -> 现有调用（含 H5、老小程序）行为一字不变。
     """
+    # [S406-20260921] 新公众号身份隔离（收口，所有调用点统一）：
+    #   openid 属于【当前启用的公众号】前缀时，丢掉 phone / unionid 兜底键 —— 只按 openid 认人。
+    #   否则会把新公众号用户兜到老账号上（生产实例：订单 135729 的 user_id 被兜到老账号 97336，
+    #   导致"存包认老账号、看钱包按新 openid 查不到"）。新公众号用户 = 全新用户。
+    try:
+        from wx_config import oa_openid_prefix as _oap406
+        _p406 = _oap406() or ''
+        if _p406 and openid and str(openid).startswith(_p406):
+            if phone or unionid:
+                logger.info('[S406] 新公众号身份隔离：丢弃兜底键(phone/unionid)，只按 openid=%s...', str(openid)[:10])
+            phone = ''
+            unionid = ''
+    except Exception:
+        pass
     if strict_openid:
         # [S320] 只承认"新小程序自己的 mp_openid"
         _np = new_mp_openid_prefix()

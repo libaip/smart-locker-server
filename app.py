@@ -1038,6 +1038,37 @@ def go_with_expiry():
     return _resp
 
 
+# [S373] 公众号图文卡片的配图（动态生成，带中文）
+@app.route('/img/card-banner.png', methods=['GET'])
+def card_banner_img():
+    from flask import Response as _Resp
+    try:
+        from cardimg import banner as _banner
+        _site = request.args.get('s', '')
+        _data = _banner(site=_site)
+        _r = _Resp(_data, mimetype='image/jpeg')
+    except Exception as _e:
+        logger.error('[S373] 生成卡片大图失败: %s', _e)
+        return redirect('/static/locker-avatar.jpg', code=302)
+    _r.headers['Cache-Control'] = 'public, max-age=86400'
+    return _r
+
+
+@app.route('/img/card-icon.png', methods=['GET'])
+def card_icon_img():
+    from flask import Response as _Resp
+    try:
+        from cardimg import icon as _icon
+        _ch = (request.args.get('c') or '存')[:1]
+        _data = _icon(_ch)
+        _r = _Resp(_data, mimetype='image/png')
+    except Exception as _e:
+        logger.error('[S373] 生成卡片图标失败: %s', _e)
+        return redirect('/static/locker-avatar.jpg', code=302)
+    _r.headers['Cache-Control'] = 'public, max-age=86400'
+    return _r
+
+
 @app.route('/api/wx/jsapi-signature', methods=['GET'])
 def wx_jsapi_signature():
     """为H5页面提供微信JS-SDK签名,用于wx-open-launch-weapp开放标签"""

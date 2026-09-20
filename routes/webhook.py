@@ -263,10 +263,50 @@ def wechat_message():
             _base = _wx_h5b() or 'https://locker.cqdyxl.com'
             return '%s/go?d=%s&t=%d&s=%s' % (_base, _dev, _now, _sig)
 
+        def _multi_news(arts):
+            """多条图文；arts=[(标题, 描述, 图片URL, 链接URL), ...]"""
+            _x = ('<xml><ToUserName><![CDATA[' + from_user + ']]></ToUserName>'
+                  '<FromUserName><![CDATA[' + to_user + ']]></FromUserName>'
+                  '<CreateTime>' + ts + '</CreateTime>'
+                  '<MsgType><![CDATA[news]]></MsgType>'
+                  '<ArticleCount>' + str(len(arts)) + '</ArticleCount><Articles>')
+            for _t, _d, _p, _u in arts:
+                _x += ('<item><Title><![CDATA[' + _t + ']]></Title>'
+                       '<Description><![CDATA[' + _d + ']]></Description>'
+                       '<PicUrl><![CDATA[' + _p + ']]></PicUrl>'
+                       '<Url><![CDATA[' + _u + ']]></Url></item>')
+            return _x + '</Articles></xml>'
+
+        def _site_name(scene):
+            """根据带参二维码的 scene 查出网点名（图里要显示）"""
+            try:
+                _s = str(scene or '')
+                _conn = get_db()
+                _cur = _conn.cursor()
+                if _s.startswith('c') and _s[1:].isdigit():
+                    _cur.execute('SELECT l.name AS n FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.id=%s', (_s[1:],))
+                elif _s.startswith('d') and _s[1:]:
+                    _cur.execute('SELECT l.name AS n FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.mainboard_device_id=%s', (_s[1:],))
+                else:
+                    return ''
+                _r = _cur.fetchone()
+                return (_r['n'] if _r and _r.get('n') else '') or ''
+            except Exception as _e:
+                logger.warning('[S373] 查网点名失败: %s', _e)
+                return ''
+
         def _news_for_scene(scene):
-            _url = _store_card_url(scene)
-            _pic = (_wx_h5b() or 'https://locker.cqdyxl.com') + '/static/locker-avatar.jpg'
-            return _reply_news('存包', '点击进入存包页面（10分钟内有效，过期请重新扫码）', _pic, _url)
+            import urllib.parse as _up
+            _base = _wx_h5b() or 'https://locker.cqdyxl.com'
+            _store = _store_card_url(scene)
+            _pic = _base + '/img/card-banner.png?s=' + _up.quote(_site_name(scene))
+            _i_store = _base + '/img/card-icon.png?c=' + _up.quote('存')
+            _i_fetch = _base + '/img/card-icon.png?c=' + _up.quote('取')
+            return _multi_news([
+                ('自助存取包', '点击下方「存包」开始（10分钟内有效）', _pic, _store),
+                ('STORE | 点击->存包', '', _i_store, _store),
+                ('FETCH | 点击->取包', '', _i_fetch, _base + '/retrieve'),
+            ])
 
         if msg_type == 'event':
             if event == 'subscribe':

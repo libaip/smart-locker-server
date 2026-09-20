@@ -296,16 +296,16 @@ def wechat_message():
                 return ''
 
         def _news_for_scene(scene):
+            # [S375] 老板要求：大图显示【网点名】；下面只留一条「存」；不要「取」。
             import urllib.parse as _up
             _base = _wx_h5b() or 'https://locker.cqdyxl.com'
             _store = _store_card_url(scene)
-            _pic = _base + '/img/card-banner.png?s=' + _up.quote(_site_name(scene))
+            _site = _site_name(scene)
+            _pic = _base + '/img/card-banner.png?s=' + _up.quote(_site)
             _i_store = _base + '/img/card-icon.png?c=' + _up.quote('存')
-            _i_fetch = _base + '/img/card-icon.png?c=' + _up.quote('取')
             return _multi_news([
-                ('自助存取包', '点击下方「存包」开始（10分钟内有效）', _pic, _store),
-                ('STORE | 点击->存包', '', _i_store, _store),
-                ('FETCH | 点击->取包', '', _i_fetch, _base + '/retrieve'),
+                (_site or '自助存取包', '点击下方「存」进入存包（10分钟内有效）', _pic, _store),
+                ('存', '', _i_store, _store),
             ])
 
         if msg_type == 'event':

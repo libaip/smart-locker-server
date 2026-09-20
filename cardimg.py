@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-"""S373：公众号图文卡片的配图（动态生成，带中文）。
+"""S375：公众号图文卡片的配图（动态生成，带中文）。
 字体：static/fonts/cjk.ttc（文泉驿正黑，apt 只下载解包取得，未装系统包）
+
+改动（老板要求）：
+  · 大图主标题改成【网点名】（原来是"自助存取包"），字号自适应不溢出
+  · 网点名拿不到时才回落"自助存取包"
 """
 import io
 import os
@@ -19,13 +23,12 @@ def _font(size):
     return ImageFont.truetype(p, size)
 
 
-def _clean(s, n=16):
+def _clean(s, n=18):
     s = re.sub(r'[\x00-\x1f\x7f]', '', str(s or '')).strip()
     return s[:n]
 
 
 def _gradient(w, h, c1, c2):
-    """竖向渐变（按 1 像素宽的条生成再放大，避免逐像素慢）"""
     strip = Image.new('RGB', (1, h))
     px = strip.load()
     for y in range(h):
@@ -41,30 +44,41 @@ def _cache_put(key, data):
     return data
 
 
-def banner(site='', title='自助存取包', sub='点击下方 · 存包', w=900, h=500):
-    """首条图文的大图。返回 JPEG 字节。"""
-    site = _clean(site, 16)
-    key = ('b', site, title, sub, w, h)
+def banner(site='', sub='点击下方 · 存包', w=900, h=500):
+    """首条图文的大图：主标题=网点名（拿不到就用"自助存取包"）。返回 JPEG 字节。"""
+    site = _clean(site, 18)
+    main = site or '自助存取包'
+    key = ('b2', main, sub, w, h)
     if key in _CACHE:
         return _CACHE[key]
     im = _gradient(w, h, (48, 130, 255), (18, 82, 205))
     d = ImageDraw.Draw(im)
-    f1 = _font(84)
-    f2 = _font(44)
-    f3 = _font(38)
-    tw = d.textlength(title, font=f1)
-    d.text(((w - tw) / 2.0, int(h * 0.26)), title, font=f1, fill=(255, 255, 255))
-    sw = d.textlength(sub, font=f2)
-    d.text(((w - sw) / 2.0, int(h * 0.50)), sub, font=f2, fill=(226, 238, 255))
-    if site:
-        d.text((44, h - 84), site, font=f3, fill=(206, 224, 255))
+
+    # 主标题自适应字号
+    size = 100
+    while size > 40:
+        f1 = _font(size)
+        if d.textlength(main, font=f1) <= w - 90:
+            break
+        size -= 4
+    f1 = _font(size)
+    tb = d.textbbox((0, 0), main, font=f1)
+    tw = tb[2] - tb[0]
+    th = tb[3] - tb[1]
+    d.text(((w - tw) / 2.0 - tb[0], (h - th) / 2.0 - tb[1] - 40), main, font=f1, fill=(255, 255, 255))
+
+    if sub:
+        f2 = _font(44)
+        sw = d.textlength(sub, font=f2)
+        d.text(((w - sw) / 2.0, int(h * 0.68)), sub, font=f2, fill=(224, 236, 255))
+
     b = io.BytesIO()
     im.save(b, 'JPEG', quality=88)
     return _cache_put(key, b.getvalue())
 
 
 def icon(ch='存', w=200, h=200):
-    """次条的小缩略图（存/取）。返回 PNG 字节。"""
+    """次条的小缩略图。返回 PNG 字节。"""
     ch = (ch or '存')[:1]
     if ch not in ('存', '取'):
         ch = '存'

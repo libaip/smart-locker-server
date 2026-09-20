@@ -119,7 +119,7 @@ var t;
 setTimeout(function(){t=vant.Toast},500);
 new Vue({
 el:'#app',
-data:{page:'home',user:{phone:'155****2051',balance:'0.00'},wallet:{balance:'0.00'},orders:[],orderTab:'active',transactions:[],transFilter:'all',withdrawals:[],withdrawAmount:'',showWithdrawSuccess:false,lastWithdrawAmount:'0.00',complaint:{content:'',phone:''},servicePhone:'023-12345678',statusMap:{0:'审核中',1:'审核通过',2:'已到账',3:'审核驳回',4:'退款失败'}},
+data:{page:(function(){try{var m=(location.search.match(/[?&]page=([a-z]+)/i)||[])[1];return m||'home';}catch(e){return 'home';}})(),user:{phone:'155****2051',balance:'0.00'},wallet:{balance:'0.00'},orders:[],orderTab:'active',transactions:[],transFilter:'all',withdrawals:[],withdrawAmount:'',showWithdrawSuccess:false,lastWithdrawAmount:'0.00',complaint:{content:'',phone:''},servicePhone:'023-12345678',statusMap:{0:'审核中',1:'审核通过',2:'已到账',3:'审核驳回',4:'退款失败'}},
 mounted:function(){this.loadUserData()},
 methods:{
 loadUserData:function(){var p=this.user.phone;if(!p)return;var th=this;fetch('/api/user/balance?phone='+p).then(function(r){return r.json()}).then(function(d){if(d.data){th.wallet.balance=d.data.balance;th.user.balance=d.data.balance}}).catch(function(){})},

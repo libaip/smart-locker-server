@@ -303,9 +303,11 @@ def wechat_message():
             _site = _site_name(scene)
             _pic = _base + '/img/card-banner.png?s=' + _up.quote(_site)
             _i_store = _base + '/img/card-icon.png?c=' + _up.quote('存')
+            _i_fetch = _base + '/img/card-icon.png?c=' + _up.quote('取')
             return _multi_news([
                 (_site or '自助存取包', '点击下方「存」进入存包（10分钟内有效）', _pic, _store),
                 ('存', '', _i_store, _store),
+                ('取', '', _i_fetch, _base + '/retrieve'),
             ])
 
         if msg_type == 'event':

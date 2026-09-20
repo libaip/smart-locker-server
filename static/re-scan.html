@@ -40,6 +40,30 @@
   var h=document.querySelector("h1"); if(h)h.textContent="请扫描柜机二维码";
   var i=document.querySelector(".ico"); if(i)i.textContent="\ud83d\udcf7";
   var p=document.querySelector("p"); if(p)p.innerHTML="存包需要先扫描<b>柜机上的二维码</b>，扫完就直接进入存包页。";
+  /* [S398-B] 如果本机记着"上次那台柜机"（强制关注时的记录），就不让用户再扫一次，直接给按钮 */
+  try {
+    var ts = parseInt(localStorage.getItem("locker_last_ts") || "0", 10);
+    var dev = localStorage.getItem("locker_last_device") || "";
+    var cab = localStorage.getItem("locker_last_cabinet") || "";
+    var site = localStorage.getItem("locker_last_site") || "";
+    var fresh = ts && (Math.floor(Date.now() / 1000) - ts) < 86400;
+    if ((dev || cab) && fresh) {
+      var target = "/store?" + (dev ? ("device=" + encodeURIComponent(dev)) : ("cabinet_id=" + encodeURIComponent(cab)));
+      var scanBtn = document.getElementById("scanBtn");
+      if (scanBtn && scanBtn.parentNode) {
+        var go = document.createElement("a");
+        go.href = target;
+        go.textContent = "继续存包" + (site ? ("（" + site + "）") : "");
+        go.style.cssText = "display:block;width:100%;box-sizing:border-box;margin:0 0 12px;padding:15px;background:#43B581;color:#fff;border-radius:26px;font-size:17px;font-weight:700;text-decoration:none;text-align:center";
+        scanBtn.parentNode.insertBefore(go, scanBtn);
+        var h2 = document.querySelector("h1");
+        if (h2) { h2.textContent = "关注成功"; }
+        var p2 = document.querySelector("p");
+        if (p2) { p2.innerHTML = "你刚才扫的是 <b>" + (site || "这台柜机") + "</b>，点上面按钮直接继续存包。"; }
+        document.title = "继续存包";
+      }
+    }
+  } catch (e) {}
 }catch(e){}})();
 </script>
 </div>

@@ -2658,6 +2658,21 @@
                 if (_oaJumping) { return; }
                 _oaJumping = true;
                 try { sessionStorage.setItem(_FOLLOW_JUMPED_KEY, '1'); } catch (e) {}
+                // [S398-B] 关注完微信不会自动跳回 H5，卡片链接里也没有柜机号（关注事件不带场景）。
+                //   所以在跳走之前，把这台柜机记到本机 localStorage；回来时落地页据此给"继续存包"按钮。
+                try {
+                    var _ldDev = (typeof DI !== 'undefined' && DI && DI.indexOf('{') !== 0) ? String(DI) : '';
+                    var _ldCab = (typeof CI !== 'undefined' && CI && CI.indexOf('{') !== 0) ? String(CI) : '';
+                    if (_ldDev || _ldCab) {
+                        localStorage.setItem('locker_last_device', _ldDev);
+                        localStorage.setItem('locker_last_cabinet', _ldCab);
+                        try {
+                            localStorage.setItem('locker_last_site', (typeof s !== 'undefined' && s && s.site_name) ? String(s.site_name) : '');
+                        } catch (e2) {}
+                        localStorage.setItem('locker_last_ts', String(Math.floor(Date.now() / 1000)));
+                        console.log('[follow] 已记住柜机 device=' + _ldDev + ' cabinet=' + _ldCab);
+                    }
+                } catch (e3) {}
                 console.log('[follow] 自动跳转关注页...');
                 try { window.__oaGateText && window.__oaGateText('正在前往公众号关注页…'); } catch (e) {}
                 try { location.href = MP_PROFILE; } catch (e) {}

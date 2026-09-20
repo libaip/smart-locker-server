@@ -1055,7 +1055,9 @@ def go_with_expiry():
     _s = (request.args.get('s') or '').strip()
     _ok = False
     try:
-        if _d and _ts.isdigit() and _s:
+        # [S391] 原来要求 _d 非空；但"没扫带参二维码就关注"的用户场景值是空的，
+        #   卡片链接 d= 空 -> 一发出来就被判过期。改成允许空 d（签名照样要过）。
+        if _ts.isdigit() and _s:
             _want = _hmac.new(_SK.encode(), ('%s|%s' % (_d, _ts)).encode(), _hl.sha256).hexdigest()[:16]
             _ok = _hmac.compare_digest(_want, _s) and (0 <= int(_t.time()) - int(_ts) <= 600)
     except Exception:
@@ -1070,6 +1072,9 @@ def go_with_expiry():
             _base = ''
         if not _base:
             _base = 'https://locker.cqdyxl.com'
+        if not _d:
+            # [S391] 没有柜机号：直接给"扫柜机码"页（会自动调起微信扫码），而不是死路
+            return redirect('%s/static/re-scan.html' % _base, code=302)
         if _d.startswith('c') and _d[1:].isdigit():
             return redirect('%s/store?cabinet_id=%s&v=%d' % (_base, _d[1:], int(_t.time())), code=302)
         return redirect('%s/store?device=%s&v=%d' % (_base, _d, int(_t.time())), code=302)

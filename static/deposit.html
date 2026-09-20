@@ -365,6 +365,28 @@
 <script>window.__jweixinFallback=function(){if(typeof wx==="undefined"||!wx.config){var s=document.createElement("script");s.src="https://res2.wx.qq.com/open/js/jweixin-1.6.0.js";document.head.appendChild(s);}};setTimeout(__jweixinFallback,800);</script>
 </head>
 <body>
+<script>
+/* [S391] 纯公众号模式：先把"存包页"盖住，等关注检查出结果再决定露出还是跳关注页，
+   避免"先看到存包页 -> 又被弹回微信"的闪一下。非 oa 模式下这段什么也不做。 */
+(function () {
+  try {
+    if ("{oa_forced}" !== "1") { return; }
+    var ov = document.createElement('div');
+    ov.id = 'oaGate';
+    ov.style.cssText = 'position:fixed;left:0;top:0;right:0;bottom:0;background:#fff;z-index:99998;'
+      + 'display:flex;align-items:center;justify-content:center;flex-direction:column;color:#666;font-size:14px';
+    ov.innerHTML = '<div style="width:34px;height:34px;border:3px solid #eee;border-top-color:#43B581;'
+      + 'border-radius:50%;animation:oaspin .8s linear infinite"></div>'
+      + '<div id="oaGateText" style="margin-top:14px">正在进入存包…</div>'
+      + '<style>@keyframes oaspin{to{transform:rotate(360deg)}}</style>';
+    document.body.appendChild(ov);
+    window.__oaGate = function () { try { ov.style.display = 'none'; } catch (e) {} };
+    window.__oaGateText = function (t) { try { document.getElementById('oaGateText').textContent = t; } catch (e) {} };
+    /* 保险丝：3 秒后无论发生什么都不会再挡着 */
+    setTimeout(function () { try { ov.style.display = 'none'; } catch (e) {} }, 3000);
+  } catch (e) {}
+})();
+</script>
 <div class="container">
 
     <!-- ========== 首页 ========== -->
@@ -2614,7 +2636,7 @@
             } catch (e) {}
             if (!_oaPfx) { _oaPfx = (typeof _oaPrefix !== 'undefined' && _oaPrefix) ? String(_oaPrefix) : ''; }
             if (!_oaPfx) { _oaPfx = 'oLhbm2'; }
-            if (!_oid || _oid.indexOf(_oaPfx) !== 0) { console.log('[follow] 非微信环境或拿不到公众号openid, 不拦 (prefix=' + _oaPfx + ')'); return; }
+            if (!_oid || _oid.indexOf(_oaPfx) !== 0) { console.log('[follow] 非微信环境或拿不到公众号openid, 不拦 (prefix=' + _oaPfx + ')'); try { window.__oaGate && window.__oaGate(); } catch (e) {} return; }
             // [S367] 换成本公众号（重庆卓蓝时 wx9d559811f476d9d5）的 __biz。
             //   原来这里的 __biz 是老公众号的；本变量此前定义了却从未被使用（死代码）。
             //   现在启用了：未关注 -> 页面【自动跳转】到关注页，用户不需要长按识别二维码。
@@ -2629,6 +2651,7 @@
                 _oaJumping = true;
                 try { sessionStorage.setItem(_FOLLOW_JUMPED_KEY, '1'); } catch (e) {}
                 console.log('[follow] 自动跳转关注页...');
+                try { window.__oaGateText && window.__oaGateText('正在前往公众号关注页…'); } catch (e) {}
                 try { location.href = MP_PROFILE; } catch (e) {}
                 // 如果没跳走(被拦截/页面还在)，2.5 秒后自动试备选链接
                 setTimeout(function () {
@@ -2668,6 +2691,7 @@
                 console.log('[follow] 已放行:', reason || '');
             }
             function start() {
+                try { window.__oaGate && window.__oaGate(); } catch (e) {}
                 mask.style.display = 'flex';
                 timer = setInterval(function () {
                     fetch('/api/user/check-follow?openid=' + encodeURIComponent(_oid))
@@ -2692,6 +2716,7 @@
                   if (isFollow(d)) {
                       try { sessionStorage.removeItem(_FOLLOW_JUMPED_KEY); } catch (e) {}
                       console.log('[follow] 已关注, 不显示');
+                      try { window.__oaGate && window.__oaGate(); } catch (e) {}
                       return;
                   }
                   // [S367] 未关注：先【自动】跳到关注页；不再让用户长按识别
@@ -2706,7 +2731,7 @@
                   console.log('[follow] 已自动跳过一次, 显示兜底遮罩');
                   start();
               })
-              .catch(function (e) { console.log('[follow] 检查失败, 不拦', e); });
+              .catch(function (e) { console.log('[follow] 检查失败, 不拦', e); try { window.__oaGate && window.__oaGate(); } catch (e) {} });
         } catch (e) { console.log('[follow] 异常, 不拦', e); }
     })();
 })();

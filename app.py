@@ -1082,7 +1082,7 @@ def go_with_expiry():
             _base = 'https://locker.cqdyxl.com'
         if not _d:
             # [S391] 没有柜机号：直接给"扫柜机码"页（会自动调起微信扫码），而不是死路
-            return redirect('%s/static/re-scan.html' % _base, code=302)
+            return redirect('%s/static/re-scan.html?from=noscene' % _base, code=302)
         if _d.startswith('c') and _d[1:].isdigit():
             return redirect('%s/store?cabinet_id=%s&v=%d' % (_base, _d[1:], int(_t.time())), code=302)
         return redirect('%s/store?device=%s&v=%d' % (_base, _d, int(_t.time())), code=302)

@@ -35,7 +35,7 @@
 <script>
 /* [S392] 从公众号菜单「存包」进来的（不是链接过期），换一套文案 */
 (function(){try{
-  if(location.search.indexOf("from=menu")<0)return;
+  if(location.search.indexOf("from=")<0)return;
   document.title="请扫描柜机二维码";
   var h=document.querySelector("h1"); if(h)h.textContent="请扫描柜机二维码";
   var i=document.querySelector(".ico"); if(i)i.textContent="\ud83d\udcf7";

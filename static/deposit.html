@@ -1273,6 +1273,14 @@
     }
 
     function launchToMpProfile() {
+        // [S396] 纯公众号模式：不跳小程序，直接开 H5 个人中心
+        try {
+            if (typeof _oaForced !== 'undefined' && _oaForced) {
+                var _o = wxOpenid || (location.search.match(/[?&]openid=([^&]*)/) || [])[1] || '';
+                window.location.href = '/static/user-h5.html' + (_o ? ('?openid=' + encodeURIComponent(_o)) : '');
+                return;
+            }
+        } catch (e) {}
         // 跳转到小程序 我的页面，带当前用户的openid
         var _oid = wxOpenid || '';
         if (!_oid) {

@@ -644,6 +644,29 @@ def store_init():
                 logger.info(f'[store_init] 免押模式开门指令已发送: order={order_id}')
             except Exception as _se3:
                 logger.error(f'[store_init] 免押开门失败: {_se3}')
+            # [S386] 公众号模板消息·寄存成功（免押单不走支付回调，只能在这里发）
+            try:
+                from helpers import send_oa_template_message, oa_tplmsg_h5_url
+                _tpl_site = ''
+                try:
+                    _tl_conn = get_db()
+                    _tl_cur = _tl_conn.cursor()
+                    _tl_cur.execute('SELECT l.name FROM cabinets c JOIN locations l ON c.location_id = l.id WHERE c.id = %s', (cabinet_id,))
+                    _tl_row = _tl_cur.fetchone()
+                    _tl_conn.close()
+                    if _tl_row:
+                        _tpl_site = (_tl_row.get('name') if hasattr(_tl_row, 'get') else _tl_row[0]) or ''
+                except Exception:
+                    pass
+                send_oa_template_message('oa_tplmsg_deposit_ok', {
+                    'thing8': _tpl_site or '智能寄存柜',
+                    'character_string7': str(compartment_display or ''),
+                    'amount9': '0元',
+                    'time1': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                }, openid=(openid or ''), phone=(user_phone or ''), unionid=(unionid or ''),
+                   url=oa_tplmsg_h5_url())
+            except Exception as _tpl_e:
+                logger.warning('[S386] 免押寄存成功模板消息失败: %s', _tpl_e)
 
         return json_response({'order_id': order_id, 'order_no': order_no, 'access_code': access_code,
                               'slot_id': slot['id'], 'cabinet_id': cabinet_id, 'compartment_number': compartment_display, 'compartment_label': slot['slot_label'] if 'slot_label' in slot.keys() and slot['slot_label'] else '',

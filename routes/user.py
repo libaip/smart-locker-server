@@ -621,8 +621,22 @@ def store_init():
         if _free_use:
             deposit_amount = 0.0
 
-        _store_uid = _resolve_user(cursor, openid=openid, mp_openid=mp_openid, phone=user_phone,
-                                   unionid=unionid, strict_openid=_strict_new)
+        # [S405-20260921] 新公众号身份隔离：openid 属于"当前启用的公众号"时，
+        #   认人【只按 openid】——不拿手机号/unionid 兜底去认老账号。
+        #   否则会出现"存包时按手机号认到老账号、看钱包时按新 openid 查不到"的错位
+        #   （2026-09-21 生产实例：订单 135729 的 user_id 被兜到了老账号 97336，钱包显示 0）。
+        _iso401 = False
+        try:
+            from wx_config import oa_openid_prefix as _oa_pfx401
+            _p401 = _oa_pfx401() or ''
+            if _p401 and openid and str(openid).startswith(_p401):
+                _iso401 = True
+        except Exception:
+            _iso401 = False
+        _resolve_phone401 = '' if _iso401 else user_phone
+        _resolve_union401 = '' if _iso401 else unionid
+        _store_uid = _resolve_user(cursor, openid=openid, mp_openid=mp_openid, phone=_resolve_phone401,
+                                   unionid=_resolve_union401, strict_openid=_strict_new)
         cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, per_use_price, status, store_time, group_id, payment_channel_id, openid, unionid, mp_openid, user_id, free_use) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
                        (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, per_use_price, 2 if _free_use else 1, datetime.now(), group_id, payment_channel_id, openid, unionid, mp_openid, _store_uid, 1 if _free_use else 0))
         row = cursor.fetchone()

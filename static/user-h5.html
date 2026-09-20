@@ -63,6 +63,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
 .btn-withdraw,.btn-rule{padding:8px 24px;border-radius:20px;font-size:14px;text-align:center;cursor:pointer;border:0}
 .btn-withdraw{background:#fff;color:#5ec9b4;font-weight:500}
 .btn-rule{background:rgba(255,255,255,.2);color:#fff}
+/* ===== 提现页：照小程序 pages/withdraw/withdraw.wxss（rpx×0.5=px）金额固定=全部余额，不能手输 ===== */
+.withdraw-content{padding:50px 24px;text-align:center}
+.withdraw-label{font-size:18px;color:#333;margin-bottom:20px;font-weight:500}
+.withdraw-amount{font-size:60px;font-weight:bold;color:#333;margin-bottom:12px;word-break:break-all}
+.withdraw-available{font-size:13px;color:#999;margin-bottom:50px}
+.withdraw-available .hl{color:#F0B429}
+.btn-gold{display:block;width:100%;background:linear-gradient(135deg,#FAD36D,#F0B429);color:#fff;font-size:16px;font-weight:600;padding:14px;border-radius:26px;border:none;box-shadow:0 4px 16px rgba(240,180,41,.25);cursor:pointer}
+.btn-gold:disabled{opacity:.6}
+.withdraw-warning{background:#FFF8E1;border-radius:8px;padding:12px 16px;font-size:12px;color:#E6A700;margin-top:20px;text-align:left;line-height:1.5}
 /* 通用 */
 .cell{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:#fff;border-bottom:1px solid #f5f5f5;font-size:15px}
 .cell .v{color:#969799;font-size:14px}
@@ -175,16 +184,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
   <!-- ================= 提现 ================= -->
   <template v-if="page==='withdraw'">
     <div class="header white"><span class="back" @click="page='wallet'">‹</span><span class="title black">余额提现</span></div>
-    <div class="cell"><span>当前余额</span><span class="v">¥{{ wallet.balance }}</span></div>
-    <div class="cell"><span>手续费</span><span class="v">免费</span></div>
-    <div class="wrap">
-      <div style="display:flex;align-items:baseline;border-bottom:2px solid #5ec9b4;padding:10px 0">
-        <span style="font-size:26px;font-weight:700;margin-right:4px">¥</span>
-        <input type="number" step="0.01" v-model="withdrawAmount" placeholder="0.00"
-               style="flex:1;font-size:30px;border:0;outline:none;font-weight:500;background:transparent;width:100%">
-      </div>
-      <div style="text-align:right;padding:8px 0 4px"><span style="color:#5ec9b4;font-size:14px" @click="withdrawAmount=wallet.balance">全部提现</span></div>
-      <button class="btn-main" style="margin-top:12px" :disabled="!withdrawAmount||parseFloat(withdrawAmount)<=0" @click="doWithdraw()">提现</button>
+    <div class="withdraw-content">
+      <div class="withdraw-label">提现金额</div>
+      <div class="withdraw-amount">¥ {{ wallet.balance || '0.00' }}</div>
+      <div class="withdraw-available">可提现余额 ¥ <span class="hl">{{ wallet.balance || '0.00' }}</span></div>
+      <button class="btn-gold" :disabled="withdrawing || !(parseFloat(wallet.balance)>0)" @click="doWithdraw()">{{ withdrawBtnText }}</button>
+      <div class="withdraw-warning">⚠ 提现后0-3个工作日内到账</div>
     </div>
     <div v-if="showWithdrawSuccess" class="mask" @click="showWithdrawSuccess=false">
       <div class="modal" @click.stop>
@@ -309,6 +314,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
       transactions: [], transFilter: 'all',
       withdrawals: [],
       withdrawAmount: '', showWithdrawSuccess: false, lastWithdrawAmount: '0.00',
+      withdrawing: false, withdrawBtnText: '立即提现',
       complaint: { content: '', phone: '' },
       servicePhone: '4006981080',
       toast: '',
@@ -352,7 +358,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
       goWallet: function () { this.page = 'wallet'; this.loadUserData(); },
       goOrders: function () { this.page = 'orders'; this.loadOrders(); },
       goTransactions: function () { this.page = 'transactions'; this.loadTransactions(); },
-      goWithdraw: function () { this.page = 'withdraw'; this.withdrawAmount = ''; },
+      goWithdraw: function () {
+        // 照小程序：提现金额固定 = 全部余额，用户不能手输
+        this.loadUserData();
+        this.withdrawAmount = this.wallet.balance || '';
+        this.withdrawBtnText = '立即提现';
+        this.page = 'withdraw';
+      },
       goWithdrawals: function () { this.page = 'withdrawals'; this.loadWithdrawals(); },
       loadOrders: function () {
         if (!this.openid) { this.tip('还没识别到账号'); return; }
@@ -380,17 +392,21 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
         }).catch(function () {});
       },
       doWithdraw: function () {
-        var amt = parseFloat(this.withdrawAmount);
-        if (!amt || amt <= 0) { return; }
+        // 金额固定取当前余额（跟小程序一致）；后端 amount 不传也会自动全额
+        var amt = parseFloat(this.wallet.balance);
+        if (!amt || amt <= 0) { this.tip('暂无可提现余额'); return; }
+        if (this.withdrawing) { return; }
         var th = this;
+        this.withdrawing = true; this.withdrawBtnText = '提交中...';
         this.api('/api/user/withdraw', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ openid: this.openid, amount: amt })
         }).then(function (d) {
+          th.withdrawing = false; th.withdrawBtnText = '立即提现';
           if (d && (d.code === 0 || d.code === 200)) {
-            th.lastWithdrawAmount = th.withdrawAmount; th.showWithdrawSuccess = true; th.loadUserData();
+            th.lastWithdrawAmount = amt.toFixed(2); th.showWithdrawSuccess = true; th.loadUserData();
           } else { th.tip((d && d.message) || '提现失败'); }
-        }).catch(function () { th.tip('提现失败'); });
+        }).catch(function () { th.withdrawing = false; th.withdrawBtnText = '立即提现'; th.tip('提现失败'); });
       },
       orderReopen: function (i) {
         var th = this;

@@ -472,7 +472,11 @@ def alipay_pay_notify():
         out_trade_no = str(params.get('out_trade_no') or '')
         # [S519] 订单桥接的另一半：付款人的支付宝 uid。
         #   验签路径 -> 通知里的 buyer_id；查单路径 -> 查单结果里的 buyer_user_id（下面覆盖）
-        _buyer_uid = str(params.get('buyer_id') or params.get('buyer_user_id') or '').strip()
+        # [S524] 补 buyer_open_id：本应用已切到支付宝 openid 模式（实测 alipay.trade.query
+        #   只返回 buyer_open_id、不返回 buyer_user_id），老代码只看 buyer_id 必然取空。
+        #   顺序：buyer_open_id 优先，老的 buyer_id / buyer_user_id 保留兼容。
+        _buyer_uid = str(params.get('buyer_open_id') or params.get('buyer_id')
+                         or params.get('buyer_user_id') or '').strip()
         logger.info('[支付宝回调] 收到通知 out_trade_no=%s trade_status=%s total_amount=%s 有签名=%s',
                     out_trade_no, params.get('trade_status'), params.get('total_amount'), bool(params.get('sign')))
         if not out_trade_no:
@@ -513,7 +517,9 @@ def alipay_pay_notify():
             q = client.query(out_trade_no=out_trade_no)
             if str(q.get('code')) == '10000' and str(q.get('trade_status')) in ('TRADE_SUCCESS', 'TRADE_FINISHED'):
                 verified_by = 'query'
-                _buyer_uid = str(q.get('buyer_user_id') or q.get('buyer_id') or _buyer_uid or '').strip()
+                # [S524] 查单结果同样优先取 buyer_open_id（本应用 openid 模式）
+                _buyer_uid = str(q.get('buyer_open_id') or q.get('buyer_user_id')
+                                 or q.get('buyer_id') or _buyer_uid or '').strip()
                 params = {'trade_no': q.get('trade_no'), 'total_amount': q.get('total_amount')}
             else:
                 logger.warning('[支付宝回调] 验签失败且查单未确认: code=%s sub_code=%s', q.get('code'), q.get('sub_code'))
@@ -526,6 +532,28 @@ def alipay_pay_notify():
                 return 'fail', 400
         except Exception:
             pass
+        # [S524] 付款人 uid 兜底补采（只读、幂等、不改任何状态）：
+        #   上面两条路都可能取空 —— 验签路径的通知里带的是 buyer_open_id（老代码只认
+        #   buyer_id），查单路径老代码只认 buyer_user_id。这里在"已确认支付成功 + 金额已
+        #   核对 + 还没拿 FOR UPDATE 行锁"的位置补一次 alipay.trade.query，把 uid 补出来。
+        #   任何异常只告警：绝不影响订单已支付 / 开门 / 记账 / 微信那套（本函数只服务支付宝）。
+        if not _buyer_uid:
+            try:
+                _q2 = client.query(out_trade_no=out_trade_no)
+                if str(_q2.get('code')) == '10000':
+                    _buyer_uid = str(_q2.get('buyer_open_id') or _q2.get('buyer_user_id')
+                                     or _q2.get('buyer_id') or '').strip()
+                    if _buyer_uid:
+                        logger.info('[S524] 付款人 uid 补采(只读查单)成功: order_no=%s len=%s',
+                                    out_trade_no, len(_buyer_uid))
+                    else:
+                        logger.warning('[S524] 只读查单也没拿到付款人 uid: order_no=%s', out_trade_no)
+                else:
+                    logger.warning('[S524] 只读查单未成功: order_no=%s code=%s sub_code=%s',
+                                   out_trade_no, _q2.get('code'), _q2.get('sub_code'))
+            except Exception as _qe:
+                logger.warning('[S524] 付款人 uid 补查异常(不影响订单已支付): order_no=%s err=%s',
+                               out_trade_no, _qe)
         trade_no = str(params.get('trade_no') or '')
         conn = get_db()
         cursor = conn.cursor()

@@ -1109,6 +1109,11 @@
                 if (_oaForceH5) {
                     mpSavePendingJump();   // [测试] 存档，回来才能接着付
                     showMpTipModal();      // [测试] 强制走 H5: 直接看到 A1 的拦截弹层(请跳转小程序)
+                } else if (isAlipayEnv() && !sessionStorage.getItem('alipay_sub_jumped')) {
+                    // [S515] 支付宝：先跳小程序拿订阅，回来再进支付页（与微信同样的顺序）
+                    sessionStorage.setItem('alipay_sub_jumped', '1');
+                    mpSavePendingJump();
+                    alipayJumpSubscribe();
                 } else if (allowH5ToMp === 1) {
                     mpSavePendingJump();      // FIX-20260912b 跳转前存档，回来才能接着付
                     mpAutoJump();
@@ -1781,6 +1786,7 @@
         var payParams = data.pay_params;
         if (payParams) {
             if (payParams.mode === 'jsapi' && payParams.jsapi_params) { callWxPay(payParams.jsapi_params); }
+            else if (payParams.mode === 'alipay' && (payParams.form || payParams.pay_url)) { alipayPay(payParams); }
             else if (payParams.mode === 'h5' && payParams.mweb_url) {
                 sessionStorage.setItem('pendingOrderId', String(currentOrderId));
                 sessionStorage.setItem('pendingCabinetId', String(currentCabinetId));
@@ -1799,6 +1805,118 @@
     function stopCountdown() { if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; } }
 
     var payPollingTimer = null;
+    /* [S514-20260921] 支付宝 H5：先跳支付宝小程序拿订阅，回到本页再走手机网站支付 */
+    var ALIPAY_MP_APPID = '2021006199688688';
+    function isAlipayEnv() { return /AlipayClient/i.test(navigator.userAgent || ''); }
+
+    // [S515-20260921] 支付宝：点"下一步"就跳小程序拿订阅，回来再进支付页
+    var alipayReturnWatch = null;
+    function alipayJumpSubscribe() {
+        // [S516] 手机号兜底：currentPhone 为空就直接读输入框
+        var _ph = currentPhone || '';
+        if (!_ph) { var _pe = document.getElementById('userPhone'); _ph = (_pe && _pe.value) || ''; }
+        var _rt = '';
+        try { _rt = location.href.split('#')[0]; } catch (e) { _rt = ''; }
+        // [S516] 官方格式：query 整体 UrlEncode；page 用【原样路径】（斜杠不编码！）
+        var _qk = 'source=h5&order_id=' + encodeURIComponent(String(currentOrderId || '')) +
+                  '&phone=' + encodeURIComponent(_ph) +
+                  '&code=' + encodeURIComponent(currentAccessCode || '') +
+                  '&return_url=' + encodeURIComponent(_rt);
+        var _qenc = encodeURIComponent(_qk);
+        var u = 'alipays://platformapi/startapp?appId=' + ALIPAY_MP_APPID +
+                '&page=pages/subscribe/subscribe?' + _qenc +
+                '&query=' + _qenc;
+        alipayWatchReturn();                      // 回来（隐藏->可见）直接进支付页
+        var jumped = false;
+        try { window.location.href = u; jumped = true; } catch (e) { jumped = false; }
+        if (!jumped) { try { alipayResumeFromJump(); } catch (e) {} return; }
+        // 4 秒还没跳走（没装小程序/scheme 被拦）-> 直接进支付页，不能把用户卡住
+        setTimeout(function () { if (!document.hidden) { try { alipayResumeFromJump(); } catch (e) {} } }, 4000);
+    }
+    function alipayWatchReturn() {
+        if (alipayReturnWatch) { clearInterval(alipayReturnWatch); }
+        var sawHidden = false, ticks = 0;
+        alipayReturnWatch = setInterval(function () {
+            ticks++;
+            if (ticks > 240) { clearInterval(alipayReturnWatch); alipayReturnWatch = null; return; }
+            var st = document.visibilityState || (document.hidden ? 'hidden' : 'visible');
+            if (st === 'hidden') { sawHidden = true; return; }
+            if (st === 'visible' && sawHidden) {
+                clearInterval(alipayReturnWatch); alipayReturnWatch = null;
+                try { alipayResumeFromJump(); } catch (e) {}
+            }
+        }, 1000);
+    }
+    function alipayResumeFromJump() {
+        // 还原订单上下文（复用微信那套存档），但**不走**微信的"是否进过小程序"门禁
+        try {
+            var o = mpReadPendingJump();
+            if (o) {
+                mpClearPendingJump();
+                currentOrderId = o.order_id;
+                currentOrderNo = o.order_no || '';
+                currentCompartmentNumber = o.compartment || '';
+                if (o.access_code) { currentAccessCode = o.access_code; }
+                if (o.cabinet_id) { currentCabinetId = o.cabinet_id; }
+                if (o.deposit) { currentDepositAmount = o.deposit; }
+                if (o.size) { selectedSize = o.size; }
+                if (o.phone) {
+                    currentPhone = o.phone;
+                    var pel = document.getElementById('userPhone');
+                    if (pel && !pel.value) { pel.value = o.phone; }
+                }
+            }
+        } catch (e) {}
+        try { _mpEscaped = true; } catch (e) {}     // 标记已放行，任何门禁都不再拦
+        try { goToStep2Direct(); } catch (e) {}
+    }
+    // 页面若被重载（有些机型返回时会重载）-> 加载后自动接着进支付页
+    (function () {
+        if (!isAlipayEnv()) { return; }
+        var jumped = '';
+        try { jumped = sessionStorage.getItem('alipay_sub_jumped') || ''; } catch (e) {}
+        if (!jumped) { return; }
+        setTimeout(function () {
+            var f = '';
+            try { f = sessionStorage.getItem('alipay_form') || ''; } catch (e) {}
+            if (f) { submitAlipayForm(); return; }   // 已经在支付环节 -> 继续去收银台
+            try { alipayResumeFromJump(); } catch (e) {}
+        }, 900);
+    })();
+    function alipayPay(pp) {
+        // [S515] 订阅已在"下一步"那一步拿过了，这里只负责去收银台
+        sessionStorage.setItem('pendingOrderId', String(currentOrderId));
+        sessionStorage.setItem('pendingCabinetId', String(currentCabinetId));
+        sessionStorage.setItem('pendingOrderNo', currentOrderNo || '');
+        sessionStorage.setItem('pendingCompartment', currentCompartmentNumber || '');
+        sessionStorage.setItem('pendingAccessCode', currentAccessCode || '');
+        try {
+            sessionStorage.setItem('alipay_form', pp.form || '');
+            sessionStorage.setItem('alipay_url', pp.pay_url || '');
+        } catch (e) {}
+        submitAlipayForm();
+    }
+
+    function submitAlipayForm() {
+        var f = '', u = '';
+        try {
+            f = sessionStorage.getItem('alipay_form') || '';
+            u = sessionStorage.getItem('alipay_url') || '';
+            sessionStorage.removeItem('alipay_form');
+            sessionStorage.removeItem('alipay_url');
+        } catch (e) {}
+        if (f) { document.open(); document.write(f); document.close(); return; }
+        if (u) { window.location.href = u; return; }
+        showToast('支付宝下单失败，请重试');
+    }
+    document.addEventListener('visibilitychange', function () {
+        if (!document.hidden && isAlipayEnv()) {
+            var f = '';
+            try { f = sessionStorage.getItem('alipay_form') || ''; } catch (e) {}
+            if (f) { submitAlipayForm(); }
+        }
+    });
+
     function startPayPolling() {
         if (payPollingTimer) clearInterval(payPollingTimer);
         var count = 0;

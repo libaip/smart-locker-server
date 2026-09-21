@@ -44,13 +44,17 @@ DEFAULTS = {
         'subject': '重庆科莱维科技有限公司',
     },
     'oa': {
-        'name': '智能寄存柜(兜底config.py)',
-        'appid': 'wxd85204d0ec930d46',
-        'openid_prefix': 'oLhbm2',
-        'secret': '552e27fa9a260a6640bf6983bd3470f5',
+        # [S416-20260921] 原来是【老公众号·智能寄存柜】(wxd85204d0ec930d46) 的凭据。
+        #   它是"配置库读不到时的兜底"，留着老 appid = 哪天读不到库就静默拿老号去授权/发消息，
+        #   而老号的 appid 跟现在在用的商户没有绑定 -> 支付/通知必炸（2026-09-21 同类故障实测）。
+        #   改成当前在用的公众号【重庆卓蓝时】，与 wx_accounts.id=10 / config.py 一致。
+        'name': '重庆卓蓝时(兜底config.py)',
+        'appid': 'wx9d559811f476d9d5',
+        'openid_prefix': 'octN92',
+        'secret': 'e15202f4cf3e6ea86ebbeee8e62b3bd6',
         'token': 'smartlocker2024',
         'aes_key': '',
-        'subject': '重庆科莱维科技有限公司',
+        'subject': '重庆卓蓝时科技有限公司',
     },
     'config': {
         'h5_base': 'https://locker.cqdyxl.com',

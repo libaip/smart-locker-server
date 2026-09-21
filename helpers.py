@@ -4123,6 +4123,30 @@ def oa_notify_order_end(order_id=None, amount=None, when=None, openid='', phone=
         return False
 
 
+def oa_notify_withdraw_ok(amount=None, when=None, openid='', phone='', unionid=''):
+    """[S416-20260921] 用户提现申请提交 -> 发公众号模板消息【提现成功通知】。
+
+    用户口径（2026-09-21）：只要用户在【公众号】里提交了提现就发，
+    **不管实际到没到账**。所以挂在 /user/withdraw 的提交成功点，
+    「自动审批」与「手动审批」两条路都发。
+
+    模板：卓蓝时「提现成功通知」YbdiBY98Zd5x8HLSQAri8uNT0tnP8f8n5ymV5-9bgCs
+    字段：amount1 提现金额 / time2 时间（微信 amount 类字段要带单位，例：30元）
+    任何异常只记日志，绝不影响提现本身。
+    """
+    try:
+        _amt = float(amount or 0)
+        _t = _oa_tv(when) or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        return send_oa_template_message('oa_tplmsg_withdraw_ok', {
+            'amount1': '{:.2f}元'.format(_amt),
+            'time2': _t,
+        }, openid=openid, phone=phone, unionid=unionid, url=oa_tplmsg_h5_url())
+    except Exception as _e:
+        logger.warning('[oa_withdraw] 异常: %s', _e)
+        return False
+
+
+
 def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, unionid=None):
     """发送微信订阅消息（仅支持小程序mp_openid）
 

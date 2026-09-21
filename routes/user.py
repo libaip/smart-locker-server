@@ -4152,10 +4152,17 @@ def user_withdraw():
                 ident['user_id'] = row.get('user_id') or 0
                 ident['unionid'] = ident['unionid'] or row.get('unionid') or ''
                 ident['mp_openid'] = ident['mp_openid'] or row.get('mp_openid') or ''
+        # [S416-20260921] 没有 user_balances 行 ≠ 用户不存在。
+        #   余额是【按订单实时算】的(calc_balance)，user_balances 只是老的历史缓存表；
+        #   新公众号(octN92)用户在 S405/S406 身份隔离之后往往还没有这张表的行，
+        #   老代码就直接 404「用户不存在」——而同一时刻钱包页却能显示余额。
+        #   （2026-09-21 生产实例：openid=octN92zm4dPmpLx8, users.id=112312，
+        #     可用明细 ¥40.42，两次提现都被 404 挡掉）
+        #   现在：没有行就往下走，交给下面的实时余额判断兜底（真没余额报「余额不足」）。
         if not row:
-            conn.rollback()
-            return json_response(message='用户不存在', code=404)
-        
+            logger.info('[S416] user_balances 没有行，改用实时余额判断: phone=%s openid=%s user_id=%s',
+                        phone, (openid or '')[:10], ident.get('user_id'))
+
         # 余额以实时计算为准（user_balances 历史表不再作为提现依据）
         from helpers import calc_balance
         balance = calc_balance(user_id=ident['user_id'], phone=phone, openid=openid,
@@ -4272,6 +4279,13 @@ def user_withdraw():
             first_wid = row["id"]
             conn.commit()
             conn.close()
+            # [S416-20260921] 公众号用户：提现申请一提交就发【提现成功通知】(不管到没到账)
+            try:
+                from helpers import oa_notify_withdraw_ok as _oa_wd416
+                _oa_wd416(amount=actual_amount, openid=openid or order_openid, phone=phone,
+                          unionid=ident.get('unionid') or '')
+            except Exception as _e416:
+                logger.warning('[S416] 提现公众号通知失败: %s', _e416)
             if mp_openid:
                 try:
                     from helpers import send_wx_subscribe_message
@@ -4388,6 +4402,13 @@ def user_withdraw():
             first_wid = row["id"]
             conn.commit()
             conn.close()
+            # [S416-20260921] 公众号用户：提现申请一提交就发【提现成功通知】(不管到没到账)
+            try:
+                from helpers import oa_notify_withdraw_ok as _oa_wd416
+                _oa_wd416(amount=actual_amount, openid=openid or order_openid, phone=phone,
+                          unionid=ident.get('unionid') or '')
+            except Exception as _e416:
+                logger.warning('[S416] 提现公众号通知失败: %s', _e416)
             # 发送订阅消息：使用 mp_openid（已解析的公众号openid）
             if mp_openid:
                 try:

@@ -1206,6 +1206,34 @@ _new_prefix_cache = {'ts': 0.0, 'prefix': None}
 _LEGACY_PREFIX_TTL = 300
 
 
+def _active_mp_ident():
+    """[S523-20260921] 当前【生效的小程序账号】(appid, openid_prefix)。
+
+    为什么要有它：原来"新小程序"写死成清域智(wx0be09d4de1417e01/oQXFs3)，
+      但老板 2026-09-21 起生效的小程序是卓蓝时(wx281a9540a6a5b64d/oXTD3x)，
+      它的用户于是被判成"没有身份"（订单 user_id=0、看不到订单/余额）。
+    取值：wx_accounts 里 is_active=1 的 mp 账号；读不到 -> 前缀读不到 -> 再回落写死常量。
+    """
+    appid, prefix = '', ''
+    try:
+        import wx_config as _wc523
+        _acc523 = _wc523.get_effective_account('mp') or {}
+        appid = str(_acc523.get('appid') or '').strip()
+        prefix = str(_acc523.get('openid_prefix') or '').strip()
+    except Exception as _e523:
+        logger.warning('[S523] 取生效小程序账号失败，回落写死常量: %s', _e523)
+    if not appid:
+        appid = NEW_MP_APPID
+    if not prefix:
+        try:
+            prefix = (_mp_openid_prefix_of(appid) or '').strip()
+        except Exception:
+            prefix = ''
+    if not prefix:
+        prefix = _NEW_MP_PREFIX_FALLBACK
+    return appid, prefix
+
+
 def legacy_openid_prefixes():
     """老体系(科莱维/景钧达)已知的 openid 前缀集合。
 
@@ -1225,10 +1253,17 @@ def legacy_openid_prefixes():
         conn = get_db()
         cursor = conn.cursor()
         # 注意：这里【不能】加 acct_type 过滤 —— mp + oa 的 prefix 都要算老体系。
+        # [S523-20260921] 排除的不能只有写死的清域智：当前生效的小程序(卓蓝时)同样属于"新体系"，
+        #   否则它会被算成老体系、隔离逻辑反向。读不到生效账号时只排除写死 appid（老行为）。
+        _act_appid_523 = ''
+        try:
+            _act_appid_523 = _active_mp_ident()[0] or ''
+        except Exception:
+            _act_appid_523 = ''
         cursor.execute(
             "SELECT DISTINCT openid_prefix FROM wx_accounts "
-            "WHERE NULLIF(openid_prefix,'') IS NOT NULL AND appid <> %s",
-            (NEW_MP_APPID,))
+            "WHERE NULLIF(openid_prefix,'') IS NOT NULL AND appid <> %s AND appid <> %s",
+            (NEW_MP_APPID, _act_appid_523 or NEW_MP_APPID))
         for row in cursor.fetchall():
             p = row['openid_prefix'] if isinstance(row, dict) else row[0]
             if p:
@@ -1247,9 +1282,9 @@ def new_mp_openid_prefix():
     cached = _new_prefix_cache.get('prefix')
     if cached and (now - _new_prefix_cache.get('ts', 0.0)) < _LEGACY_PREFIX_TTL:
         return cached
-    p = ''
+    # [S523-20260921] 以当前生效的小程序账号为准（生效的是卓蓝时，不再是写死的清域智）
     try:
-        p = _mp_openid_prefix_of(NEW_MP_APPID) or ''
+        p = _active_mp_ident()[1] or ''
     except Exception:
         p = ''
     if not p:
@@ -1265,9 +1300,14 @@ def is_new_mp_identity(appid='', openid='', mp_openid=''):
     只有能【确定】不是老体系时才返回 True；无法判断一律 False(保持原行为)。
     """
     _appid = (appid or '').strip()
+    # [S523-20260921] 当前生效的小程序账号同样属于"新体系"
+    try:
+        _act_appid_523b, _act_prefix_523b = _active_mp_ident()
+    except Exception:
+        _act_appid_523b, _act_prefix_523b = NEW_MP_APPID, _NEW_MP_PREFIX_FALLBACK
     if _appid:
         # 客户端带了 appid：只信 appid，不做前缀猜测
-        if _appid == NEW_MP_APPID:
+        if _appid == NEW_MP_APPID or _appid == _act_appid_523b:
             return True
         _p = _mp_openid_prefix_of(_appid)
         if _p:
@@ -1276,6 +1316,9 @@ def is_new_mp_identity(appid='', openid='', mp_openid=''):
     _oid = (openid or mp_openid or '').strip()
     if not _oid:
         return False
+    # [S523] 前缀 == 当前生效小程序 -> 新体系（先于老体系判断）
+    if _act_prefix_523b and _oid.startswith(_act_prefix_523b):
+        return True
     for _p in legacy_openid_prefixes():
         if _p and _oid.startswith(_p):
             return False

@@ -4154,12 +4154,27 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
       若属于"非当前生效账号"（= 新小程序），走 _send_subscribe_for_account（用该小程序的 token + 模板）。
       否则（= 老小程序 / 判断不出）走下面原有的全部逻辑，行为一字不变。
     """
-    # [S400-20260921] 总开关：老板要求"小程序订阅消息全部停掉"，通知只走公众号模板消息。
-    #   wx_config_items.mp_subscribe_enabled='false' 即全部停；读不到/异常 -> 保持原样继续发。
+    # [S420-20260921] 订阅通知不再靠人工"全局关"，改为【跟随入口模式自动联动】：
+    #   纯公众号(oa) / 纯支付宝(alipay) -> 小程序订阅消息根本没有发送场景，自动跳过；
+    #   其它模式(mp / h5) -> 正常发送。
+    #   wx_config_items.mp_subscribe_enabled 仍然尊重，但默认 true：
+    #   只有显式设成 false 才额外全关（留给运维一个应急开关，而不是"想全关只能改代码"）。
+    #   历史：S400 曾把它设成 false 把小程序订阅消息全停（当时切纯公众号），
+    #   切回 H5 跳小程序时必须自动恢复，不用人工记得去开。
     try:
         import wx_config as _wc_sw
+        _em420 = ''
+        try:
+            from entry_mode import get_entry_mode as _gem420
+            _em420 = _gem420()
+        except Exception:
+            _em420 = ''
+        if _em420 in ('oa', 'alipay'):
+            logger.info('[subscribe_msg] 入口模式=%s（无小程序场景），跳过小程序订阅消息 openid=%s...',
+                        _em420, str(openid or '')[:8])
+            return False
         if str(_wc_sw.get_config('mp_subscribe_enabled', 'true')).strip().lower() in ('0', 'false', 'off', 'no'):
-            logger.info('[subscribe_msg] 小程序订阅消息总开关=off，跳过 openid=%s...', str(openid or '')[:8])
+            logger.info('[subscribe_msg] 小程序订阅消息手动应急开关=off，跳过 openid=%s...', str(openid or '')[:8])
             return False
     except Exception:
         pass

@@ -2894,8 +2894,12 @@ def check_merchant_health():
             mch_id = channel.get('mch_id', '未知')
             try:
                 # 找该渠道的最近一笔已支付订单作为探测目标
+                # [S414-20260921] 连订单的 openid 一起查出来：下单时的 appid 是【按付款人 openid 前缀】
+                #   动态选的（公众号用户=公众号appid / 小程序用户=小程序appid）。
+                #   这里不传 openid 就会用渠道里存的 app_id，两者不一致时微信回
+                #   APPID_MCHID_NOT_MATCH -> 被误判成"商户异常"-> 自动禁用渠道 -> 支付全挂。
                 cursor.execute(
-                    "SELECT order_no FROM orders WHERE status IN (2,3,4) "
+                    "SELECT order_no, openid, mp_openid FROM orders WHERE status IN (2,3,4) "
                     "AND transaction_id IS NOT NULL AND transaction_id != '' "
                     "AND payment_channel_id = %s "
                     "ORDER BY id DESC LIMIT 1",
@@ -2905,7 +2909,12 @@ def check_merchant_health():
                     logger.debug('[MerchantHealth] 渠道 %s(%s) 无探测订单，跳过' % (ch_name, mch_id))
                     continue
 
-                payer, ch_type = get_channel_wxpay(channel)
+                _probe_oid = ''
+                try:
+                    _probe_oid = (row.get('openid') or '') or (row.get('mp_openid') or '')
+                except Exception:
+                    _probe_oid = ''
+                payer, ch_type = get_channel_wxpay(channel, openid=_probe_oid)
                 if not payer:
                     logger.warning('[MerchantHealth] 渠道 %s 无法创建支付实例' % ch_name)
                     continue
@@ -2920,10 +2929,17 @@ def check_merchant_health():
                     err_desc = result.get('err_code_des') or result.get('return_msg', '')
                     if is_merchant_account_error(ec):
                         logger.error('[MerchantHealth] 渠道 %s(%s) 异常! err=%s %s' % (ch_name, mch_id, ec, err_desc))
-                        # 自动禁用该渠道
-                        cursor.execute('UPDATE payment_channels SET is_active=0, auto_disabled=1 WHERE id=%s', (channel['id'],))
-                        conn.commit()
-                        logger.warning('[MerchantHealth] 已自动禁用渠道: %s(%s)' % (ch_name, mch_id))
+                        # [S414-20260921] 保险：连续 2 轮异常才禁用（一次探测误判不再直接停掉整个渠道）
+                        _fk = 'mh_failcnt_%s' % channel['id']
+                        _fc = int(_merchant_health_state.get(_fk, 0) or 0) + 1
+                        _merchant_health_state[_fk] = _fc
+                        if _fc < 2:
+                            logger.warning('[MerchantHealth] 渠道 %s(%s) 第 %d 次异常，再观察一轮不停用' % (ch_name, mch_id, _fc))
+                        else:
+                            # 自动禁用该渠道
+                            cursor.execute('UPDATE payment_channels SET is_active=0, auto_disabled=1 WHERE id=%s', (channel['id'],))
+                            conn.commit()
+                            logger.warning('[MerchantHealth] 已自动禁用渠道: %s(%s)' % (ch_name, mch_id))
                         _on_merchant_error(ec, err_desc, result, channel=channel)
                         all_ok = False
                     else:

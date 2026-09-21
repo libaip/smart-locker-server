@@ -1127,51 +1127,115 @@ def admin_order_refund():
         order_no = order_dict.get('order_no', '')
         payment_channel_id = order_dict.get('payment_channel_id')
         refund_no = 'RF' + datetime.now().strftime('%Y%m%d%H%M%S') + str(order_id)
-        # 尝试调用微信退款API
+        # 尝试调用退款API
+        # [S535-20260921] 按订单【实际渠道】分流: 原来无论什么渠道都按【微信退款】调用,
+        #   支付宝单(channel_type='alipay') 会把 AlipayClient 当微信实例用 ->
+        #   TypeError: refund() got an unexpected keyword argument 'total_fee'
+        #   -> 后台点【退款】直接报"微信退款异常"。此处只【新增】支付宝分支,
+        #   微信分支逻辑一字未改(仅整体缩进4空格)。
         refund_result = None
         actual_refund = False
         if transaction_id and transaction_id != 'MOCK':
-            try:
-                from helpers import get_channel_wxpay, get_wxpay
-                if payment_channel_id:
+            _s535_ch_type = ''
+            if payment_channel_id:
+                try:
+                    c.execute('SELECT channel_type FROM payment_channels WHERE id=%s', (payment_channel_id,))
+                    _s535_r = c.fetchone()
+                    if _s535_r:
+                        try:
+                            _s535_ch_type = _s535_r['channel_type'] or ''
+                        except Exception:
+                            _s535_ch_type = _s535_r[0] or ''
+                except Exception as _s535_e:
+                    logger.warning(f'[order_refund] 读取渠道类型失败 order={order_no} err={_s535_e}')
+            if _s535_ch_type == 'alipay':
+                # ---------------- 支付宝原路退款: alipay.trade.refund ----------------
+                try:
+                    from helpers import get_channel_wxpay as _s535_gchw
                     c.execute('SELECT * FROM payment_channels WHERE id=%s', (payment_channel_id,))
-                    ch = c.fetchone()
-                    if ch:
-                        wxpay_inst, _ = get_channel_wxpay(dict(ch))
-                    else:
-                        return json_response(message='订单关联的商户渠道不存在，无法退款', code=400)
-                else:
-                    # 没有渠道ID，选一个活跃的
-                    c.execute('SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1')
-                    active_ch = c.fetchone()
-                    if active_ch:
-                        wxpay_inst, _ = get_channel_wxpay(dict(active_ch))
-                    else:
-                        return json_response(message='无可用活跃商户，无法退款', code=400)
-                refund_result = wxpay_inst.refund(
-                    out_trade_no=order_no,
-                    total_fee=total_fee,
-                    refund_fee=refund_fee,
-                    out_refund_no=refund_no,
-                    refund_desc=''
-                )
-                if refund_result and refund_result.get('return_code') == 'SUCCESS' and refund_result.get('result_code') == 'SUCCESS':
-                    actual_refund = True
-                    logger.info(f'[order_refund] 微信退款成功 order={order_no} refund_no={refund_no}')
-                else:
-                    err_msg = (refund_result.get('err_code_des') or refund_result.get('err_code') or refund_result.get('return_msg') or '未知错误') if refund_result else '无返回'
-                    # 已退款/已全额退款视为成功（之前退款成功但本地DB未更新的场景）
-                    if refund_result and ('已退款' in str(refund_result.get('err_code_des') or '') or '全额退款' in str(refund_result.get('err_code_des') or '')):
-                        actual_refund = True
-                        logger.info(f'[order_refund] 微信已全额退款，同步本地状态 order={order_no}')
-                    else:
-                        logger.warning(f'[order_refund] 微信退款失败 order={order_no} err={err_msg}')
+                    _s535_ch = c.fetchone()
+                    if not _s535_ch:
                         conn.close()
-                        return json_response(message=f'微信退款失败: {err_msg}', code=400)
-            except Exception as e:
-                logger.warning(f'[order_refund] 微信退款异常 order={order_no} err={e}')
-                conn.close()
-                return json_response(message=f'微信退款异常: {str(e)}', code=400)
+                        return json_response(message='订单关联的商户渠道不存在，无法退款', code=400)
+                    _s535_inst, _s535_itype = _s535_gchw(dict(_s535_ch))
+                    if not _s535_inst:
+                        logger.warning(f'[order_refund] 支付宝渠道配置不可用 order={order_no} channel={payment_channel_id}')
+                        conn.close()
+                        return json_response(message='支付宝渠道配置不可用(密钥/应用ID)，无法退款', code=400)
+                    # out_request_no 用【确定性唯一串】(订单号+金额分), 同单同额重试幂等
+                    #   -> 网络超时重发不会重复退款; 换金额(如退使用费)则是另一笔可识别的请求
+                    refund_no = 'RF%d%s_%d' % (order_id, order_no, int(round(float(amount) * 100)))
+                    _s535_resp = _s535_inst.refund(
+                        out_trade_no=order_no,
+                        refund_amount=float(amount),
+                        out_request_no=refund_no,
+                        refund_reason='后台退款',
+                    )
+                except Exception as _s535_re:
+                    logger.warning(f'[order_refund] 支付宝退款异常 order={order_no} err={_s535_re}')
+                    conn.close()
+                    return json_response(message=f'支付宝退款异常: {_s535_re}', code=400)
+                _s535_resp = _s535_resp or {}
+                _s535_code = str(_s535_resp.get('code') or '')
+                _s535_fc = str(_s535_resp.get('fund_change') or '')
+                if _s535_code == '10000':
+                    refund_result = {'refund_id': refund_no,
+                                     'trade_no': _s535_resp.get('trade_no') or transaction_id,
+                                     'fund_change': _s535_fc}
+                    logger.info('[order_refund] 支付宝退款成功 order=%s out_request_no=%s trade_no=%s '
+                                'fund_change=%s refund_fee=%s 金额=%s'
+                                % (order_no, refund_no, refund_result['trade_no'], _s535_fc,
+                                   _s535_resp.get('refund_fee'), amount))
+                else:
+                    _s535_msg = _s535_resp.get('sub_msg') or _s535_resp.get('msg') or '未知错误'
+                    _s535_sc = _s535_resp.get('sub_code') or ''
+                    logger.warning('[order_refund] 支付宝退款失败 order=%s code=%s sub_code=%s msg=%s'
+                                   % (order_no, _s535_code, _s535_sc, _s535_msg))
+                    conn.close()
+                    return json_response(message='支付宝退款失败: %s%s' % (_s535_msg, ('(%s)' % _s535_sc) if _s535_sc else ''), code=400)
+            else:
+                # ---- 以下为原微信退款分支, 逻辑未改(仅整体缩进) ----
+                try:
+                    from helpers import get_channel_wxpay, get_wxpay
+                    if payment_channel_id:
+                        c.execute('SELECT * FROM payment_channels WHERE id=%s', (payment_channel_id,))
+                        ch = c.fetchone()
+                        if ch:
+                            wxpay_inst, _ = get_channel_wxpay(dict(ch))
+                        else:
+                            return json_response(message='订单关联的商户渠道不存在，无法退款', code=400)
+                    else:
+                        # 没有渠道ID，选一个活跃的
+                        c.execute('SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1')
+                        active_ch = c.fetchone()
+                        if active_ch:
+                            wxpay_inst, _ = get_channel_wxpay(dict(active_ch))
+                        else:
+                            return json_response(message='无可用活跃商户，无法退款', code=400)
+                    refund_result = wxpay_inst.refund(
+                        out_trade_no=order_no,
+                        total_fee=total_fee,
+                        refund_fee=refund_fee,
+                        out_refund_no=refund_no,
+                        refund_desc=''
+                    )
+                    if refund_result and refund_result.get('return_code') == 'SUCCESS' and refund_result.get('result_code') == 'SUCCESS':
+                        actual_refund = True
+                        logger.info(f'[order_refund] 微信退款成功 order={order_no} refund_no={refund_no}')
+                    else:
+                        err_msg = (refund_result.get('err_code_des') or refund_result.get('err_code') or refund_result.get('return_msg') or '未知错误') if refund_result else '无返回'
+                        # 已退款/已全额退款视为成功（之前退款成功但本地DB未更新的场景）
+                        if refund_result and ('已退款' in str(refund_result.get('err_code_des') or '') or '全额退款' in str(refund_result.get('err_code_des') or '')):
+                            actual_refund = True
+                            logger.info(f'[order_refund] 微信已全额退款，同步本地状态 order={order_no}')
+                        else:
+                            logger.warning(f'[order_refund] 微信退款失败 order={order_no} err={err_msg}')
+                            conn.close()
+                            return json_response(message=f'微信退款失败: {err_msg}', code=400)
+                except Exception as e:
+                    logger.warning(f'[order_refund] 微信退款异常 order={order_no} err={e}')
+                    conn.close()
+                    return json_response(message=f'微信退款异常: {str(e)}', code=400)
         # 微信退款成功或无transaction_id(MOCK)，才更新本地状态；refund_id 回填微信退款单号(无则用商户单号)
         _rid_val = ''
         try:

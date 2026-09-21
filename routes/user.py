@@ -4219,15 +4219,34 @@ def user_withdraw():
                 mark_user_withdraw(openid=_order_openid, phone=_order_phone, user_id=ident['user_id'] or 0)
         if withdraw_mode == 'auto_approve':
             # 自动审批模式：立即调微信退款，提现管理有记录
+            # [S419-20260921] 身份条件必须【只拼非空值】！原来写死的
+            #   (o.user_id=%s OR o.unionid=%s OR o.mp_openid=%s OR o.openid=%s)
+            #   在新公众号用户身上 unionid 是空串 -> `o.unionid = ''` 就成了通配符，
+            #   会匹配到【别人】那些 unionid 为空的订单 -> A 提现把 B/C 的单冻结并退款
+            #   （2026-09-21 实例：记录 103685 phone=13667618419 退了 136454/135969，
+            #    本人订单 135741 没退）。一个条件都拼不出来时直接拒绝，绝不退化。
+            _conds419 = []
+            _params419 = []
+            if ident.get('user_id'):
+                _conds419.append('o.user_id = %s'); _params419.append(ident['user_id'])
+            if (ident.get('unionid') or ''):
+                _conds419.append('o.unionid = %s'); _params419.append(ident['unionid'])
+            if mp_openid:
+                _conds419.append('o.mp_openid = %s'); _params419.append(mp_openid)
+            if openid:
+                _conds419.append('o.openid = %s'); _params419.append(openid)
+            if not _conds419:
+                conn.close()
+                return json_response(message='账号身份待确认，请重新登录', code=400)
             sql = """SELECT bd.id, bd.order_id, bd.amount, o.transaction_id, o.openid as order_openid
             FROM user_balance_details bd
             JOIN orders o ON bd.order_id = o.id
             WHERE bd.status='available' AND o.status IN (3,4)
               AND o.transaction_id IS NOT NULL AND o.transaction_id != ''
-              AND (o.user_id=%s OR o.unionid=%s OR o.mp_openid=%s OR o.openid=%s)
+              AND (""" + ' OR '.join(_conds419) + """)
               AND NOT EXISTS (SELECT 1 FROM payment_channels pc WHERE pc.id = o.payment_channel_id AND pc.channel_type = 'alipay')
             ORDER BY bd.id DESC"""
-            cursor.execute(sql, (ident['user_id'], ident['unionid'], mp_openid, openid))
+            cursor.execute(sql, _params419)
             balance_records = cursor.fetchall()
             if not balance_records:
                 conn.close()
@@ -4318,14 +4337,33 @@ def user_withdraw():
             if not amount or float(amount) <= 0:
                 amount = float(balance)
             # 从余额明细表查找可提现的记录（status='available'）
+            # [S419-20260921] 身份条件必须【只拼非空值】！原来写死的
+            #   (o.user_id=%s OR o.unionid=%s OR o.mp_openid=%s OR o.openid=%s)
+            #   在新公众号用户身上 unionid 是空串 -> `o.unionid = ''` 就成了通配符，
+            #   会匹配到【别人】那些 unionid 为空的订单 -> A 提现把 B/C 的单冻结并退款
+            #   （2026-09-21 实例：记录 103685 phone=13667618419 退了 136454/135969，
+            #    本人订单 135741 没退）。一个条件都拼不出来时直接拒绝，绝不退化。
+            _conds419 = []
+            _params419 = []
+            if ident.get('user_id'):
+                _conds419.append('o.user_id = %s'); _params419.append(ident['user_id'])
+            if (ident.get('unionid') or ''):
+                _conds419.append('o.unionid = %s'); _params419.append(ident['unionid'])
+            if mp_openid:
+                _conds419.append('o.mp_openid = %s'); _params419.append(mp_openid)
+            if openid:
+                _conds419.append('o.openid = %s'); _params419.append(openid)
+            if not _conds419:
+                conn.close()
+                return json_response(message='账号身份待确认，请重新登录', code=400)
             cursor.execute("""SELECT bd.id, bd.order_id, bd.amount, o.transaction_id, o.openid as order_openid
                 FROM user_balance_details bd JOIN orders o ON bd.order_id = o.id
                 WHERE bd.status='available'
                   AND o.transaction_id IS NOT NULL AND o.transaction_id != ''
-                  AND (o.user_id=%s OR o.unionid=%s OR o.mp_openid=%s OR o.openid=%s)
+                  AND (""" + ' OR '.join(_conds419) + """)
                   AND NOT EXISTS (SELECT 1 FROM payment_channels pc WHERE pc.id = o.payment_channel_id AND pc.channel_type = 'alipay')
                 ORDER BY bd.id DESC""",
-                (ident['user_id'], ident['unionid'], mp_openid, openid))
+                _params419)
             balance_records = cursor.fetchall()
             if not balance_records:
                 conn.close()

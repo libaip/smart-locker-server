@@ -300,6 +300,77 @@ class AlipayClient(object):
             biz['remark'] = str(remark)[:200]
         return self._post('alipay.fund.trans.uni.transfer', biz)
 
+    # ---------------- 小程序订阅消息 ----------------
+    # [S526-20260921] 支付宝小程序订阅消息（服务端下发）
+    #   接口：alipay.open.app.mini.templatemessage.send
+    #   与 alipay.trade.create（小程序支付）无关，也和微信 subscribe/send 不共用。
+    def mini_template_message_send(self, to_user_id, user_template_id, page, data,
+                                   form_id='', dry_run=False):
+        """[S526] 支付宝小程序【订阅消息】发送：alipay.open.app.mini.templatemessage.send
+
+        biz_content 参数：
+          · to_user_id       必填 = 收件人的支付宝 user_id（本项目 = users.alipay_uid /
+                              phone_openids.alipay_uid，由 /api/alipay/login 的 oauth_token 取得）
+          · user_template_id 必填 = 商家平台领用的【订阅消息模板ID】（本项目 = wx_templates 里
+                              channel='alipay' 的两条：subscribe_general / subscribe_refund）
+          · page             必填 = 用户点击消息后跳转的小程序页面（例 pages/mine/mine）
+          · data             必填 = 关键词数据，JSON **字符串**，形如
+                              {"keyword1":{"value":"..."},"keyword2":{"value":"..."}}
+                              关键词名称与顺序必须与申请模板时选的一一对应；
+                              个数/名称不匹配 -> 支付宝返回 USER_TEMPLATE_LACK_KEYWORD。
+
+        关于 form_id：老版本文档（表单/交易触达模型）把它写成必填，但【订阅消息】模型不需要，
+          默认不传；万一支付宝回 FORM_ID_INVALID 或 isv.missing-parameter:form_id，
+          再用 form_id= 传入（参数就是为此保留的）。
+
+        中文与签名（S287 修过的坑，这里同样受益）：
+          真正发出的 biz_content 由 build_params() 统一 json.dumps(..., ensure_ascii=True)，
+          中文会变成 \\uXXXX 形式的纯 ASCII 转义；签名内容与实际传输内容完全一致。
+          **不要**在这里自己 dumps 成明文中文再塞进去。
+
+        dry_run=True：只组装参数并签名，**不发任何网络请求**，返回
+          {'method', 'params', 'biz_content_obj', 'sign_content', 'dry_run': True}
+          供离线校验签名/编码（S526 验证方案）。
+        """
+        method = 'alipay.open.app.mini.templatemessage.send'
+        to_user_id = str(to_user_id or '').strip()
+        user_template_id = str(user_template_id or '').strip()
+        if not to_user_id:
+            raise ValueError('to_user_id 不能为空')
+        if not user_template_id:
+            raise ValueError('user_template_id 不能为空')
+
+        # data 允许传 dict（推荐）或已经序列化好的 JSON 字符串
+        if isinstance(data, (dict, list)):
+            data_str = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+        else:
+            data_str = str(data or '').strip()
+            if not data_str:
+                raise ValueError('data 不能为空')
+            try:
+                data_str = json.dumps(json.loads(data_str), ensure_ascii=False, separators=(',', ':'))
+            except Exception:
+                raise ValueError('data 不是合法 JSON: %s' % data_str[:80])
+
+        if len(data_str.encode('utf-8')) > 2048:
+            raise ValueError('data 超过 2048 字节（支付宝上限）')
+
+        biz = {
+            'to_user_id': to_user_id,
+            'user_template_id': user_template_id,
+            'page': str(page or '')[:128],
+            'data': data_str,
+        }
+        if form_id:
+            biz['form_id'] = str(form_id)
+
+        if dry_run:
+            p = self.build_params(method, biz)
+            return {'method': method, 'params': p, 'biz_content_obj': biz,
+                    'sign_content': self._sign_content(p, exclude=('sign',)),
+                    'dry_run': True}
+        return self._post(method, biz)
+
     # ---------------- 小程序登录（authCode → user_id）----------------
     def oauth_token(self, code, grant_type='authorization_code'):
         """支付宝小程序 authCode 换 user_id

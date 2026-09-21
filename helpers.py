@@ -4472,6 +4472,110 @@ def order_notify_target(order=None, order_id=None, cursor=None):
                 'alipay_uid': '', 'reason': 'exception'}
 
 
+# ============================================================
+# [S526-20260921] 支付宝小程序【订阅消息】发送
+#   与微信 send_wx_subscribe_message 一一对应，但口径不同：
+#     · 收件人 = 支付宝 user_id（users.alipay_uid / phone_openids.alipay_uid），不是 openid
+#     · 模板走 wx_templates 里 channel='alipay' 的两条（account_id=0 通用）
+#         subscribe_general = c142ac2357774daab8994a0f5a91faa4  账户余额通知
+#         subscribe_refund  = de68d98e94c84477b1b9e116fcb8cbfa  寄存押金退还通知
+#       调用方取模板ID：wx_config.template_id('subscribe_general', 'alipay', '')
+#     · data 的关键词名是 keyword1..keywordN，名称/顺序由"申请模板时选的关键词"决定
+#   安全口径：任何异常只记日志、绝不抛出；alipay_uid 为空直接返回 False。
+# ============================================================
+_ALIPAY_TPL_GENERAL = 'c142ac2357774daab8994a0f5a91faa4'   # 账户余额通知（兜底值）
+_ALIPAY_TPL_REFUND = 'de68d98e94c84477b1b9e116fcb8cbfa'    # 寄存押金退还通知（兜底值）
+
+# 微信字段名 -> 支付宝关键词名。
+#   ★ 值【待老板提供 / 待实测】：库里 wx_templates.fields 是 {}，项目文档里也没有关键词说明，
+#     所以两条先留空 {}。留空 = 不做任何转换，调用方直接给 keyword1..keywordN（最安全的默认）。
+#   现有微信字段（来自各处 send_wx_subscribe_message 调用点）：
+#     subscribe_general：amount1 金额 / time2 时间 / thing4 变动原因 / thing3 温馨提示
+#     subscribe_refund ：amount2 金额 / time5 时间 / thing4 退款方式 / thing3 备注
+_ALIPAY_SUBSCRIBE_FIELD_MAP = {
+    _ALIPAY_TPL_GENERAL: {},
+    _ALIPAY_TPL_REFUND: {},
+}
+
+
+def alipay_subscribe_data(template_id, data):
+    """[S526] 把 data 规整成支付宝要的关键词字典（序列化交给 AlipayClient）
+
+    · 映射表里没有该模板 / 映射为空 -> 原样返回，不做任何猜测；
+    · 映射表里有 -> 只挑映射到的键改名，未映射的键丢弃（防止多传关键词被拒）。
+    """
+    if not isinstance(data, dict):
+        return data
+    m = _ALIPAY_SUBSCRIBE_FIELD_MAP.get(str(template_id or '')) or {}
+    if not m:
+        return data
+    out = {}
+    for k, v in data.items():
+        nk = m.get(k)
+        if nk:
+            out[nk] = v
+    return out
+
+
+def send_alipay_subscribe_message(alipay_uid, template_id, data, page='pages/mine/mine',
+                                  dry_run=False):
+    """[S526] 发送支付宝小程序订阅消息（对应微信的 send_wx_subscribe_message）
+
+    入参：
+      alipay_uid  = 用户支付宝 user_id（users.alipay_uid / phone_openids.alipay_uid）
+      template_id = wx_templates channel='alipay' 里那条的 template_id；
+                    取法：wx_config.template_id('subscribe_general'|'subscribe_refund', 'alipay', '')
+      data        = dict，推荐 {'keyword1': {'value': '¥30.00'}, 'keyword2': {'value': '2026-09-21 21:00'}}
+                    （也接受微信字段名，前提是 _ALIPAY_SUBSCRIBE_FIELD_MAP 里配好了映射）
+      page        = 点击消息跳转的小程序页，默认 pages/mine/mine
+      dry_run     = True 时只构造 + 签名、不发网络请求（离线自检用）
+
+    返回：dry_run=False -> True/False；dry_run=True -> 参数字典。**绝不抛异常。**
+    """
+    try:
+        alipay_uid = str(alipay_uid or '').strip()
+        if not alipay_uid:
+            logger.warning('[alipay_subscribe] alipay_uid 为空，跳过发送')
+            return False
+        template_id = str(template_id or '').strip()
+        if not template_id:
+            logger.warning('[alipay_subscribe] template_id 为空，跳过发送 uid=%s...', alipay_uid[:8])
+            return False
+        # 疑似把微信模板ID发到支付宝：微信模板ID是43位 base64url，支付宝是32位 hex。
+        # 只告警不拦截（真发错了支付宝会回 USER_TEMPLATE_ILLEGAL，不会投递）。
+        _tid_l = template_id.lower()
+        if not (len(template_id) == 32 and all(c in '0123456789abcdef' for c in _tid_l)):
+            logger.warning('[alipay_subscribe] template_id 不是32位hex（疑似微信模板ID）: %s', template_id)
+        # 应急开关（默认开；库里没有这个 key 时 get_config 返回默认值 'true'）
+        try:
+            import wx_config as _wc526
+            if str(_wc526.get_config('alipay_subscribe_enabled', 'true')).strip().lower() in ('0', 'false', 'off', 'no'):
+                logger.info('[alipay_subscribe] 开关 alipay_subscribe_enabled=off，跳过 uid=%s...', alipay_uid[:8])
+                return False
+        except Exception:
+            pass
+        client = get_alipay_mp_client()
+        if client is None:
+            logger.error('[alipay_subscribe] 支付宝小程序客户端不可用（密钥文件缺失？）')
+            return False
+        _d = alipay_subscribe_data(template_id, data)
+        _res = client.mini_template_message_send(alipay_uid, template_id,
+                                                page or 'pages/mine/mine', _d, dry_run=dry_run)
+        if dry_run:
+            return _res
+        if str(_res.get('code')) == '10000':
+            logger.info('[alipay_subscribe] 发送成功 uid=%s... template=%s...',
+                        alipay_uid[:8], template_id[:8])
+            return True
+        logger.error('[alipay_subscribe] 发送失败 uid=%s... template=%s... code=%s sub_code=%s sub_msg=%s',
+                     alipay_uid[:8], template_id[:8], _res.get('code'),
+                     _res.get('sub_code'), _res.get('sub_msg'))
+        return False
+    except Exception as e:
+        logger.error('[alipay_subscribe] 异常: %s', e)
+        return False
+
+
 def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, unionid=None,
                               order_id=None, order_ids=None, pay_channel_id=None):
     """发送微信订阅消息（仅支持小程序mp_openid）

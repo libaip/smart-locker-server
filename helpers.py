@@ -866,6 +866,94 @@ def get_wxpay(use_mp_appid=False):
                  cert_path=WX_CERT_PATH, key_path=WX_KEY_PATH)
 
 
+# ============================================
+# [S531-20260921] 商户号被封(收款受限)告警
+# ============================================
+# 背景(为什么原来的"商户号被封通知"是坏的):
+#   1) 主动巡检 check_merchant_health() 用 order_query 判活, 而微信对"收款功能受限"
+#      是在【下单 unifiedorder】上才返回 NOAUTH / err_code_des
+#      "此商家的收款功能已被限制，暂无法支付"。实测 2026-09-21: 109/109 个微信渠道
+#      order_query 全部 return_code=SUCCESS -> 探不到封号。
+#   2) _MERCHANT_ERROR_CODES 明确把 NOAUTH 排除在外, 所以真封号时只走
+#      logger.warning("[渠道] 商户收款受限(不禁用)，切换重试") 然后切渠道, 从不告警。
+#   生产实证: 2026-09-21 16:04:04 商户号 1000688402 被封, 16:04:04/13/18 连续 3 次
+#   NOAUTH, 全程 0 条通知。
+# 本函数只在"已无任何可用微信渠道"时告警, 避免正常轮转时打扰。
+# 去重靠 DB(system_settings 一条 key), 跨 8 个 worker/跨进程有效。
+_MCH_RESTRICTED_ALERT_KEY = '[S531]mch_restricted_alert'
+_MCH_RESTRICTED_ALERT_GAP = 600      # 同渠道 10 分钟内只告警一次
+
+
+def _alert_mch_restricted(channel, err_code, err_desc):
+    """微信回 NOAUTH/收款受限 -> 若无其他可用微信渠道则告警(不产生任何支付副作用)"""
+    import json as _json
+    import time as _time
+    try:
+        cid = (channel or {}).get('id')
+        cname = (channel or {}).get('name', '未知')
+        cmch = (channel or {}).get('mch_id', '未知')
+
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+
+        # 还有别的活跃微信渠道可用吗? 有就只是常规轮转, 不打扰
+        cur.execute("SELECT count(*) FROM payment_channels "
+                    "WHERE is_active=1 AND channel_type='wechat' AND id<>%s", (cid,))
+        _r = cur.fetchone()
+        alive = (_r[0] if not isinstance(_r, dict) else list(_r.values())[0]) if _r else 0
+        if alive and alive > 0:
+            conn.close()
+            return False
+
+        # 去重: 同渠道 10 分钟内只告警一次
+        cur.execute("SELECT setting_value FROM system_settings WHERE setting_key=%s",
+                    (_MCH_RESTRICTED_ALERT_KEY,))
+        row = cur.fetchone()
+        st = {}
+        if row:
+            raw = row.get('setting_value') if isinstance(row, dict) else row[0]
+            try:
+                st = _json.loads(raw or '{}') or {}
+            except Exception:
+                st = {}
+        now = int(_time.time())
+        last = int((st.get(str(cid)) or {}).get('ts') or 0) if isinstance(st.get(str(cid)), dict) else 0
+        if now - last < _MCH_RESTRICTED_ALERT_GAP:
+            logger.info('[MchRestricted] 渠道 %s 10分钟内已告警过, 跳过' % cid)
+            conn.close()
+            return False
+
+        title = '【寄存柜】微信商户号被封/收款受限'
+        content = ('微信支付商户号被限制收款，且当前已无其他可用微信渠道。\n'
+                   '商户名称: %s\n'
+                   '商户号(mch_id): %s\n'
+                   '渠道ID: %s\n'
+                   '错误码: %s\n'
+                   '错误描述: %s\n'
+                   '\n请立刻登录 pay.weixin.qq.com 查看，并到后台"支付渠道"启用备用商户号。') % (
+            cname, cmch, cid, err_code, err_desc)
+        ok = send_pushplus(title, content)
+        st[str(cid)] = {'ts': now, 'name': cname, 'mch': cmch, 'err': err_code, 'desc': err_desc}
+        try:
+            cur.execute(
+                "INSERT INTO system_settings (setting_key, setting_value) VALUES (%s, %s) "
+                "ON CONFLICT (setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value",
+                (_MCH_RESTRICTED_ALERT_KEY, _json.dumps(st, ensure_ascii=False)))
+            conn.commit()
+        except Exception as _we:
+            logger.warning('[MchRestricted] 告警状态写库失败: %s' % _we)
+        conn.close()
+        logger.warning('[MchRestricted] 告警已发(%s): %s' % ('成功' if ok else '失败', title))
+        return ok
+    except Exception as e:
+        logger.error('[MchRestricted] 告警失败: %s' % e)
+        return False
+
+
+_mch_fail_poll_count = {}
+
+
 def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, openid=None,
                        payment_channel=None, payment_channel_id=None, _retry_count=0):
     """获取微信支付参数"""
@@ -997,7 +1085,12 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
     _dead_errors = {'MCH_NOT_EXIST', 'ACCOUNT_ERROR', 'BANK_ERROR'}
     _skip_errors = {'NOAUTH', 'NO_AUTH', 'APPID_MCHID_NOT_MATCH'}  # 收款受限，切换重试但不永久禁用
     _err_code = result.get('err_code', '')
-    if current_channel and _retry_count < 3 and (_err_code in _dead_errors or _err_code in _skip_errors):
+    # [S531-20260921] 失败轮询: 用户重扫码时前端会再调一次, 靠内存计数代替自递归,
+    #   否则 _retry_count 恒为 0 会无限重试, 永远到不了"无渠道可用"的告警分支。
+    _pfx = '%s' % (order_no or order_id or '')
+    _mch_fail_poll_count[_pfx] = int(_mch_fail_poll_count.get(_pfx, 0) or 0) + 1
+    _poll = _mch_fail_poll_count[_pfx] - 1
+    if current_channel and _poll < 3 and (_err_code in _dead_errors or _err_code in _skip_errors):
         # 只对严重错误禁用商户；NOAUTH等收款受限只切换不禁用
         if _err_code in _dead_errors:
             try:
@@ -1011,14 +1104,19 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
                 logger.error(f'[渠道] 自动禁用失败: {_e}')
         else:
             logger.warning(f'[渠道] 商户收款受限(不禁用)，切换重试: id={current_channel["id"]}, err={result.get("err_code")}')
+            # [S531-20260921] 原来的"商户号被封通知"就断在这里: 只切渠道、从不告警。
+            #   现在若无其他可用微信渠道, 立刻推送给管理员(带 10 分钟去重)。
+            _alert_mch_restricted(current_channel, result.get('err_code'),
+                                  result.get('err_code_des') or result.get('return_msg', ''))
         next_ch = select_payment_channel(exclude_channel_id=current_channel['id'])
         if next_ch and next_ch.get('id') and next_ch['id'] != current_channel['id']:
             logger.info(f'[渠道] 切换到下一个渠道重试: {next_ch["name"]}')
             # [已修复] 不再修改订单的payment_channel_id，让用户重新扫码
             # 原因：用户扫码时是商户A，如果系统偷偷换成商户B，支付回调时会找不到订单
             logger.warning(f'[渠道] 商户异常，需要用户重新扫码。不修改订单#{order_id}的payment_channel_id')
-            return get_payment_params(order_id, order_no, deposit_amount, user_phone, openid, payment_channel=next_ch, payment_channel_id=next_ch['id'], _retry_count=_retry_count+1)
+            return get_payment_params(order_id, order_no, deposit_amount, user_phone, openid, payment_channel=next_ch, payment_channel_id=next_ch['id'], _retry_count=_poll+1)
     
+    _mch_fail_poll_count.pop(_pfx, None)
     if current_channel:
         try:
             from database import get_db

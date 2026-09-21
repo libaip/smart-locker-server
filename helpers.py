@@ -4497,6 +4497,98 @@ _ALIPAY_SUBSCRIBE_FIELD_MAP = {
     _ALIPAY_TPL_REFUND: {},
 }
 
+# [S530-20260921] 微信字段名 -> biz：调用方没给 biz 时，用 data 里带的微信字段名反推
+#   （这两组字段来自各处 send_wx_subscribe_message 调用点，见上面 _ALIPAY_SUBSCRIBE_FIELD_MAP 注释）
+_ALIPAY_TPL_BIZ_HINTS = (
+    ('amount1', 'subscribe_general'),
+    ('time2', 'subscribe_general'),
+    ('amount2', 'subscribe_refund'),
+    ('time5', 'subscribe_refund'),
+)
+
+
+def alipay_subscribe_template_id(biz, default=''):
+    """[S530-20260921] 直接查库取支付宝【订阅消息】模板ID（绕开配置中心）
+
+    背景（本次修的 bug）：
+      wx_config.template_id(biz, 'alipay', '') 对 alipay 通道**永远返回空**——
+      因为配置中心 CHANNELS = ('mp', 'oa')，get_template 会把 channel='alipay' 过滤掉。
+      发送端拿到空模板ID → 直接 return False，订阅消息一条也发不出去。
+
+    做法：只读 wx_templates（不改配置中心、不加新表、不写库）：
+        SELECT template_id FROM wx_templates
+         WHERE biz=%s AND channel='alipay' AND is_active=1
+         ORDER BY CASE WHEN account_id=0 THEN 0 ELSE 1 END, id LIMIT 1
+      （优先 account_id=0 的通用模板，其次 id 最小的）
+
+    取不到 / biz 为空 -> 返回 default；任何异常只 warning 并返回 default，**绝不抛出**。
+    """
+    _d = str(default or '')
+    try:
+        _biz = str(biz or '').strip()
+        if not _biz:
+            return _d
+        conn = get_db()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT template_id FROM wx_templates "
+                "WHERE biz=%s AND channel='alipay' AND is_active=1 "
+                "ORDER BY CASE WHEN account_id=0 THEN 0 ELSE 1 END, id LIMIT 1",
+                (_biz,))
+            row = cur.fetchone()
+            try:
+                cur.close()
+            except Exception:
+                pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        if not row:
+            logger.warning('[alipay_subscribe] wx_templates 里没有可用模板 biz=%s channel=alipay', _biz)
+            return _d
+        try:
+            _tid = row['template_id']
+        except Exception:
+            _tid = row[0]
+        _tid = str(_tid or '').strip()
+        if not _tid:
+            return _d
+        logger.info('[alipay_subscribe] 模板ID取自 wx_templates biz=%s -> %s...', _biz, _tid[:8])
+        return _tid
+    except Exception as e:
+        logger.warning('[alipay_subscribe] 取模板ID异常 biz=%s: %s', biz, e)
+        return _d
+
+
+def alipay_subscribe_guess_biz(template_id='', data=None):
+    """[S530-20260921] 调用方没给 biz 时，尽量从函数入参反推 biz（推不出返回 ''）
+
+    顺序：
+      1) template_id 就是本项目两个已知模板ID -> 直接对应
+      2) template_id 不是 32 位 hex（= 对方把 biz 名当模板ID传了）-> 当 biz 用
+      3) data 里显式带了 biz / _biz
+      4) data 里带了微信字段名（amount1/time2 -> general, amount2/time5 -> refund）
+    """
+    _t = str(template_id or '').strip()
+    if _t == _ALIPAY_TPL_GENERAL:
+        return 'subscribe_general'
+    if _t == _ALIPAY_TPL_REFUND:
+        return 'subscribe_refund'
+    if _t and not (len(_t) == 32 and all(c in '0123456789abcdef' for c in _t.lower())):
+        return _t
+    if isinstance(data, dict):
+        for _k in ('biz', '_biz'):
+            _v = str(data.get(_k) or '').strip()
+            if _v:
+                return _v
+        for _field, _biz in _ALIPAY_TPL_BIZ_HINTS:
+            if _field in data:
+                return _biz
+    return ''
+
 
 def alipay_subscribe_data(template_id, data):
     """[S526] 把 data 规整成支付宝要的关键词字典（序列化交给 AlipayClient）
@@ -4518,17 +4610,21 @@ def alipay_subscribe_data(template_id, data):
 
 
 def send_alipay_subscribe_message(alipay_uid, template_id, data, page='pages/mine/mine',
-                                  dry_run=False):
+                                  dry_run=False, biz=''):
     """[S526] 发送支付宝小程序订阅消息（对应微信的 send_wx_subscribe_message）
 
     入参：
       alipay_uid  = 用户支付宝 user_id（users.alipay_uid / phone_openids.alipay_uid）
       template_id = wx_templates channel='alipay' 里那条的 template_id；
                     取法：wx_config.template_id('subscribe_general'|'subscribe_refund', 'alipay', '')
+                    ★ [S530] 但该取法对 alipay 通道**永远返回空**（配置中心 CHANNELS 只有 mp/oa）。
+                      为兼容旧调用方，参数保持原样；**传空时本函数自动按 biz 查库兜底**。
       data        = dict，推荐 {'keyword1': {'value': '¥30.00'}, 'keyword2': {'value': '2026-09-21 21:00'}}
                     （也接受微信字段名，前提是 _ALIPAY_SUBSCRIBE_FIELD_MAP 里配好了映射）
       page        = 点击消息跳转的小程序页，默认 pages/mine/mine
       dry_run     = True 时只构造 + 签名、不发网络请求（离线自检用）
+      biz         = [S530] 可选。'subscribe_general' / 'subscribe_refund'；
+                    template_id 为空时按它查库取模板ID。不给则由 data 入参反推。
 
     返回：dry_run=False -> True/False；dry_run=True -> 参数字典。**绝不抛异常。**
     """
@@ -4538,6 +4634,13 @@ def send_alipay_subscribe_message(alipay_uid, template_id, data, page='pages/min
             logger.warning('[alipay_subscribe] alipay_uid 为空，跳过发送')
             return False
         template_id = str(template_id or '').strip()
+        if not template_id:
+            # [S530-20260921] 空模板ID -> 直接查 wx_templates 兜底（原来这里直接放弃发送）
+            _bz = str(biz or '').strip() or alipay_subscribe_guess_biz('', data)
+            if _bz:
+                template_id = alipay_subscribe_template_id(_bz, '')
+                logger.info('[alipay_subscribe] 入参 template_id 为空，按 biz=%s 查库兜底 -> %s',
+                            _bz, (template_id[:8] + '...') if template_id else '(仍为空)')
         if not template_id:
             logger.warning('[alipay_subscribe] template_id 为空，跳过发送 uid=%s...', alipay_uid[:8])
             return False

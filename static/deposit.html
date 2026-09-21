@@ -1109,11 +1109,9 @@
                 if (_oaForceH5) {
                     mpSavePendingJump();   // [测试] 存档，回来才能接着付
                     showMpTipModal();      // [测试] 强制走 H5: 直接看到 A1 的拦截弹层(请跳转小程序)
-                } else if (isAlipayEnv() && !sessionStorage.getItem('alipay_sub_jumped') && !(function () { try { return localStorage.getItem('alipay_sub_jumped_ls'); } catch (e) { return ''; } })()) {
-                    // [S515] 支付宝：先跳小程序拿订阅，回来再进支付页（与微信同样的顺序）
-                    sessionStorage.setItem('alipay_sub_jumped', '1');
-                    mpSavePendingJump();
-                    alipayJumpSubscribe();
+                } else if (isAlipayEnv()) {
+                    // [S530-20260921] 支付宝纯小程序模式：H5 不建单、不支付，任何支付宝路径都回"去小程序"引导
+                    alipayPureMpRedirect(true);
                 } else if (allowH5ToMp === 1) {
                     mpSavePendingJump();      // FIX-20260912b 跳转前存档，回来才能接着付
                     mpAutoJump();
@@ -1786,7 +1784,7 @@
         var payParams = data.pay_params;
         if (payParams) {
             if (payParams.mode === 'jsapi' && payParams.jsapi_params) { callWxPay(payParams.jsapi_params); }
-            else if (payParams.mode === 'alipay' && (payParams.form || payParams.pay_url)) { alipayPay(payParams); }
+            else if (payParams.mode === 'alipay' && (payParams.form || payParams.pay_url)) { alipayPureMpRedirect(true); }   // [S530] 支付宝纯小程序：绝不再进 H5 收银台
             else if (payParams.mode === 'h5' && payParams.mweb_url) {
                 sessionStorage.setItem('pendingOrderId', String(currentOrderId));
                 sessionStorage.setItem('pendingCabinetId', String(currentCabinetId));
@@ -1889,6 +1887,8 @@
         }, 900);
     })();
     function alipayPay(pp) {
+        // [S530-20260921] 支付宝纯小程序模式：这里**绝不再**去手机网站收银台，直接回"去小程序"引导
+        if (isAlipayEnv()) { try { alipayPureMpRedirect(true); } catch (e) {} return; }
         // [S515] 订阅已在"下一步"那一步拿过了，这里只负责去收银台
         sessionStorage.setItem('pendingOrderId', String(currentOrderId));
         sessionStorage.setItem('pendingCabinetId', String(currentCabinetId));
@@ -1903,6 +1903,8 @@
     }
 
     function submitAlipayForm() {
+        // [S530-20260921] 支付宝纯小程序模式：禁止 document.write 收银台表单 / 跳手机网站支付地址
+        if (isAlipayEnv()) { try { alipayPureMpRedirect(true); } catch (e) {} return; }
         var f = '', u = '';
         try {
             f = sessionStorage.getItem('alipay_form') || '';
@@ -1921,6 +1923,114 @@
             if (f) { submitAlipayForm(); }
         }
     });
+
+    /* ==========================================================================
+     * [S530-20260921] 支付宝【纯小程序模式】：H5 不做任何支付
+     *   老板要求：支付宝里扫现在这张老二维码（就是本 H5 链接）-> 进来【立刻】跳小程序，
+     *   存包 / 支付 / 取包全在小程序里完成；【不要】H5 手机网站支付兜底。
+     *   · 所有入口都由 isAlipayEnv() 守着 —— 微信分支一行都不碰。
+     *   · 跳转串格式（S516 踩过坑的官方规则）：page 用【原样路径】（斜杠不编码），
+     *     ? 后面的参数整体 UrlEncode，query 复用同一串。
+     *   · 跳转前先铺提示 + 打开按钮；4 秒后页面仍可见 = 没跳过去 -> 失败文案 + 客服电话。
+     *   · 全程不出现任何 H5 支付 / 收银台。
+     * ======================================================================== */
+    var _alipayPureMpAutoDone = false;
+    var _alipayPureMpFailTimer = null;
+
+    // 目标页（调研结论：pages/deposit/deposit 吃 cabinet_id，直接进存包页最省事；
+    //   拿不到显式 cabinet_id 时退到 pages/index/index?q=原链接，由首页解析 device/group_code）
+    function alipayPureMpUrl() {
+        var _p = null;
+        try { _p = new URLSearchParams(window.location.search); } catch (e) { _p = null; }
+        var _cid = (_p && _p.get('cabinet_id')) || '';
+        if (!_cid) {
+            try { if (typeof CI !== 'undefined' && CI && CI.indexOf('{') !== 0) { _cid = String(CI); } } catch (e) {}
+        }
+        var _oid = '';
+        try { _oid = (typeof wxOpenid !== 'undefined' && wxOpenid) ? String(wxOpenid) : ''; } catch (e) { _oid = ''; }
+        var _page = '', _qk = '';
+        if (_cid) {
+            _page = 'pages/deposit/deposit';
+            _qk = 'cabinet_id=' + encodeURIComponent(_cid) + '&from=h5' +
+                  (_oid ? ('&openid=' + encodeURIComponent(_oid)) : '');
+        } else {
+            var _orig = '';
+            try { _orig = location.href.split('#')[0]; } catch (e) { _orig = ''; }
+            _page = 'pages/index/index';
+            _qk = 'q=' + encodeURIComponent(_orig);
+        }
+        var _qenc = encodeURIComponent(_qk);
+        return {
+            page: _page,
+            query: _qk,
+            url: 'alipays://platformapi/startapp?appId=' + ALIPAY_MP_APPID +
+                 '&page=' + _page + '?' + _qenc +
+                 '&query=' + _qenc
+        };
+    }
+
+    function alipayPureMpText(failed) {
+        var t = document.getElementById('alipayPureMpTitle');
+        var h = document.getElementById('alipayPureMpHint');
+        var b = document.getElementById('alipayPureMpRetry');
+        if (t) { t.textContent = failed ? '跳转失败，请点重试' : '正在打开支付宝小程序…'; }
+        if (h) {
+            h.innerHTML = failed
+                ? '仍不行请联系客服 <a href="tel:4006981080" style="color:#1677FF;text-decoration:none;font-weight:700">4006981080</a><br>本页面不支持支付，请在小程序里完成。'
+                : '存包、支付、取包都在小程序里完成，请稍候。';
+        }
+        if (b) { b.textContent = failed ? '重新打开小程序' : '打开小程序'; }
+    }
+
+    function alipayPureMpOverlay() {
+        var d = document.getElementById('alipayPureMpMask');
+        if (d) { return d; }
+        d = document.createElement('div');
+        d.id = 'alipayPureMpMask';
+        d.style.cssText = 'position:fixed;left:0;top:0;right:0;bottom:0;background:#fff;z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;text-align:center';
+        d.innerHTML = ''
+          + '<div style="max-width:360px;width:100%">'
+          + '<div style="font-size:38px;line-height:1;margin-bottom:14px">&#128230;</div>'
+          + '<div id="alipayPureMpTitle" style="font-size:19px;font-weight:700;color:#1a1a1a;margin-bottom:10px">正在打开支付宝小程序…</div>'
+          + '<div id="alipayPureMpHint" style="font-size:14px;color:#666;line-height:1.7;margin-bottom:22px">存包、支付、取包都在小程序里完成，请稍候。</div>'
+          + '<div id="alipayPureMpRetry" style="background:#1677FF;color:#fff;padding:13px;border-radius:24px;font-size:16px;font-weight:700;cursor:pointer">打开小程序</div>'
+          + '<div style="font-size:12px;color:#999;line-height:1.7;margin-top:16px">若多次打不开，请拨打客服电话<br><a href="tel:4006981080" style="color:#1677FF;text-decoration:none">4006981080</a></div>'
+          + '</div>';
+        try { (document.body || document.documentElement).appendChild(d); } catch (e) { try { document.documentElement.appendChild(d); } catch (e2) {} }
+        var _b = document.getElementById('alipayPureMpRetry');
+        if (_b) { _b.onclick = function () { try { alipayPureMpRedirect(true); } catch (e) {} }; }
+        return d;
+    }
+
+    // 支付宝内唯一的动作：铺提示 -> 跳小程序 -> 4 秒没跳走就报失败
+    function alipayPureMpRedirect(force) {
+        if (!isAlipayEnv()) { return; }                    // ★非支付宝环境：一个字都不做（微信路径完全不受影响）
+        try { alipayPureMpOverlay(); } catch (e) {}
+        if (_alipayPureMpAutoDone && !force) { return; }   // 同一次加载只自动跳一次，重试靠用户点按钮
+        _alipayPureMpAutoDone = true;
+        try { alipayPureMpText(false); } catch (e) {}
+        if (_alipayPureMpFailTimer) { clearTimeout(_alipayPureMpFailTimer); _alipayPureMpFailTimer = null; }
+        var _t = alipayPureMpUrl();
+        try { console.log('[S530][alipay-pure-mp] jump page=' + _t.page + ' query=' + _t.query); } catch (e) {}
+        try { window.location.href = _t.url; } catch (e) {}
+        _alipayPureMpFailTimer = setTimeout(function () {
+            try {
+                var vis = document.visibilityState || (document.hidden ? 'hidden' : 'visible');
+                if (vis !== 'hidden') { alipayPureMpText(true); }   // 人还在这页 = 没跳过去
+            } catch (e) {}
+        }, 4000);
+    }
+
+    // 进页面就跳：支付宝里打开本 H5 后，不再有任何"填资料/选柜格/收银台"的 H5 步骤
+    (function () {
+        try {
+            if (!isAlipayEnv()) { return; }
+            var _go = function () { try { alipayPureMpRedirect(); } catch (e) {} };
+            if (document.body) { _go(); }
+            else if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', _go); }
+            else { _go(); }
+        } catch (e) {}
+    })();
 
     function startPayPolling() {
         if (payPollingTimer) clearInterval(payPollingTimer);

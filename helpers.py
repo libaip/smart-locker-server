@@ -2529,13 +2529,18 @@ def oa_tplmsg_h5_url(path='/static/user-h5.html'):
         return 'https://kelaiwei.top' + path
 
 
-def send_oa_template_message(biz, data, openid='', phone='', unionid='', url='', account_id=None):
+def send_oa_template_message(biz, data, openid='', phone='', unionid='', url='', account_id=None,
+                             order_id=None, order_ids=None, pay_channel_id=None):
     """发【公众号模板消息】。
     biz  : 配置中心 wx_templates 里的 biz（如 oa_tplmsg_deposit_ok）
     data : {'thing8': '网点名'} 或 {'thing8': {'value': '网点名'}}
     只发模板里登记过的字段（防止字段写错报 47003）；返回 True/False，绝不抛异常。
     """
     try:
+        # [S525] 平台分流闸门：支付宝单绝不按手机号反查公众号/微信身份
+        if order_notify_blocked(order_id=order_id, order_ids=order_ids, pay_channel_id=pay_channel_id):
+            logger.info('[S525] 支付宝单跳过公众号模板消息 biz=%s order_id=%s order_ids=%s', biz, order_id, order_ids)
+            return False
         import json as _json
         import requests
         import wx_config
@@ -4248,6 +4253,10 @@ def oa_notify_order_end(order_id=None, amount=None, when=None, openid='', phone=
     缺的字段按 order_id 自己查；任何异常只记日志，绝不影响业务。
     """
     try:
+        # [S525] 平台分流：支付宝单不发微信公众号模板消息
+        if order_notify_blocked(order_id=order_id):
+            logger.info('[S525] 支付宝单跳过结束订单公众号模板消息 order_id=%s', order_id)
+            return False
         from database import get_db as _g
         _o = {}
         if order_id:
@@ -4280,19 +4289,20 @@ def oa_notify_order_end(order_id=None, amount=None, when=None, openid='', phone=
             'time2': _oa_tv(_o.get('store_time')),
             'time3': _t3,
             'amount4': '¥{:.2f}'.format(_dep),
-        }, openid=_oid, phone=_ph, unionid=_uni, url=_url)
+        }, openid=_oid, phone=_ph, unionid=_uni, url=_url, order_id=order_id)
         if _dep > 0:
             send_oa_template_message('oa_tplmsg_refund_ok', {
                 'amount7': '¥{:.2f}'.format(_dep),
                 'time10': _t3,
-            }, openid=_oid, phone=_ph, unionid=_uni, url=_url)
+            }, openid=_oid, phone=_ph, unionid=_uni, url=_url, order_id=order_id)
         return True
     except Exception as _e:
         logger.warning('[oa_end] 异常 order_id=%s: %s', order_id, _e)
         return False
 
 
-def oa_notify_withdraw_ok(amount=None, when=None, openid='', phone='', unionid=''):
+def oa_notify_withdraw_ok(amount=None, when=None, openid='', phone='', unionid='',
+                          order_id=None, order_ids=None):
     """[S416-20260921] 用户提现申请提交 -> 发公众号模板消息【提现成功通知】。
 
     用户口径（2026-09-21）：只要用户在【公众号】里提交了提现就发，
@@ -4304,25 +4314,177 @@ def oa_notify_withdraw_ok(amount=None, when=None, openid='', phone='', unionid='
     任何异常只记日志，绝不影响提现本身。
     """
     try:
+        # [S525] 平台分流：整张提现单都来自支付宝 -> 不发微信公众号模板消息
+        if order_notify_blocked(order_id=order_id, order_ids=order_ids):
+            logger.info('[S525] 支付宝单跳过提现公众号模板消息 order_id=%s order_ids=%s', order_id, order_ids)
+            return False
         _amt = float(amount or 0)
         _t = _oa_tv(when) or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         return send_oa_template_message('oa_tplmsg_withdraw_ok', {
             'amount1': '{:.2f}元'.format(_amt),
             'time2': _t,
-        }, openid=openid, phone=phone, unionid=unionid, url=oa_tplmsg_h5_url())
+        }, openid=openid, phone=phone, unionid=unionid, url=oa_tplmsg_h5_url(),
+           order_id=order_id, order_ids=order_ids)
     except Exception as _e:
         logger.warning('[oa_withdraw] 异常: %s', _e)
         return False
 
 
 
-def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, unionid=None):
+# ============================================================
+# [S525 2026-09-21] 通知"按平台分流"
+#   事故：支付宝的单在【结束订单】时，收件人 openid 是拿手机号去微信库里反查出来的
+#         -> 微信小程序订阅消息 + 公众号模板消息发给了支付宝用户
+#            （订单 137354 / payment_channel_id=120 / channel_type=alipay）。
+#   口径：通知只发给"这笔单自己所属平台的身份"；
+#         * 订单带 alipay_mp_uid / alipay_pay_uid，或渠道 channel_type='alipay'
+#           -> 判为支付宝单，微信侧通知一律不发（只记日志）；
+#              支付宝订阅消息后端暂不具备，留 TODO（见 order_notify_target）。
+#         * 其它情况（含判不出来的）-> 完全走原逻辑，保证微信行为一字不变。
+# ============================================================
+NOTIFY_PLATFORM_WECHAT = 'wechat'
+NOTIFY_PLATFORM_ALIPAY = 'alipay'
+NOTIFY_PLATFORM_UNKNOWN = 'unknown'
+
+
+def order_notify_platform(order=None, order_id=None, pay_channel_id=None, cursor=None):
+    """[S525] 判断"这笔单该用哪个平台的身份发通知"：'alipay' / 'wechat' / 'unknown'。
+
+    只做【正向判定】：只有明确是支付宝单才返回 'alipay'（此时微信侧通知必须拦掉）；
+    判不出来一律 'unknown'，调用方按老逻辑走，绝不改变微信既有行为。
+    任何异常都吞掉并按 'unknown' 处理（宁可发得出去，也不能因为判定失败把通知全停）。
+    """
+    try:
+        _o = dict(order) if order else None
+        _oid = _o.get('id') if _o else order_id
+        _chid = pay_channel_id
+        if _o and not _chid:
+            _chid = _o.get('payment_channel_id')
+        # 1) 订单自带支付宝 uid（支付宝小程序登录桥接 / 支付宝支付回调桥接）-> 铁证
+        if _o and (str(_o.get('alipay_mp_uid') or '').strip() or str(_o.get('alipay_pay_uid') or '').strip()):
+            return NOTIFY_PLATFORM_ALIPAY
+        # 2) 渠道类型 = alipay
+        if _chid or _oid:
+            _c = cursor
+            _own = False
+            try:
+                if _c is None:
+                    from database import get_db as _g525
+                    _c = _g525()
+                    _own = True
+                _cur = _c.cursor()
+                if _chid:
+                    _cur.execute("SELECT channel_type FROM payment_channels WHERE id=%s", (_chid,))
+                    _r = _cur.fetchone()
+                    if _r:
+                        _ct = _r.get('channel_type') if hasattr(_r, 'get') else _r[0]
+                        if _ct == 'alipay':
+                            return NOTIFY_PLATFORM_ALIPAY
+                elif _oid:
+                    # [S525] 有渠道 id 时就以渠道结论为准，不再多查一次 orders（少一次查询）
+                    _cur.execute("""SELECT pc.channel_type AS ct
+                                    FROM orders o
+                                    LEFT JOIN payment_channels pc ON pc.id = o.payment_channel_id
+                                    WHERE o.id=%s""", (_oid,))
+                    _r = _cur.fetchone()
+                    if _r:
+                        _ct = _r.get('ct') if hasattr(_r, 'get') else _r[0]
+                        if _ct == 'alipay':
+                            return NOTIFY_PLATFORM_ALIPAY
+            finally:
+                if _own and _c is not None:
+                    try:
+                        _c.close()
+                    except Exception:
+                        pass
+        # 3) 订单自带微信身份 -> wechat（仅作正向信号，绝不按手机号反查）
+        if _o and (str(_o.get('mp_openid') or '').strip() or str(_o.get('openid') or '').strip()
+                   or str(_o.get('unionid') or '').strip()):
+            return NOTIFY_PLATFORM_WECHAT
+        return NOTIFY_PLATFORM_UNKNOWN
+    except Exception as _e:
+        logger.warning('[S525] order_notify_platform 异常(按 unknown 处理): %s', _e)
+        return NOTIFY_PLATFORM_UNKNOWN
+
+
+def order_notify_blocked(order=None, order_id=None, order_ids=None, pay_channel_id=None, cursor=None):
+    """[S525] 微信侧通知闸门：这笔单是支付宝的 -> True（必须拦掉，绝不按手机号找微信身份）。
+
+    order_ids: 合并提现单场景（一张提现单里多个订单）。只有【全部】订单都是支付宝单才拦；
+               只要有一笔微信单，说明这次通知本身就属于微信侧，照旧发（不回归）。
+    """
+    try:
+        if order_ids:
+            _pf = [order_notify_platform(order_id=_i, cursor=cursor) for _i in list(order_ids)]
+            return bool(_pf) and all(_p == NOTIFY_PLATFORM_ALIPAY for _p in _pf)
+        return order_notify_platform(order=order, order_id=order_id,
+                                     pay_channel_id=pay_channel_id, cursor=cursor) == NOTIFY_PLATFORM_ALIPAY
+    except Exception as _e:
+        logger.warning('[S525] order_notify_blocked 异常(按不拦处理): %s', _e)
+        return False
+
+
+def order_notify_target(order=None, order_id=None, cursor=None):
+    """[S525] 统一"取这笔单自己所属平台的通知身份"。通知调用点应当【先问它】再发。
+
+    返回 dict:
+      {'platform': 'wechat'|'alipay'|'unknown', 'can_send': bool,
+       'openid': '', 'mp_openid': '', 'unionid': '', 'phone': '',
+       'alipay_uid': '', 'reason': ''}
+
+    规则（关键：绝不跨平台按手机号反查）：
+      * 支付宝单 -> can_send=False（后端暂无支付宝订阅消息能力，TODO: 接支付宝订阅消息）；
+                    只把 alipay uid 带出来，微信侧任何 openid 都不返回。
+      * 微信单   -> 只用订单自带的 openid/mp_openid/unionid；订单没带时 phone 原样带出，
+                    由 send_wx_subscribe_message / send_oa_template_message 里【原有的】
+                    手机号反查逻辑兜底 —— 微信单保持原行为不变。
+      * unknown  -> 老行为（phone 带出，can_send=True）。
+    """
+    try:
+        _o = dict(order) if order else {}
+        if not _o and order_id:
+            try:
+                from database import get_db as _g525t
+                _c = cursor or _g525t()
+                _cur = _c.cursor()
+                _cur.execute("""SELECT o.id, o.openid, o.mp_openid, o.unionid, o.user_phone,
+                                       o.alipay_mp_uid, o.alipay_pay_uid, o.payment_channel_id
+                                FROM orders o WHERE o.id=%s""", (order_id,))
+                _r = _cur.fetchone()
+                if _r:
+                    _o = dict(_r)
+            except Exception as _e:
+                logger.warning('[S525] order_notify_target 查订单失败 id=%s: %s', order_id, _e)
+        _pf = order_notify_platform(order=_o, order_id=order_id, cursor=cursor)
+        if _pf == NOTIFY_PLATFORM_ALIPAY:
+            return {'platform': NOTIFY_PLATFORM_ALIPAY, 'can_send': False,
+                    'openid': '', 'mp_openid': '', 'unionid': '', 'phone': '',
+                    'alipay_uid': str(_o.get('alipay_mp_uid') or _o.get('alipay_pay_uid') or ''),
+                    'reason': 'alipay_order_no_wechat_notify'}
+        return {'platform': _pf, 'can_send': True,
+                'openid': str(_o.get('openid') or ''), 'mp_openid': str(_o.get('mp_openid') or ''),
+                'unionid': str(_o.get('unionid') or ''), 'phone': str(_o.get('user_phone') or ''),
+                'alipay_uid': '', 'reason': ''}
+    except Exception as _e:
+        logger.warning('[S525] order_notify_target 异常(按老行为): %s', _e)
+        return {'platform': NOTIFY_PLATFORM_UNKNOWN, 'can_send': True,
+                'openid': '', 'mp_openid': '', 'unionid': '', 'phone': '',
+                'alipay_uid': '', 'reason': 'exception'}
+
+
+def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, unionid=None,
+                              order_id=None, order_ids=None, pay_channel_id=None):
     """发送微信订阅消息（仅支持小程序mp_openid）
 
     [S307] 多小程序分流：先按 openid 前缀判断用户属于哪个小程序。
       若属于"非当前生效账号"（= 新小程序），走 _send_subscribe_for_account（用该小程序的 token + 模板）。
       否则（= 老小程序 / 判断不出）走下面原有的全部逻辑，行为一字不变。
     """
+    # [S525] 平台分流闸门：支付宝单绝不按手机号反查微信身份
+    if order_notify_blocked(order_id=order_id, order_ids=order_ids, pay_channel_id=pay_channel_id):
+        logger.info('[S525] 支付宝单跳过微信订阅消息(不按手机号反查微信身份) order_id=%s order_ids=%s openid=%s...',
+                    order_id, order_ids, str(openid or '')[:8])
+        return False
     # [S420-20260921] 订阅通知不再靠人工"全局关"，改为【跟随入口模式自动联动】：
     #   纯公众号(oa) / 纯支付宝(alipay) -> 小程序订阅消息根本没有发送场景，自动跳过；
     #   其它模式(mp / h5) -> 正常发送。

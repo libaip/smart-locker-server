@@ -258,7 +258,7 @@ def offline_retrieve():
                         "time2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
                         "thing4": {"value": "已退还至小程序用户钱包"},
                         "thing3": {"value": "请点击本通知进入“我的钱包”提现"}
-                    }, page='pages/mine/mine')
+                    }, page='pages/mine/mine', order_id=order['id'])  # [S525] 平台分流
                     logger.info('[offline_retrieve] 押金退还通知已发送')
         except Exception as ne:
             logger.error(f'[offline_retrieve发送通知失败] {ne}')
@@ -354,7 +354,7 @@ def offline_retrieve_batch():
                             "time2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
                             "thing4": {"value": "已退还至小程序用户钱包"},
                             "thing3": {"value": "请点击本通知进入“我的钱包”提现"}
-                        }, page='pages/mine/mine')
+                        }, page='pages/mine/mine', order_id=_rrec.get('order_id'))  # [S525] 平台分流
                         logger.info('[offline_batch] 押金退还通知已发送')
             except Exception as ne:
                 logger.error(f'[offline_batch发送通知失败] {ne}')

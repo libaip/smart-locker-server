@@ -1526,7 +1526,7 @@ def _auto_clear_cabinet_scheduler():
                                     "thing4": {"value": "已退还至小程序用户钱包"},
                                     "thing3": {"value": "请自行点击此通知消息跳转\u201c我的钱包\u201d提现"}
                                 }
-                                send_wx_subscribe_message(mp_openid or "", _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), sub_data, phone=o["user_phone"], page="pages/mine/mine")
+                                send_wx_subscribe_message(mp_openid or "", _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), sub_data, phone=o["user_phone"], page="pages/mine/mine", order_id=o["id"])  # [S525]
                             except Exception as e:
                                 logger.error('[自动清柜] 发送通知失败')
 

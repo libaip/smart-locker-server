@@ -1302,7 +1302,15 @@ def admin_order_close():
         ntf_openid = order_dict.get('mp_openid') or ''
         if not _is_sendable_mp_openid(ntf_openid):
             ntf_openid = order_dict.get('openid') or ''
-        if not _is_sendable_mp_openid(ntf_openid) and order_dict.get('user_phone'):
+        # [S525] 平台分流：支付宝单不做"按手机号反查微信身份"，直接不发微信侧通知
+        try:
+            from helpers import order_notify_platform as _s525_pf
+            _s525_is_alipay = (_s525_pf(order=order_dict) == 'alipay')
+        except Exception:
+            _s525_is_alipay = False
+        if _s525_is_alipay:
+            logger.info('[S525] 支付宝单(订单%s)跳过微信侧通知：不按手机号反查微信身份', order_dict.get('id'))
+        if (not _s525_is_alipay) and (not _is_sendable_mp_openid(ntf_openid)) and order_dict.get('user_phone'):
             try:
                 c2 = conn.cursor(cursor_factory=RealDictCursor)
                 # [S343] 按"可发送的小程序"实时前缀集合查（老 ooTcRx + 新 oQXFs3），
@@ -1322,7 +1330,8 @@ def admin_order_close():
                         ntf_openid = _r['mp_openid']
             except Exception as _e:
                 logger.warning(f'[order_close] 查询小程序openid失败: {_e}')
-        if ntf_openid:
+        # [S525] 支付宝单这里整体跳过（原逻辑一字未动，只是多一个前置条件）
+        if ntf_openid and not _s525_is_alipay:
             try:
                 from helpers import send_wx_subscribe_message
                 subscribe_data = {
@@ -1331,7 +1340,7 @@ def admin_order_close():
                     'thing4': {'value': '已退还至小程序用户钱包'},
                     'thing3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                 }
-                send_wx_subscribe_message(ntf_openid, _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'), subscribe_data, phone=order_dict.get('user_phone'), page='pages/mine/mine')
+                send_wx_subscribe_message(ntf_openid, _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'), subscribe_data, phone=order_dict.get('user_phone'), page='pages/mine/mine', order_id=order_dict.get('id'))
                 # 退款通知在用户提现时发送，不在结束寄存时发送
             except Exception as e:
                 logger.error(f"[order_close发送订阅消息失败] {e}") 
@@ -1351,7 +1360,8 @@ def admin_order_close():
             _tpl_kw = dict(openid=(order_dict.get('openid') or ''),
                            phone=(order_dict.get('user_phone') or ''),
                            unionid=(order_dict.get('unionid') or ''),
-                           url=oa_tplmsg_h5_url())
+                           url=oa_tplmsg_h5_url(),
+                           order_id=order_dict.get('id'))  # [S525] 平台分流
             _dep = float(deposit_amount or 0)
             send_oa_template_message('oa_tplmsg_deposit_end', {
                 'thing1': _tpl_site or '智能寄存柜',
@@ -5438,7 +5448,7 @@ def _release_auto_claim(wid):
         logger.error('[auto_withdraw] 释放认领失败 id=%s: %s', wid, e)
 
 
-def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid='', unionid=''):
+def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid='', unionid='', order_ids=None):
     try:
         from helpers import send_wx_subscribe_message
         # [S343-20260920] 字段名按【老模板 lJpnAUiE（退款成功通知）】的真实字段来：
@@ -5460,7 +5470,8 @@ def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid='', unionid='
         _ok = openid or ''
         if not _is_sendable_mp_openid(_ok):
             _ok = ''
-        send_wx_subscribe_message(_ok, _auto_withdraw_tpl(), wd_data, phone=phone, page='pages/mine/mine', unionid=unionid)
+        # [S525] 平台分流：整张提现单都来自支付宝 -> 闸门内部直接拦掉
+        send_wx_subscribe_message(_ok, _auto_withdraw_tpl(), wd_data, phone=phone, page='pages/mine/mine', unionid=unionid, order_ids=order_ids)
     except Exception as e:
         logger.error('[auto_withdraw] 订阅通知失败 phone=%s: %s', phone, e)
 
@@ -5545,7 +5556,7 @@ def _process_auto_withdrawal_record(wid):
             conn2.commit()
             # [S343] 乱码文案修复：第3个参数=退款方式(老模板 thing4 -> 新模板 thing10)，
             #   第4个参数=备注(老模板 thing3 -> 新模板 thing2)；本流程是 do_real_refund 原路退回。
-            _send_withdraw_subscribe(phone, amount, '原路退回支付账户', '预计0-3个工作日到账', row.get('w_openid') or '', row.get('w_unionid') or '')
+            _send_withdraw_subscribe(phone, amount, '原路退回支付账户', '预计0-3个工作日到账', row.get('w_openid') or '', row.get('w_unionid') or '', order_ids=order_ids)  # [S525]
             logger.info('[auto_withdraw] ???? id=%s orders=%s', wid, order_ids)
             done = True
         else:
@@ -7004,7 +7015,7 @@ def admin_device_clear_all():
                             'thing4': {'value': '已退还至小程序用户钱包'},
                             'thing3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                         }
-                        send_wx_subscribe_message(mp_openid or '', _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'), subscribe_data, phone=o_dict.get('user_phone'), page='pages/mine/mine', unionid=o_dict.get('unionid') or '')
+                        send_wx_subscribe_message(mp_openid or '', _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'), subscribe_data, phone=o_dict.get('user_phone'), page='pages/mine/mine', unionid=o_dict.get('unionid') or '', order_id=o_dict.get('id'))  # [S525]
                         notified += 1
                     except Exception as e:
                         logger.error(f'[clear_all] 发送订阅消息失败 order={o_dict["id"]}: {e}')

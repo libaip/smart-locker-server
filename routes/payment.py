@@ -380,7 +380,7 @@ def pay_notify():
                     # 想恢复发送: 把下面这行改成 True 即可
                     _SEND_STORAGE_SUCCESS_NOTIFY = False
                     if _SEND_STORAGE_SUCCESS_NOTIFY:
-                        send_wx_subscribe_message(openid, _wx_tpl('subscribe_deposit', 'mp', 'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk'), subscribe_data, phone=order.get('user_phone'), page='pages/mine/mine', unionid=_pay_unionid)
+                        send_wx_subscribe_message(openid, _wx_tpl('subscribe_deposit', 'mp', 'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk'), subscribe_data, phone=order.get('user_phone'), page='pages/mine/mine', unionid=_pay_unionid, order_id=order['id'])  # [S525]
                 # [S393-20260921] 公众号模板消息·寄存成功 —— 必须放在下面那个
                 #   `if openid and openid.startswith(mp_openid_prefix())` 【外面】：
                 #   公众号用户根本没有小程序 openid，放里面会被整段跳过
@@ -401,7 +401,7 @@ def pay_notify():
                         'amount9': str(order.get('deposit_amount')) + '元',
                         'time1': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     }, openid=(order.get('openid') or ''), phone=(order.get('user_phone') or ''),
-                       unionid=_tpl_union, url=oa_tplmsg_h5_url())
+                       unionid=_tpl_union, url=oa_tplmsg_h5_url(), order_id=order['id'])  # [S525] 平台分流
                 except Exception as _tpl_e:
                     logger.warning('[S393] 寄存成功模板消息失败: %s', _tpl_e)
             except Exception as e:

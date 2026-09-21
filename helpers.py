@@ -903,7 +903,19 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
         current_channel = payment_channel
     else:
         # [S317] 这里是要【发起微信支付】，必须只在 wechat 渠道里选，绝不能选到支付宝渠道
-        current_channel = _get_payment_channel(channel_type='wechat')  # 自动选活跃的微信渠道
+        # [S512b-20260921] 例外：在【支付宝内置浏览器】里必须挑支付宝通道。
+        #   否则支付宝用户永远拿到的是微信通道 -> 下面 ch_type=='alipay' 那段成了死代码，
+        #   用户在支付宝里根本付不了钱。支付宝通道不存在时回退微信通道（保持原行为）。
+        if is_alipay_browser():
+            current_channel = _get_payment_channel(channel_type='alipay')
+            if current_channel:
+                logger.info('[支付宝] 支付宝浏览器：选用支付宝通道 id=%s appid=%s',
+                            current_channel.get('id'), current_channel.get('app_id'))
+            else:
+                logger.warning('[支付宝] 支付宝浏览器但没有可用的支付宝通道，回退微信通道')
+                current_channel = _get_payment_channel(channel_type='wechat')
+        else:
+            current_channel = _get_payment_channel(channel_type='wechat')  # 自动选活跃的微信渠道
 
     if current_channel:
         wxpay, ch_type = get_channel_wxpay(current_channel, use_mp_appid=False, openid=openid)
@@ -1601,6 +1613,83 @@ def phone_openid_rows(cursor, phone='', openid='', mp_openid='', unionid=''):
         return []
     cursor.execute('SELECT * FROM users WHERE ' + ' OR '.join(parts) + ' ORDER BY id', params)
     return [dict(r) for r in cursor.fetchall()]
+
+
+# ============================================================
+# [S521-20260921] 身份改造：新数据按平台 id 认人
+#   小程序只看 mp_openid / 公众号只看 openid / 支付宝只看 alipay_uid
+#   手机号不再参与认人（只当联系方式）
+#   开关 system_settings.identity_strict_mode: off(默认=老逻辑) / new_order / all
+#   阶段①只落地函数与开关，不接任何调用点 —— 线上行为零变化
+# ============================================================
+_IDENT_COL = {'mp_openid': 'mp_openid', 'oa_openid': 'openid', 'alipay_uid': 'alipay_uid'}
+
+
+def identity_strict_mode():
+    """[S521] 身份改造开关；任何异常/非法值一律回落 'off'（等同老逻辑）。"""
+    try:
+        v = str(get_setting('identity_strict_mode', 'off') or 'off').strip().lower()
+    except Exception:
+        v = 'off'
+    return v if v in ('off', 'new_order', 'all') else 'off'
+
+
+def resolve_user_by_ident(cursor, kind, ident, auto_create=True):
+    """[S521] 按平台 id 认人：kind ∈ {mp_openid, oa_openid, alipay_uid}
+
+    老板口径（2026-09-21）：存量不动；新数据统一按 id 认人；小程序与公众号各算各的、不合并。
+      · 只按 id 查/建，手机号不参与；查不到就新建身份（phone 留空）
+      · 同一 id 命中多行（历史脏数据）-> 取最早那行(id 最小) + 告警，绝不猜别的行
+      · id 空 / 长度不在 16~64 -> 直接拒绝，绝不做兜底查询
+      · 并发：用"单语句条件插入 + 回查最早行"，宁可多出一条空行也不引会话级锁
+        （连接池 + autocommit 下 pg_advisory_lock 有泄漏风险；空行由对账脚本发现）
+    返回 user_id；0 = 没认出来/被拒绝。
+    """
+    col = _IDENT_COL.get(str(kind or '').strip())
+    if not col:
+        logger.error('[ident] 未知 kind=%s，拒绝认人', kind)
+        return 0
+    ident = _clean(ident)
+    if not ident:
+        logger.warning('[ident] 空 ident，拒绝认人 kind=%s', kind)
+        return 0
+    if not (16 <= len(ident) <= 64):
+        logger.warning('[ident] ident 长度异常(%d)，拒绝认人 kind=%s', len(ident), kind)
+        return 0
+    try:
+        cursor.execute('SELECT id FROM users WHERE %s = %%s ORDER BY id' % col, (ident,))
+        rows = cursor.fetchall() or []
+    except Exception as e:
+        logger.error('[ident] 查询失败 kind=%s: %s', kind, e)
+        return 0
+    ids = [int((r['id'] if hasattr(r, 'keys') else r[0]) or 0) for r in rows]
+    ids = [i for i in ids if i > 0]
+    if len(ids) == 1:
+        return ids[0]
+    if len(ids) > 1:
+        logger.warning('[ident] 同一身份命中 %d 行（按规矩取最早 id=%s，请客服人工核）kind=%s ident=%s...',
+                       len(ids), ids[0], kind, ident[:10])
+        return ids[0]
+    if not auto_create:
+        return 0
+    try:
+        cursor.execute(
+            "INSERT INTO users (%s, phone) SELECT %%s, '' "
+            "WHERE NOT EXISTS (SELECT 1 FROM users WHERE %s = %%s) RETURNING id" % (col, col),
+            (ident, ident))
+        r = cursor.fetchone()
+        if r:
+            uid = int((r['id'] if hasattr(r, 'keys') else r[0]) or 0)
+            logger.info('[ident] 新建身份 kind=%s ident=%s... user_id=%s', kind, ident[:10], uid)
+            return uid
+        # 并发下别人先建了 -> 回查最早那行
+        cursor.execute('SELECT id FROM users WHERE %s = %%s ORDER BY id LIMIT 1' % col, (ident,))
+        r2 = cursor.fetchone()
+        if r2:
+            return int((r2['id'] if hasattr(r2, 'keys') else r2[0]) or 0)
+    except Exception as e:
+        logger.error('[ident] 新建失败 kind=%s: %s', kind, e)
+    return 0
 
 
 def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='', user_id=0,

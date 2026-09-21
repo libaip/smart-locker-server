@@ -159,7 +159,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
       </div>
       <div class="common-q" @click="page='rules'"><span>❓</span><span>常见问题</span></div>
     </div>
-    <div class="floating">
+    <!-- [S418-20260921] 弹窗期间/刚关闭的 600ms 内隐藏悬浮按钮：
+         否则手机上弹窗消失的瞬间，同一次触摸会再被派发一次 click 到刚露出来的按钮上，
+         用户就会从"提现完成"跳到"联系客服"页。 -->
+    <div class="floating" v-if="!showWithdrawConfirm && !showWithdrawSuccess && !hideFloat">
       <div class="float-btn" @click="page='service'"><div class="float-icon robot">📞</div><span class="float-label">联系客服</span></div>
       <div class="float-btn" @click="goComplaint()"><div class="float-icon complaint">💬</div><span class="float-label">投诉商家</span></div>
     </div>
@@ -181,7 +184,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
       <div class="list-item" @click="goWithdrawals()"><div class="list-icon">📄</div><span class="label">提现记录</span><span class="arrow">›</span></div>
       <div class="list-item" @click="goTransactions()"><div class="list-icon">📊</div><span class="label">交易明细</span><span class="arrow">›</span></div>
     </div>
-    <div class="floating">
+    <div class="floating" v-if="!showWithdrawConfirm && !showWithdrawSuccess && !hideFloat">
       <div class="float-btn" @click="page='service'"><div class="float-icon robot">📞</div><span class="float-label">联系客服</span></div>
     </div>
   </template>
@@ -210,13 +213,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
       <div class="withdraw-warning">⚠ 提现后0-3个工作日内到账</div>
     </div>
     <!-- [S417-20260921] 照小程序：提交前先「确认提现」 -->
-    <div v-if="showWithdrawConfirm" class="mask" @click="showWithdrawConfirm=false">
+    <div v-if="showWithdrawConfirm" class="mask" @click="cancelWithdrawConfirm()">
       <div class="modal" @click.stop>
         <h3>确认提现</h3>
         <div style="color:#333;font-size:16px;margin:10px 0 4px">确认提现 ¥{{ wallet.balance || '0.00' }} ？</div>
         <div style="color:#999;font-size:12px">提现后 0-3 个工作日内到账</div>
         <div class="modal-btns">
-          <div class="confirm" style="background:#F2F3F5;color:#333" @click="showWithdrawConfirm=false">取消</div>
+          <div class="confirm" style="background:#F2F3F5;color:#333" @click="cancelWithdrawConfirm()">取消</div>
           <div class="confirm" @click="confirmWithdraw()">确认</div>
         </div>
       </div>
@@ -381,7 +384,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
       orders: [], orderTab: 'active',
       transactions: [], transFilter: 'all',
       withdrawals: [],
-      withdrawAmount: '', showWithdrawSuccess: false, showWithdrawConfirm: false, lastWithdrawAmount: '0.00',
+      withdrawAmount: '', showWithdrawSuccess: false, showWithdrawConfirm: false, hideFloat: false, lastWithdrawAmount: '0.00',
       withdrawing: false, withdrawBtnText: '立即提现',
       complaint: { content: '', phone: '', orderNo: '' },
       complaintOrders: [], complaintDone: false, submittingComplaint: false,
@@ -517,10 +520,21 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
         }).catch(function () { th.withdrawing = false; th.withdrawBtnText = '立即提现'; th.tip('提现失败'); });
       },
       closeWithdrawSuccess: function () {
-        // [S417] 关掉成功弹窗 -> 回钱包页 -> 再刷一次余额（对齐小程序 navigateBack + onShow）
+        // [S418-20260921] 用户口径：提现完成后回【个人中心首页】，不要停在钱包页，
+        //   更不能因为"弹窗消失瞬间的补发点击"掉进联系客服页。
+        var th = this;
         this.showWithdrawSuccess = false;
-        this.page = 'wallet';
+        this.hideFloat = true;          // 防补发点击打到悬浮按钮
+        this.page = 'main';
         this.loadUserData();
+        setTimeout(function () { th.hideFloat = false; }, 600);
+      },
+      cancelWithdrawConfirm: function () {
+        // 取消确认弹窗：同样短暂隐藏悬浮按钮，避免补发点击跳到客服页
+        var th = this;
+        this.showWithdrawConfirm = false;
+        this.hideFloat = true;
+        setTimeout(function () { th.hideFloat = false; }, 600);
       },
       orderReopen: function (i) {
         var th = this;

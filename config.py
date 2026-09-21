@@ -23,8 +23,12 @@ WX_MCH_ID = '1747762575'  # 默认回退商户号（已受限），优先使用�
 WX_API_KEY = 'lichengju0904LICHENGJU0904libaip'
 WX_API_V3_KEY = 'lichengju0904LICHENGJU0904libaip'
 WX_CERT_SERIAL_NO = '73AB063E7593B2FC5DDF37C0F6A269826675D119'
-WX_APP_ID = 'wxd85204d0ec930d46'
-WX_APP_SECRET = '552e27fa9a260a6640bf6983bd3470f5'
+# [S415-20260921] 原来是【老公众号·智能寄存柜】的凭据(wxd85204d0ec930d46)。
+#   它是"配置中心读不到时的兜底"，留着老 appid = 哪天读配置失败就静默拿老号去授权/下单，
+#   而老号的 appid 跟现在在用的商户没有绑定 -> 支付必炸（2026-09-21 同类故障实测）。
+#   改成当前在用的公众号【重庆卓蓝时】的凭据，与 wx_accounts.id=10 保持一致。
+WX_APP_ID = 'wx9d559811f476d9d5'
+WX_APP_SECRET = 'e15202f4cf3e6ea86ebbeee8e62b3bd6'
 WX_MP_APP_ID = 'wxcabd4cbdb3096c4b'
 WX_MP_APP_SECRET = 'f8d9d68772401f4fdda4a2d2d6143988'
 WX_MP_TOKEN = 'smartlocker2024'

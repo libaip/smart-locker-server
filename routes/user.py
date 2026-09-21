@@ -694,6 +694,17 @@ def store_init():
 def get_pay_params_api():
     """获取已有订单的支付参数"""
     try:
+        # [S415-20260921] 关掉"支付宝小程序"这条老侧门：
+        #   实测 2026-09-21：走 /api/deposit/create-order 的 22 次下单全部来自支付宝小程序
+        #   （Referer=2021006199688688.hybrid.alipay-eco.com，UA=AlipayClient）。它把用户的
+        #   老公众号身份（oLhbm2…）当"微信付款身份"传上来 -> 取到已停用的老 appid ->
+        #   微信回 APPID_MCHID_NOT_MATCH -> 当时唯一在用的商户 118 被停 -> 全站支付挂 3 次。
+        #   该入口对应的支付宝渠道(id=113)历史 9 笔全失败、is_active=0、从未成功过一单。
+        _ua415 = request.headers.get('User-Agent', '') or ''
+        _ref415 = request.headers.get('Referer', '') or ''
+        if ('AlipayClient' in _ua415) or ('AliApp(' in _ua415) or ('alipay-eco.com' in _ref415):
+            logger.warning('[S415] 拒绝支付宝小程序下单: ua=%s ref=%s', _ua415[:60], _ref415[:80])
+            return json_response(message='该入口已停用，请用微信扫柜机上的二维码使用', code=403)
         data = request.get_json()
         order_id = data.get('order_id')
         phone = data.get('phone', '')
@@ -1227,6 +1238,17 @@ def retrieve_confirm():
 def create_deposit_order():
     """创建存包订单并获取微信支付参数"""
     try:
+        # [S415-20260921] 关掉"支付宝小程序"这条老侧门：
+        #   实测 2026-09-21：走 /api/deposit/create-order 的 22 次下单全部来自支付宝小程序
+        #   （Referer=2021006199688688.hybrid.alipay-eco.com，UA=AlipayClient）。它把用户的
+        #   老公众号身份（oLhbm2…）当"微信付款身份"传上来 -> 取到已停用的老 appid ->
+        #   微信回 APPID_MCHID_NOT_MATCH -> 当时唯一在用的商户 118 被停 -> 全站支付挂 3 次。
+        #   该入口对应的支付宝渠道(id=113)历史 9 笔全失败、is_active=0、从未成功过一单。
+        _ua415 = request.headers.get('User-Agent', '') or ''
+        _ref415 = request.headers.get('Referer', '') or ''
+        if ('AlipayClient' in _ua415) or ('AliApp(' in _ua415) or ('alipay-eco.com' in _ref415):
+            logger.warning('[S415] 拒绝支付宝小程序下单: ua=%s ref=%s', _ua415[:60], _ref415[:80])
+            return json_response(message='该入口已停用，请用微信扫柜机上的二维码使用', code=403)
         data = request.get_json()
         cabinet_id = data.get('cabinet_id')
         device_id = data.get('device_id', '')

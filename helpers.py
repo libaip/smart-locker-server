@@ -977,8 +977,13 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
                     'mweb_url': result.get('mweb_url')}
     
     # 商户被封/异常自动检测
-    _dead_errors = {'MCH_NOT_EXIST', 'APPID_MCHID_NOT_MATCH', 'ACCOUNT_ERROR', 'BANK_ERROR'}
-    _skip_errors = {'NOAUTH', 'NO_AUTH'}  # 收款受限，切换重试但不永久禁用
+    # [S415-20260921] APPID_MCHID_NOT_MATCH 移出"商户死亡"名单：
+    #   它的含义是"这笔单的付款人身份(appid)跟这个商户不搭"，不是"商户坏了"。
+    #   2026-09-21 生产实例：老身份进来下单 -> 微信回 APPID_MCHID_NOT_MATCH ->
+    #   一句话就把当时唯一在用的商户 118 停掉 -> 全站支付挂了 3 次(08:00/08:18/08:19)。
+    #   现在它跟 NOAUTH 一样：只换渠道重试、不停商户（真死的商户仍会被停）。
+    _dead_errors = {'MCH_NOT_EXIST', 'ACCOUNT_ERROR', 'BANK_ERROR'}
+    _skip_errors = {'NOAUTH', 'NO_AUTH', 'APPID_MCHID_NOT_MATCH'}  # 收款受限，切换重试但不永久禁用
     _err_code = result.get('err_code', '')
     if current_channel and _retry_count < 3 and (_err_code in _dead_errors or _err_code in _skip_errors):
         # 只对严重错误禁用商户；NOAUTH等收款受限只切换不禁用
@@ -1118,8 +1123,12 @@ def _appid_rows():
     try:
         conn = get_db()
         cursor = conn.cursor()
+        # [S415-20260921] 已停用的公众号(oa)不再参与"按 openid 取 appid"：
+        #   它的 appid 跟现在在用的商户没有绑定，拿来下单必然 APPID_MCHID_NOT_MATCH。
+        #   （2026-09-21 生产实例：老公众号 oLhbm2 的 appid 被拿去给卓蓝时商户下单）
         cursor.execute("SELECT appid, openid_prefix, name, acct_type FROM wx_accounts "
-                       "WHERE COALESCE(openid_prefix,'') <> '' AND COALESCE(appid,'') <> ''")
+                       "WHERE COALESCE(openid_prefix,'') <> '' AND COALESCE(appid,'') <> '' "
+                       "AND NOT (COALESCE(acct_type,'') = 'oa' AND COALESCE(is_active,0) = 0)")
         for r in cursor.fetchall():
             _p = str(r.get('openid_prefix') or '').strip()
             _a = str(r.get('appid') or '').strip()

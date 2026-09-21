@@ -1634,6 +1634,43 @@ def identity_strict_mode():
     return v if v in ('off', 'new_order', 'all') else 'off'
 
 
+def _s521_ident_kind(openid='', mp_openid='', alipay_uid=''):
+    """[S521] 判断本次请求的身份类别，返回 (kind, ident)。
+
+    规则（老板口径：小程序看小程序 ID、公众号看公众号 ID、各自算各自的）：
+      · openid 前缀属于【公众号】账号  -> ('oa_openid', openid)   （H5 入口）
+      · openid 前缀属于【小程序】账号  -> ('mp_openid', openid)   （小程序客户端常把 mp openid 放在 openid 字段）
+      · 前缀判不出来但 is_new_mp_identity 为真（新体系）-> ('mp_openid', openid)
+      · 其余：mp_openid 非空 -> ('mp_openid', mp_openid)；alipay_uid 非空 -> ('alipay_uid', alipay_uid)
+      · 什么 id 都没有 -> ('', '')，调用方回落老逻辑
+    """
+    o = _clean(openid)
+    m = _clean(mp_openid)
+    a = _clean(alipay_uid)
+    if o:
+        try:
+            if appid_by_openid(o, 'oa'):
+                return 'oa_openid', o
+        except Exception:
+            pass
+        try:
+            if appid_by_openid(o, 'mp'):
+                return 'mp_openid', o
+        except Exception:
+            pass
+        try:
+            if is_new_mp_identity(openid=o):
+                return 'mp_openid', o
+        except Exception:
+            pass
+        return 'oa_openid', o
+    if m:
+        return 'mp_openid', m
+    if a:
+        return 'alipay_uid', a
+    return '', ''
+
+
 def resolve_user_by_ident(cursor, kind, ident, auto_create=True):
     """[S521] 按平台 id 认人：kind ∈ {mp_openid, oa_openid, alipay_uid}
 

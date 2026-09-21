@@ -209,12 +209,25 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
       <button class="btn-gold" :disabled="withdrawing || !(parseFloat(wallet.balance)>0)" @click="doWithdraw()">{{ withdrawBtnText }}</button>
       <div class="withdraw-warning">⚠ 提现后0-3个工作日内到账</div>
     </div>
-    <div v-if="showWithdrawSuccess" class="mask" @click="showWithdrawSuccess=false">
+    <!-- [S417-20260921] 照小程序：提交前先「确认提现」 -->
+    <div v-if="showWithdrawConfirm" class="mask" @click="showWithdrawConfirm=false">
+      <div class="modal" @click.stop>
+        <h3>确认提现</h3>
+        <div style="color:#333;font-size:16px;margin:10px 0 4px">确认提现 ¥{{ wallet.balance || '0.00' }} ？</div>
+        <div style="color:#999;font-size:12px">提现后 0-3 个工作日内到账</div>
+        <div class="modal-btns">
+          <div class="confirm" style="background:#F2F3F5;color:#333" @click="showWithdrawConfirm=false">取消</div>
+          <div class="confirm" @click="confirmWithdraw()">确认</div>
+        </div>
+      </div>
+    </div>
+    <div v-if="showWithdrawSuccess" class="mask" @click="closeWithdrawSuccess()">
       <div class="modal" @click.stop>
         <div style="width:52px;height:52px;border-radius:50%;background:#5ec9b4;color:#fff;font-size:28px;line-height:52px;margin:0 auto 12px">✓</div>
-        <h3>提现提交成功</h3>
-        <div style="color:#999;font-size:14px">¥{{ lastWithdrawAmount }} 已提交审核</div>
-        <div class="modal-btns"><div class="confirm" @click="showWithdrawSuccess=false;page='wallet'">完成</div></div>
+        <h3>提现申请已提交</h3>
+        <div style="color:#333;font-size:16px;margin:8px 0 4px">¥{{ lastWithdrawAmount }}</div>
+        <div style="color:#999;font-size:12px">预计 0-3 个工作日内到账</div>
+        <div class="modal-btns"><div class="confirm" @click="closeWithdrawSuccess()">完成</div></div>
       </div>
     </div>
   </template>
@@ -368,7 +381,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
       orders: [], orderTab: 'active',
       transactions: [], transFilter: 'all',
       withdrawals: [],
-      withdrawAmount: '', showWithdrawSuccess: false, lastWithdrawAmount: '0.00',
+      withdrawAmount: '', showWithdrawSuccess: false, showWithdrawConfirm: false, lastWithdrawAmount: '0.00',
       withdrawing: false, withdrawBtnText: '立即提现',
       complaint: { content: '', phone: '', orderNo: '' },
       complaintOrders: [], complaintDone: false, submittingComplaint: false,
@@ -479,7 +492,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
         var amt = parseFloat(this.wallet.balance);
         if (!amt || amt <= 0) { this.tip('暂无可提现余额'); return; }
         if (this.withdrawing) { return; }
+        // [S417-20260921] 照小程序 wx.showModal('确认提现')：先弹确认，再提交
+        this.showWithdrawConfirm = true;
+      },
+      confirmWithdraw: function () {
+        var amt = parseFloat(this.wallet.balance);
+        if (!amt || amt <= 0) { this.showWithdrawConfirm = false; this.tip('暂无可提现余额'); return; }
+        if (this.withdrawing) { return; }
         var th = this;
+        this.showWithdrawConfirm = false;
         this.withdrawing = true; this.withdrawBtnText = '提交中...';
         this.api('/api/user/withdraw', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -487,9 +508,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue'
         }).then(function (d) {
           th.withdrawing = false; th.withdrawBtnText = '立即提现';
           if (d && (d.code === 0 || d.code === 200)) {
-            th.lastWithdrawAmount = amt.toFixed(2); th.showWithdrawSuccess = true; th.loadUserData();
+            th.lastWithdrawAmount = amt.toFixed(2);
+            // [S417] 先本地清零，再拉实时余额；跟小程序「返回钱包页 onShow 重新拉」效果一致
+            th.wallet.balance = '0.00';
+            th.showWithdrawSuccess = true;
+            th.loadUserData();
           } else { th.tip((d && d.message) || '提现失败'); }
         }).catch(function () { th.withdrawing = false; th.withdrawBtnText = '立即提现'; th.tip('提现失败'); });
+      },
+      closeWithdrawSuccess: function () {
+        // [S417] 关掉成功弹窗 -> 回钱包页 -> 再刷一次余额（对齐小程序 navigateBack + onShow）
+        this.showWithdrawSuccess = false;
+        this.page = 'wallet';
+        this.loadUserData();
       },
       orderReopen: function (i) {
         var th = this;

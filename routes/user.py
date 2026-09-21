@@ -4250,9 +4250,18 @@ def user_withdraw():
                     conn.close()
                     return json_response(message='订单已有待处理提现，请勿重复提交', code=400)
             # 扣除余额
-            upsert_user_balance_row(cursor, phone=phone, openid=openid, unionid=ident['unionid'],
-                                    mp_openid=mp_openid, balance=-actual_amount,
-                                    total_withdrawn=actual_amount, user_id=ident['user_id'])
+            # [S417-20260921] 老表 user_balances 只是历史账面，不能因为它把提现整个搞失败：
+            #   它的唯一索引 idx_user_balances_phone_empty_union 是 (phone) WHERE unionid 空，
+            #   而新公众号用户没有手机号(phone='')，库里早有一行 phone='' 的历史数据
+            #   (user_balances.id=33379)，于是 upsert 直接撞唯一键 ->
+            #   事务被中止 -> 提现 400「duplicate key value violates unique constraint」。
+            #   真账在 user_balance_details + withdrawal_records，无手机号时这里跳过。
+            if phone:
+                upsert_user_balance_row(cursor, phone=phone, openid=openid, unionid=ident['unionid'],
+                                        mp_openid=mp_openid, balance=-actual_amount,
+                                        total_withdrawn=actual_amount, user_id=ident['user_id'])
+            else:
+                logger.info('[S417] 无手机号用户，跳过老表 user_balances 扣减(避免 phone=\'\' 唯一键冲突)')
             # 异步：先冻结余额并插入待处理记录，后台统一退款
             import json as _json_auto
             remaining = actual_amount
@@ -4362,9 +4371,13 @@ def user_withdraw():
             # 冻结余额（严格按phone+openid）
             from helpers import check_whitelist
             wl_record = check_whitelist(openid, ident.get('unionid') or '') if (openid or ident.get('unionid')) else None
-            upsert_user_balance_row(cursor, phone=phone, openid=openid, unionid=ident['unionid'],
-                                    mp_openid=mp_openid, balance=-actual_amount,
-                                    user_id=ident['user_id'])
+            # [S417-20260921] 同上：无手机号用户跳过老表 user_balances（唯一索引 (phone) 会撞）
+            if phone:
+                upsert_user_balance_row(cursor, phone=phone, openid=openid, unionid=ident['unionid'],
+                                        mp_openid=mp_openid, balance=-actual_amount,
+                                        user_id=ident['user_id'])
+            else:
+                logger.info('[S417] 无手机号用户，跳过老表 user_balances 冻结(避免 phone=\'\' 唯一键冲突)')
             # 按订单逐条创建提现记录
             import json as _json_auto
             remaining = actual_amount
@@ -4430,8 +4443,13 @@ def user_withdraw():
     except Exception as e:
         logger.error(f'[user/withdraw] {e}')
         msg = str(e)
-        if 'uq_withdrawal_pending_order' in msg or 'duplicate key' in msg:
+        # [S417-20260921] 原来任何 duplicate key 都报「已有待处理提现」，其实只有那条唯一约束才是；
+        #   其它重复键(例如老表 user_balances 的 (phone) 索引)会把 SQL 原文糊到用户脸上。
+        if 'uq_withdrawal_pending_order' in msg:
             return json_response(message='订单已有待处理提现，请勿重复提交', code=400)
+        if 'duplicate key' in msg:
+            logger.error('[S417] 提现重复键: %s', msg)
+            return json_response(message='提现提交失败，请稍后重试', code=400)
         return json_response(message=msg, code=500)
 
 

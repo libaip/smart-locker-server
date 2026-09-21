@@ -470,6 +470,9 @@ def alipay_pay_notify():
     try:
         params = dict(request.form) if request.form else dict(request.args)
         out_trade_no = str(params.get('out_trade_no') or '')
+        # [S519] 订单桥接的另一半：付款人的支付宝 uid。
+        #   验签路径 -> 通知里的 buyer_id；查单路径 -> 查单结果里的 buyer_user_id（下面覆盖）
+        _buyer_uid = str(params.get('buyer_id') or params.get('buyer_user_id') or '').strip()
         logger.info('[支付宝回调] 收到通知 out_trade_no=%s trade_status=%s total_amount=%s 有签名=%s',
                     out_trade_no, params.get('trade_status'), params.get('total_amount'), bool(params.get('sign')))
         if not out_trade_no:
@@ -510,6 +513,7 @@ def alipay_pay_notify():
             q = client.query(out_trade_no=out_trade_no)
             if str(q.get('code')) == '10000' and str(q.get('trade_status')) in ('TRADE_SUCCESS', 'TRADE_FINISHED'):
                 verified_by = 'query'
+                _buyer_uid = str(q.get('buyer_user_id') or q.get('buyer_id') or _buyer_uid or '').strip()
                 params = {'trade_no': q.get('trade_no'), 'total_amount': q.get('total_amount')}
             else:
                 logger.warning('[支付宝回调] 验签失败且查单未确认: code=%s sub_code=%s', q.get('code'), q.get('sub_code'))
@@ -556,6 +560,17 @@ def alipay_pay_notify():
                     update_channel_stats(order['payment_channel_id'], amount)
                 except Exception:
                     pass
+        # [S519] 订单桥接：把付款人 uid 落到本单（只写支付宝专用列，不动 user_id/openid/mp_openid）
+        if updated and _buyer_uid:
+            try:
+                cursor.execute("""UPDATE orders SET alipay_pay_uid = %s
+                                  WHERE id = %s AND COALESCE(alipay_pay_uid, '') = ''""",
+                               (_buyer_uid, order['id']))
+                logger.info('[支付宝回调] 订单桥接: order=%s alipay_pay_uid=%s...'
+                            % (order['id'], _buyer_uid[:8]))
+            except Exception as _be:
+                logger.error('[支付宝回调] 落 alipay_pay_uid 失败(不影响订单已支付): order=%s err=%s'
+                             % (order['id'], _be))
         conn.commit()
         conn.close()
         # [S334] 支付宝支付成功也要【开门】：原来这里只改单/记账，没有发开锁指令，

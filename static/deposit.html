@@ -1109,7 +1109,7 @@
                 if (_oaForceH5) {
                     mpSavePendingJump();   // [测试] 存档，回来才能接着付
                     showMpTipModal();      // [测试] 强制走 H5: 直接看到 A1 的拦截弹层(请跳转小程序)
-                } else if (isAlipayEnv() && !sessionStorage.getItem('alipay_sub_jumped')) {
+                } else if (isAlipayEnv() && !sessionStorage.getItem('alipay_sub_jumped') && !(function () { try { return localStorage.getItem('alipay_sub_jumped_ls'); } catch (e) { return ''; } })()) {
                     // [S515] 支付宝：先跳小程序拿订阅，回来再进支付页（与微信同样的顺序）
                     sessionStorage.setItem('alipay_sub_jumped', '1');
                     mpSavePendingJump();
@@ -1826,6 +1826,8 @@
         var u = 'alipays://platformapi/startapp?appId=' + ALIPAY_MP_APPID +
                 '&page=pages/subscribe/subscribe?' + _qenc +
                 '&query=' + _qenc;
+        // [S516b-20260921] 同时写 localStorage：回跳若是新开 webview，sessionStorage 会丢
+        try { localStorage.setItem('alipay_sub_jumped_ls', '1'); } catch (e) {}
         alipayWatchReturn();                      // 回来（隐藏->可见）直接进支付页
         var jumped = false;
         try { window.location.href = u; jumped = true; } catch (e) { jumped = false; }
@@ -1848,6 +1850,9 @@
         }, 1000);
     }
     function alipayResumeFromJump() {
+        // [S516b-20260921] 消费掉标记（含 localStorage 那份），避免下次流程被跳过
+        try { sessionStorage.removeItem('alipay_sub_jumped'); } catch (e) {}
+        try { localStorage.removeItem('alipay_sub_jumped_ls'); } catch (e) {}
         // 还原订单上下文（复用微信那套存档），但**不走**微信的"是否进过小程序"门禁
         try {
             var o = mpReadPendingJump();
@@ -1874,7 +1879,7 @@
     (function () {
         if (!isAlipayEnv()) { return; }
         var jumped = '';
-        try { jumped = sessionStorage.getItem('alipay_sub_jumped') || ''; } catch (e) {}
+        try { jumped = sessionStorage.getItem('alipay_sub_jumped') || localStorage.getItem('alipay_sub_jumped_ls') || ''; } catch (e) {}
         if (!jumped) { return; }
         setTimeout(function () {
             var f = '';

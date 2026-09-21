@@ -4777,6 +4777,55 @@ def send_alipay_subscribe_message(alipay_uid, template_id, data, page='pages/min
         return False
 
 
+
+# ============================================================
+# [S533-20260921] 模板ID按"实际发信账号"纠正
+#   事故：2026-09-21 23:15:13 order=137358 openid=oXTD3xYN...(新小程序 账号11 卓蓝时)
+#         template=ax-O5Qa... -> 微信 40037 invalid template_id，小程序订阅消息静默丢失
+#         （同一时刻公众号模板消息发成功，因为 oa 模板是按账号10 专属配的）
+#   机制：所有调用点都用 wx_config.template_id(biz,'mp',老ID) 取模板，而
+#         template_id() -> get_template(biz, channel) **不传 account_id**，
+#         永远返回 account_id=0 的通用行（= 老小程序的模板ID）。生效小程序换成
+#         账号11 后，这条ID在账号11 里根本不存在 -> 40037。
+#   做法：发信前按 openid 所属账号再查一次同 biz 的专属模板；查到且不同就换掉。
+#   安全：任何异常 / 查不到 / 取到同一个ID -> 原样返回，行为与改动前完全一致。
+#         本函数只查库、不发任何请求。
+# ============================================================
+def _wx_fix_subscribe_template(openid, template_id):
+    """[S533] 把"不区分账号"取到的模板ID，纠正成 openid 所属小程序自己的模板ID。"""
+    _tid = str(template_id or '').strip()
+    _oid = str(openid or '').strip()
+    if not _tid or not _oid:
+        return template_id
+    try:
+        import wx_config as _wc533
+        try:
+            _aid = int(_wc533.account_id_by_openid(_oid) or 0)
+        except Exception:
+            _aid = 0
+        if not _aid:
+            try:
+                _eff533 = _wc533.get_effective_account('mp') or {}
+                _aid = int(_eff533.get('id') or 0)
+            except Exception:
+                _aid = 0
+        if not _aid:
+            return template_id
+        _biz533 = _wc533.biz_by_template_id(_tid)
+        if not _biz533:
+            return template_id
+        _row533 = _wc533.get_template(_biz533, 'mp', account_id=_aid)
+        _new533 = str((_row533 or {}).get('template_id') or '').strip()
+        if not _new533 or _new533 == _tid:
+            return template_id
+        logger.info('[S533] 模板ID按账号纠正: account_id=%s biz=%s %s... -> %s...',
+                    _aid, _biz533, _tid[:8], _new533[:8])
+        return _new533
+    except Exception as _e533:
+        logger.warning('[S533] 模板ID纠正失败(用原ID): %s', _e533)
+        return template_id
+
+
 def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, unionid=None,
                               order_id=None, order_ids=None, pay_channel_id=None):
     """发送微信订阅消息（仅支持小程序mp_openid）
@@ -4943,6 +4992,8 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
             send_oa_subscribe_notify(template_id, data, phone=phone or '', unionid=unionid, reason='没有小程序openid')
             return False
 
+        # [S533-20260921] 模板ID按 openid 所属小程序纠正（不区分账号取模板会 40037）
+        template_id = _wx_fix_subscribe_template(openid, template_id)
         # 获取access_token（使用getStableAccessToken + DB缓存）
         access_token = get_access_token()
         if not access_token:

@@ -273,6 +273,22 @@ class AlipayClient(object):
             biz['refund_reason'] = str(refund_reason)[:256]
         return self._post('alipay.trade.refund', biz, notify_url=None)
 
+    def refund_query(self, out_trade_no=None, out_request_no=None, trade_no=None):
+        """[S541-20260922] 退款查询：alipay.trade.fastpay.refund.query
+        官方口径（alipay.trade.refund 文档）：
+          "接口返回 fund_change=Y 为退款成功，fund_change=N 或无此字段值返回时需通过退款查询接口
+           进一步确认。注意，接口中 code=10000 仅代表本次退款请求成功，不代表退款成功。"
+        -> 本方法用于 fund_change 不是 Y 时的复核，按 out_request_no（我们自己的确定性单号）查。
+        返回 {'code':'10000','refund_status':'REFUND_SUCCESS'|'REFUND_CLOSED'|...,'refund_amount':..}
+        """
+        biz = {}
+        if out_request_no:
+            biz['out_request_no'] = str(out_request_no)
+        if out_trade_no:
+            biz['out_trade_no'] = str(out_trade_no)
+        if trade_no:
+            biz['trade_no'] = str(trade_no)
+        return self._post('alipay.trade.fastpay.refund.query', biz)
     def close(self, out_trade_no=None, trade_no=None):
         biz = {}
         if out_trade_no:

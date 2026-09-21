@@ -2707,7 +2707,243 @@ def send_oa_template_message(biz, data, openid='', phone='', unionid='', url='',
         return False
 
 
-def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=None, skip_balance=False, **kwargs):
+# ============================================================
+# [S541-20260922] 提现"押金原路退回"开关（默认值全部 = 现状行为，上线后行为不变）
+#   withdraw_refund_mode              : transfer(默认,现状=仅微信退款且过滤支付宝) / original(逐单按渠道原路退回)
+#   withdraw_refund_alipay            : 0(默认) / 1   支付宝单是否参与提现
+#   withdraw_refund_dry_run           : 0(默认) / 1   干跑：只算计划打日志，不调渠道、不改库
+#   withdraw_refund_original_locations: ''(默认,不限) 逗号分隔 locations.id，仅 mode=original 时的网点灰度白名单
+#   读不到/值非法一律回落现状，绝不因配置问题改变资金行为。
+# ============================================================
+WITHDRAW_REFUND_MODE_KEY = 'withdraw_refund_mode'
+WITHDRAW_REFUND_ALIPAY_KEY = 'withdraw_refund_alipay'
+WITHDRAW_REFUND_DRY_RUN_KEY = 'withdraw_refund_dry_run'
+WITHDRAW_REFUND_ORIG_LOCS_KEY = 'withdraw_refund_original_locations'
+
+
+def is_channel_balance_error(msg='', result=None):
+    """[S541] 渠道"资金水位不足"判定 —— 这类失败是【可重试】的，不是永久失败。
+      支付宝: ACQ.SELLER_BALANCE_NOT_ENOUGH (卖家余额不足；官方释义"商户账户充值后重新发起退款即可")
+      微信  : NOTENOUGH / 基本账户余额不足
+    官方还明确"退款退费：退款时手续费会一并退还"，所以退款失败只可能是账户里没有可动用的钱。
+    """
+    _s = str(msg or '')
+    _u = _s.upper()
+    if 'BALANCE_NOT_ENOUGH' in _u or 'SELLER_BALANCE' in _u:
+        return True
+    if 'NOTENOUGH' in _u or '余额不足' in _s:
+        return True
+    try:
+        if isinstance(result, dict):
+            _sc = str(result.get('sub_code') or '').upper()
+            _ec = str(result.get('err_code') or '').upper()
+            if 'BALANCE_NOT_ENOUGH' in _sc or 'NOTENOUGH' in _ec:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def alert_withdraw_channel_balance(amount=0, count=0, msg='', wid=None, tag=''):
+    """[S541] 渠道余额不足 -> 给管理员一条"人话"提醒(PushPlus)，30 分钟去重。
+    返回 True=本次真的推送了。任何异常都不影响退款主流程。"""
+    try:
+        import time as _t
+        import json as _j
+        from database import get_db as _gdb
+        _key = 'withdraw_channel_balance_alert'
+        _conn = _gdb()
+        _c = _conn.cursor()
+        _c.execute("SELECT setting_value FROM system_settings WHERE setting_key=%s", (_key,))
+        _row = _c.fetchone()
+        _raw = ''
+        if _row:
+            _raw = _row.get('setting_value') if isinstance(_row, dict) else _row[0]
+        try:
+            _st = _j.loads(_raw or '{}') or {}
+        except Exception:
+            _st = {}
+        _now = int(_t.time())
+        if _now - int(_st.get('ts') or 0) < 1800:
+            try:
+                _conn.close()
+            except Exception:
+                pass
+            return False
+        _title = '【寄存柜】商户账户余额不足：提现原路退回暂缓，充值后自动重试'
+        _content = ('有提现的原路退回因为【商户账户可用余额不足】暂时没退成，钱没有丢，也没有算成拒绝。\n'
+                    '提现单: %s (%s)\n'
+                    '涉及笔数: %s\n'
+                    '涉及金额: 约 %.2f 元\n'
+                    '渠道返回: %s\n'
+                    '系统已安排 30 分钟后自动重试（同一笔用确定性退款单号，不会重复退款）。\n'
+                    '说明: 支付宝官方口径——退款失败只可能是账户里没有可动用的钱（退款时手续费会一并退还）；'
+                    '新商户当日收款资金可能是"次日结算/不可用余额"，不是故障。\n'
+                    '-> 请到支付宝商户账户充值，或到后台"提现管理"对该笔点【通过】重试。') % (
+            wid, tag, int(count or 0), float(amount or 0), str(msg or '')[:120])
+        _ok = send_pushplus(_title, _content)
+        try:
+            _c.execute("INSERT INTO system_settings (setting_key, setting_value) VALUES (%s, %s) "
+                       "ON CONFLICT (setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value",
+                       (_key, _j.dumps({'ts': _now, 'wid': wid, 'tag': tag}, ensure_ascii=False)))
+            _conn.commit()
+        except Exception:
+            pass
+        try:
+            _conn.close()
+        except Exception:
+            pass
+        logger.warning('[S541] 已给管理员推送"渠道余额不足"提醒 wid=%s ok=%s', wid, _ok)
+        return bool(_ok)
+    except Exception as _e:
+        logger.warning('[S541] 渠道余额不足提醒发送失败(不影响主流程): %s', _e)
+        return False
+
+
+
+def _s541_bool_setting(key, default=False):
+    try:
+        v = str(get_setting(key, '') or '').strip().lower()
+    except Exception:
+        return default
+    if v in ('1', 'true', 'yes', 'on'):
+        return True
+    return False
+
+
+def withdraw_refund_mode():
+    """提现退款模式：transfer=现状(仅微信退款且过滤支付宝) / original=逐单按渠道原路退回。"""
+    try:
+        v = str(get_setting(WITHDRAW_REFUND_MODE_KEY, 'transfer') or '').strip().lower()
+    except Exception:
+        return 'transfer'
+    return 'original' if v == 'original' else 'transfer'
+
+
+def withdraw_refund_alipay_enabled():
+    """支付宝单是否参与提现（默认 0=不参与=现状）。"""
+    return _s541_bool_setting(WITHDRAW_REFUND_ALIPAY_KEY, False)
+
+
+def withdraw_refund_dry_run():
+    """干跑：只算计划、写日志，不调渠道、不改库（默认 0）。"""
+    return _s541_bool_setting(WITHDRAW_REFUND_DRY_RUN_KEY, False)
+
+
+def withdraw_refund_original_locations():
+    """网点灰度白名单（逗号分隔 locations.id；空=不限）。仅 mode=original 时对微信单生效。"""
+    try:
+        raw = str(get_setting(WITHDRAW_REFUND_ORIG_LOCS_KEY, '') or '')
+    except Exception:
+        return set()
+    out = set()
+    for x in raw.replace('，', ',').split(','):
+        x = x.strip()
+        if x.isdigit():
+            out.add(int(x))
+    return out
+
+
+def withdraw_use_original(ch_types, location_id=None, mode=None, alipay_enabled=None):
+    """[S541] 判断"这一单"是否走新的原路退回口径。返回 bool。
+    规则（与灰度顺序一致）：
+      * 支付宝单(channel_type=alipay)：只要 withdraw_refund_alipay=1 就生效 —— 微信路径完全不受影响
+        （对应"只放支付宝"灰度：在途支付宝资金极小，微信侧保持现状）
+      * 其他/判不出渠道     ：必须 withdraw_refund_mode=original；若配了网点白名单，则要求该单网点在白名单内
+    """
+    if mode is None:
+        mode = withdraw_refund_mode()
+    if alipay_enabled is None:
+        alipay_enabled = withdraw_refund_alipay_enabled()
+    _has_alipay = False
+    for t in (ch_types or []):
+        if str(t or '').strip().lower() == 'alipay':
+            _has_alipay = True
+            break
+    if _has_alipay:
+        return bool(alipay_enabled)
+    if mode != 'original':
+        return False
+    _locs = withdraw_refund_original_locations()
+    if _locs:
+        try:
+            return int(location_id or 0) in _locs
+        except Exception:
+            return False
+    return True
+
+
+def withdraw_refund_plan(order_ids, mode=None, alipay_enabled=None):
+    """[S541] 预扫一批提现订单：{oid: {'channel_type','location_id','original'}}。
+    只读；任何异常返回 {}（调用方按"全部现状"处理）。"""
+    out = {}
+    try:
+        ids = [int(x) for x in (order_ids or [])]
+    except Exception:
+        return out
+    if not ids:
+        return out
+    if mode is None:
+        mode = withdraw_refund_mode()
+    if alipay_enabled is None:
+        alipay_enabled = withdraw_refund_alipay_enabled()
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("""SELECT o.id,
+                            COALESCE(pc.channel_type, '') AS channel_type,
+                            l.id AS location_id
+                     FROM orders o
+                     LEFT JOIN payment_channels pc ON pc.id = o.payment_channel_id
+                     LEFT JOIN cabinets cb ON cb.id = o.cabinet_id
+                     LEFT JOIN locations l ON l.id = cb.location_id
+                     WHERE o.id = ANY(%s)""", (ids,))
+        for r in c.fetchall():
+            _ch = str(r.get('channel_type') or '').strip().lower()
+            out[int(r['id'])] = {
+                'channel_type': _ch,
+                'location_id': r.get('location_id'),
+                'original': bool(withdraw_use_original([_ch], r.get('location_id'),
+                                                       mode=mode, alipay_enabled=alipay_enabled)),
+            }
+    except Exception as e:
+        logger.warning('[S541] 提现计划预扫失败(按现状处理): %s', e)
+        return {}
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return out
+
+
+def do_withdraw_order_refund(order_id=None, order_no=None, payment_channel_id=None,
+                             amount=0, use_original=False, wid=None):
+    """[S541] 提现"逐单"退款统一入口。返回 (success, refund_id, msg)。
+    use_original=False：与改动前逐字节相同的调用（只转发 4 个老参数）-> 微信路径零变化。
+    use_original=True ：多传 2 个可选参数
+        out_refund_no='WD<wid>_<oid>' -> 渠道侧确定性幂等（同单同额重试不重复退款）
+        write_payment=True            -> 补写 payments(type=2) 对账流水（方案 §3.6 的缺口）
+    """
+    if not use_original:
+        return do_real_refund(order_id=order_id, order_no=order_no, amount=amount,
+                              payment_channel_id=payment_channel_id)
+    _out_no = None
+    if wid is not None and order_id is not None:
+        _out_no = 'WD%s_%s' % (wid, order_id)
+    return do_real_refund(order_id=order_id, order_no=order_no, amount=amount,
+                          payment_channel_id=payment_channel_id,
+                          out_refund_no=_out_no, write_payment=True)
+
+
+def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=None, skip_balance=False,
+                   out_refund_no=None, write_payment=False, **kwargs):
+    # [S541-20260922] 只新增 2 个【可选】参数(默认 None/False)，不传时本函数行为与改动前逐字节一致：
+    #   out_refund_no : 渠道侧确定性退款单号（微信 out_refund_no / 支付宝 out_request_no）
+    #   write_payment : 退款成功后是否补写 payments(type=2) 对账流水（方案 §3.6 的缺口）
+    """Actually call WeChat refund API. Returns (success, refund_id, message)"""
     """Actually call WeChat refund API. Returns (success, refund_id, message)"""
     try:
         from database import get_db
@@ -2723,6 +2959,8 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
         if not order_no:
             return False, '', 'Order number is empty'
         payer = None
+        # [S538-20260922] 记录渠道实例类型(wechat/alipay), 供后面按渠道分流退款调用
+        _s538_ch_type = ''
         if payment_channel_id:
             try:
                 conn2 = get_db()
@@ -2734,7 +2972,7 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
                     channel_dict = {}
                     for key in channel.keys():
                         channel_dict[key] = channel[key]
-                    payer, _ = get_channel_wxpay(channel_dict)
+                    payer, _s538_ch_type = get_channel_wxpay(channel_dict)
             except:
                 pass
         if not payer:
@@ -2750,7 +2988,7 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
                         _rc2.execute("SELECT * FROM payment_channels WHERE id=%s", (_rr['payment_channel_id'],))
                         _rch = _rc2.fetchone()
                         if _rch:
-                            payer, _ = get_channel_wxpay(dict(_rch))
+                            payer, _s538_ch_type = get_channel_wxpay(dict(_rch))
                         _rc2.close()
             except Exception as _e:
                 logger.error('[do_real_refund] 渠道查询异常: %s' % _e)
@@ -2775,9 +3013,57 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
         else:
             total_fee = int(float(amount) * 100)
         refund_fee = int(float(amount) * 100)
-        result = payer.refund(out_trade_no=order_no, total_fee=total_fee, refund_fee=refund_fee)
-        if result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS':
-            refund_id = result.get('refund_id') or result.get('out_refund_no', '')
+        # [S538-20260922] 按【订单实际渠道】分流退款调用:
+        #   原来无论什么渠道都按【微信退款】口径调用 payer.refund(total_fee/refund_fee),
+        #   支付宝单(channel_type='alipay') 拿到的是 AlipayClient ->
+        #   TypeError: refund() got an unexpected keyword argument 'total_fee'
+        #   -> 退使用费/提现审批/投诉退款等所有走本函数的支付宝单全部失败。
+        #   此处只【新增】支付宝分支, 微信分支的调用参数一字未改。
+        _s538_req_no = ''
+        if _s538_ch_type == 'alipay':
+            # out_request_no 用【确定性唯一串】(订单ID/订单号 + 金额分), 同单同额重试幂等, 防重复退款
+            # out_request_no 用【确定性唯一串】(订单ID/订单号 + 金额分), 同单同额重试幂等, 防重复退款
+            # [S541-20260922] 调用方给了确定性单号(out_refund_no)就优先用它; 没给=原样(S538 的生成式)
+            _s538_req_no = out_refund_no or ('RF%s_%d' % (order_id or order_no, int(round(float(amount) * 100))))
+            result = payer.refund(out_trade_no=order_no, refund_amount=float(amount),
+                                  out_request_no=_s538_req_no, refund_reason='原路退款')
+        else:
+            # [S541-20260922] 只多一个"给确定性幂等号"的分支：调用方没传 out_refund_no 时，
+            #   这里执行的仍是改动前那一行（同一函数、同一参数），微信路径行为完全不变。
+            if out_refund_no:
+                result = payer.refund(out_trade_no=order_no, total_fee=total_fee, refund_fee=refund_fee,
+                                      out_refund_no=out_refund_no)
+            else:
+                result = payer.refund(out_trade_no=order_no, total_fee=total_fee, refund_fee=refund_fee)
+        if _s538_ch_type == 'alipay':
+            # [S541-20260922] 官方口径：code=10000 只代表"本次退款请求成功", 不代表退款成功。
+            #   必须 fund_change=Y 才算退成功；fund_change=N 或无此字段时用退款查询接口复核。
+            _s541_fc = str(result.get('fund_change') or '').strip().upper()
+            _s538_refund_ok = (str(result.get('code') or '') == '10000') and (_s541_fc == 'Y')
+            if (str(result.get('code') or '') == '10000') and not _s538_refund_ok:
+                try:
+                    _s541_q = payer.refund_query(out_request_no=_s538_req_no,
+                                                 out_trade_no=order_no) or {}
+                except Exception as _s541_qe:
+                    _s541_q = {}
+                    logger.warning('[S541] 支付宝退款查询异常(按未成功处理): order=%s err=%s', order_no, _s541_qe)
+                _s541_qs = str(_s541_q.get('refund_status') or '').strip().upper()
+                try:
+                    _s541_qamt = float(_s541_q.get('refund_amount') or 0)
+                except Exception:
+                    _s541_qamt = 0.0
+                _s538_refund_ok = (str(_s541_q.get('code') or '') == '10000') and (
+                    _s541_qs == 'REFUND_SUCCESS' or (_s541_qamt > 0 and _s541_qs != 'REFUND_CLOSED'))
+                logger.warning('[S541] 支付宝退款 fund_change=%s 需复核: order=%s out_request_no=%s '
+                               'query_code=%s refund_status=%s refund_amount=%s -> ok=%s',
+                               _s541_fc or '(空)', order_no, _s538_req_no,
+                               _s541_q.get('code'), _s541_qs, _s541_qamt, _s538_refund_ok)
+                if _s538_refund_ok and not result.get('trade_no'):
+                    result['trade_no'] = _s541_q.get('trade_no')
+        else:
+            _s538_refund_ok = result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS'
+        if _s538_refund_ok:
+            refund_id = result.get('refund_id') or result.get('out_refund_no', '') or _s538_req_no
             logger.info('[do_real_refund] Success: order=%s, refund_id=%s' % (order_no, refund_id))
             # 更新订单退款状态（calc_balance 模式：余额实时计算，无需操作 user_balances）
             if order_id:
@@ -2788,6 +3074,25 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
                     if c_bal.rowcount > 0:
                         logger.info("[do_real_refund] Orders updated: order_id=%s" % order_id)
                     c_bal.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order_id,))
+                    # [S541-20260922] 对账缺口补齐：提现退款成功后补写 payments(type=2)。
+                    #   只有调用方显式要求(write_payment=True，即 original/支付宝灰度)时才写 ->
+                    #   transfer(现状)模式不执行这一段，行为与改动前完全一致。
+                    if write_payment:
+                        try:
+                            _s541_rid = refund_id or _s538_req_no or ''
+                            _s541_txn = None
+                            if isinstance(result, dict):
+                                _s541_txn = (result.get('transaction_id') or result.get('trade_no')
+                                             or (result.get('out_refund_no') if _s538_ch_type != 'alipay' else None))
+                            c_bal.execute(
+                                "INSERT INTO payments (order_id, type, amount, transaction_id, refund_transaction_id, status, created_at) "
+                                "SELECT %s, 2, %s, %s, %s, 1, NOW() "
+                                "WHERE NOT EXISTS (SELECT 1 FROM payments p WHERE p.order_id=%s AND p.type=2 AND p.refund_transaction_id=%s)",
+                                (order_id, float(amount), _s541_txn, _s541_rid, order_id, _s541_rid))
+                            logger.info('[S541] payments(type=2) 已补写: order_id=%s amount=%s refund_id=%s', order_id, amount, _s541_rid)
+                        except Exception as _s541_pe:
+                            logger.error('[S541] payments(type=2) 写入失败: %s', _s541_pe)
+
                     # 退款成功=订单结束，释放柜门，防止"钱退了柜门还占着"的幽灵占用
                     try:
                         c_bal.execute("UPDATE cabinet_slots SET status=1 WHERE id=(SELECT slot_id FROM orders WHERE id=%s) AND status=2", (order_id,))
@@ -2804,9 +3109,19 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
             return True, refund_id, 'Refund successful'
         else:
             err_msg = result.get('err_code_des') or result.get('err_code') or result.get('return_msg') or 'Refund failed'
+            if _s538_ch_type == 'alipay':
+                # 支付宝失败信息在 sub_msg/sub_code, 让调用方能拿到可读原因
+                # [S541-20260922] 带上 sub_code(如 ACQ.SELLER_BALANCE_NOT_ENOUGH), 调用方据此判"可重试"
+                _s541_sub_code = str(result.get('sub_code') or '')
+                err_msg = result.get('sub_msg') or result.get('msg') or err_msg
+                if _s541_sub_code:
+                    err_msg = '%s(%s)' % (err_msg, _s541_sub_code)
             logger.error('[do_real_refund] Failed: order=%s, msg=%s, result=%s' % (order_no, err_msg, str(result)))
             # 微信明确表示订单已退款/已全额退款时，按退款成功处理，避免恢复余额导致双倍到账
             _already_refunded = ('订单已全额退款' in str(err_msg)) or ('该订单已全额退款' in str(err_msg))
+            if _s538_ch_type == 'alipay' and ('ACQ.TRADE_HAS_REFUND' in str(result.get('sub_code') or '')):
+                # [S541-20260922] 支付宝明确"交易已全额退款" -> 按已退款处理(幂等: 不重复退也不报错)
+                _already_refunded = True
             if _already_refunded:
                 _rid = result.get('refund_id') or result.get('out_refund_no') or ('ALREADY_' + str(order_id or order_no))
                 logger.info('[do_real_refund] Already refunded: order=%s, refund_id=%s, msg=%s' % (order_no, _rid, err_msg))
@@ -3174,6 +3489,31 @@ def check_merchant_health():
             ch_name = channel.get('name', '未知')
             mch_id = channel.get('mch_id', '未知')
             try:
+                import os as _s538_os
+                # [S538-20260922] 支付宝渠道【显式跳过】巡检。
+                #   背景: 本巡检用微信专用的 payer.order_query() 判活, 支付宝渠道的
+                #   AlipayClient 没有该方法 -> 每分钟抛一条
+                #   "'AlipayClient' object has no attribute 'order_query'" ERROR
+                #   (2026-09-21 23:01~23:04 实测每 60 秒 1 条)。
+                #   这里只对 channel_type='alipay' 提前 continue;
+                #   判不出渠道类型(channel_type 为空/其它)时保持原行为(仍走 order_query)。
+                #   提示做"每小时最多一次"去重(跨 worker 用文件 mtime), 不再每分钟刷日志。
+                if (channel.get('channel_type') or '').strip().lower() == 'alipay':
+                    _s538_notice = True
+                    try:
+                        _s538_notice = (time.time() - _s538_os.path.getmtime(_MH_ALIPAY_NOTICE_FILE)) > 3600
+                    except Exception:
+                        _s538_notice = True
+                    if _s538_notice:
+                        try:
+                            with open(_MH_ALIPAY_NOTICE_FILE, 'w') as _s538_nf:
+                                _s538_nf.write(str(time.time()))
+                        except Exception:
+                            pass
+                        logger.info('[MerchantHealth] 渠道 %s 为支付宝渠道(无微信查单接口), 已显式跳过巡检' % ch_name)
+                    else:
+                        logger.debug('[MerchantHealth] 渠道 %s 支付宝渠道跳过巡检' % ch_name)
+                    continue
                 # 找该渠道的最近一笔已支付订单作为探测目标
                 # [S414-20260921] 连订单的 openid 一起查出来：下单时的 appid 是【按付款人 openid 前缀】
                 #   动态选的（公众号用户=公众号appid / 小程序用户=小程序appid）。
@@ -3236,6 +3576,8 @@ def check_merchant_health():
 
 _MH_LOCK_FILE = '/tmp/merchant_health_patrol.lock'
 _MH_ROUNDS_FILE = '/tmp/merchant_health_rounds.txt'
+# [S538-20260922] 支付宝渠道巡检跳过提示的"已提示过"标记文件(跨 worker 共享, 按 mtime 去重)
+_MH_ALIPAY_NOTICE_FILE = '/tmp/merchant_health_alipay_notice.txt'
 
 
 def _mh_try_lock():
@@ -5080,13 +5422,23 @@ def calc_balance(user_id=None, phone=None, openid=None, mp_openid=None, unionid=
             cond.append('o.user_phone = %s')
             params.append(phone)
         where = ' OR '.join(cond)
+        # [S541-20260922] 支付宝排除改为【开关控制】(withdraw_refund_alipay，默认 0=维持现状)：
+        #   关(默认)时下面拼出的 SQL 与改动前逐字节相同；开时不再排除支付宝单，
+        #   使"用户看到的可提现金额"与"提现实际能取到的订单"一致(S273 临时隔离正名)。
+        try:
+            _s541_alipay_excl = ''
+            if not withdraw_refund_alipay_enabled():
+                _s541_alipay_excl = ("AND NOT EXISTS (SELECT 1 FROM payment_channels pc WHERE pc.id = o.payment_channel_id AND pc.channel_type = 'alipay') ")
+        except Exception:
+            _s541_alipay_excl = ("AND NOT EXISTS (SELECT 1 FROM payment_channels pc WHERE pc.id = o.payment_channel_id AND pc.channel_type = 'alipay') ")
+
         sql = (
             "SELECT COALESCE(SUM(bd.amount), 0) FROM user_balance_details bd "
             "JOIN orders o ON bd.order_id = o.id "
             "WHERE bd.status = 'available' AND o.status = 3 AND (" + where + ") "
             # [S273] 渠道隔离(方案B)：支付宝渠道付的押金【不进】微信余额。
             #   用"排除支付宝"而非"只算微信"，这样 payment_channel_id 为空的老订单行为完全不变。
-            "AND NOT EXISTS (SELECT 1 FROM payment_channels pc WHERE pc.id = o.payment_channel_id AND pc.channel_type = 'alipay') "
+            + _s541_alipay_excl +
             "AND NOT EXISTS (SELECT 1 FROM withdrawal_records w WHERE w.order_id = o.id AND w.status IN (0, 1, 2))"
         )
         c.execute(sql, params)

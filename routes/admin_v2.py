@@ -1494,47 +1494,112 @@ def admin_member_refund():
         order = c.fetchone()
         refund_no = 'RF_M' + datetime.now().strftime('%Y%m%d%H%M%S') + str(phone)[-4:]
         if order:
-            # 先尝试微信退款，成功才更新本地状态
+            # 先尝试按【订单实际渠道】退款，成功才更新本地状态
             wx_refund_ok = False
             wx_err_msg = ''
-            try:
-                from helpers import get_channel_wxpay, get_wxpay
-                payment_channel_id = order['payment_channel_id'] if order else None
-                if payment_channel_id:
-                    c.execute('SELECT * FROM payment_channels WHERE id=%s', (payment_channel_id,))
-                    ch = c.fetchone()
-                    if ch:
-                        wxpay_inst, _ = get_channel_wxpay(dict(ch))
-                    else:
-                        wxpay_inst = None
-                        wx_err_msg = '订单关联的商户渠道不存在'
-                else:
-                    c.execute('SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1')
-                    active_ch = c.fetchone()
-                    if active_ch:
-                        wxpay_inst, _ = get_channel_wxpay(dict(active_ch))
-                    else:
-                        wxpay_inst = None
-                        wx_err_msg = '无可用活跃商户'
-                total_fee = int(refund_amount * 100)
-                if not wxpay_inst:
-                    wx_err_msg = wx_err_msg or '无可用支付实例'
-                    logger.error(f'[member_refund] {wx_err_msg}')
-                else:
-                    refund_result = wxpay_inst.refund(out_trade_no=order['order_no'], total_fee=total_fee, refund_fee=total_fee, out_refund_no=refund_no, refund_desc='')
-                if refund_result and refund_result.get('return_code') == 'SUCCESS' and refund_result.get('result_code') == 'SUCCESS':
+            # [S538-20260922] 按订单【实际渠道】分流: 原来无论什么渠道都按【微信退款】调用,
+            #   支付宝单(channel_type='alipay') 会把 AlipayClient 当微信实例用 ->
+            #   TypeError: refund() got an unexpected keyword argument 'total_fee'
+            #   -> 后台点【会员退款】直接报"微信退款失败"。此处只【新增】支付宝分支,
+            #   微信分支逻辑一字未改(仅整体缩进4空格)。
+            _s538_m_ch_type = ''
+            _s538_m_pcid = order['payment_channel_id'] if order else None
+            if _s538_m_pcid:
+                try:
+                    c.execute('SELECT channel_type FROM payment_channels WHERE id=%s', (_s538_m_pcid,))
+                    _s538_m_r = c.fetchone()
+                    if _s538_m_r:
+                        try:
+                            _s538_m_ch_type = _s538_m_r['channel_type'] or ''
+                        except Exception:
+                            _s538_m_ch_type = _s538_m_r[0] or ''
+                except Exception as _s538_m_e:
+                    logger.warning(f'[member_refund] 读取渠道类型失败 order={order["order_no"]} err={_s538_m_e}')
+            if _s538_m_ch_type == 'alipay':
+                # ---------------- 支付宝原路退款: alipay.trade.refund ----------------
+                try:
+                    from helpers import get_channel_wxpay as _s538_m_gchw
+                    c.execute('SELECT * FROM payment_channels WHERE id=%s', (_s538_m_pcid,))
+                    _s538_m_ch = c.fetchone()
+                    if not _s538_m_ch:
+                        conn.close()
+                        return json_response(message='订单关联的商户渠道不存在，无法退款', code=400)
+                    _s538_m_inst, _s538_m_itype = _s538_m_gchw(dict(_s538_m_ch))
+                    if not _s538_m_inst:
+                        logger.warning(f'[member_refund] 支付宝渠道配置不可用 order={order["order_no"]} channel={_s538_m_pcid}')
+                        conn.close()
+                        return json_response(message='支付宝渠道配置不可用(密钥/应用ID)，无法退款', code=400)
+                    # out_request_no 用【确定性唯一串】(订单ID+订单号+金额分), 同单同额重试幂等, 防重复退款
+                    refund_no = 'RF_M%d%s_%d' % (order['id'], order['order_no'], int(round(float(refund_amount) * 100)))
+                    _s538_m_resp = _s538_m_inst.refund(
+                        out_trade_no=order['order_no'],
+                        refund_amount=float(refund_amount),
+                        out_request_no=refund_no,
+                        refund_reason='会员退款',
+                    )
+                except Exception as _s538_m_re:
+                    logger.warning(f'[member_refund] 支付宝退款异常 order={order["order_no"]} err={_s538_m_re}')
+                    conn.close()
+                    return json_response(message=f'支付宝退款异常: {_s538_m_re}', code=400)
+                _s538_m_resp = _s538_m_resp or {}
+                _s538_m_code = str(_s538_m_resp.get('code') or '')
+                _s538_m_fc = str(_s538_m_resp.get('fund_change') or '')
+                if _s538_m_code == '10000':
+                    refund_result = {'refund_id': refund_no,
+                                     'trade_no': _s538_m_resp.get('trade_no') or order['transaction_id'],
+                                     'fund_change': _s538_m_fc}
                     wx_refund_ok = True
+                    logger.info('[member_refund] 支付宝退款成功 order=%s out_request_no=%s trade_no=%s '
+                                'fund_change=%s refund_fee=%s 金额=%s'
+                                % (order['order_no'], refund_no, refund_result['trade_no'],
+                                   _s538_m_fc, _s538_m_resp.get('refund_fee'), refund_amount))
                 else:
-                    wx_err_msg = (refund_result.get('err_code_des') or refund_result.get('err_code') or refund_result.get('return_msg') or '未知错误') if refund_result else '无返回'
-                    # 已退款/已全额退款视为成功
-                    if refund_result and ('已退款' in str(refund_result.get('err_code_des') or '') or '全额退款' in str(refund_result.get('err_code_des') or '')):
-                        wx_refund_ok = True
-                        logger.info(f'[member_refund] 微信已全额退款，同步本地状态 order={order.get("order_no", "")}')
+                    _s538_m_msg = _s538_m_resp.get('sub_msg') or _s538_m_resp.get('msg') or '未知错误'
+                    _s538_m_sc = _s538_m_resp.get('sub_code') or ''
+                    logger.warning('[member_refund] 支付宝退款失败 order=%s code=%s sub_code=%s msg=%s'
+                                   % (order['order_no'], _s538_m_code, _s538_m_sc, _s538_m_msg))
+                    conn.close()
+                    return json_response(message='支付宝退款失败: %s%s' % (_s538_m_msg, ('(%s)' % _s538_m_sc) if _s538_m_sc else ''), code=400)
+            else:
+                # ---- 以下为原微信退款分支, 逻辑未改(仅整体缩进) ----
+                try:
+                    from helpers import get_channel_wxpay, get_wxpay
+                    payment_channel_id = order['payment_channel_id'] if order else None
+                    if payment_channel_id:
+                        c.execute('SELECT * FROM payment_channels WHERE id=%s', (payment_channel_id,))
+                        ch = c.fetchone()
+                        if ch:
+                            wxpay_inst, _ = get_channel_wxpay(dict(ch))
+                        else:
+                            wxpay_inst = None
+                            wx_err_msg = '订单关联的商户渠道不存在'
                     else:
-                        logger.warning(f'[member_refund] 微信退款失败 err={wx_err_msg}')
-            except Exception as e:
-                wx_err_msg = str(e)
-                logger.warning(f'[member_refund] 微信退款异常 err={e}')
+                        c.execute('SELECT * FROM payment_channels WHERE is_active=1 ORDER BY id DESC LIMIT 1')
+                        active_ch = c.fetchone()
+                        if active_ch:
+                            wxpay_inst, _ = get_channel_wxpay(dict(active_ch))
+                        else:
+                            wxpay_inst = None
+                            wx_err_msg = '无可用活跃商户'
+                    total_fee = int(refund_amount * 100)
+                    if not wxpay_inst:
+                        wx_err_msg = wx_err_msg or '无可用支付实例'
+                        logger.error(f'[member_refund] {wx_err_msg}')
+                    else:
+                        refund_result = wxpay_inst.refund(out_trade_no=order['order_no'], total_fee=total_fee, refund_fee=total_fee, out_refund_no=refund_no, refund_desc='')
+                    if refund_result and refund_result.get('return_code') == 'SUCCESS' and refund_result.get('result_code') == 'SUCCESS':
+                        wx_refund_ok = True
+                    else:
+                        wx_err_msg = (refund_result.get('err_code_des') or refund_result.get('err_code') or refund_result.get('return_msg') or '未知错误') if refund_result else '无返回'
+                        # 已退款/已全额退款视为成功
+                        if refund_result and ('已退款' in str(refund_result.get('err_code_des') or '') or '全额退款' in str(refund_result.get('err_code_des') or '')):
+                            wx_refund_ok = True
+                            logger.info(f'[member_refund] 微信已全额退款，同步本地状态 order={order.get("order_no", "")}')
+                        else:
+                            logger.warning(f'[member_refund] 微信退款失败 err={wx_err_msg}')
+                except Exception as e:
+                    wx_err_msg = str(e)
+                    logger.warning(f'[member_refund] 微信退款异常 err={e}')
             if not wx_refund_ok and order['transaction_id'] and order['transaction_id'] != 'MOCK':
                 conn.close()
                 return json_response(message=f'微信退款失败: {wx_err_msg}', code=400)
@@ -1918,10 +1983,20 @@ def admin_withdrawal_approve():
         # 如果有order_ids（打包提现），对每个订单退款
         if order_ids_list and len(order_ids_list) > 0:
             from helpers import do_real_refund
+            # [S541-20260922] 原路退回计划/干跑闸(默认 transfer/0/0 -> original 全 False, 行为不变)
+            _s541_plan, _s541_blocked = _s541_wd_gate(order_ids_list, withdrawal_id, 'admin_approve')
+            if _s541_blocked:
+                conn.close()
+                return json_response(message='[S541 干跑] 未实际退款，提现单保持待审核', code=200)
             all_ok = True
             failed_amount = 0.0
             failed_oids = []
             failed_msgs = []
+            _s541_bal_fail = False
+            try:
+                from helpers import is_channel_balance_error as _s541_is_bal
+            except Exception:
+                _s541_is_bal = lambda *a, **k: False
             for oid in order_ids_list:
                 # [S226 2026-09-15] 原来对每一笔都用 wd['payment_channel_id'](= 单上挂的那笔订单的商户号),
                 #   一张提现单里混多个商户号时, 非该商户号的订单一律被微信拒退 -> "审批只退得动一笔".
@@ -1931,9 +2006,11 @@ def admin_withdrawal_approve():
                 if od:
                     refund_this = float(od['deposit_amount']) - float(od['refund_amount'])
                     if refund_this > 0.001:
-                        ok, rid, rmsg = do_real_refund(order_id=oid, order_no=od['order_no'] or '',
-                                                       amount=refund_this,
-                                                       payment_channel_id=od['payment_channel_id'] or wd.get('payment_channel_id'))
+                        ok, rid, rmsg, _s541_used = _s541_wd_refund(
+                            order_id=oid, order_no=od['order_no'] or '',
+                            amount=refund_this,
+                            payment_channel_id=od['payment_channel_id'] or wd.get('payment_channel_id'),
+                            plan=_s541_plan, wid=withdrawal_id, tag='admin_approve')
                         if ok and '已退款' not in rmsg and '全额退款' not in rmsg:
                             # [S226] do_real_refund 内部已把 refund_amount 写成本次退款额, 这里不能再用 "+" 累加(否则记成两倍,
                             #   还会导致以后再退这笔时算出"已退够"直接跳过)
@@ -1946,8 +2023,22 @@ def admin_withdrawal_approve():
                             all_ok = False
                             failed_amount += refund_this
                             failed_oids.append(oid)
+                        if _s541_used and _s541_is_bal(rmsg):
+                            _s541_bal_fail = True
                             failed_msgs.append('订单%s(%s元):%s' % (oid, round(refund_this, 2), str(rmsg)[:60]))
             _approver_now = session.get('admin_username', 'admin')
+            if not all_ok and _s541_bal_fail:
+                # [S541-20260922] 渠道余额不足：不判永久失败、不退回余额 -> 保持待审核, 提示充值后重试
+                try:
+                    _s541_balance_retry_finalize(c, withdrawal_id, failed_oids, '; '.join(failed_msgs),
+                                                 'admin_approve', amount=failed_amount)
+                    conn.commit()
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                return json_response(message='商户账户余额不足（资金未动，未判失败）：请充值后对本单再点一次【通过】重试')
             c.execute('UPDATE withdrawal_records SET status=%s, approver=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s',
                        (2 if all_ok else 4, _approver_now, withdrawal_id))
             # [S226 2026-09-15] 部分失败必须留痕+告警: 以前只置 status=4, 不写原因也不报警,
@@ -5540,6 +5631,121 @@ def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid='', unionid='
         logger.error('[auto_withdraw] 订阅通知失败 phone=%s: %s', phone, e)
 
 
+# ============================================================
+# [S541-20260922] 提现"原路退回"改造：逐单退款 / 干跑闸 / 部分成功(状态6) 共用件
+#   开关默认值 = 现状行为（transfer / alipay=0 / dry_run=0）：
+#     * 计划里 original 全为 False -> 退款调用与改动前逐字节相同（不加确定性单号、不写 payments）
+#     * 干跑闸永不触发
+#     * 部分成功分支永不进入（_s541_ok_cnt 恒为 0）
+# ============================================================
+
+def _s541_wd_gate(order_ids, wid, tag):
+    """[S541] 提现处理前的"计划 + 干跑"闸。
+    返回 (plan, blocked)：
+      plan    = {oid: {'channel_type','location_id','original'}}（只读；失败返回 {}）
+      blocked = True 表示当前 dry_run=1 且这批单里确实有要走新口径的单
+                -> 调用方必须放弃本轮处理(不调渠道、不改库、提现单保持原状态)
+    """
+    try:
+        from helpers import withdraw_refund_plan as _s541_pf, withdraw_refund_dry_run as _s541_drf
+        plan = _s541_pf(order_ids)
+        if _s541_drf():
+            _hit = [o for o, i in plan.items() if i.get('original')]
+            if _hit:
+                for _o in _hit:
+                    _i = plan.get(_o) or {}
+                    logger.info('[S541][dry-run] %s 干跑(不调渠道/不改库): wid=%s oid=%s channel=%s location=%s',
+                                tag, wid, _o, _i.get('channel_type') or 'unknown', _i.get('location_id'))
+                logger.info('[S541][dry-run] %s wid=%s 计划走原路退回 %s/%s 单, 本轮不处理', tag, wid, len(_hit), len(plan))
+                return plan, True
+        return plan, False
+    except Exception as _e:
+        logger.warning('[S541] 干跑闸判断失败, 按现状继续: %s', _e)
+        return {}, False
+
+
+def _s541_wd_refund(order_id, order_no, amount, payment_channel_id, plan, wid, tag):
+    """[S541] 逐单退款。返回 (ok, refund_id, msg, used_original)。
+    used_original=False -> 调用参数与改动前完全相同（微信路径行为不变）。
+    used_original=True  -> 多传确定性幂等号 out_refund_no='WD<wid>_<oid>' + 补写 payments(type=2)。
+    """
+    _orig = False
+    try:
+        _orig = bool(((plan or {}).get(int(order_id)) or {}).get('original'))
+    except Exception:
+        _orig = False
+    try:
+        from helpers import do_withdraw_order_refund as _s541_rf
+        ok, rid, msg = _s541_rf(order_id=order_id, order_no=order_no, amount=amount,
+                                payment_channel_id=payment_channel_id,
+                                use_original=_orig, wid=wid)
+        return ok, rid, msg, _orig
+    except Exception as _e:
+        # 只可能发生在"封装函数不可用"时；按失败处理，绝不改口径重试，避免重复退款
+        logger.error('[S541] %s 原路退回封装不可用, 按失败处理(不重试): %s', tag, _e)
+        return False, '', ('S541 封装异常: %s' % _e), _orig
+
+
+def _s541_partial_finalize(cursor, wid, ok_cnt, failed_oids, first_msg, tag):
+    """[S541] 提现"部分成功"落库（方案 §3.5 新状态 6）。
+    ≥1 单已成功原路退回(不撤销、明细保持 withdrawn)，≥1 单失败(明细保持 pending 隐藏)。
+    不放开 dedup_key(防重复提交)、不置 3、写 alarms 供后台/告警处理。返回 True=已落库。
+    """
+    try:
+        _msg = '部分成功(%d/%d): 成功单已原路退回, 失败单待重试/转人工 | %s' % (
+            int(ok_cnt), int(ok_cnt) + len(failed_oids or []), str(first_msg or ''))
+        for _fo in (failed_oids or []):
+            cursor.execute("UPDATE user_balance_details SET status='pending' WHERE order_id=%s AND status IN ('available','pending')", (_fo,))
+        cursor.execute("UPDATE withdrawal_records SET status=6, error_msg=%s, approve_time=NOW(), next_attempt_at=NULL WHERE id=%s",
+                       (_msg[:500], wid))
+        try:
+            cursor.execute("INSERT INTO alarms (type, device_id, content, status, created_at) VALUES ('withdraw_refund_partial', NULL, %s, '0', NOW())",
+                           ((('[S541] %s 提现部分成功 wid=%s: ' % (tag, wid)) + str(first_msg or ''))[:500],))
+        except Exception as _ae:
+            logger.error('[S541] 部分成功告警写入失败 wid=%s: %s', wid, _ae)
+        logger.warning('[S541] 提现部分成功 wid=%s tag=%s ok=%s failed=%s msg=%s', wid, tag, ok_cnt, failed_oids, first_msg)
+        return True
+    except Exception as _e:
+        logger.error('[S541] 部分成功落库失败 wid=%s: %s', wid, _e)
+        return False
+
+
+def _s541_balance_retry_finalize(cursor, wid, failed_oids, first_msg, tag, amount=0.0):
+    """[S541] 渠道"资金水位不足"专用收尾（可重试，绝不能当永久失败）。
+    支付宝官方释义：ACQ.SELLER_BALANCE_NOT_ENOUGH=卖家余额不足，商户账户充值后重新发起退款即可；
+    微信对应 NOTENOUGH（基本账户余额不足）。所以：
+      * 提现单【保持待处理】(status 不动)，只推后 30 分钟再试（next_attempt_at / auto_approve_time）
+      * 明细保持 pending（用户端隐藏）, dedup_key 不放开（防同一批重复提现）
+      * 写 alarms（同类只留一条未处理）+ 给管理员发人话提醒（30 分钟去重）
+      * 绝不置 3(永久拒绝) / 4(退回余额)：钱没丢，充值后重试即成功（确定性单号，不会重复退款）
+    返回 True=已按"可重试"收尾。
+    """
+    try:
+        from helpers import alert_withdraw_channel_balance as _s541_alert
+        _msg = ('渠道账户余额不足，资金未动，已排定 30 分钟后自动重试；'
+                '请给商户账户充值后重试该笔原路退回 | %s' % str(first_msg or ''))[:500]
+        for _fo in (failed_oids or []):
+            cursor.execute("UPDATE user_balance_details SET status='pending' WHERE order_id=%s AND status IN ('available','pending')", (_fo,))
+        cursor.execute("UPDATE withdrawal_records SET error_msg=%s, retry_count=COALESCE(retry_count,0)+1, "
+                       "next_attempt_at=NOW() + INTERVAL '30 minutes', "
+                       "auto_approve_time=to_char(NOW() + INTERVAL '30 minutes', 'YYYY-MM-DD HH24:MI:SS') "
+                       "WHERE id=%s", (_msg, wid))
+        try:
+            cursor.execute("INSERT INTO alarms (type, device_id, content, status, created_at) "
+                           "SELECT 'withdraw_refund_channel_balance', NULL, %s, '0', NOW() "
+                           "WHERE NOT EXISTS (SELECT 1 FROM alarms WHERE type='withdraw_refund_channel_balance' AND status='0')",
+                           ((('[S541] %s 提现渠道余额不足 wid=%s: ' % (tag, wid)) + str(first_msg or ''))[:500],))
+        except Exception as _ae:
+            logger.error('[S541] 渠道余额不足告警写入失败 wid=%s: %s', wid, _ae)
+        try:
+            _s541_alert(amount=amount, count=len(failed_oids or []), msg=first_msg, wid=wid, tag=tag)
+        except Exception as _ne:
+            logger.warning('[S541] 渠道余额不足提醒失败(不影响主流程): %s', _ne)
+        logger.warning('[S541] 提现因渠道余额不足推迟重试 wid=%s tag=%s failed=%s', wid, tag, failed_oids)
+        return True
+    except Exception as _e:
+        logger.error('[S541] 渠道余额不足收尾失败 wid=%s: %s', wid, _e)
+        return False
 def _process_auto_withdrawal_record(wid):
     claimed = _claim_auto_withdrawal(wid)
     if not claimed:
@@ -5577,8 +5783,20 @@ def _process_auto_withdrawal_record(wid):
             done = True
             return
         from helpers import do_real_refund
+        # [S541-20260922] 部分成功(新状态6)计数：只有"新口径"成功的单才计入
+        #   -> 默认(transfer)时恒为 0，下面的最终判定与改动前完全一致。
+        _s541_ok_cnt = 0
+        _s541_balance_fail = False
+        try:
+            from helpers import is_channel_balance_error as _s541_is_bal
+        except Exception:
+            _s541_is_bal = lambda *a, **k: False
         conn2 = get_db()
         c2 = conn2.cursor()
+        # [S541-20260922] 原路退回计划 + 干跑闸（默认 -> original 全 False，不做任何改变）
+        _s541_plan, _s541_blocked = _s541_wd_gate(order_ids, wid, 'auto')
+        if _s541_blocked:
+            return
         failed = []
         failed_amount = 0.0
         first_msg = ''
@@ -5598,20 +5816,33 @@ def _process_auto_withdrawal_record(wid):
             if od.get('refund_status') == 'refunded':
                 c2.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (oid,))
                 continue
+            _s541_orig = bool((_s541_plan or {}).get(int(oid), {}).get('original'))
             refund_this = float(od['bd_amount'] or od['remain_amount'] or 0)
+            if _s541_orig:
+                # [S541] 口径A(老板拍板): 退【全额押金】(deposit_amount)；历史上部分退过的按"押金-已退"封顶
+                _s541_cap = max(0.0, float(od['remain_amount'] or 0))
+                if _s541_cap > 0 and refund_this > _s541_cap:
+                    refund_this = _s541_cap
             if refund_this <= 0:
                 continue
-            success, refund_id, msg = do_real_refund(
+            success, refund_id, msg, _s541_used = _s541_wd_refund(
                 order_id=oid,
                 order_no=od['order_no'],
                 amount=refund_this,
                 payment_channel_id=od['payment_channel_id'],
+                plan=_s541_plan,
+                wid=wid,
+                tag='auto',
             )
             if success or ('订单已全额退款' in str(msg)) or ('该订单已全额退款' in str(msg)):
                 c2.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=COALESCE(%s, refund_id), refund_amount=GREATEST(COALESCE(refund_amount,0), %s), refund_time=NOW(), refund_mark=1 WHERE id=%s", (refund_id, refund_this, oid))
                 c2.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (oid,))
+                if _s541_used:
+                    _s541_ok_cnt += 1
             else:
                 failed.append(oid)
+                if _s541_used and _s541_is_bal(msg):
+                    _s541_balance_fail = True
                 failed_amount += refund_this
                 if not first_msg:
                     first_msg = str(msg)
@@ -5623,6 +5854,17 @@ def _process_auto_withdrawal_record(wid):
             _send_withdraw_subscribe(phone, amount, '原路退回支付账户', '预计0-3个工作日到账', row.get('w_openid') or '', row.get('w_unionid') or '', order_ids=order_ids)  # [S525]
             logger.info('[auto_withdraw] ???? id=%s orders=%s', wid, order_ids)
             done = True
+        elif _s541_balance_fail:
+            # [S541-20260922] 渠道余额不足 = 可重试(不是永久失败)：保持待处理, 30 分钟后自动重试
+            if _s541_balance_retry_finalize(c2, wid, failed, first_msg, 'auto', amount=amount):
+                conn2.commit()
+                done = True
+        elif _s541_ok_cnt > 0:
+            # [S541-20260922] 部分成功(方案 §3.5 新状态 6)：≥1 单已成功原路退回(不撤销)、≥1 单失败
+            #   -> 提现单置 6 待人工；不放开 dedup_key，不动成功单的明细
+            if _s541_partial_finalize(c2, wid, _s541_ok_cnt, failed, first_msg, 'auto'):
+                conn2.commit()
+                done = True
         else:
             c2.execute("UPDATE withdrawal_records SET retry_count=retry_count+1, error_msg=%s, next_attempt_at=NULL WHERE id=%s", (first_msg, wid))
             c2.execute("SELECT retry_count FROM withdrawal_records WHERE id=%s", (wid,))
@@ -5853,6 +6095,7 @@ def _run_withdrawal_batch_auto():
             FROM withdrawal_records w
             WHERE w.status = 0 AND w.approver = 'whitelist_auto'
               AND (w.error_msg IS NULL OR w.error_msg <> 'PROCESSING')
+              AND (w.next_attempt_at IS NULL OR w.next_attempt_at <= NOW())
             LIMIT 200
         """).fetchall()
         for rw in rows_wl:
@@ -5866,6 +6109,12 @@ def _run_withdrawal_batch_auto():
                 _w_oids = []
             if not _w_oids and rw.get('order_id'):
                 _w_oids = [int(rw['order_id'])]
+            # [S541-20260922] 原路退回计划 + 干跑闸（默认 -> original 全 False，行为不变）
+            _s541_plan, _s541_blocked = _s541_wd_gate(_w_oids, _wid, 'whitelist')
+            if _s541_blocked:
+                continue
+            _s541_ok_cnt = 0
+            _s541_balance_fail = False
             if not _w_oids:
                 c.execute("UPDATE withdrawal_records SET status=4, error_msg='订单不存在', approve_time=NOW(), approver='白名单' WHERE id=%s", (_wid,))
                 rejected += 1
@@ -5886,13 +6135,19 @@ def _run_withdrawal_batch_auto():
                 _rthis = float(_ord.get('deposit_amount') or 0) - float(_ord.get('refund_amount') or 0)
                 if _rthis <= 0:
                     continue
-                from helpers import do_real_refund
-                _suc, _rid, _msg = do_real_refund(order_id=_oid, order_no=_ord['order_no'], amount=_rthis, payment_channel_id=_ord['payment_channel_id'])
+                _suc, _rid, _msg, _s541_used_wl = _s541_wd_refund(
+                    order_id=_oid, order_no=_ord['order_no'], amount=_rthis,
+                    payment_channel_id=_ord['payment_channel_id'],
+                    plan=_s541_plan, wid=_wid, tag='whitelist')
                 if _suc:
                     c.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=COALESCE(%s, refund_id), refund_amount=GREATEST(COALESCE(refund_amount,0), %s), refund_time=NOW(), refund_mark=1 WHERE id=%s", (_rid, _rthis, _oid))
                     c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (_oid,))
+                    if _s541_used_wl:
+                        _s541_ok_cnt += 1
                 else:
                     _all_ok = False
+                    if _s541_used_wl and _s541_is_bal(_msg):
+                        _s541_balance_fail = True
                     _failed_oids.append(_oid)
                     _failed_amt += _rthis
                     if not _first_msg:
@@ -5900,6 +6155,12 @@ def _run_withdrawal_batch_auto():
             if _all_ok:
                 c.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), approver='白名单' WHERE id=%s", (_wid,))
                 approved += 1
+            elif _s541_balance_fail:
+                # [S541] 渠道余额不足：保持待处理, 30 分钟后自动重试
+                _s541_balance_retry_finalize(c, _wid, _failed_oids, _first_msg, 'whitelist', amount=_failed_amt)
+            elif _s541_ok_cnt > 0:
+                # [S541-20260922] 部分成功(状态6)：成功单不撤销，失败单待人工
+                _s541_partial_finalize(c, _wid, _s541_ok_cnt, _failed_oids, _first_msg, 'whitelist')
             else:
                 # S100 2026-08-30: 退款失败保持pending隐藏(用户端看不到), wr置3拒绝, 后台手动处理; 不恢复余额
                 if _failed_amt > 0:
@@ -5931,6 +6192,7 @@ def _run_withdrawal_batch_auto():
             AND w.auto_approve_time IS NOT NULL
             AND w.auto_approve_time::timestamp <= NOW()
             AND (w.error_msg IS NULL OR w.error_msg <> 'PROCESSING')
+            AND (w.next_attempt_at IS NULL OR w.next_attempt_at <= NOW())
         """).fetchall()
         for r in rows:
             rate = (r['refund_approve_rate'] or 80) / 100.0
@@ -5949,6 +6211,12 @@ def _run_withdrawal_batch_auto():
                     c.execute("UPDATE withdrawal_records SET status=4, error_msg='订单不存在', approve_time=datetime('now'), approver='自动' WHERE id=%s", (r['id'],))
                     continue
                 c2 = conn.cursor()
+                # [S541-20260922] 原路退回计划 + 干跑闸（默认 -> original 全 False，行为不变）
+                _s541_plan, _s541_blocked = _s541_wd_gate(order_ids, r['id'], 'queue')
+                if _s541_blocked:
+                    continue
+                _s541_ok_cnt = 0
+                _s541_balance_fail = False
                 all_ok = True
                 failed_oids = []
                 failed_amount = 0.0
@@ -5965,13 +6233,20 @@ def _run_withdrawal_batch_auto():
                     refund_this = float(ord.get('deposit_amount') or 0) - float(ord.get('refund_amount') or 0)
                     if refund_this <= 0:
                         continue
-                    success, refund_id, msg = do_real_refund(order_id=oid, order_no=ord['order_no'], amount=refund_this, payment_channel_id=ord['payment_channel_id'])
+                    success, refund_id, msg, _s541_used = _s541_wd_refund(
+                        order_id=oid, order_no=ord['order_no'], amount=refund_this,
+                        payment_channel_id=ord['payment_channel_id'],
+                        plan=_s541_plan, wid=r['id'], tag='queue')
                     if success:
                         c2.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=COALESCE(%s, refund_id), refund_amount=GREATEST(COALESCE(refund_amount,0), %s), refund_time=datetime('now'), refund_mark=1 WHERE id=%s", (refund_id, refund_this, oid))
                         c2.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (oid,))
+                        if _s541_used:
+                            _s541_ok_cnt += 1
                     else:
                         all_ok = False
                         failed_oids.append(oid)
+                        if _s541_used and _s541_is_bal(msg):
+                            _s541_balance_fail = True
                         failed_amount += refund_this
                         if not first_msg:
                             first_msg = str(msg)
@@ -5985,6 +6260,12 @@ def _run_withdrawal_batch_auto():
                             consume_whitelist(r.get('openid') or '')
                         except Exception:
                             pass
+                elif _s541_balance_fail:
+                    # [S541] 渠道余额不足：保持待处理, 30 分钟后自动重试
+                    _s541_balance_retry_finalize(c2, r['id'], failed_oids, first_msg, 'queue', amount=failed_amount)
+                elif _s541_ok_cnt > 0:
+                    # [S541-20260922] 部分成功(状态6)：成功单不撤销，失败单待人工
+                    _s541_partial_finalize(c2, r['id'], _s541_ok_cnt, failed_oids, first_msg, 'queue')
                 else:
                     # S100 2026-08-30: 退款失败保持pending隐藏(用户端看不到), wr置3拒绝, 后台手动处理; 不恢复余额
                     if failed_amount > 0:
@@ -6028,6 +6309,7 @@ def _run_withdrawal_batch_auto():
                    AND (ww.remain_count = -1 OR ww.remain_count > 0)
             WHERE w.status = 0 AND l.withdraw_mode = 'manual_approve'
               AND (w.error_msg IS NULL OR w.error_msg <> 'PROCESSING')
+              AND (w.next_attempt_at IS NULL OR w.next_attempt_at <= NOW())
               AND (ww.openid IS NOT NULL
                    OR ((l.auto_approve_day IS NULL OR l.auto_approve_day <= 0
                         OR w.created_at::date <= CURRENT_DATE - l.auto_approve_day::integer)
@@ -6058,6 +6340,12 @@ def _run_withdrawal_batch_auto():
                     if not order_ids:
                         lc.execute("UPDATE withdrawal_records SET status=4, error_msg=%s, approve_time=NOW(), approver='自动', dedup_key=NULL WHERE id=%s", ('订单不存在', r['id']))
                         continue
+                    # [S541-20260922] 原路退回计划 + 干跑闸（默认 -> original 全 False，行为不变）
+                    _s541_plan, _s541_blocked = _s541_wd_gate(order_ids, r['id'], 'manual')
+                    if _s541_blocked:
+                        continue
+                    _s541_ok_cnt = 0
+                    _s541_balance_fail = False
                     all_ok = True
                     failed_oids = []
                     failed_amount = 0.0
@@ -6074,13 +6362,20 @@ def _run_withdrawal_batch_auto():
                         refund_this = float(ord_row.get('deposit_amount') or 0) - float(ord_row.get('refund_amount') or 0)
                         if refund_this <= 0:
                             continue
-                        success, refund_id, msg = do_real_refund(order_id=oid, order_no=ord_row['order_no'], amount=refund_this, payment_channel_id=ord_row['payment_channel_id'])
+                        success, refund_id, msg, _s541_used = _s541_wd_refund(
+                            order_id=oid, order_no=ord_row['order_no'], amount=refund_this,
+                            payment_channel_id=ord_row['payment_channel_id'],
+                            plan=_s541_plan, wid=r['id'], tag='manual')
                         if success:
                             lc.execute("UPDATE orders SET status=4, refund_status='refunded', refund_id=COALESCE(%s, refund_id), refund_amount=GREATEST(COALESCE(refund_amount,0), %s), refund_time=NOW(), refund_mark=1 WHERE id=%s", (refund_id, refund_this, oid))
                             lc.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (oid,))
+                            if _s541_used:
+                                _s541_ok_cnt += 1
                         else:
                             all_ok = False
                             failed_oids.append(oid)
+                            if _s541_used and _s541_is_bal(msg):
+                                _s541_balance_fail = True
                             failed_amount += refund_this
                             if not first_msg:
                                 first_msg = str(msg)
@@ -6094,6 +6389,12 @@ def _run_withdrawal_batch_auto():
                                 consume_whitelist(r.get('openid') or '')
                             except Exception:
                                 pass
+                    elif _s541_balance_fail:
+                        # [S541] 渠道余额不足：保持待处理, 30 分钟后自动重试
+                        _s541_balance_retry_finalize(lc, r['id'], failed_oids, first_msg, 'manual', amount=failed_amount)
+                    elif _s541_ok_cnt > 0:
+                        # [S541-20260922] 部分成功(状态6)：成功单不撤销，失败单待人工
+                        _s541_partial_finalize(lc, r['id'], _s541_ok_cnt, failed_oids, first_msg, 'manual')
                     else:
                         # S100 2026-08-30: 退款失败保持pending隐藏(用户端看不到), wr置3拒绝, 后台手动处理; 不恢复余额
                         _rp = r.get('user_phone') or ''

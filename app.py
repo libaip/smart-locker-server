@@ -1487,7 +1487,7 @@ def _auto_clear_cabinet_scheduler():
                         continue
 
                     c.execute("""
-                        SELECT o.id, o.slot_id, o.user_phone, o.deposit_amount, o.openid, o.unionid, o.mp_openid, o.wechat_name
+                        SELECT o.id, o.slot_id, o.user_phone, o.deposit_amount, o.openid, o.unionid, o.mp_openid, o.wechat_name, o.refund_status, o.refund_amount
                         FROM orders o
                         JOIN cabinets c ON o.cabinet_id = c.id
                         WHERE c.location_id = %s AND o.status = 2 AND o.store_time < %s

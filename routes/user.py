@@ -26,6 +26,7 @@ from helpers import (json_response, get_setting, is_mock_mode, is_wechat_browser
                      check_withdraw_auto_approve, mark_user_withdraw, get_withhold_hours,
                      phone_openid_rows, resolve_user_identity, find_user_balance_row,
                      upsert_user_balance_row, upsert_phone_openid_row,
+                     deposit_already_refunded,
                      is_new_mp_identity, new_mp_openid_prefix,
                      get_mid_retrieve_config, get_order_mid_retrieve_info, try_increment_mid_retrieve,
                      apply_order_auto_hide)
@@ -1048,7 +1049,8 @@ def retrieve():
             if order['slot_id']:
                 cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (order['slot_id'],))
                 _deposit_amount = order.get('deposit_amount', 0)
-                if _deposit_amount > 0:
+                # [S628-20260923] 已原路退款的订单不再把押金计入余额
+                if _deposit_amount > 0 and not deposit_already_refunded(order):
                     _r_openid = order.get('openid', '') or ''
                     _r_unionid = order.get('unionid', '') or ''
                     _r_mp_openid = order.get('mp_openid', '') or _r_openid
@@ -1324,7 +1326,8 @@ def retrieve_confirm():
             logger.error(f'[retrieve_confirm] 白名单直接退款异常 order={order_id}: {e}')
         # 结束订单，预付款退到用户余额（不直接退微信）
         # 防重复：如果订单原状态不是status=2(使用中)，说明已被其他路径处理过，跳过余额更新
-        if orig_status == 2 and not _direct_refund:
+        # [S628-20260923] 再加一道：押金已原路退款(refund_status='refunded' 且 refund_amount>=deposit_amount)的不再计入余额
+        if orig_status == 2 and not _direct_refund and not deposit_already_refunded(order):
             if not _mp_openid:
                 _mp_openid = _resolve_mp_openid(cursor, mp_openid='', openid=_openid, phone=order['user_phone'])
             # 统一用 mp_openid 查找用户余额
@@ -1936,10 +1939,12 @@ def deposit_retrieve():
                     if order_dict.get('slot_id'):
                         c2.execute("UPDATE cabinet_slots SET status=1 WHERE id=%s", (order_dict['slot_id'],))
                     _oid_user_id = order_dict.get('user_id') or 0
-                    if _oid_user_id:
+                    # [S628-20260923] 已原路退款的订单不再把押金计入余额（两条分支都不写明细）
+                    _s628_skip = deposit_already_refunded(order_dict)
+                    if _oid_user_id and not _s628_skip:
                         c2.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status, user_id) VALUES (%s,%s,%s,'available',%s) ON CONFLICT (order_id) DO NOTHING",
                                   (order_dict.get('user_phone',''), order_dict['id'], order_dict['deposit_amount'], _oid_user_id))
-                    else:
+                    elif not _s628_skip:
                         c2.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s,%s,%s,'available') ON CONFLICT (order_id) DO NOTHING",
                                   (order_dict.get('user_phone',''), order_dict['id'], order_dict['deposit_amount']))
                     conn2.commit()
@@ -2013,6 +2018,52 @@ def deposit_continue_storage():
         return json_response(message=str(e), code=500)
 
 
+# ============================================
+# [S309-20260923] 支付宝订单归属校验（老板要求：两个写接口必须校验归属）
+#   红线：支付宝身份【只】用 users.alipay_uid（openid 形态，含字母/横线，不是纯数字），
+#         绝不使用手机号做身份识别或桥接。
+#   微信/H5（platform != alipay 且没传 alipay_uid）：这两个函数一次都不会被调用，
+#         原有校验逻辑与执行过的 SQL 一字不变。
+# ============================================
+def _s309_alipay_order_owned(cursor, order, alipay_uid):
+    """校验支付宝订单归属。返回 (是否成立, alipay_uid 换出的 users.id)。
+
+    成立条件（老板口径）：
+      orders.alipay_mp_uid == alipay_uid  或
+      orders.alipay_pay_uid == alipay_uid 或
+      (_ali_user_id 非 0 且 orders.user_id == _ali_user_id)
+    只用 alipay_uid 换 users.id；解析异常按"不匹配"处理，绝不抛出（接口不得因此 500）。
+    """
+    _uid = str(alipay_uid or '').strip()
+    if not _uid:
+        return False, 0
+    _ali_user_id = 0
+    try:
+        cursor.execute('SELECT id FROM users WHERE alipay_uid = %s AND id > 0 ORDER BY id LIMIT 1',
+                       (_uid,))
+        _r = cursor.fetchone()
+        if _r:
+            _ali_user_id = int((_r['id'] if isinstance(_r, dict) else _r[0]) or 0)
+    except Exception as _e:
+        logger.warning('[S309] alipay_uid 解析失败(按不匹配处理): %s', _e)
+        return False, 0
+    _o = order or {}
+    if str(_o.get('alipay_mp_uid') or '') == _uid:
+        return True, _ali_user_id
+    if str(_o.get('alipay_pay_uid') or '') == _uid:
+        return True, _ali_user_id
+    if _ali_user_id and int(_o.get('user_id') or 0) == _ali_user_id:
+        return True, _ali_user_id
+    return False, _ali_user_id
+
+
+def _s309_alipay_403(endpoint, order_id, alipay_uid):
+    """支付宝归属校验失败：记 warning（只打印 uid 前 8 位）+ 返回 403，调用方直接 return。"""
+    logger.warning('[S309][%s] 支付宝订单归属校验失败，拒绝: order_id=%s alipay_uid=%s...',
+                   endpoint, order_id, str(alipay_uid or '')[:8])
+    return json_response(message='订单不属于当前账号', code=403)
+
+
 @bp.route('/deposit/end-storage', methods=['POST'])
 def deposit_end_storage():
     """结束取物"""
@@ -2033,7 +2084,21 @@ def deposit_end_storage():
             return json_response(message='订单不存在或状态异常', code=404 if not order else 400)
         _caller_openid = str(data.get('openid') or '').strip()
         _caller_phone = str(data.get('phone') or '').strip()
-        if _caller_openid or _caller_phone:
+        # [S309-20260923] 支付宝归属校验（老板要求）。
+        #   原逻辑：openid 与 phone 【都为空】时跳过归属校验直接放行 —— 支付宝端两者恒为空，
+        #   等于完全无校验。这里给支付宝请求单独加严，身份只用 alipay_uid，绝不使用手机号。
+        #   微信/H5（不传 platform=alipay 且不传 alipay_uid）走下面的 elif，语义一字不变。
+        _s309_plat = str(data.get('platform') or '').strip().lower()
+        _s309_ali = str(data.get('alipay_uid') or data.get('alipay_mp_uid') or '').strip()
+        if _s309_plat == 'alipay' or _s309_ali:
+            if not _s309_ali:
+                conn.close()
+                return _s309_alipay_403('end-storage', order_id, '')
+            _s309_ok, _ = _s309_alipay_order_owned(cursor, order, _s309_ali)
+            if not _s309_ok:
+                conn.close()
+                return _s309_alipay_403('end-storage', order_id, _s309_ali)
+        elif _caller_openid or _caller_phone:
             _caller_uid, _caller_unionid, _caller_canon_phone = _resolve_canonical_identity(
                 cursor, mp_openid=_caller_openid, phone=_caller_phone
             )
@@ -2134,7 +2199,7 @@ def deposit_end_storage():
                 logger.info(f'[end_storage] 白名单退款入队(后台处理): order={order_id}, amount={refund_amount}')
         except Exception as e:
             logger.error(f'[end_storage] 白名单直接退款异常 order={order_id}: {e}')
-        if not _direct_refund:
+        if not _direct_refund and not deposit_already_refunded(order):
             # 统一用 mp_openid 查找用户余额
             if not _mp_openid:
                 _mp_openid = _resolve_mp_openid(cursor, mp_openid='', openid=_openid, phone=order['user_phone'])
@@ -2362,6 +2427,19 @@ def deposit_mid_retrieve():
         if order['status'] != 2:
             conn.close()
             return json_response(message='订单状态不允许中途取物', code=400)
+        # [S309-20260923] 支付宝归属校验（新增；微信路径一条 SQL 都不执行，行为不变）。
+        #   本接口原先【完全没有】归属校验 —— 传 order_id 就能开门。这里只对支付宝请求加严，
+        #   且身份只用 alipay_uid（openid 形态），绝不使用手机号。
+        _s309_plat = str(data.get('platform') or '').strip().lower()
+        _s309_ali = str(data.get('alipay_uid') or data.get('alipay_mp_uid') or '').strip()
+        if _s309_plat == 'alipay' or _s309_ali:
+            if not _s309_ali:
+                conn.close()
+                return _s309_alipay_403('mid-retrieve', order_id, '')
+            _s309_ok, _ = _s309_alipay_order_owned(cursor, order, _s309_ali)
+            if not _s309_ok:
+                conn.close()
+                return _s309_alipay_403('mid-retrieve', order_id, _s309_ali)
         # 网点设置：不允许中途取物时提示去屏幕开门
         try:
             _lc = conn.cursor()
@@ -4309,7 +4387,29 @@ def get_user_balance():
         conn = get_db()
         cur = conn.cursor()
         
-        ident = resolve_user_identity(cur, mp_openid=openid, phone=request_phone)
+        # [S625-20260922] 支付宝身份入口（P0-A）。
+        #   支付宝端 storage 里 phone/openid 都是空的，只有 alipay_uid；本接口原先没有
+        #   alipay_uid 入口 -> 支付宝用户认不出身份（/user/balance 无从回答"我是谁"）。
+        #   这里只用 alipay_uid 换 users.id，绝不使用手机号做任何身份识别或桥接。
+        #   注意：真实 alipay_uid 含字母和横线（022f-_ka...），不是纯数字，所以不能靠
+        #   /user/orders 那套"纯数字且>=16位"的平台自动判定，必须显式 platform=alipay。
+        #   微信端（platform != alipay 或 alipay_uid 为空）本段一条 SQL 都不执行，
+        #   _s625_alipay_user_id 恒为 0 -> 下面 resolve_user_identity 的入参与改前等价。
+        _s625_alipay_user_id = 0
+        try:
+            _s625_plat = str(request.args.get('platform') or '').strip().lower()
+            _s625_ali = str(request.args.get('alipay_uid') or request.args.get('alipay_mp_uid') or '').strip()
+            if _s625_plat == 'alipay' and _s625_ali:
+                cur.execute("SELECT id FROM users WHERE alipay_uid = %s AND id > 0 ORDER BY id LIMIT 1",
+                            (_s625_ali,))
+                _s625_row = cur.fetchone()
+                if _s625_row:
+                    _s625_alipay_user_id = int(
+                        (_s625_row['id'] if isinstance(_s625_row, dict) else _s625_row[0]) or 0)
+        except Exception as _s625_e:
+            logger.warning('[S625][user/balance] alipay_uid 解析失败(按未登录处理): %s', _s625_e)
+
+        ident = resolve_user_identity(cur, mp_openid=openid, phone=request_phone, user_id=_s625_alipay_user_id)
         if ident['ambiguous']:
             conn.close()
             return json_response(message='账号身份待确认，请重新登录', code=400)
@@ -4335,7 +4435,11 @@ def get_user_balance():
         #   code===0||200，改错会让钱包页直接崩）、绝不改 balance/available_balance 的算法。
         _s569_identity_issue = False
         try:
-            if float(calc_bal or 0) <= 0:
+            # [S625-20260922] 支付宝路径跳过本防呆：该防呆是按手机号查账本的，
+            #   而支付宝请求的 phone 恒为空串（按红线不允许用手机号桥接），
+            #   查 phone = '' 会把所有空手机号账本行加总 -> 必然假告警。
+            #   微信路径 _s625_alipay_user_id 恒为 0，条件与改前逐字节等价。
+            if float(calc_bal or 0) <= 0 and not _s625_alipay_user_id:
                 _s569_ledger = 0.0
                 _s569_orphan = 0.0
                 try:

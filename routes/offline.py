@@ -10,12 +10,16 @@ from flask import Blueprint, request, session
 from database import get_db
 from helpers import json_response, logger, pending_lock_commands, connected_devices, require_auth, \
     find_user_balance_row, upsert_user_balance_row, phone_openid_rows, \
+    deposit_already_refunded, \
     get_mid_retrieve_config, try_increment_mid_retrieve
 
 def _return_balance_to_user(cursor, order_dict):
     """离线取包/APK取件时退还保证金到用户余额 - 统一用 mp_openid"""
     deposit_amount = order_dict.get('deposit_amount', 0)
     if deposit_amount <= 0:
+        return (0, order_dict.get('openid', '') or '')
+    # [S628-20260923] 已原路退款的订单不再把押金计入余额
+    if deposit_already_refunded(order_dict):
         return (0, order_dict.get('openid', '') or '')
     user_phone = order_dict.get('user_phone', '')
     if not user_phone:

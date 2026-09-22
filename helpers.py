@@ -2597,11 +2597,52 @@ def return_to_balance(phone, amount, withdrawal_id=None, openid='', order_id=Non
             pass
 
 
+def deposit_already_refunded(order):
+    """[S628-20260923] "结束订单->押金计入余额" 前的一致性闸门。
+
+    背景（2026-09-13 生产 4 笔微信单，合计 ¥81.21）：订单先被原路退款
+    （投诉自动退款 / 提现退款 / 后台退款都会把 orders.refund_status 置成 'refunded'，
+     helpers.do_real_refund 同时把已存在的 user_balance_details 置为 'withdrawn'），
+    但退款发生时订单还在使用中(status=2)、余额明细行还没生成，那条 UPDATE 命中 0 行；
+    之后用户取件、订单结束时又走一次"押金进余额"——同一笔押金既退回支付账户、
+    又变成可提现余额。
+
+    口径：
+      refund_status == 'refunded' 且 refund_amount >= deposit_amount
+        -> 押金已全额原路退回，不再计入余额（本轮任务口径）。
+      部分退款 0 < refund_amount < deposit_amount
+        -> 这些调用点入账金额用的是整笔 deposit_amount，入账会多给，
+           故一律保守跳过并打 WARNING（生产库当前 0 笔，见 S628 报告）。
+      refund_status == 'refunded' 但 refund_amount <= 0
+        -> 不拦（保持原行为；生产库 14 笔老单，明细均非 available，无重复入账风险）。
+
+    返回 True = 跳过入账。任何取值异常一律返回 False（保持原行为，绝不影响正常结束订单）。
+    """
+    try:
+        _o = order or {}
+        _oid = _o.get('id')
+        _rs = str(_o.get('refund_status') or '').strip().lower()
+        _ra = float(_o.get('refund_amount') or 0)
+        _da = float(_o.get('deposit_amount') or 0)
+    except Exception:
+        return False
+    if _rs != 'refunded' or _da <= 0 or _ra <= 0:
+        return False
+    if _ra >= _da:
+        logger.warning('[S628] order_id=%s 押金已全额原路退款(refund_amount=%s >= deposit_amount=%s)，跳过计入余额', _oid, _ra, _da)
+    else:
+        logger.warning('[S628] order_id=%s 押金已部分原路退款(0 < refund_amount=%s < deposit_amount=%s)，保守跳过计入余额，需人工核对', _oid, _ra, _da)
+    return True
+
+
 def refund_deposit_to_balance(cursor, order):
     """清柜/定时清柜统一退押金到余额，返回 (是否退款, mp_openid)"""
     deposit = float(order.get('deposit_amount') or 0)
     phone = str(order.get('user_phone') or '')
     if deposit <= 0 or not phone:
+        return False, '', False
+    # [S628-20260923] 已原路退款的订单不再计入余额（否则同一笔押金既退回支付账户又变成可提现余额）
+    if deposit_already_refunded(order):
         return False, '', False
     openid = order.get('openid') or ''
     unionid = order.get('unionid') or ''

@@ -20,7 +20,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from database import get_db
 import threading, uuid
 from helpers import json_response, manage_user_tokens, require_auth, logger, connected_devices, supersede_force_update_cmds, \
-    upsert_user_balance_row, find_user_balance_row
+    upsert_user_balance_row, find_user_balance_row, deposit_already_refunded
 from config import WX_API_V3_KEY, WX_MCH_ID, WX_CERT_SERIAL_NO, WX_KEY_PATH, WX_CERT_PATH, WX_APP_ID, WX_APP_SECRET, WX_MP_APP_ID, WX_MP_APP_SECRET
 
 # ===== 微信投诉自动处理话术（2026-08-19 定版，全部投诉统一话术）=====
@@ -1350,7 +1350,8 @@ def admin_order_close():
             c.execute('UPDATE cabinet_slots SET status=1 WHERE id=%s', (order_dict['slot_id'],))
         # 保证金退到用户余额
         deposit_amount = order_dict.get('deposit_amount', 0)
-        if deposit_amount > 0 and order_dict.get("user_phone"):
+        # [S628-20260923] 已原路退款的订单不再把押金计入余额
+        if deposit_amount > 0 and order_dict.get("user_phone") and not deposit_already_refunded(order_dict):
             c.execute("UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE phone = %s",
                       (deposit_amount, deposit_amount, order_dict.get("user_phone")))
             # 写入余额明细（灰度：新提现逻辑）
@@ -7470,7 +7471,7 @@ def admin_device_clear_all():
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         from helpers import refund_deposit_to_balance, send_wx_subscribe_message
         # 查询所有活跃订单(使用中2+已结算3)的完整信息
-        c.execute("""SELECT id, order_no, slot_id, user_phone, deposit_amount, openid, unionid, mp_openid, wechat_name, status, compartment_number
+        c.execute("""SELECT id, order_no, slot_id, user_phone, deposit_amount, openid, unionid, mp_openid, wechat_name, status, compartment_number, refund_status, refund_amount
                      FROM orders WHERE cabinet_id=%s AND status IN (2,3)""", (cabinet_id,))
         active = c.fetchall()
         ended = 0

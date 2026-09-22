@@ -3368,15 +3368,25 @@ def alipay_login():
             return json_response(message='支付宝小程序密钥未配置', code=500)
 
         r = client.oauth_token(code)
-        if str(r.get('code')) != '10000':
-            logger.warning('[alipay_login] 换取 user_id 失败: %s %s'
-                           % (r.get('sub_code'), r.get('sub_msg')))
+        # [S622b] 修致命误判：alipay.system.oauth.token 的【成功响应里没有 code 字段】。
+        #   官方样例：alipay_system_oauth_token_response 只有 user_id/open_id/access_token/...；
+        #   只有出错时才是 {"error_response": {"code": "40002", "sub_code": ...}}。
+        #   原判断 `str(r.get('code')) != '10000'` 会把【所有成功响应】都当失败，
+        #   于是支付宝小程序登录永远 400（实测 23:26:51/53 code=None sub_code=None，
+        #   即换取已成功、结果被这行丢掉）。
+        _rc = str(r.get('code') or '').strip()
+        _uid_try = str(r.get('open_id') or r.get('user_id') or '').strip()
+        if not _uid_try and _rc not in ('', '10000'):
+            logger.warning('[alipay_login] 换取 user_id 失败: code=%s sub_code=%s sub_msg=%s node=%s'
+                           % (_rc, r.get('sub_code'), r.get('sub_msg'), r.get('_node')))
             return json_response(
                 message='支付宝登录失败: %s' % (r.get('sub_msg') or r.get('msg') or '未知错误'),
                 code=400)
 
-        alipay_uid = str(r.get('open_id') or r.get('user_id') or '').strip()   # [S524b] 支付宝已切 openid 模式
+        alipay_uid = _uid_try   # [S524b] 支付宝已切 openid 模式
         if not alipay_uid:
+            logger.warning('[alipay_login] 未取到用户标识: code=%s node=%s raw=%s'
+                           % (_rc, r.get('_node'), str(r.get('_raw_body'))[:300]))
             return json_response(message='未取到支付宝用户标识', code=400)
 
         conn = get_db()
@@ -4980,9 +4990,43 @@ def link_openid():
         conn.commit()
         conn.close()
         return json_response(message='关联成功')
-    except Exception as e:
+    except psycopg2.errors.UniqueViolation as e:
+        # [S307-20260922] link-openid 500 修复(A3) —— 只吞"手机号空 unionid 唯一索引"这一种冲突。
+        #   成因：helpers.upsert_user_balance_row 在 unionid 为空的 elif mp_openid / elif openid
+        #   两个分支里，ON CONFLICT 只声明了 (phone,mp_openid) / (openid)，而插入行的 unionid=''
+        #   还同时落在另一个部分唯一索引
+        #     idx_user_balances_phone_empty_union = UNIQUE(phone) WHERE unionid IS NULL OR unionid=''
+        #   上。PG 的 ON CONFLICT 只抑制被声明的那个索引 -> 手机号已存在空 unionid 行时抛 duplicate key。
+        #   此时 phone_openids 的绑定已经写进去了(连接池 autocommit=True)，只有 user_balances
+        #   那一行没写成；本分支**不改任何金额、不搬运任何 openid**，按成功返回，避免客户端 5xx 重试风暴。
+        #   注意：supersede 了早前"把新 openid UPDATE 进老行"的 A2 方案 —— 生产实测那条空 unionid
+        #   老行的 openid 是老账号自己的(34 个失败号里 33 个 openid 非空，全库 6155 行)，
+        #   UPDATE 会把老账号的 openid 覆盖成新账号的 -> 老小程序用户看不到自己的余额。老板禁止跨账号合并身份。
+        _S307_KNOWN = 'idx_user_balances_phone_empty_union'
+        _s307_cname = ''
+        try:
+            if getattr(e, 'diag', None) is not None:
+                _s307_cname = e.diag.constraint_name or ''
+        except Exception:
+            _s307_cname = ''
+        _s307_msg = str(e)
+        if _s307_cname == _S307_KNOWN or (
+                not _s307_cname and ('"' + _S307_KNOWN + '"') in _s307_msg):
+            logger.warning(
+                '[S307] link_openid 命中已知唯一索引冲突(%s)，phone_openids 绑定已生效，按成功返回: %s',
+                _S307_KNOWN, _s307_msg)
+            try:
+                conn.close()
+            except Exception:
+                pass
+            return json_response(message='关联成功')
+        # 其它唯一约束(如 user_balances_openid_uk / uq_withdrawal_pending_order)照原样报错，绝不吞
         logger.error(f'[link_openid] {e}')
-        return json_response(message=str(e), code=500)
+        return json_response(message='服务繁忙，请稍后重试', code=500)
+    except Exception as e:
+        # [S307-20260922 A4] 不再把 str(e) 回显给客户端；真实错误只进日志
+        logger.error(f'[link_openid] {e}')
+        return json_response(message='服务繁忙，请稍后重试', code=500)
 
 
 

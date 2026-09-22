@@ -1300,7 +1300,8 @@ def retrieve_confirm():
         _direct_refund_id = ''
         try:
             from helpers import check_whitelist_today, get_setting_int, count_today_whitelist_uses
-            _wl_today = check_whitelist_today(_openid, _unionid) if (_openid or _unionid) else None
+            # [S588] 手机号优先匹配（phone 只进白名单表比对）
+            _wl_today = check_whitelist_today(_openid, _unionid, order.get('user_phone') or '') if (_openid or _unionid or order.get('user_phone')) else None
             if _wl_today:
                 _daily = get_setting_int('whitelist_daily_use_limit', 3)
                 if _daily > 0 and count_today_whitelist_uses(order['user_phone'], _openid) >= _daily:
@@ -1314,7 +1315,8 @@ def retrieve_confirm():
                 cursor.execute("UPDATE orders SET logical_mark='end' WHERE id=%s", (order_id,))
                 try:
                     from helpers import consume_whitelist
-                    consume_whitelist(_openid or order.get('openid') or '')
+                    # [S588] 按手机号命中的行 openid 可能是老 openid，故一并传 phone 定位
+                    consume_whitelist(_openid or order.get('openid') or '', phone=order.get('user_phone') or '')
                 except Exception:
                     pass
                 logger.info(f'[retrieve_confirm] 白名单退款入队(后台处理): order={order_id}, amount={deposit_amount}')
@@ -2110,7 +2112,8 @@ def deposit_end_storage():
         _direct_refund_id = ''
         try:
             from helpers import check_whitelist_today, get_setting_int, count_today_whitelist_uses
-            _wl_today = check_whitelist_today(_openid, _unionid) if (_openid or _unionid) else None
+            # [S588] 手机号优先匹配（phone 只进白名单表比对）
+            _wl_today = check_whitelist_today(_openid, _unionid, order.get('user_phone') or '') if (_openid or _unionid or order.get('user_phone')) else None
             if _wl_today:
                 _daily = get_setting_int('whitelist_daily_use_limit', 3)
                 if _daily > 0 and count_today_whitelist_uses(order['user_phone'], _openid) >= _daily:
@@ -2124,7 +2127,8 @@ def deposit_end_storage():
                 cursor.execute("UPDATE orders SET logical_mark='end' WHERE id=%s", (order_id,))
                 try:
                     from helpers import consume_whitelist
-                    consume_whitelist(_openid or order.get('openid') or '')
+                    # [S588] 按手机号命中的行 openid 可能是老 openid，故一并传 phone 定位
+                    consume_whitelist(_openid or order.get('openid') or '', phone=order.get('user_phone') or '')
                 except Exception:
                     pass
                 logger.info(f'[end_storage] 白名单退款入队(后台处理): order={order_id}, amount={refund_amount}')
@@ -4818,7 +4822,8 @@ def user_withdraw():
                                        location_id=loc_row.get('id') if loc_row else None)
             # 冻结余额（严格按phone+openid）
             from helpers import check_whitelist
-            wl_record = check_whitelist(openid, ident.get('unionid') or '') if (openid or ident.get('unionid')) else None
+            # [S588] 手机号优先匹配（phone 只进白名单表比对）
+            wl_record = check_whitelist(openid, ident.get('unionid') or '', phone) if (openid or ident.get('unionid') or phone) else None
             # [S417-20260921] 同上：无手机号用户跳过老表 user_balances（唯一索引 (phone) 会撞）
             if phone:
                 upsert_user_balance_row(cursor, phone=phone, openid=openid, unionid=ident['unionid'],

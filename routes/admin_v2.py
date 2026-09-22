@@ -6196,6 +6196,7 @@ def _run_withdrawal_batch_auto():
         # 1. 队列审批：到 auto_approve_time 的按通过率退款
         rows = c.execute("""
             SELECT w.id, w.user_phone, w.amount, w.order_id, w.order_ids, w.auto_approve_time, w.openid,
+                   o.user_phone AS order_phone,
                    l.refund_approve_rate,
                    ww.openid as wl_openid
             FROM withdrawal_records w
@@ -6204,7 +6205,10 @@ def _run_withdrawal_batch_auto():
             JOIN locations l ON cb.location_id = l.id
             LEFT JOIN withdrawal_whitelist ww
                    ON ((ww.unionid IS NOT NULL AND ww.unionid <> '' AND ww.unionid = o.unionid)
-                       OR (COALESCE(ww.unionid, '') = '' AND ww.openid = w.openid))
+                       OR (COALESCE(ww.unionid, '') = '' AND ww.openid = w.openid)
+                       -- [S588-20260922] 手机号优先兜底：老名单只按 openid/unionid 存，用户换小程序后 openid 变了就认不出；
+                       -- 用订单手机号(o.user_phone, 实测永不为空)匹配白名单自己的 phone 列。其余条件一字未动。
+                       OR (COALESCE(ww.phone, '') <> '' AND ww.phone = o.user_phone))
                    AND (ww.expires_at IS NULL OR ww.expires_at > NOW())
                    AND (ww.remain_count = -1 OR ww.remain_count > 0)
             WHERE w.status = 0 AND l.withdraw_mode = 'queue_approve'
@@ -6276,7 +6280,8 @@ def _run_withdrawal_batch_auto():
                         # 白名单免审放行: 消耗一次白名单次数(限次来源)
                         try:
                             from helpers import consume_whitelist
-                            consume_whitelist(r.get('openid') or '')
+                            # [S588] 与 JOIN 口径一致：按订单手机号定位白名单行(可能是老 openid 的行)
+                            consume_whitelist(r.get('openid') or '', phone=r.get('order_phone') or '')
                         except Exception:
                             pass
                 elif _s541_balance_fail:
@@ -6316,6 +6321,7 @@ def _run_withdrawal_batch_auto():
         # 2. 人工审批：白名单或达到自动审批条件的按通过率退款
         rows2 = c.execute("""
             SELECT w.id, w.amount, w.user_phone, w.order_id, w.order_ids, w.openid, l.auto_approve_rate,
+                   o.user_phone AS order_phone,
                    ww.openid as wl_openid
             FROM withdrawal_records w
             JOIN orders o ON w.order_id = o.id
@@ -6323,7 +6329,10 @@ def _run_withdrawal_batch_auto():
             JOIN locations l ON cb.location_id = l.id
             LEFT JOIN withdrawal_whitelist ww
                    ON ((ww.unionid IS NOT NULL AND ww.unionid <> '' AND ww.unionid = o.unionid)
-                       OR (COALESCE(ww.unionid, '') = '' AND ww.openid = w.openid))
+                       OR (COALESCE(ww.unionid, '') = '' AND ww.openid = w.openid)
+                       -- [S588-20260922] 手机号优先兜底：老名单只按 openid/unionid 存，用户换小程序后 openid 变了就认不出；
+                       -- 用订单手机号(o.user_phone, 实测永不为空)匹配白名单自己的 phone 列。其余条件一字未动。
+                       OR (COALESCE(ww.phone, '') <> '' AND ww.phone = o.user_phone))
                    AND (ww.expires_at IS NULL OR ww.expires_at > NOW())
                    AND (ww.remain_count = -1 OR ww.remain_count > 0)
             WHERE w.status = 0 AND l.withdraw_mode = 'manual_approve'
@@ -6405,7 +6414,8 @@ def _run_withdrawal_batch_auto():
                             # 白名单免审放行: 消耗一次白名单次数(限次来源)
                             try:
                                 from helpers import consume_whitelist
-                                consume_whitelist(r.get('openid') or '')
+                                # [S588] 与 JOIN 口径一致：按订单手机号定位白名单行(可能是老 openid 的行)
+                                consume_whitelist(r.get('openid') or '', phone=r.get('order_phone') or '')
                             except Exception:
                                 pass
                     elif _s541_balance_fail:

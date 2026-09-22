@@ -4208,11 +4208,26 @@ def _resolve_unionid(openid='', phone=''):
     return ''
 
 
-def check_whitelist(openid='', unionid=''):
+def check_whitelist(openid='', unionid='', phone=''):
+    """提现免审白名单查询。
+
+    [S588-20260922] 匹配优先级：**手机号 → unionid → openid**（老板口径）。
+    原因：换小程序/换微信号后 openid 会变，老名单只按 openid/unionid 存就认不出本人，
+    用户"手机号明明在白名单里却匹配不上"。手机号是稳定身份，故优先。
+    边界（头号铁律）：phone 只用于本函数对 withdrawal_whitelist 表自身的匹配，
+    不做任何跨表身份兜底 / 认人 / 合并账户；phone 为空时行为与改动前完全一致。
+    """
     try:
         from database import get_db
         conn = get_db()
         cur = conn.cursor()
+        # [S588] 手机号优先
+        if phone:
+            cur.execute("SELECT openid, source, remain_count, unionid, created_at FROM withdrawal_whitelist WHERE phone = %s AND (expires_at IS NULL OR expires_at > NOW()) LIMIT 1", (str(phone),))
+            row = cur.fetchone()
+            if row:
+                conn.close()
+                return row
         if unionid:
             cur.execute("SELECT openid, source, remain_count, unionid, created_at FROM withdrawal_whitelist WHERE unionid = %s AND (expires_at IS NULL OR expires_at > NOW()) LIMIT 1", (unionid,))
             row = cur.fetchone()
@@ -4237,8 +4252,13 @@ def check_whitelist(openid='', unionid=''):
         return None
 
 
-def add_whitelist(openid, source, remain_count=-1, unionid='', expire_days=None):
-    """加入提现白名单。expire_days>0: N天后过期; 重复拉白时次数取较小值(不重置回满), 有效期不刷新(保留原值)"""
+def add_whitelist(openid, source, remain_count=-1, unionid='', expire_days=None, phone=''):
+    """加入提现白名单。expire_days>0: N天后过期; 重复拉白时次数取较小值(不重置回满), 有效期不刷新(保留原值)
+
+    [S588-20260922] 双写：有手机号就一并写入 phone 列（原来是 NULL，换微信号后按手机号认不出）。
+    按 unionid/openid 命中已有行时也把 phone 补上（COALESCE 语义：不覆盖已有非空 phone）。
+    边界（头号铁律）：phone 只写 withdrawal_whitelist 自己这一列，不写 orders/users/user_balances。
+    """
     try:
         from database import get_db
         conn = get_db()
@@ -4247,24 +4267,28 @@ def add_whitelist(openid, source, remain_count=-1, unionid='', expire_days=None)
             unionid = _resolve_unionid(openid=openid)
         # 过期天数参数化(make_interval), 不能拼SQL字符串当参数传, 否则报timestamp语法错
         _exp_days = int(expire_days) if (expire_days is not None and expire_days > 0) else None
+        # [S588] 手机号规范化：空串统一成 None 语义由 COALESCE(NULLIF(...)) 处理
+        _phone = str(phone) if phone else ''
         if unionid:
             cur.execute("SELECT openid FROM withdrawal_whitelist WHERE unionid = %s LIMIT 1", (unionid,))
             exist = cur.fetchone()
             if exist:
                 cur.execute("""UPDATE withdrawal_whitelist SET openid = %s, source = %s,
+                               phone = COALESCE(NULLIF(%s, ''), phone),
                                remain_count = CASE
                                  WHEN withdrawal_whitelist.remain_count = -1 THEN %s
                                  WHEN %s = -1 THEN withdrawal_whitelist.remain_count
                                  ELSE LEAST(withdrawal_whitelist.remain_count, %s)
                                END
                                WHERE unionid = %s""",
-                            (openid, source, remain_count, remain_count, remain_count, unionid))
+                            (openid, source, _phone, remain_count, remain_count, remain_count, unionid))
                 conn.commit()
                 conn.close()
                 return True
-        sql = """INSERT INTO withdrawal_whitelist (openid, source, remain_count, unionid, created_at, expires_at)
-                 VALUES (%s, %s, %s, %s, NOW(), NOW() + make_interval(days => %s))
+        sql = """INSERT INTO withdrawal_whitelist (openid, source, remain_count, unionid, created_at, expires_at, phone)
+                 VALUES (%s, %s, %s, %s, NOW(), NOW() + make_interval(days => %s), %s)
                  ON CONFLICT (openid) DO UPDATE SET source = EXCLUDED.source,
+                   phone = COALESCE(NULLIF(EXCLUDED.phone, ''), withdrawal_whitelist.phone),
                    remain_count = CASE
                      WHEN withdrawal_whitelist.remain_count = -1 THEN EXCLUDED.remain_count
                      WHEN EXCLUDED.remain_count = -1 THEN withdrawal_whitelist.remain_count
@@ -4272,7 +4296,7 @@ def add_whitelist(openid, source, remain_count=-1, unionid='', expire_days=None)
                    END,
                    unionid = COALESCE(NULLIF(EXCLUDED.unionid, ''), withdrawal_whitelist.unionid),
                    expires_at = withdrawal_whitelist.expires_at"""
-        cur.execute(sql, (openid, source, remain_count, unionid, _exp_days))
+        cur.execute(sql, (openid, source, remain_count, unionid, _exp_days, _phone))
         conn.commit()
         conn.close()
         return True
@@ -4281,15 +4305,23 @@ def add_whitelist(openid, source, remain_count=-1, unionid='', expire_days=None)
         return False
 
 
-def check_whitelist_today(openid='', unionid=''):
-    """当天投诉白名单：source=complaint 且白名单创建于今天（北京时间）"""
+def check_whitelist_today(openid='', unionid='', phone=''):
+    """当天投诉白名单：source=complaint 且白名单创建于今天（北京时间）
+
+    [S588-20260922] 匹配优先级：手机号 → unionid → openid（与 check_whitelist 一致）；
+    phone 为空时执行路径与改动前逐字相同。
+    """
     try:
         from database import get_db
         conn = get_db()
         cur = conn.cursor()
         conds = ["source = 'complaint'"]
         params = []
-        if unionid:
+        if phone:
+            # [S588] 手机号优先（只匹配白名单表自己的 phone 列）
+            conds.append("phone = %s")
+            params.append(str(phone))
+        elif unionid:
             conds.append("unionid = %s")
             params.append(unionid)
         elif openid:
@@ -4426,7 +4458,9 @@ def check_use_limits(phone='', unionid='', openid=''):
             return '累计投诉次数过多，暂不可使用'
         daily = get_setting_int('whitelist_daily_use_limit', 3)
         if daily > 0:
-            _wl = check_whitelist_today(openid, unionid)
+            # [S588] 与白名单匹配口径取齐：本函数下方 count_today_whitelist_uses 本来就按 phone 计数，
+            # 这里也把 phone 传进去，避免"按手机号命中的白名单在限额判断上漏看"。
+            _wl = check_whitelist_today(openid, unionid, phone)
             if _wl and count_today_whitelist_uses(phone, openid) >= daily:
                 return '今日使用次数已达上限'
     except Exception as e:
@@ -4434,24 +4468,39 @@ def check_use_limits(phone='', unionid='', openid=''):
     return None
 
 
-def consume_whitelist(openid):
-    """消费一次白名单(限次来源扣1,扣完删除; -1不限次不扣; 过期不消费)"""
+def consume_whitelist(openid, phone=''):
+    """消费一次白名单(限次来源扣1,扣完删除; -1不限次不扣; 过期不消费)
+
+    [S588-20260922] 新增可选 phone：按手机号命中的白名单行，其 openid 往往是【老 openid】，
+    只按当前 openid 扣次会扣不到（等于漏扣、白名单次数不清零），所以支持用手机号定位同一行。
+    顺序：phone 优先 → openid；phone 为空时 _keys 只有 openid，SQL 与改动前逐字相同。
+    边界（头号铁律）：phone 只用于定位 withdrawal_whitelist 自己的行。
+    """
     try:
         from database import get_db
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("UPDATE withdrawal_whitelist SET remain_count = remain_count - 1 WHERE openid = %s AND remain_count > 0 AND (expires_at IS NULL OR expires_at > NOW())", (openid,))
-        if cur.rowcount > 0:
-            cur.execute("DELETE FROM withdrawal_whitelist WHERE openid = %s AND remain_count <= 0", (openid,))
-            conn.commit()
-            conn.close()
-            return True
-        cur.execute("SELECT remain_count FROM withdrawal_whitelist WHERE openid = %s AND (expires_at IS NULL OR expires_at > NOW())", (openid,))
-        row = cur.fetchone()
-        if row and row["remain_count"] == -1:
-            conn.commit()
-            conn.close()
-            return True
+        _keys = []
+        if phone:
+            _keys.append(('phone', str(phone)))
+        if openid:
+            _keys.append(('openid', openid))
+        for _col, _val in _keys:
+            cur.execute("UPDATE withdrawal_whitelist SET remain_count = remain_count - 1 WHERE " + _col + " = %s AND remain_count > 0 AND (expires_at IS NULL OR expires_at > NOW())", (_val,))
+            if cur.rowcount > 0:
+                cur.execute("DELETE FROM withdrawal_whitelist WHERE " + _col + " = %s AND remain_count <= 0", (_val,))
+                conn.commit()
+                conn.close()
+                return True
+            cur.execute("SELECT remain_count FROM withdrawal_whitelist WHERE " + _col + " = %s AND (expires_at IS NULL OR expires_at > NOW())", (_val,))
+            row = cur.fetchone()
+            if row is not None:
+                if row["remain_count"] == -1:
+                    conn.commit()
+                    conn.close()
+                    return True
+                # 命中该键但已无可用次数：与改动前一致，直接结束(不再尝试下一个键，避免重复扣次)
+                break
         conn.commit()
         conn.close()
         return False
@@ -4485,10 +4534,12 @@ def get_openid_by_phone(phone):
 def add_whitelist_by_phone(phone, source, remain_count=-1, expire_days=None):
     openid = get_openid_by_phone(phone)
     if not openid:
+        # [S588] 老行为保留：查不到 openid 就不拉白(白名单表 openid 是主键且 NOT NULL，不能只写手机号)
         logger.warning("[add_whitelist_by_phone] phone=" + str(phone) + " no openid")
         return False
     unionid = _resolve_unionid(openid=openid, phone=phone)
-    return add_whitelist(openid, source, remain_count, unionid, expire_days)
+    # [S588] 双写：手机号一并落库（原来只落 openid/unionid，换微信号后就按手机号认不出）
+    return add_whitelist(openid, source, remain_count, unionid, expire_days, phone=phone)
 
 
 # ============ 白名单发放统一入口（2026-08-21 新增） ============
@@ -4523,7 +4574,8 @@ def _grant_whitelist(phone='', openid='', unionid='', location_id=None, source='
         uses = get_location_wl_uses(location_id)
         remain = -1 if uses <= 0 else uses
         if openid:
-            return add_whitelist(openid, source, remain, unionid or '', expire_days=days)
+            # [S588] 双写：有手机号就一并写入白名单 phone 列
+            return add_whitelist(openid, source, remain, unionid or '', expire_days=days, phone=phone or '')
         if phone:
             return add_whitelist_by_phone(phone, source, remain, expire_days=days)
         return False

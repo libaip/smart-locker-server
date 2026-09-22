@@ -1359,7 +1359,8 @@ def refund_order(order_id):
             openid = order.get('openid', '')
             if openid:
                 from helpers import add_whitelist
-                add_whitelist(openid, 'manual_help', 1, expire_days=7)
+                # [S588] 双写：把本单手机号一并写入白名单 phone 列
+                add_whitelist(openid, 'manual_help', 1, expire_days=7, phone=user_phone or '')
             elif user_phone:
                 from helpers import add_whitelist_by_phone
                 add_whitelist_by_phone(user_phone, 'manual_help', 1, expire_days=7)
@@ -1609,7 +1610,8 @@ def withdrawal_apply():
                 # 检查白名单
                 from helpers import check_whitelist, add_whitelist, consume_whitelist, do_real_refund
                 openid_for_wl = user_openid or _real_openid
-                wl_record = check_whitelist(openid_for_wl) if openid_for_wl else None
+                # [S588] 手机号优先匹配（phone 只进白名单表比对）；无 openid 但有手机号时也要查
+                wl_record = check_whitelist(openid_for_wl, phone=user_phone) if (openid_for_wl or user_phone) else None
                 if wl_record:
                     # 白名单免审，直接退款
                     success, refund_id, msg = do_real_refund(order_id=order_id, order_no=eligible['order_no'], amount=amount, payment_channel_id=eligible['payment_channel_id'])
@@ -1620,7 +1622,8 @@ def withdrawal_apply():
                         conn.close()
                         # 白名单免审成功: 消费次数(限次来源扣1, -1不限不扣)
                         try:
-                            consume_whitelist(openid_for_wl)
+                            # [S588] 按手机号命中的行 openid 可能是老 openid，故一并传 phone 定位
+                            consume_whitelist(openid_for_wl, phone=user_phone)
                         except Exception:
                             pass
                         _s557_notify_applied(order_id, amount, user_openid, user_phone, eligible['order_no'])   # [S557c] 申请时发一条
@@ -1702,7 +1705,8 @@ def withdrawal_apply():
         # 检查白名单（先查后判断）
         from helpers import check_whitelist, add_whitelist, consume_whitelist
         openid_for_wl = order.get('openid', '') or user_openid
-        wl_record = check_whitelist(openid_for_wl) if openid_for_wl else None
+        # [S588] 手机号优先匹配（phone 只进白名单表比对）；无 openid 但有手机号时也要查
+        wl_record = check_whitelist(openid_for_wl, phone=user_phone) if (openid_for_wl or user_phone) else None
         if wl_record:
             # 在白名单中，跳过审批直接退款
             from helpers import do_real_refund
@@ -1714,7 +1718,8 @@ def withdrawal_apply():
                 conn.close()
                 # 白名单免审成功: 消费次数(限次来源扣1, -1不限不扣)
                 try:
-                    consume_whitelist(openid_for_wl)
+                    # [S588] 按手机号命中的行 openid 可能是老 openid，故一并传 phone 定位
+                    consume_whitelist(openid_for_wl, phone=user_phone)
                 except Exception:
                     pass
                 return json_response({'withdrawal_id': 0, 'status': 'auto_approved', 'amount': amount, 'message': '白名单免审，已自动退款'})

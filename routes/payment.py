@@ -14,7 +14,9 @@ from flask import Blueprint, request
 from database import get_db
 from helpers import (json_response, require_auth, get_setting, is_mock_mode, logger, _get_device_protocol,
                      get_wxpay, get_channel_wxpay, update_channel_stats, send_open_lock,
-                     upsert_user_balance_row)
+                     upsert_user_balance_row,
+                     _s556_correct_order_channel,               # [S556] 订单渠道纠正
+                     _backfill_order_identity, appid_by_openid)  # [S569] 订单身份回填 + openid 分类
 from wxpay import WxPay, ThirdPartyPay
 
 bp = Blueprint('payment', __name__)
@@ -192,6 +194,11 @@ def pay_notify():
                         wxpay_inst, ch_type = get_channel_wxpay(dict(ch))
                         if wxpay_inst and ch_type == 'wechat':
                             notify_wxpay = wxpay_inst
+                            # [S556-20260922] bug① —— 记下"真正能解析这笔回调的那个通道"，
+                            #   它就是这笔钱的真实收款渠道。原来这里不记，而回写又只在
+                            #   "订单没挂渠道"时才做 -> 脏单（订单挂支付宝 113、实际微信 121
+                            #   收款）的真实渠道永远写不回订单。
+                            _callback_channel_id = ch['id']
                 # 没找到渠道，选一个活跃的
                 _callback_channel_id = None
                 if not notify_wxpay:
@@ -267,6 +274,19 @@ def pay_notify():
                 cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s AND status = 1',
                                (transaction_id, datetime.now(), order['id']))
             we_updated = cursor.rowcount > 0
+            # [S556-20260922] bug① —— 用【真实收款渠道】纠正订单渠道。
+            #   订单没挂渠道时上面那句 UPDATE 已经写了；这里覆盖"挂了但是脏的"（订单渠道
+            #   解析不出回调，真实收款其实是另一个通道）：只在真实渠道 != 订单渠道时才
+            #   UPDATE + WARNING + alarms，一致时一个字都不写（正常同渠道支付零变化）。
+            if '_callback_channel_id' in locals() and _callback_channel_id:
+                try:
+                    _s556_correct_order_channel(order['id'], _callback_channel_id,
+                                                source='wx-notify',
+                                                order_no=order.get('order_no') or '',
+                                                transaction_id=transaction_id,
+                                                ch_type='wechat')
+                except Exception as _s556_e:
+                    logger.error('[支付回调] S556 渠道纠正失败(不影响订单已支付): %s', _s556_e)
             if we_updated and order['slot_id']:
                 cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
             cursor.execute("SELECT id FROM payments WHERE order_id=%s AND type=1 AND transaction_id=%s LIMIT 1", (order['id'], transaction_id))
@@ -306,7 +326,8 @@ def pay_notify():
                     }
             except Exception as e:
                 logger.error(f'[支付回调读取开锁信息失败] {e}')
-            _channel_id = order['payment_channel_id']
+            _channel_id = (_callback_channel_id if '_callback_channel_id' in locals()
+                           else None) or order['payment_channel_id']  # [S556] 按真实渠道计数
             _deposit_amount = float(order['deposit_amount']) + float(order.get('per_use_price') or 0)
             # 更新渠道统计（支付成功）
             try:
@@ -315,6 +336,24 @@ def pay_notify():
             except Exception as _es:
                 logger.error(f'[pay_notify] update_channel_stats: {_es}')
             conn.commit()
+            # [S569-20260922] 支付成功且【已 commit】（订单行锁已释放，避免跨连接 UPDATE 互相等锁）：
+            #   用微信回调里【付款人的真实 openid】把下单时缺失的订单身份补回来。
+            #   微信 v2 回调字段：直连商户 openid / 服务商 sub_openid。
+            #   只在订单身份缺失时写（函数内自检），正常单一个字不动；
+            #   失败只记日志，绝不影响"已支付"这个事实。
+            try:
+                _payer_oid = str(result.get('openid') or result.get('sub_openid') or '').strip()
+                if _payer_oid:
+                    # 小程序 openid -> orders.mp_openid；公众号 openid -> orders.openid。
+                    # 分类用现成的 appid_by_openid(acct_type='mp')（wx_accounts 登记表），
+                    # 绝不把公众号 openid 写进 mp_openid 列。
+                    _payer_mp = _payer_oid if appid_by_openid(_payer_oid, acct_type='mp') else ''
+                    _backfill_order_identity(order['id'],
+                                             mp_openid=_payer_mp,
+                                             openid=('' if _payer_mp else _payer_oid),
+                                             source='wx-notify')
+            except Exception as _e569:
+                logger.error(f'[S569] 支付回调身份回填失败(不影响已支付): {_e569}')
         else:
             if order['status'] == 1:
                 cursor.execute('UPDATE orders SET status = 5 WHERE id = %s', (order['id'],))
@@ -492,38 +531,77 @@ def alipay_pay_notify():
         if order['status'] in (2, 3, 4):
             conn.close()
             return 'success'
-        ch = None
+        # [S556-20260922] bug① —— 候选渠道列表：订单挂的渠道优先，其后是活跃支付宝渠道。
+        #   原来只认"订单挂的那个渠道"：订单渠道脏了（挂微信、实际走的支付宝）时，
+        #   验签和查单都会失败 -> 回调被拒 -> 订单永远停在待支付。
+        #   一笔钱只可能被一个 appid 收走：能验签成功/查单成功的那个才是真实收款渠道。
+        _cands = []
         if order.get('payment_channel_id'):
             cursor.execute('SELECT * FROM payment_channels WHERE id = %s', (order['payment_channel_id'],))
-            ch = cursor.fetchone()
-        if not ch:
-            cursor.execute("SELECT * FROM payment_channels WHERE channel_type='alipay' AND is_active=1 ORDER BY id ASC LIMIT 1")
-            ch = cursor.fetchone()
+            _c0 = cursor.fetchone()
+            if _c0:
+                _cands.append(dict(_c0))
+        cursor.execute("SELECT * FROM payment_channels WHERE channel_type='alipay' AND is_active=1 ORDER BY id ASC LIMIT 1")
+        _c1 = cursor.fetchone()
+        if _c1 and not any(int(c.get('id') or 0) == int(_c1['id']) for c in _cands):
+            _cands.append(dict(_c1))
         conn.close()
-        if not ch:
+        if not _cands:
             logger.error('[支付宝回调] 找不到可用的支付宝渠道')
             return 'fail', 500
-        client, ch_type = get_channel_wxpay(dict(ch))
-        if client is None or ch_type != 'alipay':
-            logger.error('[支付宝回调] 支付宝渠道实例创建失败: id=%s', ch.get('id'))
-            return 'fail', 500
+        client = None
+        _picked = None
+        ch_type = None
+        # [S556-20260922] bug① —— 逐个候选渠道确认：先试回调验签，验签不行再试主动查单。
+        #   口径与改动前完全一致（验签成功 + TRADE_SUCCESS/TRADE_FINISHED 才算数；
+        #   验签不行就靠我们主动发的查单结果），只是从"单个渠道"换成"逐个候选渠道"。
         verified_by = ''
-        if params.get('sign') and client.verify_notify(params):
-            verified_by = 'sign'
+        _last_q = None
+        for _cand in _cands:
+            _cli = None
+            try:
+                _cli, _t = get_channel_wxpay(dict(_cand))
+            except Exception as _ce:
+                logger.warning('[支付宝回调] 候选渠道 %s 实例化异常: %s', _cand.get('id'), _ce)
+                continue
+            if _cli is None or _t != 'alipay':
+                logger.warning('[支付宝回调] 候选渠道 %s 不是可用支付宝渠道(type=%s)',
+                               _cand.get('id'), _t)
+                continue
+            if params.get('sign'):
+                try:
+                    if _cli.verify_notify(params):
+                        client, _picked, ch_type, verified_by = _cli, _cand, _t, 'sign'
+                        break
+                except Exception as _ve:
+                    logger.warning('[支付宝回调] 候选渠道 %s 验签异常: %s', _cand.get('id'), _ve)
+            try:
+                _q = _cli.query(out_trade_no=out_trade_no)
+            except Exception as _qe:
+                logger.warning('[支付宝回调] 候选渠道 %s 查单异常: %s', _cand.get('id'), _qe)
+                continue
+            _last_q = _q
+            if (str(_q.get('code')) == '10000'
+                    and str(_q.get('trade_status')) in ('TRADE_SUCCESS', 'TRADE_FINISHED')):
+                client, _picked, ch_type, verified_by = _cli, _cand, _t, 'query'
+                _buyer_uid = str(_q.get('buyer_open_id') or _q.get('buyer_user_id')
+                                 or _q.get('buyer_id') or _buyer_uid or '').strip()
+                params = {'trade_no': _q.get('trade_no'), 'total_amount': _q.get('total_amount')}
+                break
+        if client is None:
+            _q = _last_q or {}
+            logger.warning('[支付宝回调] 候选渠道全部验签/查单失败: code=%s sub_code=%s trade_status=%s',
+                           _q.get('code'), _q.get('sub_code'), _q.get('trade_status'))
+            return 'fail', 400
+        if verified_by == 'sign':
             if str(params.get('trade_status')) not in ('TRADE_SUCCESS', 'TRADE_FINISHED'):
                 logger.info('[支付宝回调] 验签通过但交易状态非成功: %s', params.get('trade_status'))
                 return 'success'
-        else:
-            q = client.query(out_trade_no=out_trade_no)
-            if str(q.get('code')) == '10000' and str(q.get('trade_status')) in ('TRADE_SUCCESS', 'TRADE_FINISHED'):
-                verified_by = 'query'
-                # [S524] 查单结果同样优先取 buyer_open_id（本应用 openid 模式）
-                _buyer_uid = str(q.get('buyer_open_id') or q.get('buyer_user_id')
-                                 or q.get('buyer_id') or _buyer_uid or '').strip()
-                params = {'trade_no': q.get('trade_no'), 'total_amount': q.get('total_amount')}
-            else:
-                logger.warning('[支付宝回调] 验签失败且查单未确认: code=%s sub_code=%s', q.get('code'), q.get('sub_code'))
-                return 'fail', 400
+        elif int(_picked.get('id') or 0) != int(order.get('payment_channel_id') or 0):
+            logger.warning('[支付宝回调] 订单记账渠道与实际收款渠道不一致: out_trade_no=%s 订单=%s '
+                           '实收=%s(%s) 校验方式=%s',
+                           out_trade_no, order.get('payment_channel_id'), _picked.get('id'),
+                           _picked.get('name'), verified_by)
         try:
             expect = float(order['deposit_amount'] or 0) + float(order.get('per_use_price') or 0)
             got = float(params.get('total_amount') or 0)
@@ -569,6 +647,15 @@ def alipay_pay_notify():
         cursor.execute("UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s AND status = 1",
                        (trade_no, datetime.now(), order['id']))
         updated = cursor.rowcount > 0
+        # [S556-20260922] bug① —— 用【真正确认成功的那个渠道】纠正订单渠道
+        if updated and _picked:
+            try:
+                _s556_correct_order_channel(order['id'], _picked.get('id'),
+                                            source='alipay-notify',
+                                            order_no=order.get('order_no') or '',
+                                            transaction_id=trade_no, ch_type='alipay')
+            except Exception as _s556_e:
+                logger.error('[支付宝回调] S556 渠道纠正失败(不影响订单已支付): %s', _s556_e)
         if updated and order.get('slot_id'):
             cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
         if updated:
@@ -583,9 +670,10 @@ def alipay_pay_notify():
                     logger.info('[支付宝回调] 已记 payments: order=%s amount=%.2f', order['id'], amount)
             except Exception as _pe:
                 logger.error('[支付宝回调] 记账失败(不影响订单已支付): order=%s err=%s', order['id'], _pe)
-            if order.get('payment_channel_id'):
+            _s556_stat_ch = (_picked.get('id') if _picked else None) or order.get('payment_channel_id')
+            if _s556_stat_ch:
                 try:
-                    update_channel_stats(order['payment_channel_id'], amount)
+                    update_channel_stats(_s556_stat_ch, amount)   # [S556] 按真实收款渠道计
                 except Exception:
                     pass
         # [S519] 订单桥接：把付款人 uid 落到本单（只写支付宝专用列，不动 user_id/openid/mp_openid）

@@ -329,6 +329,92 @@ def _resolve_order_identity(cursor, phone, openid='', unionid='', mp_openid='', 
     return openid or '', unionid or '', mp_openid or ''
 
 
+def _s551_alarm_order_identity(cursor, order_id, order_no, user_phone, strict, reason):
+    """[S551] 写一条 alarms，便于发现"又有订单身份全空"。失败不抛（绝不影响下单）。"""
+    try:
+        _content = ('订单身份六字段全空: order_id=%s order_no=%s phone=%s strict=%s reason=%s'
+                    % (order_id, order_no, user_phone, strict, reason))[:500]
+        cursor.execute(
+            "INSERT INTO alarms (type, device_id, content, status, created_at) "
+            "VALUES ('order_identity_missing', NULL, %s, '0', NOW())", (_content,))
+    except Exception as _e:
+        logger.warning('[S551] 写 order_identity_missing 告警失败: %s', _e)
+
+
+def _s551_backfill_orphan_identity(cursor, order_id, order_no, user_phone, strict, cabinet_id=None):
+    """[S551] 防新孤儿单兜底（保守版）。
+
+    订单写库后，如果【六个身份字段全空】而手机号非空，说明"谁都认领不了"：
+      * strict=True （S320 新体系路径）：只告警 + 写 alarms，**绝不按手机号回填**。
+      * strict=False（老路径）      ：按手机号在 phone_openids **唯一命中**才回填；
+                                      0 条或多条都不回填（只告警 + 写 alarms）。
+    返回 True 表示发生了回填。绝不抛异常，绝不影响下单主流程。
+    """
+    try:
+        cursor.execute("""
+            SELECT COALESCE(user_id,0) AS user_id, COALESCE(unionid,'') AS unionid,
+                   COALESCE(mp_openid,'') AS mp_openid, COALESCE(openid,'') AS openid,
+                   COALESCE(alipay_mp_uid,'') AS alipay_mp_uid,
+                   COALESCE(alipay_pay_uid,'') AS alipay_pay_uid
+            FROM orders WHERE id = %s
+        """, (order_id,))
+        _row = cursor.fetchone()
+        if not _row:
+            return False
+        _d = dict(_row)
+        _all_empty = (int(_d.get('user_id') or 0) == 0
+                      and not (_d.get('unionid') or '')
+                      and not (_d.get('mp_openid') or '')
+                      and not (_d.get('openid') or '')
+                      and not (_d.get('alipay_mp_uid') or '')
+                      and not (_d.get('alipay_pay_uid') or ''))
+        if not _all_empty:
+            return False          # 身份本来就有的单：一行逻辑都不变
+        if not user_phone:
+            logger.warning('[S551] 订单身份全空且无手机号，无法兜底: order_id=%s order_no=%s', order_id, order_no)
+            _s551_alarm_order_identity(cursor, order_id, order_no, user_phone, strict, 'no_phone')
+            return False
+
+        if strict:
+            logger.warning('[S551] 订单身份全空(strict 路径，按硬化口径**不按手机号回填**): '
+                           'order_id=%s order_no=%s phone=%s cabinet_id=%s',
+                           order_id, order_no, user_phone, cabinet_id)
+            _s551_alarm_order_identity(cursor, order_id, order_no, user_phone, strict, 'strict_no_backfill')
+            return False
+
+        _rows = phone_openid_rows(cursor, phone=user_phone) or []
+        _ids = set()
+        for _r in _rows:
+            _ids.add((( _r.get('openid') or ''), (_r.get('mp_openid') or ''), (_r.get('unionid') or '')))
+        if len(_rows) != 1 and len(_ids) != 1:
+            logger.warning('[S551] 订单身份全空且按手机号无法唯一命中(%d 行/%d 种身份)，不回溯: '
+                           'order_id=%s order_no=%s phone=%s',
+                           len(_rows), len(_ids), order_id, order_no, user_phone)
+            _s551_alarm_order_identity(cursor, order_id, order_no, user_phone, strict, 'not_unique')
+            return False
+
+        _r0 = _rows[0]
+        _oid = (_r0.get('openid') or '').strip()
+        _mp = (_r0.get('mp_openid') or '').strip()
+        _un = (_r0.get('unionid') or '').strip()
+        if not (_oid or _mp or _un):
+            logger.warning('[S551] 订单身份全空，phone_openids 唯一命中但三字段都为空，不回溯: order_id=%s', order_id)
+            _s551_alarm_order_identity(cursor, order_id, order_no, user_phone, strict, 'empty_identity_row')
+            return False
+        # 故意不写 user_id：phone_openids.user_id 被标注为污染不可信（见文件顶部 resolve 注释）
+        cursor.execute("""
+            UPDATE orders SET openid = %s, mp_openid = %s, unionid = %s
+            WHERE id = %s AND COALESCE(openid,'') = '' AND COALESCE(mp_openid,'') = ''
+        """, (_oid, _mp, _un, order_id))
+        logger.warning('[S551] 订单身份全空，已按手机号唯一命中回填 openid/mp_openid/unionid: '
+                       'order_id=%s order_no=%s phone=%s openid=%s... mp_openid=%s... unionid=%s...',
+                       order_id, order_no, user_phone, _oid[:10], _mp[:10], _un[:10])
+        return True
+    except Exception as _e:
+        logger.warning('[S551] 身份兜底回填异常(不影响下单): order_id=%s err=%s', order_id, _e)
+        return False
+
+
 def _find_bound_phone_by_identity(cursor, openid='', unionid='', mp_openid='', exclude_phone=''):
     """返回同一个微信身份已经绑定的手机号。"""
     phones = []
@@ -635,8 +721,30 @@ def store_init():
             _iso401 = False
         _resolve_phone401 = '' if _iso401 else user_phone
         _resolve_union401 = '' if _iso401 else unionid
-        _store_uid = _resolve_user(cursor, openid=openid, mp_openid=mp_openid, phone=_resolve_phone401,
-                                   unionid=_resolve_union401, strict_openid=_strict_new)
+        # [S521-阶段②] 开关 new_order/all 时：订单身份【按平台 id 认】——
+        #   小程序看 mp_openid、公众号看 openid、支付宝看 alipay_uid；手机号只作联系方式。
+        #   开关 off 或拿不到任何 id 时，一字不变地走原来的 _resolve_user（含 S405 新公众号隔离）。
+        _store_uid = 0
+        try:
+            from helpers import identity_strict_mode as _ism521
+            from helpers import _s521_ident_kind as _kind521
+            from helpers import resolve_user_by_ident as _ruid521
+            if _ism521() in ('new_order', 'all'):
+                _k521, _i521 = _kind521(openid=openid, mp_openid=mp_openid,
+                                        alipay_uid=str(data.get('alipay_uid') or ''))
+                if _k521 and _i521:
+                    _store_uid = _ruid521(cursor, _k521, _i521)
+                    if _store_uid:
+                        logger.info('[S521] store_init 按 id 认人 kind=%s ident=%s... -> user_id=%s',
+                                    _k521, str(_i521)[:10], _store_uid)
+                else:
+                    logger.info('[S521] store_init 没拿到平台 id，回落老逻辑认人 phone=%s', user_phone)
+        except Exception as _e521:
+            logger.warning('[S521] store_init 按 id 认人异常，回落老逻辑: %s', _e521)
+            _store_uid = 0
+        if not _store_uid:
+            _store_uid = _resolve_user(cursor, openid=openid, mp_openid=mp_openid, phone=_resolve_phone401,
+                                       unionid=_resolve_union401, strict_openid=_strict_new)
         cursor.execute('INSERT INTO orders (order_no, user_phone, slot_id, cabinet_id, compartment_number, access_code, deposit_amount, per_use_price, status, store_time, group_id, payment_channel_id, openid, unionid, mp_openid, user_id, free_use) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
                        (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, per_use_price, 2 if _free_use else 1, datetime.now(), group_id, payment_channel_id, openid, unionid, mp_openid, _store_uid, 1 if _free_use else 0))
         row = cursor.fetchone()
@@ -644,6 +752,22 @@ def store_init():
             conn.close()
             return json_response(message="订单创建失败", code=500)
         order_id = row["id"]
+        # [S551-A] 支付宝身份落库：支付宝端客户端会带 alipay_uid（S521 已读它认人），
+        #   但这条 INSERT 从来不写 orders.alipay_mp_uid，导致支付宝单永远匹配不到
+        #   （S524 设计里 alipay_mp_uid 才是支付宝身份列）。按 S524 既有写法补一次
+        #   受保护的 UPDATE：只在原值为空时写，绝不动微信四列、绝不动已有值。
+        _s551_ali_uid = str(data.get('alipay_uid') or '').strip()
+        if _s551_ali_uid:
+            try:
+                cursor.execute("""UPDATE orders SET alipay_mp_uid = %s
+                                  WHERE id = %s AND COALESCE(alipay_mp_uid, '') = ''""",
+                               (_s551_ali_uid, order_id))
+                logger.info('[S551-A] 支付宝身份落库: order=%s alipay_mp_uid=%s...',
+                            order_id, _s551_ali_uid[:8])
+            except Exception as _e551a:
+                logger.warning('[S551-A] 支付宝身份落库失败(不影响下单): order=%s err=%s', order_id, _e551a)
+        # [S551] 防新孤儿单兜底（保守版）：六字段全空才进；strict 路径只告警不回填。
+        _s551_backfill_orphan_identity(cursor, order_id, order_no, user_phone, _strict_new, cabinet_id)
         apply_order_auto_hide(cursor, order_id, cabinet_id, user_phone)
         conn.commit()
         conn.close()
@@ -678,7 +802,7 @@ def store_init():
                     'amount9': '0元',
                     'time1': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 }, openid=(openid or ''), phone=(user_phone or ''), unionid=(unionid or ''),
-                   url=oa_tplmsg_h5_url())
+                   url=oa_tplmsg_h5_url(), order_id=order_id)  # [S525] 平台分流
             except Exception as _tpl_e:
                 logger.warning('[S386] 免押寄存成功模板消息失败: %s', _tpl_e)
 
@@ -700,11 +824,27 @@ def get_pay_params_api():
         #   老公众号身份（oLhbm2…）当"微信付款身份"传上来 -> 取到已停用的老 appid ->
         #   微信回 APPID_MCHID_NOT_MATCH -> 当时唯一在用的商户 118 被停 -> 全站支付挂 3 次。
         #   该入口对应的支付宝渠道(id=113)历史 9 笔全失败、is_active=0、从未成功过一单。
-        _ua415 = request.headers.get('User-Agent', '') or ''
-        _ref415 = request.headers.get('Referer', '') or ''
-        if ('AlipayClient' in _ua415) or ('AliApp(' in _ua415) or ('alipay-eco.com' in _ref415):
-            logger.warning('[S415] 拒绝支付宝小程序下单: ua=%s ref=%s', _ua415[:60], _ref415[:80])
-            return json_response(message='该入口已停用，请用微信扫柜机上的二维码使用', code=403)
+        # [S511-20260921] 精准放开：只拦"支付宝小程序内嵌页"（Referer 带 hybrid.alipay-eco.com）那条老路；
+        #   支付宝 App 内置浏览器打开我们的 H5（UA 同样是 AlipayClient）【必须放行】，否则支付宝用户没法付钱。
+        # [S532-20260921] 收窄 S511 这道闸。原判定是「Referer 含 alipay-eco.com 就一律 403」，
+        #   但支付宝【小程序】自身发出的 uni.request 同样带
+        #   Referer=https://<appid>.hybrid.alipay-eco.com/...#pages/deposit/deposit，
+        #   于是这道闸把小程序自己的下单也一并拦了。实测 2026-09-21：带该 Referer 的
+        #   /api/deposit/create-order 共 446 次全部 403，前端点【下一步】永远拿不到订单号
+        #   （只转圈、无任何提示）。
+        #   现改为白名单式：
+        #     · 我们自己的支付宝小程序 appid 2021006199688688 → 放行（留 INFO 日志便于排查）
+        #     · 其它 appid 的 hybrid 内嵌页（S415 要关的老侧门）→ 行为一字未变，仍是 403
+        #   微信小程序 / 支付宝内置浏览器打开的 H5（Referer=kelaiwei.top）完全不进本分支。
+        _ALIPAY_MP_APPID_532 = '2021006199688688'
+        _ref511 = request.headers.get('Referer', '') or ''
+        if 'alipay-eco.com' in _ref511:
+            if _ALIPAY_MP_APPID_532 in _ref511:
+                logger.info('[S532] 放行支付宝小程序下单(白名单 appid=%s): ref=%s',
+                            _ALIPAY_MP_APPID_532, _ref511[:90])
+            else:
+                logger.warning('[S511] 拒绝支付宝小程序内嵌页下单: ref=%s', _ref511[:90])
+                return json_response(message='该入口已停用，请用微信扫码，或在支付宝里打开我们的存包网页', code=403)
         data = request.get_json()
         order_id = data.get('order_id')
         phone = data.get('phone', '')
@@ -939,7 +1079,7 @@ def retrieve():
                         "thing4": {"value": "已退还至小程序用户钱包"},
                         "thing3": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}
                     }
-                    send_wx_subscribe_message(_openid, _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
+                    send_wx_subscribe_message(_openid, _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine", order_id=order["id"])  # [S525]
                 except Exception as e:
                     logger.error(f"[retrieve发送订阅消息失败] {e}")
             conn.commit()
@@ -1217,7 +1357,7 @@ def retrieve_confirm():
                     "thing4": {"value": _thing7},
                     "thing3": {"value": _thing2}
                 }
-                send_wx_subscribe_message(_openid, _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), subscribe_data, phone=order.get("user_phone"), page='pages/mine/mine')
+                send_wx_subscribe_message(_openid, _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), subscribe_data, phone=order.get("user_phone"), page='pages/mine/mine', order_id=order_id)  # [S525]
             except Exception as e:
                 logger.error(f"[retrieve_confirm发送订阅消息失败] {e}")
         if _direct_refund:
@@ -1244,11 +1384,27 @@ def create_deposit_order():
         #   老公众号身份（oLhbm2…）当"微信付款身份"传上来 -> 取到已停用的老 appid ->
         #   微信回 APPID_MCHID_NOT_MATCH -> 当时唯一在用的商户 118 被停 -> 全站支付挂 3 次。
         #   该入口对应的支付宝渠道(id=113)历史 9 笔全失败、is_active=0、从未成功过一单。
-        _ua415 = request.headers.get('User-Agent', '') or ''
-        _ref415 = request.headers.get('Referer', '') or ''
-        if ('AlipayClient' in _ua415) or ('AliApp(' in _ua415) or ('alipay-eco.com' in _ref415):
-            logger.warning('[S415] 拒绝支付宝小程序下单: ua=%s ref=%s', _ua415[:60], _ref415[:80])
-            return json_response(message='该入口已停用，请用微信扫柜机上的二维码使用', code=403)
+        # [S511-20260921] 精准放开：只拦"支付宝小程序内嵌页"（Referer 带 hybrid.alipay-eco.com）那条老路；
+        #   支付宝 App 内置浏览器打开我们的 H5（UA 同样是 AlipayClient）【必须放行】，否则支付宝用户没法付钱。
+        # [S532-20260921] 收窄 S511 这道闸。原判定是「Referer 含 alipay-eco.com 就一律 403」，
+        #   但支付宝【小程序】自身发出的 uni.request 同样带
+        #   Referer=https://<appid>.hybrid.alipay-eco.com/...#pages/deposit/deposit，
+        #   于是这道闸把小程序自己的下单也一并拦了。实测 2026-09-21：带该 Referer 的
+        #   /api/deposit/create-order 共 446 次全部 403，前端点【下一步】永远拿不到订单号
+        #   （只转圈、无任何提示）。
+        #   现改为白名单式：
+        #     · 我们自己的支付宝小程序 appid 2021006199688688 → 放行（留 INFO 日志便于排查）
+        #     · 其它 appid 的 hybrid 内嵌页（S415 要关的老侧门）→ 行为一字未变，仍是 403
+        #   微信小程序 / 支付宝内置浏览器打开的 H5（Referer=kelaiwei.top）完全不进本分支。
+        _ALIPAY_MP_APPID_532 = '2021006199688688'
+        _ref511 = request.headers.get('Referer', '') or ''
+        if 'alipay-eco.com' in _ref511:
+            if _ALIPAY_MP_APPID_532 in _ref511:
+                logger.info('[S532] 放行支付宝小程序下单(白名单 appid=%s): ref=%s',
+                            _ALIPAY_MP_APPID_532, _ref511[:90])
+            else:
+                logger.warning('[S511] 拒绝支付宝小程序内嵌页下单: ref=%s', _ref511[:90])
+                return json_response(message='该入口已停用，请用微信扫码，或在支付宝里打开我们的存包网页', code=403)
         data = request.get_json()
         cabinet_id = data.get('cabinet_id')
         device_id = data.get('device_id', '')
@@ -1394,6 +1550,8 @@ def create_deposit_order():
                        (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, per_use_price, datetime.now(), group_id, payment_channel_id, openid, unionid, mp_openid, _wn2, _cdo_uid))
         row = cursor.fetchone()
         order_id = row["id"]
+        # [S551] 防新孤儿单兜底（保守版）：同 /store/init。
+        _s551_backfill_orphan_identity(cursor, order_id, order_no, user_phone, _strict_new, cabinet_id)
         apply_order_auto_hide(cursor, order_id, cabinet_id, user_phone)
         conn.commit()
         conn.close()
@@ -1810,7 +1968,7 @@ def deposit_retrieve():
                             'thing4': {'value': '已退还至小程序用户钱包'},
                             'thing3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                         }
-                        send_wx_subscribe_message(_noid, _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'), _nsd, phone=_n_phone, page='pages/mine/mine')
+                        send_wx_subscribe_message(_noid, _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'), _nsd, phone=_n_phone, page='pages/mine/mine', order_id=order_dict['id'])  # [S525]
                     except Exception as _ne:
                         logger.error('[deposit_retrieve_notify1] '+ str(_ne))
                 else:
@@ -2049,7 +2207,7 @@ def deposit_end_storage():
                 'time3': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'amount4': '¥{:.2f}'.format(float(order.get('deposit_amount') or 0)),
             }, openid=(order.get('openid') or ''), phone=(order.get('user_phone') or ''),
-               unionid=(order.get('unionid') or ''), url=_oth())
+               unionid=(order.get('unionid') or ''), url=_oth(), order_id=order_id)  # [S525] 平台分流
         except Exception as _tpl_e:
             logger.warning('[S387] 寄存结束模板消息失败: %s', _tpl_e)
         if float(refund_amount or 0) > 0:
@@ -2059,7 +2217,7 @@ def deposit_end_storage():
                     'amount7': '¥{:.2f}'.format(float(refund_amount or 0)),
                     'time10': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 }, openid=(order.get('openid') or ''), phone=(order.get('user_phone') or ''),
-                   unionid=(order.get('unionid') or ''), url=_oth2())
+                   unionid=(order.get('unionid') or ''), url=_oth2(), order_id=order_id)  # [S525] 平台分流
             except Exception as _tpl_e2:
                 logger.warning('[S387] 退款成功模板消息失败: %s', _tpl_e2)
         if _openid:
@@ -2069,7 +2227,7 @@ def deposit_end_storage():
                 _thing7 = "已原路退回支付账户" if _direct_refund else "已退还至小程序用户钱包"
                 _thing2 = "无需提现，请留意微信到账" if _direct_refund else "请自行点击此通知消息跳转“我的钱包”提现"
                 subscribe_data = {"amount1": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))}, "time2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}, "thing4": {"value": _thing7}, "thing3": {"value": _thing2}}
-                _sent = send_wx_subscribe_message(_openid, _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine")
+                _sent = send_wx_subscribe_message(_openid, _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), subscribe_data, phone=order.get("user_phone"), page="pages/mine/mine", order_id=order_id)  # [S525]
                 if _sent:
                     logger.info(f"[deposit_end_storage] 订阅消息已发送: order={order_id}")
                 else:
@@ -3213,7 +3371,7 @@ def alipay_login():
                 message='支付宝登录失败: %s' % (r.get('sub_msg') or r.get('msg') or '未知错误'),
                 code=400)
 
-        alipay_uid = str(r.get('user_id') or '').strip()
+        alipay_uid = str(r.get('open_id') or r.get('user_id') or '').strip()   # [S524b] 支付宝已切 openid 模式
         if not alipay_uid:
             return json_response(message='未取到支付宝用户标识', code=400)
 
@@ -3237,13 +3395,34 @@ def alipay_login():
                 phone = ''
                 is_new = True
                 logger.info('[alipay_login] 新建支付宝用户 id=%s alipay_uid=%s...' % (user_id, alipay_uid[:8]))
+            # [S519] 订单桥接：小程序把 order_id 带上来了 -> 把"小程序侧 uid"落到这张订单上。
+            #   只写支付宝专用列 alipay_mp_uid，绝不动 orders.user_id / openid / mp_openid / unionid
+            #   （H5/微信那一侧的认人方式完全不变）。只在空时写；失败只告警，不影响登录。
+            _oid = 0
+            try:
+                _oid = int(str(data.get('order_id') or data.get('orderId') or '').strip() or 0)
+            except Exception:
+                _oid = 0
+            _bound = False
+            if _oid:
+                try:
+                    cur.execute("""UPDATE orders SET alipay_mp_uid = %s
+                                   WHERE id = %s AND COALESCE(alipay_mp_uid, '') = ''""",
+                                (alipay_uid, _oid))
+                    _bound = cur.rowcount > 0
+                    if _bound:
+                        logger.info('[alipay_login] 订单桥接: order=%s alipay_mp_uid=%s...'
+                                    % (_oid, alipay_uid[:8]))
+                except Exception as _oe:
+                    logger.warning('[alipay_login] 订单桥接失败(不影响登录): order=%s err=%s' % (_oid, _oe))
             conn.commit()
         finally:
             cur.close()
             conn.close()
 
         return json_response({'alipay_uid': alipay_uid, 'user_id': user_id,
-                              'phone': phone, 'is_new': is_new}, code=200)
+                              'phone': phone, 'is_new': is_new,
+                              'order_id': _oid, 'order_bound': _bound}, code=200)
     except Exception as e:
         logger.error('[alipay_login] %s' % (e,))
         return json_response(message=str(e), code=500)
@@ -3694,24 +3873,42 @@ def get_user_orders():
         conn = get_db()
         cur = conn.cursor()
         
-        ident = resolve_user_identity(cur, mp_openid=openid, phone=request_phone, unionid=unionid)
-        if ident['ambiguous']:
-            conn.close()
-            return json_response(message='账号身份待确认，请重新登录', code=400)
+        # [S551] 口径变更：订单可见性从"身份 OR 组合(user_id/unionid/mp_openid/openid)"
+        #   改为"按平台的严格 openid 匹配"——只显示"这个用户在这个小程序上的订单"。
+        #   不再用 phone / user_id / unionid 兜底（跨渠道串号与越权的来源）。
+        #   历史订单把小程序 openid 写在 orders.openid 列，故微信侧两列都要匹配；
+        #   支付宝侧按 S524 写入的 alipay_mp_uid / alipay_pay_uid 匹配。
+        _platform = str(request.args.get('platform') or '').strip().lower()
+        if _platform not in ('wechat', 'alipay'):
+            _platform = ''
+        _wx_id = openid or ''
+        _ali_id = str(request.args.get('alipay_uid') or request.args.get('alipay_mp_uid') or '').strip()
+        # 支付宝 uid 是纯数字（一般 16 位以上）；微信 openid 以 o 开头。
+        _wx_is_ali = bool(_wx_id) and _wx_id.isdigit() and len(_wx_id) >= 16
+        if not _platform:
+            if _ali_id or _wx_is_ali:
+                _platform = 'alipay'
+            elif _wx_id:
+                _platform = 'wechat'
+        if _wx_is_ali and not _ali_id:
+            _ali_id = _wx_id
+        if _platform == 'alipay' and not _ali_id and _wx_id:
+            _ali_id = _wx_id
         where_parts = []
         params = []
-        if ident['user_id']:
-            where_parts.append('o.user_id = %s')
-            params.append(ident['user_id'])
-        if ident['unionid']:
-            where_parts.append('o.unionid = %s')
-            params.append(ident['unionid'])
-        if ident['mp_openid']:
-            where_parts.append('o.mp_openid = %s')
-            params.append(ident['mp_openid'])
-        if openid:
-            where_parts.append('o.openid = %s')
-            params.append(openid)
+        _matched = []
+        if _platform in ('wechat', '') and _wx_id and not _wx_is_ali:
+            where_parts.append('(o.mp_openid = %s OR o.openid = %s)')
+            params.extend([_wx_id, _wx_id])
+            _matched.append('wechat')
+        if _platform in ('alipay', '') and _ali_id:
+            where_parts.append('(o.alipay_mp_uid = %s OR o.alipay_pay_uid = %s)')
+            params.extend([_ali_id, _ali_id])
+            _matched.append('alipay')
+        if not _platform:
+            # 平台判不出来时不硬猜：能匹配的都匹配，并记日志便于排查。
+            logger.info('[S551][user/orders][platform-auto] openid=%s... alipay_id=%s... -> matched=%s',
+                        str(_wx_id)[:10], str(_ali_id)[:10], ','.join(_matched) or '(none)')
         if not where_parts:
             conn.close()
             return json_response(message='请先登录', code=400)
@@ -3724,7 +3921,7 @@ def get_user_orders():
                 FROM orders o
                 LEFT JOIN cabinets c ON o.cabinet_id = c.id
                 LEFT JOIN locations l ON c.location_id = l.id
-                WHERE o.status != 1 AND (o.logic_mark IS NULL OR o.logic_mark != 'Y')
+                WHERE o.status != 1
                 AND NOT EXISTS (
                     SELECT 1 FROM user_balance_details d2
                     WHERE d2.order_id = o.id AND d2.status = 'pending'
@@ -3753,6 +3950,41 @@ def get_user_orders():
 @bp.route('/user/subscribe-templates', methods=['GET'])
 def get_subscribe_templates():
     """返回订阅消息模板ID列表（动态下发，前端不写死）"""
+    # [S528-20260921] 订阅弹窗时机，后端可控：老板改配置即可调整/关闭，不用再发小程序版本。
+    #   取值：step1(默认，存包页第1步弹) / pay(点支付时弹) / off(不弹)。
+    #   小程序侧"字段缺失或非法"按 step1 处理，这里同样回落 step1，保证新旧版本都安全。
+    #   只读 system_settings，不写；读取失败也不影响模板下发（最坏=按默认 step1）。
+    _prompt_at = 'step1'
+    try:
+        _pv528 = str(get_setting('mp_subscribe_prompt', 'step1') or '').strip().lower()
+        if _pv528 in ('step1', 'pay', 'off'):
+            _prompt_at = _pv528
+    except Exception as _e528:
+        logger.warning('[subscribe_templates] 读订阅弹窗时机失败(按 step1): %s', _e528)
+
+    # [S522-20260921] 支付宝小程序分支：返回支付宝自己的订阅消息模板（老板提供）
+    #   微信这段（Referer/appid 分流、A/B、落地页）与支付宝无关，直接短路；
+    #   platform 不是 alipay 时一字不变走下面原逻辑。
+    try:
+        if str(request.args.get('platform') or '').strip().lower() == 'alipay':
+            from wx_config import template_id as _tid522
+            _g522 = _tid522('subscribe_general', 'alipay', '')   # 账户余额通知
+            _w522 = _tid522('subscribe_refund', 'alipay', '')    # 寄存押金退还通知
+            _ids522 = [x for x in (_g522, _w522) if x]
+            logger.info('[subscribe_templates] 支付宝分支: general=%s... refund=%s...',
+                        str(_g522)[:8], str(_w522)[:8])
+            return json_response(data={
+                'templates': _ids522,
+                'deposit': _g522, 'deposit_notify': _g522,
+                'general': _g522, 'general_notify': _g522,
+                'withdraw': _w522, 'withdraw_notify': _w522,
+                'ab_group': 'alipay', 'ab_mode': 'alipay', 'requested_count': len(_ids522),
+                'landing': False, 'platform': 'alipay',
+                'prompt_at': _prompt_at,
+            })
+    except Exception as _e522:
+        logger.warning('[subscribe_templates] 支付宝分支异常，回落微信逻辑: %s', _e522)
+
     # [S308] 多小程序分流：小程序请求本接口时 Referer 里带着自己的 appid
     #   形如 https://servicewechat.com/wx0be09d4de1417e01/0/page-frame.html
     #   据此判断"这次弹窗该让用户授权哪个小程序的模板"，避免新小程序用户
@@ -3848,6 +4080,7 @@ def get_subscribe_templates():
         'ab_mode': _ab_mode,
         'ab_group': _ab_group,
         'requested_count': len(_tpls),
+        'prompt_at': _prompt_at,
     })
 
 
@@ -3935,6 +4168,75 @@ def get_withdrawal_rules():
             'withdraw_mode': 'auto_approve'
         })
 
+# ============================================
+# [S569-20260922] 钱包"静默 0"防呆
+# ============================================
+_S569_BAL_ALARM_GAP = 1800          # 同一手机号 30 分钟内只写一条告警
+_s569_bal_alarm_cache = {}
+_s569_bal_alarm_lock = None
+
+
+def _s569_balance_identity_alarm(phone, user_id, ledger_balance, orphan_amount, calc_bal):
+    """[S569-20260922] 钱包显示 0 但账本还有钱 -> 写一条 alarms(type='balance_identity_mismatch')。
+
+    背景：/user/balance 显示的余额是 calc_balance() 按【身份】现算的
+      （SQL 里 AND o.user_id = <身份>），历史孤儿单 user_id=0 匹配不上 -> 用户账本有钱却显示 0，
+      页面又没有任何提示，用户只能打电话。本函数只【告警】，不改任何金额口径。
+
+    同一手机号 30 分钟内只写一条：
+      · 进程内缓存（8 个 worker 各一份，快路径）；
+      · 再查一次 alarms 里近 30 分钟的同类记录（跨 worker/跨进程去重）。
+    绝不抛异常、绝不影响接口返回。
+    """
+    global _s569_bal_alarm_lock
+    _phone = str(phone or '').strip()
+    if not _phone:
+        return False
+    try:
+        import time as _t569
+        import threading as _th569
+        if _s569_bal_alarm_lock is None:
+            _s569_bal_alarm_lock = _th569.Lock()
+        _now = _t569.time()
+        with _s569_bal_alarm_lock:
+            _last = float(_s569_bal_alarm_cache.get(_phone) or 0)
+            if _now - _last < _S569_BAL_ALARM_GAP:
+                return False
+            _s569_bal_alarm_cache[_phone] = _now
+            if len(_s569_bal_alarm_cache) > 5000:          # 防止缓存无限增长
+                _cut = _now - _S569_BAL_ALARM_GAP
+                for _k in [k for k, v in _s569_bal_alarm_cache.items() if float(v or 0) < _cut]:
+                    _s569_bal_alarm_cache.pop(_k, None)
+    except Exception:
+        pass
+    _c569 = None
+    try:
+        from helpers import _s556_write_alarm
+        _c569 = get_db()
+        _cur569 = _c569.cursor()
+        # 跨 worker 去重：近 30 分钟已有同手机号的同类告警就不再写
+        _cur569.execute("SELECT id FROM alarms WHERE type = 'balance_identity_mismatch' "
+                        "AND content LIKE %s AND created_at > NOW() - INTERVAL '30 minutes' LIMIT 1",
+                        ('%%phone=%s %%' % _phone,))
+        if _cur569.fetchone():
+            return False
+        _s556_write_alarm(
+            'balance_identity_mismatch',
+            '钱包余额显示0但账本身份不匹配: phone=%s user_id=%s 账本余额=%s 未认领订单额=%s '
+            'calc_balance=%s（用户看到的 0 是"按身份现算"算不出，不是真没钱，需人工确认身份）'
+            % (_phone, int(user_id or 0), ledger_balance, orphan_amount, calc_bal))
+        return True
+    except Exception as _e:
+        logger.warning('[S569] 钱包身份防呆告警失败(不影响返回): %s', _e)
+        return False
+    finally:
+        if _c569 is not None:
+            try:
+                _c569.close()
+            except Exception:
+                pass
+
+
 @bp.route('/user/balance', methods=['GET'])
 def get_user_balance():
     """获取用户钱包余额"""
@@ -3964,6 +4266,41 @@ def get_user_balance():
         from helpers import calc_balance
         calc_bal = calc_balance(user_id=ident['user_id'], phone=_check_phone, openid=openid,
                                 mp_openid=ident['mp_openid'], unionid=ident['unionid'])
+
+        # [S569-20260922] 防呆：钱包"静默 0"。
+        #   calc_balance 是按【身份】现算的（SQL 里 AND o.user_id = <身份>），历史孤儿单
+        #   user_id=0 永远匹配不上 -> 用户账本明明有钱却显示 0，页面毫无提示，只能打电话。
+        #   这里只【额外告警 + 加两个提示字段】：绝不改 code（已发布小程序只认
+        #   code===0||200，改错会让钱包页直接崩）、绝不改 balance/available_balance 的算法。
+        _s569_identity_issue = False
+        try:
+            if float(calc_bal or 0) <= 0:
+                _s569_ledger = 0.0
+                _s569_orphan = 0.0
+                try:
+                    cur.execute('SELECT COALESCE(SUM(balance), 0) AS b FROM user_balances WHERE phone = %s',
+                                (_check_phone,))
+                    _r569 = cur.fetchone()
+                    _s569_ledger = float((_r569['b'] if _r569 else 0) or 0)
+                except Exception:
+                    _s569_ledger = 0.0
+                try:
+                    cur.execute("""SELECT COALESCE(SUM(bd.amount), 0) AS a
+                                   FROM user_balance_details bd JOIN orders o ON bd.order_id = o.id
+                                   WHERE bd.user_phone = %s AND bd.status = 'available'
+                                     AND COALESCE(o.user_id, 0) = 0
+                                     AND COALESCE(o.mp_openid, '') = '' AND COALESCE(o.openid, '') = ''""",
+                                (_check_phone,))
+                    _r569b = cur.fetchone()
+                    _s569_orphan = float((_r569b['a'] if _r569b else 0) or 0)
+                except Exception:
+                    _s569_orphan = 0.0
+                if _s569_ledger > 0 or _s569_orphan > 0:
+                    _s569_identity_issue = True
+                    _s569_balance_identity_alarm(_check_phone, ident['user_id'],
+                                                 _s569_ledger, _s569_orphan, calc_bal)
+        except Exception as _e569:
+            logger.warning('[S569] 钱包身份防呆检查失败(不影响返回): %s', _e569)
         
         # 检查待处理提现
         has_pending_withdrawal = False
@@ -4026,6 +4363,9 @@ def get_user_balance():
             result['has_pending_withdrawal'] = has_pending_withdrawal
             result['has_active_orders'] = has_active_orders
             result['balance_hidden'] = balance_hidden
+            # [S569-20260922] 新增字段（不改 code / balance 语义）：钱包看不到钱但账本上有
+            result['identity_issue'] = bool(_s569_identity_issue)
+            result['identity_issue_hint'] = ('账号身份待确认，请联系客服' if _s569_identity_issue else '')
             # ====== [优化] 加入倒计时信息 ======
             if user_mch_id:
                 wh = get_withhold_hours(user_mch_id)
@@ -4055,6 +4395,9 @@ def get_user_balance():
                 'has_pending_withdrawal': has_pending_withdrawal,
                 'has_active_orders': has_active_orders,
                 'balance_hidden': balance_hidden,
+                # [S569-20260922] 新增字段（不改 code / balance 语义）
+                'identity_issue': bool(_s569_identity_issue),
+                'identity_issue_hint': ('账号身份待确认，请联系客服' if _s569_identity_issue else ''),
                 'withhold_hours': 0,
                 'arrival_time': '',
                 'has_pending': has_pending_withdrawal
@@ -4207,6 +4550,20 @@ def user_withdraw():
             return json_response(message='该网点暂不支持提现', code=400)
         
         withdraw_mode = loc_row['withdraw_mode'] if loc_row else 'auto_approve'
+        # [S541-20260922] 支付宝单是否参与提现(S273 的临时隔离正名)：默认 0=不参与=与改动前逐字节一致。
+        try:
+            from helpers import withdraw_refund_alipay_enabled as _s541_ae
+            _s541_alipay_on = bool(_s541_ae())
+        except Exception:
+            _s541_alipay_on = False
+
+        def _s541_alipay_excl(_ind):
+            # 关(默认)时返回的串与改动前那一行逐字节相同；开时不拼这个子句
+            if _s541_alipay_on:
+                return ''
+            return ('\n' + _ind + "AND NOT EXISTS (SELECT 1 FROM payment_channels pc "
+                    "WHERE pc.id = o.payment_channel_id AND pc.channel_type = 'alipay')")
+
 
         # Merchant-phase hold check
         if withdraw_mode == 'auto_approve':
@@ -4238,13 +4595,12 @@ def user_withdraw():
             if not _conds419:
                 conn.close()
                 return json_response(message='账号身份待确认，请重新登录', code=400)
-            sql = """SELECT bd.id, bd.order_id, bd.amount, o.transaction_id, o.openid as order_openid
+            sql = """SELECT bd.id, bd.order_id, bd.amount, o.transaction_id, o.openid as order_openid, o.order_no
             FROM user_balance_details bd
             JOIN orders o ON bd.order_id = o.id
             WHERE bd.status='available' AND o.status IN (3,4)
               AND o.transaction_id IS NOT NULL AND o.transaction_id != ''
-              AND (""" + ' OR '.join(_conds419) + """)
-              AND NOT EXISTS (SELECT 1 FROM payment_channels pc WHERE pc.id = o.payment_channel_id AND pc.channel_type = 'alipay')
+              AND (""" + ' OR '.join(_conds419) + """)""" + _s541_alipay_excl('              ') + """
             ORDER BY bd.id DESC"""
             cursor.execute(sql, _params419)
             balance_records = cursor.fetchall()
@@ -4301,8 +4657,28 @@ def user_withdraw():
             # 一次提现只生成一条记录，订单合并到 order_ids
             order_openid = order_refund_plan[0][2].get('order_openid') or openid
             dedup_key = 'B:%s:%s' % (phone, '_'.join(plan_ids))
+            # [S558] 请求态 phone 可能为空（新公众号用户未绑手机号），但订单上一定有手机号。
+            #   以前这里直接把空串写进 withdrawal_records.user_phone，后台按 phone join 取昵称时
+            #   会撞上库里 phone='' 的脏行(user_balances 1331 行, MAX(wechat_name)='黒黒黒')，
+            #   于是任何空手机号提现单都显示成同一个别人的昵称(2026-09-22 单号 104806)。
+            #   这里【只为本字段】从订单回捞一次；dedup_key 保持原样不动（它背后是唯一索引）。
+            _s558_wr_phone = (phone or '').strip()
+            if not _s558_wr_phone:
+                try:
+                    cursor.execute("SELECT user_phone FROM orders WHERE id=%s", (int(plan_ids[0]),))
+                    _s558_row = cursor.fetchone()
+                    _s558_wr_phone = ((_s558_row or {}).get('user_phone') or '').strip()
+                except Exception as _s558_e:
+                    logger.warning('[S558] 回捞订单手机号失败 order_id=%s: %s', plan_ids[0], _s558_e)
+                    _s558_wr_phone = ''
+                if _s558_wr_phone:
+                    logger.warning('[S558] withdrawal_records.user_phone 原为空，已按订单 %s 回填 %s',
+                                   plan_ids[0], _s558_wr_phone)
+                else:
+                    logger.warning('[S558] withdrawal_records.user_phone 仍为空（订单 %s 也没手机号）openid=%s',
+                                   plan_ids[0], order_openid)
             cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, auto_approve_time, dedup_key, approver, order_ids) VALUES (%s, %s, %s, 0, 1, %s, NOW(), %s, '自动', %s) RETURNING id",
-                           (int(plan_ids[0]), phone, actual_amount, order_openid, dedup_key, _json_auto.dumps(plan_ids)))
+                           (int(plan_ids[0]), _s558_wr_phone, actual_amount, order_openid, dedup_key, _json_auto.dumps(plan_ids)))
             row = cursor.fetchone()
             first_wid = row["id"]
             conn.commit()
@@ -4311,9 +4687,12 @@ def user_withdraw():
             try:
                 from helpers import oa_notify_withdraw_ok as _oa_wd416
                 _oa_wd416(amount=actual_amount, openid=openid or order_openid, phone=phone,
-                          unionid=ident.get('unionid') or '')
+                          unionid=ident.get('unionid') or '', order_ids=plan_ids)  # [S525] 平台分流
             except Exception as _e416:
                 logger.warning('[S416] 提现公众号通知失败: %s', _e416)
+            # [S557c-20260922] 老板最终口径：同一 wid 只发一条，且【用户提交提现申请时就发】
+            #   —— 不再看退款是否成功、不再看网点审批模式(auto/manual/queue 一律申请时发一条)。
+            #   去重由"同一张提现单只有这一处发送 + 调度器那条已关闭(S557c)"保证。
             if mp_openid:
                 try:
                     from helpers import send_wx_subscribe_message
@@ -4321,9 +4700,11 @@ def user_withdraw():
                         'amount2': {'value': '¥{:.2f}'.format(actual_amount)},
                         'time5': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
                         'thing4': {'value': '提现申请已提交'},
-                        'thing3': {'value': '预计0-3个工作日到账'}
+                        'thing3': {'value': '预计0-3个工作日到账'},
+                        # [S557-20260922] character_string1 = 订单编号（模板必需，缺它必 47003）
+                        'character_string1': {'value': str((order_refund_plan[0][2].get('order_no') if order_refund_plan else '') or (plan_ids[0] if plan_ids else '') or '0')[:32]}
                     }
-                    send_wx_subscribe_message(mp_openid, _wx_tpl('subscribe_refund', 'mp', 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c'), wd_data, phone=phone, page='pages/mine/mine')
+                    send_wx_subscribe_message(mp_openid, _wx_tpl('subscribe_refund', 'mp', 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c'), wd_data, phone=phone, page='pages/mine/mine', order_ids=plan_ids)  # [S525]
                 except Exception as e:
                     logger.error(f'[提现通知失败] {e}')
             return json_response(data={
@@ -4356,12 +4737,11 @@ def user_withdraw():
             if not _conds419:
                 conn.close()
                 return json_response(message='账号身份待确认，请重新登录', code=400)
-            cursor.execute("""SELECT bd.id, bd.order_id, bd.amount, o.transaction_id, o.openid as order_openid
+            cursor.execute("""SELECT bd.id, bd.order_id, bd.amount, o.transaction_id, o.openid as order_openid, o.order_no
                 FROM user_balance_details bd JOIN orders o ON bd.order_id = o.id
                 WHERE bd.status='available'
                   AND o.transaction_id IS NOT NULL AND o.transaction_id != ''
-                  AND (""" + ' OR '.join(_conds419) + """)
-                  AND NOT EXISTS (SELECT 1 FROM payment_channels pc WHERE pc.id = o.payment_channel_id AND pc.channel_type = 'alipay')
+                  AND (""" + ' OR '.join(_conds419) + """)""" + _s541_alipay_excl('                  ') + """
                 ORDER BY bd.id DESC""",
                 _params419)
             balance_records = cursor.fetchall()
@@ -4447,8 +4827,24 @@ def user_withdraw():
             # 一次提现只生成一条记录，订单合并到 order_ids
             order_openid = order_plan[0][2].get('order_openid') or openid
             dedup_key = 'B:%s:%s' % (phone, '_'.join(plan_ids))
+            # [S558] 同上：请求态 phone 为空时，从订单回捞 user_phone（只写这一个字段，dedup_key 不动）
+            _s558_wr_phone = (phone or '').strip()
+            if not _s558_wr_phone:
+                try:
+                    cursor.execute("SELECT user_phone FROM orders WHERE id=%s", (int(plan_ids[0]),))
+                    _s558_row = cursor.fetchone()
+                    _s558_wr_phone = ((_s558_row or {}).get('user_phone') or '').strip()
+                except Exception as _s558_e:
+                    logger.warning('[S558] 回捞订单手机号失败 order_id=%s: %s', plan_ids[0], _s558_e)
+                    _s558_wr_phone = ''
+                if _s558_wr_phone:
+                    logger.warning('[S558] withdrawal_records.user_phone 原为空，已按订单 %s 回填 %s',
+                                   plan_ids[0], _s558_wr_phone)
+                else:
+                    logger.warning('[S558] withdrawal_records.user_phone 仍为空（订单 %s 也没手机号）openid=%s',
+                                   plan_ids[0], order_openid)
             cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid, auto_approve_time, dedup_key, order_ids) VALUES (%s, %s, %s, 0, 1, %s, %s, %s, %s) RETURNING id",
-                           (int(plan_ids[0]), phone, actual_amount, order_openid, _auto_time, dedup_key, _json_auto.dumps(plan_ids)))
+                           (int(plan_ids[0]), _s558_wr_phone, actual_amount, order_openid, _auto_time, dedup_key, _json_auto.dumps(plan_ids)))
             row = cursor.fetchone()
             first_wid = row["id"]
             conn.commit()
@@ -4457,7 +4853,7 @@ def user_withdraw():
             try:
                 from helpers import oa_notify_withdraw_ok as _oa_wd416
                 _oa_wd416(amount=actual_amount, openid=openid or order_openid, phone=phone,
-                          unionid=ident.get('unionid') or '')
+                          unionid=ident.get('unionid') or '', order_ids=plan_ids)  # [S525] 平台分流
             except Exception as _e416:
                 logger.warning('[S416] 提现公众号通知失败: %s', _e416)
             # 发送订阅消息：使用 mp_openid（已解析的公众号openid）
@@ -4468,9 +4864,12 @@ def user_withdraw():
                         'amount2': {'value': '¥{:.2f}'.format(actual_amount)},
                         'time5': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
                         'thing4': {'value': '原路退回支付账户'},
-                        'thing3': {'value': '预计0-3个工作日到账'}
+                        'thing3': {'value': '预计0-3个工作日到账'},
+                        # [S557-20260922] character_string1 = 订单编号（模板必需，缺它必 47003）
+                        #   合并提现时取首单订单号（character_string 上限 32 字符、不允许中文）
+                        'character_string1': {'value': str((order_plan[0][2].get('order_no') if order_plan else '') or (plan_ids[0] if plan_ids else '') or '0')[:32]}
                     }
-                    send_wx_subscribe_message(mp_openid, _wx_tpl('subscribe_refund', 'mp', 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c'), wd_data, phone=phone, page='pages/mine/mine')
+                    send_wx_subscribe_message(mp_openid, _wx_tpl('subscribe_refund', 'mp', 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c'), wd_data, phone=phone, page='pages/mine/mine', order_ids=plan_ids)  # [S525]
                 except Exception as e:
                     logger.error(f'[提现通知失败] {e}')
             return json_response(data={
@@ -4995,6 +5394,498 @@ def _auto_process_self_complaint(complaint_id, phone, openid_val, order_no=''):
                 pass
 
 
+# ==== [S552-BEGIN] 客服自助页直退押金：POST /api/user/help-refund（新增块，勿手改） ====
+# ============================================================================
+# [S552-20260922] 客服自助页「① 我要退款（退我的押金）」——押金原路【直退】，不走审批。
+#
+# 设计要点（与《S552_客服自助页与直退_方案_20260922.md》§3 一一对应）：
+#   1) 不走审批：网点审批模式(withdraw_mode=auto_approve/manual/queue_approve)、
+#      "近30天通过率未达标自动拒绝"(admin_v2 批处理)、S541 的支付宝单排除
+#      (withdraw_refund_alipay) —— 都不参与本接口。
+#   2) 底线照留：只退【本人 openid 名下 + 已结束(status=3) + 押金可退 + 未退款】的订单；
+#      金额恒等于该单 deposit_amount（入参里根本没有金额字段，从根上不可能超额）。
+#      身份口径与 S551 的 /user/orders 完全一致：
+#        微信   -> (o.mp_openid = %s OR o.openid = %s)
+#        支付宝 -> (o.alipay_mp_uid = %s OR o.alipay_pay_uid = %s)
+#      不做手机号/unionid 兜底（那正是跨渠道串号与越权的来源）。
+#   3) 复用 S541 原语，绝不重复实现资金逻辑：
+#        helpers.do_real_refund(order_id, order_no, amount, payment_channel_id,
+#                               out_refund_no='HR<oid>', write_payment=True)
+#          · out_refund_no -> 微信 out_refund_no / 支付宝 out_request_no，确定性单号，
+#            同单同额重试在渠道侧天然幂等
+#          · write_payment -> 补写 payments(type=2) 对账流水
+#          · 支付宝 fund_change 复核 + 微信"已全额退款"按成功处理，都在该原语内部
+#        helpers.is_channel_balance_error  -> 判定"渠道余额不足=可重试"
+#        helpers.alert_withdraw_channel_balance -> 写 alarms + PushPlus 人话提醒（30 分钟去重）
+#        helpers.settle_withdrawal_for_order    -> 结束该单在途提现，避免二次退款
+#   4) 开关与限额（system_settings；读不到一律按默认，绝不报错）：
+#        help_refund_enabled           默认 '0'  总开关（关 = 回"走审批"）
+#        help_refund_dry_run           默认 '1'  只读预演（不调渠道、不改库、不占额度）
+#        help_refund_daily_max_count   默认 '2'  单日最大笔数（按 openid 计）
+#        help_refund_daily_max_amount  默认 '200' 单日最大金额（按 openid 计）
+#        help_refund_locations         默认 ''   灰度网点白名单（空=全部；逗号分隔 location_id）
+#   5) 幂等：本接口可重复调用。已退的单被 orders.refund_status / refund_amount 过滤掉，
+#      渠道侧靠 out_refund_no 确定性单号；do_real_refund 自带"已全额退款 -> 按成功处理"。
+# ============================================================================
+
+_HELP_REFUND_DAILY_COUNT_DEFAULT = '2'
+_HELP_REFUND_DAILY_AMOUNT_DEFAULT = '200'
+
+
+def _hr_setting(key, default=''):
+    """[S552] 读 system_settings，任何异常都退回默认值（绝不因为开关读不到就报错）"""
+    try:
+        from helpers import get_setting
+        v = get_setting(key, default)
+        if v is None:
+            return default
+        return str(v)
+    except Exception:
+        return default
+
+
+def _hr_bool(key, default=False):
+    v = _hr_setting(key, '1' if default else '0').strip().lower()
+    return v in ('1', 'true', 'yes', 'on')
+
+
+def _hr_int(key, default=0):
+    try:
+        return int(float(_hr_setting(key, str(default)).strip() or default))
+    except Exception:
+        return default
+
+
+def _hr_float(key, default=0.0):
+    try:
+        return float(_hr_setting(key, str(default)).strip() or default)
+    except Exception:
+        return default
+
+
+def _hr_platform(wx_id='', ali_id='', platform=''):
+    """[S552] 与 S551 /user/orders 完全一致的口径判定：返回 'wechat' / 'alipay' / ''"""
+    p = str(platform or '').strip().lower()
+    if p in ('wechat', 'alipay'):
+        return p
+    if ali_id:
+        return 'alipay'
+    _w = str(wx_id or '')
+    if _w:
+        # 支付宝 uid 是纯数字(一般 16 位以上)；微信 openid 以 o 开头
+        if _w.isdigit() and len(_w) >= 16:
+            return 'alipay'
+        return 'wechat'
+    return ''
+
+
+def _hr_human_channel(channel_type=''):
+    """[S552] 渠道 -> 人话（给用户看的到账去向）"""
+    if str(channel_type or '').strip().lower() == 'alipay':
+        return '支付宝'
+    return '微信零钱'
+
+
+def _hr_fail_human(msg=''):
+    """[S552] 把渠道原文映射成用户能看懂的一句话"""
+    _s = str(msg or '')
+    _low = _s.lower()
+    _MAP = (
+        ('已全额退款', '这笔在支付通道里已经退过了，无需重复退'),
+        ('trad_has_refund', '这笔在支付宝里已经退过了，无需重复退'),
+        ('交易不存在', '支付通道里查不到这笔交易'),
+        ('订单不存在', '支付通道里查不到这笔交易'),
+        ('ordernotexist', '支付通道里查不到这笔交易'),
+        ('记录不存在', '支付通道里查不到这笔交易'),
+        ('无可用活跃商户', '暂时没有可用的收款通道，我们马上处理'),
+        ('超过订单可退金额', '可退金额和通道对不上，我们人工核实'),
+        ('基本账户余额不足', '支付通道余额不足，稍后会自动重试'),
+        ('余额不足', '支付通道余额不足，稍后会自动重试'),
+        ('balance_not_enough', '支付通道余额不足，稍后会自动重试'),
+        ('notenough', '支付通道余额不足，稍后会自动重试'),
+    )
+    for _k, _v in _MAP:
+        if _k in _s or _k in _low:
+            return _v
+    return ('退款失败：' + _s[:60]) if _s else '退款失败'
+
+
+def _hr_alarm(type_name, content, level=1):
+    """[S552] 写一条 alarms（失败绝不影响退款主流程）。type 用独立前缀便于筛选。"""
+    try:
+        from database import get_db as _hr_gdb
+        _c = _hr_gdb()
+        _cu = _c.cursor()
+        _cu.execute("INSERT INTO alarms (type, device_id, content, level, status, created_at) "
+                    "VALUES (%s, NULL, %s, %s, '0', NOW())",
+                    (str(type_name)[:60], str(content)[:500], int(level)))
+        try:
+            _c.commit()
+        except Exception:
+            pass
+        _c.close()
+        return True
+    except Exception as _e:
+        try:
+            logger.warning('[S552] 写 alarms 失败: %s', _e)
+        except Exception:
+            pass
+        return False
+
+
+def _hr_close(conn):
+    """[S552] 归还连接池连接。正常返回路径也必须关，否则池会被耗光（本次自测发现过）。"""
+    try:
+        if conn is not None:
+            conn.close()
+    except Exception:
+        pass
+
+
+@bp.route('/user/help-refund', methods=['POST'])
+def help_refund():
+    """[S552-20260922] 客服自助页「① 我要退款（退我的押金）」：押金原路直退，不走审批。
+
+    入参(JSON)：
+        openid      必填  小程序 openid（严格认人；支付宝可只传 alipay_uid）
+        platform    可空  'wechat' / 'alipay'；不传按 openid 形态自动判（与 S551 一致）
+        alipay_uid  可空  支付宝 user_id（支付宝单用）
+        unionid/phone 可空  只做日志，不参与认人（S551 口径：不用手机号/unionid 兜底）
+        dry_run     可空  1=只预演(默认) 0=真退
+        order_id    可空  只处理这一单（用于端到端验证单笔）
+
+    出参(JSON) code=200。
+    ⚠⚠ 本项目 helpers.json_response(code=...) 把 code **同时当 HTTP 状态码**用（resp.status_code = code），
+       所以这里必须传 200，**绝不能传 0**：传 0 会让 status_code=0 → HTTP 响应非法 →
+       curl / 小程序都拿不到内容（2026-09-22 已经踩过这个坑）。前端 api.js 判 code===0||code===200，两者都收。
+    data 里全部是人话可直接显示：
+        enabled/dry_run/platform/blocked/title/detail/
+        refundable_count/refundable_amount/refunded_count/refunded_amount/failed_count/
+        retryable/today_used_count/today_max_count/today_used_amount/today_max_amount/
+        remaining_count/orders[]/failures[]
+    开关关闭、没可退的单、额度用完 —— 一律 code=200 + blocked/title/detail（不报错），
+    前端据此显示"功能准备中 / 暂无可退押金 / 明天再来"，绝不白屏。
+    """
+    from helpers import get_db
+    conn = None
+    try:
+        data = request.get_json(silent=True) or {}
+        _openid = str(data.get('openid') or data.get('mp_openid') or '').strip()
+        _ali = str(data.get('alipay_uid') or data.get('alipay_mp_uid') or '').strip()
+        _phone_log = str(data.get('phone') or '').strip()
+        _platform_in = str(data.get('platform') or '').strip().lower()
+        _one_order = str(data.get('order_id') or '').strip()
+        try:
+            _dry_in = int(data.get('dry_run', 1))
+        except Exception:
+            _dry_in = 1
+
+        platform = _hr_platform(_openid, _ali, _platform_in)
+        if platform == 'alipay' and not _ali and _openid:
+            _ali = _openid
+        if platform == 'wechat' and not _openid and _ali:
+            # 兜底：调用方把 openid 放在 alipay 分支里传了
+            _openid = _ali
+            platform = 'wechat'
+        if not platform or (platform == 'wechat' and not _openid) or (platform == 'alipay' and not _ali):
+            return json_response(message='请先登录', code=400)
+
+        # 单日限额（先读出来，下面所有分支都要用；读不到/非法一律回默认）
+        max_count = _hr_int('help_refund_daily_max_count', int(_HELP_REFUND_DAILY_COUNT_DEFAULT))
+        max_amount = _hr_float('help_refund_daily_max_amount', float(_HELP_REFUND_DAILY_AMOUNT_DEFAULT))
+        # [S552] 限额是底线：配了 0 / 负数 / 读不出来 -> 一律回默认值，绝不等价于"不限"。
+        #   （自测时发现：如果 0 当作"不限"，一把配错就等于全放开，太危险。）
+        if max_count <= 0:
+            max_count = int(_HELP_REFUND_DAILY_COUNT_DEFAULT)
+        if max_amount <= 0:
+            max_amount = float(_HELP_REFUND_DAILY_AMOUNT_DEFAULT)
+
+        enabled = _hr_bool('help_refund_enabled', False)
+        # dry_run：入参要求预演(默认) 或 后台全局预演开关打开 -> 都是预演
+        dry_run = (_dry_in != 0) or _hr_bool('help_refund_dry_run', True)
+
+        if not enabled:
+            return json_response(data={
+                'enabled': False, 'dry_run': True, 'platform': platform,
+                'blocked': 'disabled',
+                'title': '自助退款准备中',
+                'detail': '一键原路退押金还没开放，请按「我的钱包 → 提现」申请，我们在后台给您审核退款。',
+                'refundable_count': 0, 'refundable_amount': 0.0,
+                'refunded_count': 0, 'refunded_amount': 0.0, 'failed_count': 0,
+                'retryable': False, 'orders': [], 'failures': [],
+                'today_used_count': 0, 'today_max_count': max_count,
+                'today_used_amount': 0.0, 'today_max_amount': max_amount,
+                'remaining_count': max_count,
+            }, message='ok', code=200)
+
+        conn = get_db()
+        cur = conn.cursor()
+
+        # ---------- 1) 严格按 openid 找"可退"的单 ----------
+        if platform == 'wechat':
+            _id_where = '(o.mp_openid = %s OR o.openid = %s)'
+            _id_params = [_openid, _openid]
+        else:
+            _id_where = '(o.alipay_mp_uid = %s OR o.alipay_pay_uid = %s)'
+            _id_params = [_ali, _ali]
+
+        _sel = ("""
+            SELECT o.id, o.order_no, o.deposit_amount, o.payment_channel_id,
+                   COALESCE(o.transaction_id, '') AS transaction_id,
+                   COALESCE(o.refund_status, '') AS refund_status,
+                   COALESCE(o.refund_amount, 0) AS refund_amount,
+                   COALESCE(pc.channel_type, '') AS channel_type,
+                   l.id AS location_id
+            FROM orders o
+            LEFT JOIN payment_channels pc ON pc.id = o.payment_channel_id
+            LEFT JOIN cabinets cb ON cb.id = o.cabinet_id
+            LEFT JOIN locations l ON l.id = cb.location_id
+            WHERE """ + _id_where + """
+              AND o.status = 3
+              AND COALESCE(o.deposit_amount, 0) > 0
+              AND COALESCE(o.transaction_id, '') NOT IN ('', 'MOCK')
+              AND COALESCE(o.refund_status, '') NOT IN ('refunded', 'success')
+              AND COALESCE(o.refund_amount, 0) < COALESCE(o.deposit_amount, 0) - 0.001
+        """)
+        _params = list(_id_params)
+        if _one_order:
+            _sel += " AND o.id = %s"
+            _params.append(_one_order)
+        _sel += " ORDER BY o.id ASC"
+        cur.execute(_sel, tuple(_params))
+        rows = [dict(r) for r in cur.fetchall()]
+
+        # ---------- 2) 灰度网点白名单（空 = 全部网点） ----------
+        _locs = set()
+        for _x in _hr_setting('help_refund_locations', '').replace('，', ',').split(','):
+            _x = _x.strip()
+            if _x.isdigit():
+                _locs.add(int(_x))
+        if _locs:
+            rows = [r for r in rows if int(r.get('location_id') or 0) in _locs]
+
+        # ---------- 3) 单日限额（按 openid 统计"今天已经退成功的"） ----------
+        _today_sql = ("""
+            SELECT COUNT(*) AS c, COALESCE(SUM(o.refund_amount), 0) AS s
+            FROM orders o
+            WHERE """ + _id_where + """
+              AND o.refund_mark = 1
+              AND COALESCE(o.refund_status, '') IN ('refunded', 'success')
+              AND o.refund_time IS NOT NULL
+              AND o.refund_time::date = CURRENT_DATE
+        """)
+        cur.execute(_today_sql, tuple(_id_params))
+        _t = cur.fetchone() or {}
+        used_count = int(_t.get('c') or 0)
+        used_amount = float(_t.get('s') or 0)
+
+        total = 0.0
+        for r in rows:
+            try:
+                total += float(r.get('deposit_amount') or 0)
+            except Exception:
+                pass
+        total = round(total, 2)
+
+        base = {
+            'enabled': True,
+            'dry_run': bool(dry_run),
+            'platform': platform,
+            'blocked': '',
+            'title': '',
+            'detail': '',
+            'refundable_count': len(rows),
+            'refundable_amount': total,
+            'refunded_count': 0,
+            'refunded_amount': 0.0,
+            'failed_count': 0,
+            'retryable': False,
+            'today_used_count': used_count,
+            'today_max_count': max_count,
+            'today_used_amount': round(used_amount, 2),
+            'today_max_amount': max_amount,
+            'remaining_count': max(0, max_count - used_count),
+            'orders': [],
+            'failures': [],
+        }
+
+        # ---------- 4) 没有可退的单 ----------
+        if not rows:
+            base['title'] = '暂无可退押金'
+            base['detail'] = ('您名下没有「已结束、押金可退而且还没退过」的订单。'
+                              '如果押金已经原路退回，可以在「② 查退款/提现进度」里看到账情况。')
+            logger.info('[S552][help-refund] 无可退单 platform=%s openid=%s... phone=%s',
+                        platform, str(_openid or _ali)[:10], _phone_log)
+            return json_response(data=base, message='ok', code=200)
+
+        # ---------- 5) 预演：只报计划，不调渠道、不改库、不占额度 ----------
+        if dry_run:
+            for r in rows:
+                _amt = round(float(r.get('deposit_amount') or 0), 2)
+                base['orders'].append({
+                    'order_id': int(r['id']),
+                    'order_no': r.get('order_no') or '',
+                    'amount': _amt,
+                    'channel': r.get('channel_type') or '',
+                    'status': 'plan',
+                    'retryable': False,
+                    'message': '预计原路退回' + _hr_human_channel(r.get('channel_type')),
+                })
+            base['successes'] = base['orders']
+            base['title'] = '可退 %d 笔，共 ¥%.2f' % (len(rows), total)
+            base['detail'] = '这是预演结果（还没真退）。确认后会立即在原支付渠道发起退款。'
+            logger.info('[S552][help-refund][dry] platform=%s openid=%s... count=%s amount=%s',
+                        platform, str(_openid or _ali)[:10], len(rows), total)
+            return json_response(data=base, message='ok', code=200)
+
+        # ---------- 6) 真退前的单日限额闸门 ----------
+        if used_count >= max_count:
+            base['blocked'] = 'daily_count'
+            base['title'] = '今天的自助退款次数已用完'
+            base['detail'] = ('每个账号每天最多自助退 %d 笔，明天再来；着急的话点最下面的'
+                              '「联系人工客服」，我们马上帮您处理。' % max_count)
+            _hr_alarm('help_refund_blocked',
+                      '客服自助直退被单日笔数限额拦住: platform=%s openid=%s phone=%s used=%s max=%s'
+                      % (platform, str(_openid or _ali)[:12], _phone_log, used_count, max_count))
+            return json_response(data=base, message='ok', code=200)
+        if used_amount >= max_amount - 0.001:
+            base['blocked'] = 'daily_amount'
+            base['title'] = '今天的自助退款额度已用完'
+            base['detail'] = ('每个账号每天最多自助退 ¥%.2f，明天再来；着急的话点最下面的'
+                              '「联系人工客服」，我们马上帮您处理。' % max_amount)
+            _hr_alarm('help_refund_blocked',
+                      '客服自助直退被单日金额限额拦住: platform=%s openid=%s phone=%s used=%s max=%s'
+                      % (platform, str(_openid or _ali)[:12], _phone_log, used_amount, max_amount))
+            return json_response(data=base, message='ok', code=200)
+
+        # ---------- 7) 逐单直退（复用 S541 原语） ----------
+        from helpers import (do_real_refund, is_channel_balance_error,
+                             alert_withdraw_channel_balance, settle_withdrawal_for_order)
+
+        _quota_c = max_count - used_count
+        _quota_a = max_amount - used_amount
+        refunded_count = 0
+        refunded_amount = 0.0
+        retryable_any = False
+
+        for r in rows:
+            _oid = int(r['id'])
+            _amt = round(float(r.get('deposit_amount') or 0), 2)
+            _ono = r.get('order_no') or ''
+            _ch = r.get('channel_type') or ''
+            item = {'order_id': _oid, 'order_no': _ono, 'amount': _amt, 'channel': _ch}
+
+            if _amt <= 0:
+                item.update({'status': 'skip', 'retryable': False, 'message': '这一单没有可退金额'})
+                base['failures'].append(item)
+                continue
+            if _quota_c <= 0 or _quota_a < _amt - 0.001:
+                item.update({'status': 'quota', 'retryable': True,
+                             'message': '今天的自助退款额度不够了，明天再试'})
+                base['failures'].append(item)
+                continue
+
+            ok, refund_id, msg = False, '', ''
+            try:
+                ok, refund_id, msg = do_real_refund(
+                    order_id=_oid, order_no=_ono, amount=_amt,
+                    payment_channel_id=r.get('payment_channel_id'),
+                    out_refund_no='HR%d' % _oid,   # 确定性幂等单号（微信 out_refund_no / 支付宝 out_request_no）
+                    write_payment=True)            # 补写 payments(type=2) 对账流水
+            except Exception as _e:
+                ok, refund_id, msg = False, '', str(_e)
+
+            if ok:
+                # 回写订单：与 /order/refund-by-tool、投诉自动退款同一套字段
+                try:
+                    cur.execute("UPDATE orders SET refund_status='refunded', status=4, "
+                                "refund_id=%s, refund_amount=%s, refund_time=NOW(), refund_mark=1 "
+                                "WHERE id=%s", (refund_id or '', _amt, _oid))
+                    cur.execute("UPDATE user_balance_details SET status='withdrawn' "
+                                "WHERE order_id=%s AND status IN ('available','pending')", (_oid,))
+                    try:
+                        settle_withdrawal_for_order(cur, _oid, _amt, '客服自助直退')
+                    except Exception as _se:
+                        logger.warning('[S552][help-refund] 提现单结算失败(不影响退款) order_id=%s err=%s', _oid, _se)
+                    try:
+                        conn.commit()
+                    except Exception:
+                        pass
+                except Exception as _ue:
+                    logger.error('[S552][help-refund] 通道退款成功但回写订单失败 order_id=%s err=%s', _oid, _ue)
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+
+                refunded_count += 1
+                refunded_amount += _amt
+                _quota_c -= 1
+                _quota_a -= _amt
+                item.update({'status': 'refunded', 'refund_id': refund_id or '', 'retryable': False,
+                             'message': '已原路退回' + _hr_human_channel(_ch)})
+                base['orders'].append(item)
+                logger.info('[S552][help-refund] 直退成功 order_id=%s order_no=%s amount=%s ch=%s refund_id=%s',
+                            _oid, _ono, _amt, _ch, refund_id)
+            else:
+                _retry = bool(is_channel_balance_error(msg))
+                if _retry:
+                    retryable_any = True
+                    # 渠道余额不足：可重试 + 写 alarms + PushPlus 人话提醒（S541 口径）
+                    _hr_alarm('help_refund_channel_balance',
+                              '客服自助直退遇到通道余额不足(可重试): order_id=%s order_no=%s amount=%s ch=%s msg=%s'
+                              % (_oid, _ono, _amt, _ch, str(msg)[:160]))
+                    try:
+                        alert_withdraw_channel_balance(amount=_amt, count=1, msg=str(msg),
+                                                       wid=('HR%d' % _oid), tag='help_refund')
+                    except Exception as _ae:
+                        logger.warning('[S552][help-refund] 渠道余额告警推送失败: %s', _ae)
+                    item.update({'status': 'channel_no_balance', 'retryable': True,
+                                 'message': '支付通道余额不足，已记录，稍后会自动重试'})
+                else:
+                    item.update({'status': 'failed', 'retryable': False,
+                                 'message': _hr_fail_human(msg)})
+                base['failures'].append(item)
+                logger.warning('[S552][help-refund] 直退失败 order_id=%s order_no=%s ch=%s retryable=%s msg=%s',
+                               _oid, _ono, _ch, _retry, str(msg)[:200])
+
+        # ---------- 8) 汇总（全部人话） ----------
+        base['refunded_count'] = refunded_count
+        base['refunded_amount'] = round(refunded_amount, 2)
+        base['failed_count'] = len(base['failures'])
+        base['retryable'] = retryable_any
+        base['successes'] = base['orders']
+        base['today_used_count'] = used_count + refunded_count
+        base['today_used_amount'] = round(used_amount + refunded_amount, 2)
+        base['remaining_count'] = max(0, _quota_c)
+
+        if refunded_count > 0:
+            _ch_txt = _hr_human_channel(base['orders'][0].get('channel')) if base['orders'] else '原支付渠道'
+            base['title'] = '已退 %d 笔，共 ¥%.2f' % (refunded_count, base['refunded_amount'])
+            base['detail'] = '已原路退回%s，一般 0-3 个工作日到账。' % _ch_txt
+            if base['failed_count']:
+                base['detail'] += '另有 %d 笔没退成，原因见下方明细。' % base['failed_count']
+            _hr_alarm('help_refund_done',
+                      '客服自助直退完成: platform=%s openid=%s count=%s amount=%s orders=%s'
+                      % (platform, str(_openid or _ali)[:12], refunded_count, base['refunded_amount'],
+                         ','.join([str(x.get('order_id')) for x in base['orders']])[:200]), level=0)
+        elif retryable_any:
+            base['title'] = '暂时没退成（支付通道余额不足）'
+            base['detail'] = ('支付通道余额暂时不足，我们已经记录并会自动重试，您不用重复点；'
+                              '着急的话点最下面的「联系人工客服」。')
+        else:
+            base['title'] = '这次没退成'
+            base['detail'] = '失败原因见下方明细；点最下面的「联系人工客服」，我们马上帮您核实。'
+
+        return json_response(data=base, message='ok', code=200)
+    except Exception as e:
+        logger.error('[S552][help-refund] 异常: %s', e)
+        return json_response(message='退款服务暂时不可用，请稍后再试或联系人工客服', code=500)
+    finally:
+        # [S552] 所有返回路径（含提前 return）都必须归还连接池连接，否则会把池耗光。
+        _hr_close(conn)
+# ==== [S552-END] ====
+
 @bp.route('/order/refund-by-tool', methods=['POST'])
 def refund_by_tool():
     """微信账单“对订单有疑惑-申请退款”常用工具回调 (S121):
@@ -5091,3 +5982,573 @@ def order_by_no(order_no):
     except Exception as e:
         logger.error(f'[order_by_no] 错误: {e}')
         return json_response(message=str(e), code=500)
+
+
+# ============================================================
+# [S505-20260921] 用户资料完善（新小程序"头像昵称填写能力"）
+#   微信 2022-11-08 起 wx.getUserProfile 只返回匿名昵称/头像，
+#   合规途径是让用户自己填：<button open-type="chooseAvatar"> + <input type="nickname">。
+#   本段为【纯新增】，不改动任何既有接口逻辑。
+# ============================================================
+_AVATAR_DIR = 'static/avatars'
+_AVATAR_MAX_BYTES = 300 * 1024
+
+
+def _profile_ident(cur, phone='', openid='', mp_openid=''):
+    """尽力把身份补全成 (phone, openid, mp_openid)；找不到的留空，不报错。"""
+    phone = (phone or '').strip()
+    openid = (openid or '').strip()
+    mp_openid = (mp_openid or '').strip()
+    try:
+        if not phone and (openid or mp_openid):
+            cur.execute("""SELECT phone FROM phone_openids
+                           WHERE (openid = %s AND %s <> '') OR (mp_openid = %s AND %s <> '')
+                           ORDER BY updated_at DESC NULLS LAST LIMIT 1""",
+                        (openid, openid, mp_openid, mp_openid))
+            r = cur.fetchone()
+            if r:
+                phone = (r.get('phone') if isinstance(r, dict) else r[0]) or ''
+        if not phone and openid:
+            cur.execute("SELECT phone FROM user_balances WHERE openid = %s LIMIT 1", (openid,))
+            r = cur.fetchone()
+            if r:
+                phone = (r.get('phone') if isinstance(r, dict) else r[0]) or ''
+        if phone and not mp_openid:
+            cur.execute("SELECT mp_openid FROM phone_openids WHERE phone = %s LIMIT 1", (phone,))
+            r = cur.fetchone()
+            if r:
+                mp_openid = (r.get('mp_openid') if isinstance(r, dict) else r[0]) or ''
+    except Exception as _e:
+        logger.warning('[profile] 身份补全失败: %s', _e)
+    return phone, openid, mp_openid
+
+
+def _save_avatar_b64(identity_key, avatar_b64):
+    """把 base64 头像落盘，返回可访问 URL；失败返回 ''。"""
+    import base64 as _b64
+    import hashlib as _hashlib
+    import os as _os
+    try:
+        data = (avatar_b64 or '').strip()
+        if not data:
+            return ''
+        if ',' in data and data.lower().startswith('data:'):
+            data = data.split(',', 1)[1]
+        if len(data) > _AVATAR_MAX_BYTES * 2:
+            logger.warning('[profile] 头像过大，拒绝保存 key=%s len=%s', identity_key, len(data))
+            return ''
+        raw = _b64.b64decode(data)
+        if len(raw) > _AVATAR_MAX_BYTES or len(raw) < 100:
+            logger.warning('[profile] 头像大小异常 key=%s bytes=%s', identity_key, len(raw))
+            return ''
+        if raw[:3] != b'\xff\xd8\xff' and raw[:8] != b'\x89PNG\r\n\x1a\n':
+            logger.warning('[profile] 头像不是 jpg/png，拒绝 key=%s', identity_key)
+            return ''
+        name = _hashlib.sha1(str(identity_key).encode('utf-8')).hexdigest()[:20] + '.png'
+        d = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), _AVATAR_DIR)
+        _os.makedirs(d, exist_ok=True)
+        with open(_os.path.join(d, name), 'wb') as f:
+            f.write(raw)
+        return '/' + _AVATAR_DIR + '/' + name
+    except Exception as _e:
+        logger.error('[profile] 头像保存失败 key=%s: %s', identity_key, _e)
+        return ''
+
+
+@bp.route('/user/profile', methods=['GET'])
+def get_user_profile():
+    """读取当前用户的昵称/头像（"完善资料"页预填用）"""
+    try:
+        phone = request.args.get('phone', '')
+        openid = request.args.get('openid', '')
+        mp_openid = request.args.get('mp_openid', '')
+        if not phone and not openid and not mp_openid:
+            return json_response(message='请先登录', code=400)
+        conn = get_db()
+        cur = conn.cursor()
+        phone, openid, mp_openid = _profile_ident(cur, phone, openid, mp_openid)
+        nickname, avatar = '', ''
+        if phone or openid or mp_openid:
+            cur.execute("""SELECT COALESCE(NULLIF(wechat_name,''), '') AS wechat_name,
+                                  COALESCE(NULLIF(nickname,''), '') AS nickname,
+                                  COALESCE(NULLIF(avatar_url,''), '') AS avatar_url
+                           FROM users
+                           WHERE (%s <> '' AND phone = %s) OR (%s <> '' AND openid = %s)
+                              OR (%s <> '' AND mp_openid = %s)
+                           LIMIT 1""",
+                        (phone, phone, openid, openid, mp_openid, mp_openid))
+            r = cur.fetchone()
+            if r:
+                nickname = (r.get('wechat_name') or r.get('nickname') or '').strip()
+                avatar = (r.get('avatar_url') or '').strip()
+        if not nickname and phone:
+            cur.execute("SELECT wechat_name FROM phone_openids WHERE phone = %s LIMIT 1", (phone,))
+            r = cur.fetchone()
+            if r:
+                nickname = ((r.get('wechat_name') if isinstance(r, dict) else r[0]) or '').strip()
+        conn.close()
+        return json_response(data={'phone': phone, 'nickname': nickname, 'avatar_url': avatar,
+                                   'has_profile': bool(nickname or avatar)})
+    except Exception as e:
+        logger.error(f'[user_profile] 错误: {e}')
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/user/save-profile', methods=['POST'])
+def save_user_profile():
+    """保存用户自己填写的昵称/头像（合规来源：微信"头像昵称填写能力"）"""
+    try:
+        data = request.get_json(silent=True) or {}
+        phone = str(data.get('phone') or '').strip()
+        openid = str(data.get('openid') or '').strip()
+        mp_openid = str(data.get('mp_openid') or '').strip()
+        nickname = str(data.get('nickname') or '').strip()[:60]
+        avatar_b64 = str(data.get('avatar') or '')
+        if not phone and not openid and not mp_openid:
+            return json_response(message='请先登录', code=400)
+        if not nickname and not avatar_b64:
+            return json_response(message='昵称和头像都是空的', code=400)
+        conn = get_db()
+        cur = conn.cursor()
+        phone, openid, mp_openid = _profile_ident(cur, phone, openid, mp_openid)
+        avatar_url = ''
+        if avatar_b64:
+            avatar_url = _save_avatar_b64(phone or openid or mp_openid, avatar_b64)
+        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # 1) users（后台/个人中心通用）
+        try:
+            cur.execute("""UPDATE users SET wechat_name = COALESCE(NULLIF(%s,''), wechat_name),
+                                  nickname    = COALESCE(NULLIF(%s,''), nickname),
+                                  avatar_url  = COALESCE(NULLIF(%s,''), avatar_url)
+                           WHERE (%s <> '' AND phone = %s) OR (%s <> '' AND openid = %s)
+                              OR (%s <> '' AND mp_openid = %s)""",
+                        (nickname, nickname, avatar_url,
+                         phone, phone, openid, openid, mp_openid, mp_openid))
+        except Exception as _e1:
+            logger.warning('[save_profile] 更新 users 失败(继续): %s', _e1)
+        # 2) phone_openids（后台投诉/订单列表优先取这里）
+        if phone and nickname:
+            try:
+                cur.execute("UPDATE phone_openids SET wechat_name = %s WHERE phone = %s", (nickname, phone))
+            except Exception as _e2:
+                logger.warning('[save_profile] 更新 phone_openids 失败: %s', _e2)
+        # 3) user_balances（钱包页显示用）
+        if nickname:
+            try:
+                cur.execute("""UPDATE user_balances SET wechat_name = %s
+                               WHERE (%s <> '' AND phone = %s) OR (%s <> '' AND openid = %s)""",
+                            (nickname, phone, phone, openid, openid))
+            except Exception as _e3:
+                logger.warning('[save_profile] 更新 user_balances 失败: %s', _e3)
+        conn.commit()
+        conn.close()
+        logger.info('[save_profile] 保存成功 phone=%s nickname=%s avatar=%s',
+                    phone or (openid or mp_openid)[:8], nickname, bool(avatar_url))
+        return json_response(data={'nickname': nickname, 'avatar_url': avatar_url}, message='已保存')
+    except Exception as e:
+        logger.error(f'[save_profile] 错误: {e}')
+        return json_response(message=str(e), code=500)
+
+
+# ============================================================
+# [S507/S508-20260921] 小程序客服自动回复（消息推送 webhook）
+#   老板要求：客服能自动回复 + 进去就给几个固定选项让用户选。
+#   纯新增，不改动任何既有接口。Token 存在 system_settings.mp_push_token。
+# ============================================================
+_MP_PUSH_TOKEN_DEFAULT = 'locker_mp_push_2026'
+
+# [S551] 菜单里不再出现客服电话（老板要求：只在用户主动问时才给）。
+#   原「4. 客服电话4006981080」删除，「柜门打不开」由 5 提到 4，
+#   与 _mp_auto_reply 的数字分支保持一致（4 -> _MP_DOOR）。
+_MP_MENU = ('你好，请描述你的问题，这边加急帮你处理。\n'
+            '1. 怎么退款\n'
+            '2. 退款未到账\n'
+            '3. 提现显示异常\n'
+            '4. 柜门打不开')
+
+_MP_NEED_INFO = ('好的，请提供使用时的手机号或订单号，这边加急帮您核实处理。\n'
+                 '（也可以直接拨打客服电话 4006981080，08:30-21:00）')
+
+_MP_NEED_INFO_KEYS = ('怎么退款', '退款', '未到账', '没到账', '无法到账', '不到账', '没退',
+                      '退钱', '提现', '异常', '没收到', '钱没', '退一下', '退给我')
+
+_MP_DOOR = '请联系客服4006981080，需要退款请提供使用时的手机号或订单号'
+
+_MP_DOOR_KEYS = ('柜门', '打不开', '开不了', '门开', '门没开', '没弹开', '弹不开', '卡住',
+                 '故障', '门锁', '锁住')
+
+_MP_PHONE = ('客服电话：4006981080（08:30-21:00）\n'
+             '如需我们主动联系您，把手机号或订单号发在这里也可以。')
+
+_MP_GOT_INFO = ('已收到，这边加急为您核实处理，请稍候。\n'
+                '如有补充说明，直接回复即可。')
+
+# [S551] 同上：兜底菜单里也不出现客服电话，编号与 _mp_auto_reply 保持一致（1-4）。
+_MP_FALLBACK = ('请描述一下您的具体问题，或回复数字选择：\n'
+                '1. 怎么退款\n'
+                '2. 退款未到账\n'
+                '3. 提现显示异常\n'
+                '4. 柜门打不开')
+
+
+def _mp_push_token():
+    """取小程序消息推送 Token（库里有就用库里的，改配置不用重启）"""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT setting_value FROM system_settings WHERE setting_key='mp_push_token'")
+        r = cur.fetchone()
+        conn.close()
+        if r:
+            v = (r.get('setting_value') if isinstance(r, dict) else r[0]) or ''
+            if str(v).strip():
+                return str(v).strip()
+    except Exception as e:
+        logger.warning('[mp_push] 读 token 失败(用默认): %s', e)
+    return _MP_PUSH_TOKEN_DEFAULT
+
+
+def _mp_push_sign_ok(token, timestamp, nonce, signature):
+    import hashlib as _hl
+    raw = ''.join(sorted([str(token or ''), str(timestamp or ''), str(nonce or '')]))
+    return _hl.sha1(raw.encode('utf-8')).hexdigest() == str(signature or '')
+
+
+def _mp_auto_reply(text):
+    """[S509] 编号/关键词自动回复（含「柜门打不开」）"""
+    t = (text or '').strip()
+    if not t:
+        return _MP_MENU
+    # 1) 已给手机号/订单号（≥8 位数字）
+    digits = ''.join(ch for ch in t if ch.isdigit())
+    if len(digits) >= 8:
+        return _MP_GOT_INFO
+    # 2) [S551] 「柜门打不开」在菜单里已由 5 提到 4；旧编号 5 不再有含义(回落菜单)。
+    #    仍放在"退款"之前：这条回复本身已含退款指引。
+    if t == '4' or any(k in t for k in _MP_DOOR_KEYS):
+        return _MP_DOOR
+    # 3) 选项 1/2/3 或退款/未到账/提现等关键词
+    if t in ('1', '2', '3') or any(k in t for k in _MP_NEED_INFO_KEYS):
+        return _MP_NEED_INFO
+    # 4) [S551] 只在用户【主动问】客服电话、或主动说"人工"时才给电话（菜单里不再带电话）
+    if '客服电话' in t or '电话' in t or '人工' in t:
+        return _MP_PHONE
+    return _MP_FALLBACK
+
+
+def _mp_kf_send(openid, content):
+    """用客服消息接口主动发一条文本（用于"用户进入会话"时推菜单）"""
+    try:
+        import requests as _rq
+        from helpers import get_access_token_for as _gat
+        tok = _mp_token_for_openid(openid)
+        if not tok:
+            logger.error('[mp_push] 拿不到小程序 token，无法推送菜单')
+            return False
+        payload = {'touser': openid, 'msgtype': 'text', 'text': {'content': content}}
+        r = _rq.post('https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token=%s' % tok,
+                     data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
+                     headers={'Content-Type': 'application/json'}, timeout=8)
+        j = r.json() if r is not None else {}
+        if j.get('errcode') in (0, None):
+            logger.info('[mp_push] 已向 openid=%s... 推送菜单', str(openid)[:8])
+            return True
+        logger.warning('[mp_push] 客服消息发送失败: %s', j)
+        return False
+    except Exception as e:
+        logger.error('[mp_push] 客服消息发送异常: %s', e)
+        return False
+
+
+# ---- [S546-20260922] 小程序客服「卡片」能力 ----------------------------------
+#   背景：小程序客服消息【没有】msgmenu（那是公众号的能力），所以把老板要的"直接点选项"
+#   改成：发一张小程序卡片 → 点开进 pages/help/help → 页面上 5 个大按钮，点一下直接触发动作。
+#   注意：卡片 pagepath 指向的页面必须【已发布】，否则点开是空白。
+_MP_CARD_TITLE = '客服自助'
+# [S546b] 默认页用【已上线】的 pages/mine/mine：pages/help/help 还没发布时点开会空白。
+#   真正生效的页从 system_settings.mp_kf_card_pagepath 读，这里只是默认兜底值。
+_MP_CARD_PAGE_DEFAULT = 'pages/mine/mine'
+_MP_CARD_THUMB_KEY = 'mp_kf_card_thumb_media'
+_MP_CARD_THUMB_FILE = '/home/ubuntu/smart-locker/static/locker-avatar.jpg'
+_MP_CARD_THUMB_TTL = 3 * 24 * 3600          # 微信临时素材 3 天有效
+_MP_KF_API_UPLOAD = 'https://api.weixin.qq.com/cgi-bin/media/upload'
+_MP_KF_API_SEND = 'https://api.weixin.qq.com/cgi-bin/message/custom/send'
+# 处罚/超限类错误码：账号被处罚时不要反复重试（越试越像骚扰）
+_MP_PUNISH_CODES = (45094, 45047, 48004, 45009)
+
+
+def _mp_kf_thumb_media_id(token):
+    """取卡片缩略图 media_id：库里有且没过期就用，否则重传（3 天有效，自动续）"""
+    import json as _json
+    cached = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT setting_value FROM system_settings WHERE setting_key=%s", (_MP_CARD_THUMB_KEY,))
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            raw = row.get('setting_value') if isinstance(row, dict) else row[0]
+            cached = _json.loads(raw) if raw else None
+    except Exception as e:
+        logger.warning('[mp_push] 读卡片缩略图缓存失败(忽略): %s', e)
+    if cached and cached.get('media_id'):
+        try:
+            exp = datetime.fromisoformat(cached['expires_at'])
+            if datetime.now() < exp - timedelta(hours=2):
+                return cached['media_id']
+        except Exception as e:
+            logger.warning('[mp_push] 卡片缩略图缓存过期时间解析失败(重传): %s', e)
+    try:
+        import requests as _rq
+        import os as _os
+        if not _os.path.exists(_MP_CARD_THUMB_FILE):
+            logger.error('[mp_push] 卡片缩略图文件不存在: %s', _MP_CARD_THUMB_FILE)
+            return ''
+        with open(_MP_CARD_THUMB_FILE, 'rb') as f:
+            r = _rq.post('%s?access_token=%s&type=image' % (_MP_KF_API_UPLOAD, token),
+                         files={'media': (_os.path.basename(_MP_CARD_THUMB_FILE), f, 'image/jpeg')},
+                         timeout=20)
+        j = r.json()
+        if not j.get('media_id'):
+            logger.warning('[mp_push] 卡片缩略图上传失败: %s', j)
+            return ''
+        now = datetime.now()
+        rec = {'media_id': j['media_id'], 'file': _MP_CARD_THUMB_FILE,
+               'uploaded_at': now.isoformat(timespec='seconds'),
+               'expires_at': (now + timedelta(seconds=_MP_CARD_THUMB_TTL)).isoformat(timespec='seconds')}
+        conn2 = get_db()
+        cur2 = conn2.cursor()
+        cur2.execute("INSERT OR REPLACE INTO system_settings (setting_key, setting_value) VALUES (%s, %s)",
+                     (_MP_CARD_THUMB_KEY, _json.dumps(rec, ensure_ascii=False)))
+        conn2.commit()
+        conn2.close()
+        logger.info('[mp_push] 卡片缩略图已上传并缓存 media_id=%s', rec['media_id'])
+        return rec['media_id']
+    except Exception as e:
+        logger.error('[mp_push] 卡片缩略图上传异常: %s', e)
+        return ''
+
+
+def _mp_accounts_by_prefix():
+    """[S546b-20260922] 读出所有 mp 账号的 openid 前缀→凭据，用于"按 openid 认号" """
+    out = {}
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT id, name, appid, secret, openid_prefix FROM wx_accounts "
+                    "WHERE acct_type='mp' AND COALESCE(appid,'')<>'' "
+                    "ORDER BY COALESCE(is_active,0) DESC, COALESCE(priority,999), id")
+        for r in cur.fetchall():
+            p = str(r.get('openid_prefix') or '').strip()
+            if p:
+                out[p] = {'id': r.get('id'), 'name': r.get('name'),
+                          'appid': r.get('appid'), 'secret': r.get('secret') or ''}
+        conn.close()
+    except Exception as e:
+        logger.warning('[mp_push] 读 wx_accounts 失败(回落当前生效账号): %s', e)
+    return out
+
+
+def _mp_token_for_openid(openid):
+    """[S546b-20260922] 按 openid 前缀挑对应小程序的 access_token。
+
+    为什么必须这样：openid 是"跟着某一个号"的，拿 A 号的 token 发 B 号的 openid
+    一定返回 40003 invalid openid（2026-09-21 17:23:22 实测踩过：那时生效号还是伧置，
+    而发的是卓蓝时的 openid）。挑不到就回落当前生效账号并记日志，不改变原有行为。
+    """
+    from helpers import get_access_token_for as _gat
+    pfx = str(openid or '')[:6]
+    acct = _mp_accounts_by_prefix().get(pfx)
+    if acct and acct.get('appid'):
+        tok = _gat(acct['appid'], acct['secret'])
+        if tok:
+            logger.info('[mp_push] openid 前缀 %s -> 用账号 id=%s(%s) 发',
+                        pfx, acct.get('id'), acct.get('name'))
+            return tok
+        logger.warning('[mp_push] 账号 id=%s 取 token 失败，回落当前生效账号', acct.get('id'))
+    else:
+        logger.warning('[mp_push] openid 前缀 %s 没匹配到小程序账号，回落当前生效账号', pfx)
+    return _gat(_wx_mp_id(), _wx_mp_secret())
+
+
+def _mp_card_on_enter_enabled():
+    """[S546b-20260922] 进入客服会话要不要主动推卡片/菜单。默认 off。
+
+    默认 off 的原因：45094 的文案点名 "when user enter session"，"进入即推送"
+    极可能就是本次平台处罚的原因。需要用的时候把 system_settings.mp_kf_card_on_enter
+    设成 '1'/'true'/'on'/'yes' 即可恢复，不用改代码、不用重启。
+    """
+    try:
+        v = get_setting('mp_kf_card_on_enter', '0')
+        return str(v).strip().lower() in ('1', 'true', 'on', 'yes')
+    except Exception as e:
+        logger.warning('[mp_push] 读开关 mp_kf_card_on_enter 失败(按 off 处理): %s', e)
+        return False
+
+
+def _mp_card_pagepath():
+    """[S546b-20260922] 卡片点开进哪个页面 —— 做成配置项，换页面不用改代码。
+
+    默认 'pages/mine/mine'（**已上线**的页面）：因为 pages/help/help 还没发布，
+    卡片指过去用户点开会是空白/报错，会误判成"卡片不能用"。
+    老板发布带 pages/help/help 的新版本后，把 system_settings.mp_kf_card_pagepath
+    改成 'pages/help/help' 即可切换（读不到/读失败一律回落默认值，绝不报错）。
+    """
+    try:
+        v = get_setting('mp_kf_card_pagepath', _MP_CARD_PAGE_DEFAULT)
+        v = str(v or '').strip()
+        return v or _MP_CARD_PAGE_DEFAULT
+    except Exception as e:
+        logger.warning('[mp_push] 读 mp_kf_card_pagepath 失败(用默认 %s): %s', _MP_CARD_PAGE_DEFAULT, e)
+        return _MP_CARD_PAGE_DEFAULT
+
+
+def _mp_kf_send_card(openid, title=None, pagepath=None):
+    """[S546] 给用户发一张【小程序客服卡片】。
+    返回 True=微信已收下，False=没发出去（调用方回落文本菜单）。"""
+    title = title or _MP_CARD_TITLE
+    pagepath = pagepath or _mp_card_pagepath()
+    try:
+        import requests as _rq
+        from helpers import get_access_token_for as _gat
+        tok = _mp_token_for_openid(openid)
+        if not tok:
+            logger.error('[mp_push] 拿不到小程序 token，无法推送卡片')
+            return False
+        thumb = _mp_kf_thumb_media_id(tok)
+        if not thumb:
+            logger.warning('[mp_push] 没有可用的卡片缩略图 media_id，本次不发卡片')
+            return False
+        payload = {'touser': openid, 'msgtype': 'miniprogrampage',
+                   'miniprogrampage': {'title': title, 'pagepath': pagepath,
+                                       'thumb_media_id': thumb}}
+        # 编码坑（同 S544）：必须自己 json.dumps(ensure_ascii=False) 再发 bytes。
+        #   用 requests 的 json= 会按 ensure_ascii=True 序列化，中文变成 \uXXXX 被微信原样显示。
+        body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        r = _rq.post('%s?access_token=%s' % (_MP_KF_API_SEND, tok), data=body,
+                     headers={'Content-Type': 'application/json'}, timeout=8)
+        j = r.json() if r is not None else {}
+        ec = j.get('errcode')
+        if ec in (0, None):
+            logger.info('[mp_push] 已向 openid=%s... 推送客服卡片 page=%s', str(openid)[:8], pagepath)
+            return True
+        if ec in _MP_PUNISH_CODES:
+            logger.warning('[mp_push] 客服卡片被微信拒绝(处罚/超限 errcode=%s): %s'
+                           ' —— 需要到小程序后台「违规和申诉」看处罚详情', ec, j)
+        else:
+            logger.warning('[mp_push] 客服卡片发送失败: %s', j)
+        return False
+    except Exception as e:
+        logger.error('[mp_push] 客服卡片发送异常: %s', e)
+        return False
+
+
+def _mp_parse_push(body, ctype):
+    """把微信推来的消息解析成 dict（JSON 与 XML 两种数据格式都兼容）"""
+    import json as _json
+    data = {}
+    ctype = (ctype or '').lower()
+    if 'json' in ctype or (body or '').strip().startswith('{'):
+        try:
+            data = _json.loads(body or '{}')
+        except Exception as e:
+            logger.warning('[mp_push] JSON 解析失败: %s', e)
+            data = {}
+    else:
+        try:
+            import xml.etree.ElementTree as _ET
+            root = _ET.fromstring(body or '<xml/>')
+            for ch in list(root):
+                data[ch.tag] = ch.text or ''
+        except Exception as e:
+            logger.warning('[mp_push] XML 解析失败: %s', e)
+            data = {}
+    return data
+
+
+def _mp_build_reply(data, content, as_json):
+    """组装被动回复（同格式返回，不用调接口）"""
+    import json as _json
+    import time as _t
+    payload = {
+        'ToUserName': data.get('FromUserName', ''),
+        'FromUserName': data.get('ToUserName', ''),
+        'CreateTime': int(_t.time()),
+        'MsgType': 'text',
+        'Content': content,
+    }
+    if as_json:
+        return _json.dumps(payload, ensure_ascii=False), 'application/json'
+    xml = ('<xml><ToUserName><![CDATA[%s]]></ToUserName>'
+           '<FromUserName><![CDATA[%s]]></FromUserName>'
+           '<CreateTime>%s</CreateTime><MsgType><![CDATA[text]]></MsgType>'
+           '<Content><![CDATA[%s]]></Content></xml>'
+           % (payload['ToUserName'], payload['FromUserName'], payload['CreateTime'], content))
+    return xml, 'application/xml'
+
+
+@bp.route('/mp/push', methods=['GET'])
+def mp_push_verify():
+    """微信服务器校验（保存消息推送配置时会 GET 一次）"""
+    token = _mp_push_token()
+    ts = request.args.get('timestamp', '')
+    nonce = request.args.get('nonce', '')
+    sig = request.args.get('signature', '')
+    echo = request.args.get('echostr', '')
+    if _mp_push_sign_ok(token, ts, nonce, sig):
+        logger.info('[mp_push] URL 校验通过')
+        return echo or 'ok'
+    logger.warning('[mp_push] URL 校验失败 token_len=%s ts=%s nonce=%s', len(token or ''), ts, nonce)
+    return 'invalid signature', 403
+
+
+@bp.route('/mp/push', methods=['POST'])
+def mp_push_receive():
+    """接收用户消息/事件并自动回复"""
+    try:
+        body = request.get_data(as_text=True)
+        ctype = request.headers.get('Content-Type', '')
+        data = _mp_parse_push(body, ctype)
+        as_json = ('json' in (ctype or '').lower()) or (body or '').strip().startswith('{')
+        msg_type = (data.get('MsgType') or '').lower()
+        event = (data.get('Event') or '').lower()
+        openid = data.get('FromUserName', '') or ''
+        content = data.get('Content', '') or ''
+        logger.info('[mp_push] 收到 MsgType=%s Event=%s openid=%s... content=%s',
+                    msg_type, event, str(openid)[:8], (content or '')[:60])
+
+        # [S546-20260922] 违规处罚事件：必须把完整报文落日志。
+        #   2026-09-22 07:36:14 收到过 wxa_punish_event，当时只记了 MsgType/Event，
+        #   导致 07:44 客服消息开始返回 errcode=45094 时查不到处罚内容。
+        if event == 'wxa_punish_event':
+            logger.warning('[mp_push] 收到 wxa_punish_event 完整报文: %s', (body or '')[:1500])
+
+        # 1) 用户进入客服会话 → [S546b-20260922] 默认【不主动推送】，不再调 custom/send。
+        #    原因：45094 文案点名 "when user enter session"，"进入即推送"极可能就是本次处罚原因。
+        #    需要恢复时把 system_settings.mp_kf_card_on_enter 设成 '1'（默认 '0'）。
+        if msg_type == 'event' and event in ('user_enter_tempsession', 'user_enter_session'):
+            if _mp_card_on_enter_enabled():
+                if not _mp_kf_send_card(openid):
+                    _mp_kf_send(openid, _MP_MENU)
+            else:
+                logger.info('[mp_push] 进入会话不主动推送(mp_kf_card_on_enter=off) openid=%s...',
+                            str(openid)[:8])
+            return 'success'
+
+        # 2) 文本消息 → [S546b-20260922] 先试【小程序卡片】（挂在"用户发消息"这条合法窗口上），
+        #    卡片发不出去（被封/超限/没缩略图）就回落【被动回复文本】——被动回复是同步 HTTP 响应，
+        #    不走被封的 custom/send，是保底通道，必须留着。
+        if msg_type == 'text':
+            reply = _mp_auto_reply(content)
+            if _mp_kf_send_card(openid):
+                return 'success'
+            out, mime = _mp_build_reply(data, reply, as_json)
+            return out, 200, {'Content-Type': mime}
+
+        # 3) 其它类型（图片/小程序卡片等）→ 引导
+        out, mime = _mp_build_reply(data, '已收到您的消息，请用文字描述问题，或回复数字选择；急事请拨 4006981080。', as_json)
+        return out, 200, {'Content-Type': mime}
+    except Exception as e:
+        logger.error('[mp_push] 处理异常: %s', e)
+        return 'success'

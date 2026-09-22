@@ -976,7 +976,7 @@ def admin_orders():
         elif not start_date and not end_date:
             # Default: last 30 days
             where += " AND o.created_at>=NOW() - INTERVAL '30 days'" 
-        c.execute(f'SELECT COUNT(*) FROM orders o LEFT JOIN cabinets c ON o.cabinet_id=c.id LEFT JOIN locations l ON c.location_id=l.id LEFT JOIN (SELECT DISTINCT ON (phone) * FROM user_balances ORDER BY phone, id DESC) ub ON o.user_phone=ub.phone LEFT JOIN (SELECT DISTINCT ON (phone) * FROM users ORDER BY phone, id DESC) po ON o.user_phone=po.phone LEFT JOIN user_profiles up ON po.openid=up.openid WHERE {where}', params)
+        c.execute(f"SELECT COUNT(*) FROM orders o LEFT JOIN cabinets c ON o.cabinet_id=c.id LEFT JOIN locations l ON c.location_id=l.id LEFT JOIN (SELECT DISTINCT ON (phone) * FROM user_balances ORDER BY phone, id DESC) ub ON NULLIF(o.user_phone,'')=ub.phone LEFT JOIN (SELECT DISTINCT ON (phone) * FROM users ORDER BY phone, id DESC) po ON NULLIF(o.user_phone,'')=po.phone LEFT JOIN user_profiles up ON po.openid=up.openid WHERE {where}", params)
         total = c.fetchone()[0]
         c.execute(f"""SELECT o.id, o.order_no, o.user_phone, o.access_code as password, o.compartment_number, o.deposit_amount, o.per_use_price, o.refund_status, CASE WHEN o.status=4 THEN COALESCE(o.refund_amount,0) ELSE 0 END as refund_amount, o.status,
             o.store_time, o.retrieve_time, o.created_at, o.group_id, COALESCE(c.cabinet_code, o.cabinet_code) as cabinet_code, c.name as cabinet_name,
@@ -985,8 +985,8 @@ def admin_orders():
             l.id as location_id, l.name as location_name, m.name as merchant_name, m.id as merchant_id, pc.mch_id as pay_mch_id, pc.name as pay_mch_name
             FROM orders o LEFT JOIN cabinets c ON o.cabinet_id=c.id
             LEFT JOIN cabinet_slots cs ON o.slot_id=cs.id
-            LEFT JOIN (SELECT DISTINCT ON (phone) * FROM user_balances ORDER BY phone, id DESC) ub ON o.user_phone=ub.phone
-            LEFT JOIN (SELECT DISTINCT ON (phone) * FROM users ORDER BY phone, id DESC) po ON o.user_phone=po.phone
+            LEFT JOIN (SELECT DISTINCT ON (phone) * FROM user_balances ORDER BY phone, id DESC) ub ON NULLIF(o.user_phone,'')=ub.phone
+            LEFT JOIN (SELECT DISTINCT ON (phone) * FROM users ORDER BY phone, id DESC) po ON NULLIF(o.user_phone,'')=po.phone
             LEFT JOIN user_profiles up ON po.openid=up.openid
             LEFT JOIN locations l ON c.location_id=l.id
             LEFT JOIN merchants m ON l.merchant_id=m.id
@@ -1024,8 +1024,8 @@ def admin_order_detail():
             l.id as location_id, l.name as location_name, m.name as merchant_name, m.id as merchant_id, pc.mch_id as pay_mch_id, pc.name as pay_mch_name
             FROM orders o LEFT JOIN cabinets c ON o.cabinet_id=c.id
             LEFT JOIN cabinet_slots cs ON o.slot_id=cs.id
-            LEFT JOIN (SELECT DISTINCT ON (phone) * FROM user_balances ORDER BY phone, id DESC) ub ON o.user_phone=ub.phone
-            LEFT JOIN (SELECT DISTINCT ON (phone) * FROM users ORDER BY phone, id DESC) po ON o.user_phone=po.phone
+            LEFT JOIN (SELECT DISTINCT ON (phone) * FROM user_balances ORDER BY phone, id DESC) ub ON NULLIF(o.user_phone,'')=ub.phone
+            LEFT JOIN (SELECT DISTINCT ON (phone) * FROM users ORDER BY phone, id DESC) po ON NULLIF(o.user_phone,'')=po.phone
             LEFT JOIN user_profiles up ON po.openid=up.openid
             LEFT JOIN locations l ON c.location_id=l.id
             LEFT JOIN merchants m ON l.merchant_id=m.id
@@ -1929,21 +1929,27 @@ def admin_withdrawals():
         if agent_id:
             where += ' AND lc.merchant_id IN (SELECT id FROM merchants WHERE agent_id = %s)'
             params.append(agent_id)
+        # [S558] 空手机号绝不去 join 空 phone 行；提现单手机号为空时按【订单手机号】认人
         join_sql = """FROM withdrawal_records wr
+                      -- [S558] ON <key>=phone, key=COALESCE(NULLIF(wr.user_phone,''),NULLIF(o.user_phone,''))
                       LEFT JOIN orders o ON wr.order_id=o.id
                       LEFT JOIN cabinets ca ON o.cabinet_id=ca.id
                       LEFT JOIN locations lc ON ca.location_id=lc.id
-                      LEFT JOIN (SELECT phone, MAX(wechat_name) as wechat_name FROM user_balances GROUP BY phone) ub ON wr.user_phone=ub.phone
-                      LEFT JOIN (SELECT DISTINCT ON (phone) * FROM users ORDER BY phone, id DESC) po ON wr.user_phone=po.phone
+                      LEFT JOIN (SELECT phone, MAX(wechat_name) as wechat_name FROM user_balances GROUP BY phone) ub ON COALESCE(NULLIF(wr.user_phone,''), NULLIF(o.user_phone,''))=ub.phone
+                      LEFT JOIN (SELECT DISTINCT ON (phone) * FROM users ORDER BY phone, id DESC) po ON COALESCE(NULLIF(wr.user_phone,''), NULLIF(o.user_phone,''))=po.phone
                       LEFT JOIN user_profiles up ON po.openid=up.openid"""
         c.execute(f'SELECT COUNT(*) {join_sql} WHERE {where}', params)
         total = c.fetchone()[0]
-        c.execute(f"SELECT wr.*, o.order_no, o.refund_id, lc.name as location_name, COALESCE(NULLIF(ub.wechat_name,''), NULLIF(po.wechat_name,''), up.wechat_name, '') as wechat_name {join_sql} WHERE {where} ORDER BY wr.created_at DESC LIMIT %s OFFSET %s",
+        c.execute(f"SELECT wr.*, o.order_no, o.refund_id, lc.name as location_name, o.user_phone as _s558_order_phone, COALESCE(NULLIF(ub.wechat_name,''), NULLIF(po.wechat_name,''), up.wechat_name, '') as wechat_name {join_sql} WHERE {where} ORDER BY wr.created_at DESC LIMIT %s OFFSET %s",
                   params + [page_size, (page-1)*page_size])
         withdrawals = []
         orders = []
         for r in c.fetchall():
             d = dict(r)
+            # [S558-可选] 提现单自身 user_phone 为空时，展示订单手机号（只改显示，不回填库）
+            if not (d.get('user_phone') or '').strip() and (d.get('_s558_order_phone') or '').strip():
+                d['user_phone'] = d['_s558_order_phone']
+            d.pop('_s558_order_phone', None)
             d['created_at'] = _fmt_time(d.get('created_at'))
             d['approve_time'] = _fmt_time(d.get('approve_time'))
             withdrawals.append(d)
@@ -2606,7 +2612,7 @@ def admin_agent_stats():
         total_deposit = row[1] or 0
         total_refund = row[2] or 0
         total_unreturned = row[3] or 0
-        c.execute(f'SELECT COUNT(*) FROM orders o LEFT JOIN cabinets c ON o.cabinet_id=c.id LEFT JOIN locations l ON c.location_id=l.id LEFT JOIN (SELECT DISTINCT ON (phone) * FROM user_balances ORDER BY phone, id DESC) ub ON o.user_phone=ub.phone LEFT JOIN (SELECT DISTINCT ON (phone) * FROM users ORDER BY phone, id DESC) po ON o.user_phone=po.phone LEFT JOIN user_profiles up ON po.openid=up.openid WHERE {where}', params)
+        c.execute(f"SELECT COUNT(*) FROM orders o LEFT JOIN cabinets c ON o.cabinet_id=c.id LEFT JOIN locations l ON c.location_id=l.id LEFT JOIN (SELECT DISTINCT ON (phone) * FROM user_balances ORDER BY phone, id DESC) ub ON NULLIF(o.user_phone,'')=ub.phone LEFT JOIN (SELECT DISTINCT ON (phone) * FROM users ORDER BY phone, id DESC) po ON NULLIF(o.user_phone,'')=po.phone LEFT JOIN user_profiles up ON po.openid=up.openid WHERE {where}", params)
         c.execute(sql2, cabinet_ids + date_params)
         active_order_count = c.fetchone()[0]
         conn.close()
@@ -5603,7 +5609,7 @@ def _release_auto_claim(wid):
         logger.error('[auto_withdraw] 释放认领失败 id=%s: %s', wid, e)
 
 
-def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid='', unionid='', order_ids=None):
+def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid='', unionid='', order_ids=None, order_no=''):
     try:
         from helpers import send_wx_subscribe_message
         # [S343-20260920] 字段名按【老模板 lJpnAUiE（退款成功通知）】的真实字段来：
@@ -5617,6 +5623,9 @@ def _send_withdraw_subscribe(phone, amount, thing3, thing2, openid='', unionid='
             'time5': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
             'thing4': {'value': thing3},     # 退款方式（调用方第 3 个参数）
             'thing3': {'value': thing2},     # 备注（调用方第 4 个参数）
+            # [S557-20260922] character_string1 = 订单编号（模板必需，缺它必 47003）；
+            #   合并提现取首单订单号，拿不到订单号则退内部单号，绝不传空值（空值同样 47003）
+            'character_string1': {'value': str(order_no or (order_ids[0] if order_ids else '') or '0')[:32]},
         }
         # [S343-20260920] 只认"可发送的小程序身份"（判定函数见文件顶部 _is_sendable_mp_openid）：
         #   老小程序(当前生效前缀 ooTcRx) 与新小程序(白名单账号9 oQXFs3) 都能发；
@@ -5800,6 +5809,7 @@ def _process_auto_withdrawal_record(wid):
         failed = []
         failed_amount = 0.0
         first_msg = ''
+        _s557_nos = []          # [S557] 本笔提现实际发起退款的订单号（给 character_string1 用）
         for oid in order_ids:
             c2.execute("""SELECT o.order_no, o.payment_channel_id, o.refund_status,
                 COALESCE(bd.amount, 0) as bd_amount,
@@ -5825,6 +5835,8 @@ def _process_auto_withdrawal_record(wid):
                     refund_this = _s541_cap
             if refund_this <= 0:
                 continue
+            if od.get('order_no'):
+                _s557_nos.append(str(od['order_no']))   # [S557]
             success, refund_id, msg, _s541_used = _s541_wd_refund(
                 order_id=oid,
                 order_no=od['order_no'],
@@ -5851,7 +5863,14 @@ def _process_auto_withdrawal_record(wid):
             conn2.commit()
             # [S343] 乱码文案修复：第3个参数=退款方式(老模板 thing4 -> 新模板 thing10)，
             #   第4个参数=备注(老模板 thing3 -> 新模板 thing2)；本流程是 do_real_refund 原路退回。
-            _send_withdraw_subscribe(phone, amount, '原路退回支付账户', '预计0-3个工作日到账', row.get('w_openid') or '', row.get('w_unionid') or '', order_ids=order_ids)  # [S525]
+            # [S557c-20260922] 老板最终口径：通知统一在【用户提交提现申请】时发一条（同一 wid 一条），
+            #   所以调度器这里【不再发】——否则同一 wid 会被发第二条、白耗用户一次性授权额度。
+            #   原发送调用保留在下面(注释)以便回滚；本处只记一行日志，便于核对"调度器没发"。
+            logger.info('[S557] 调度器不再发退款通知(已改为申请时发一条) wid=%s order_no=%s order_ids=%s',
+                        wid, (_s557_nos[0] if _s557_nos else ''), order_ids)
+            # _send_withdraw_subscribe(phone, amount, '原路退回支付账户', '预计0-3个工作日到账',
+            #                          row.get('w_openid') or '', row.get('w_unionid') or '',
+            #                          order_ids=order_ids, order_no=(_s557_nos[0] if _s557_nos else ''))  # [S525]
             logger.info('[auto_withdraw] ???? id=%s orders=%s', wid, order_ids)
             done = True
         elif _s541_balance_fail:
@@ -6995,8 +7014,8 @@ def admin_device_detail():
         result['slots'] = [dict(r) for r in c.fetchall()]
         c.execute('''SELECT o.*, cs.slot_number as compartment_number, ub.wechat_name FROM orders o
             LEFT JOIN cabinet_slots cs ON o.slot_id=cs.id
-            LEFT JOIN (SELECT DISTINCT ON (phone) * FROM user_balances ORDER BY phone, id DESC) ub ON o.user_phone=ub.phone
-            LEFT JOIN (SELECT DISTINCT ON (phone) * FROM users ORDER BY phone, id DESC) po ON o.user_phone=po.phone
+            LEFT JOIN (SELECT DISTINCT ON (phone) * FROM user_balances ORDER BY phone, id DESC) ub ON NULLIF(o.user_phone,'')=ub.phone
+            LEFT JOIN (SELECT DISTINCT ON (phone) * FROM users ORDER BY phone, id DESC) po ON NULLIF(o.user_phone,'')=po.phone
             LEFT JOIN user_profiles up ON po.openid=up.openid
             WHERE o.cabinet_id=%s AND o.status=2 ORDER BY o.created_at DESC''', (device_id,))
         result['active_orders'] = [dict(r) for r in c.fetchall()]
@@ -7497,7 +7516,7 @@ def admin_transactions():
             where += " AND o.created_at <= %s"
             params.append(end_date + " 23:59:59")
         
-        c.execute(f'SELECT COUNT(*) FROM orders o LEFT JOIN cabinets c ON o.cabinet_id=c.id LEFT JOIN locations l ON c.location_id=l.id LEFT JOIN (SELECT DISTINCT ON (phone) * FROM user_balances ORDER BY phone, id DESC) ub ON o.user_phone=ub.phone LEFT JOIN (SELECT DISTINCT ON (phone) * FROM users ORDER BY phone, id DESC) po ON o.user_phone=po.phone LEFT JOIN user_profiles up ON po.openid=up.openid WHERE {where}', params)
+        c.execute(f"SELECT COUNT(*) FROM orders o LEFT JOIN cabinets c ON o.cabinet_id=c.id LEFT JOIN locations l ON c.location_id=l.id LEFT JOIN (SELECT DISTINCT ON (phone) * FROM user_balances ORDER BY phone, id DESC) ub ON NULLIF(o.user_phone,'')=ub.phone LEFT JOIN (SELECT DISTINCT ON (phone) * FROM users ORDER BY phone, id DESC) po ON NULLIF(o.user_phone,'')=po.phone LEFT JOIN user_profiles up ON po.openid=up.openid WHERE {where}", params)
         rows = db.execute(
             f"SELECT o.id, o.order_no, o.cabinet_id, o.slot_id, o.compartment_number, "
             f"o.deposit_amount, o.status, o.access_code, o.created_at, o.retrieve_time, "

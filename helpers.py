@@ -954,6 +954,13 @@ def _alert_mch_restricted(channel, err_code, err_desc):
 _mch_fail_poll_count = {}
 
 
+# [S421-20260921] 账单里显示的【商品名称】= 微信统一下单的 body。
+#   业务要求：显示成「寄存柜预付款（人工加急电话：4006981080）」（人工加急电话写进账单，用户一眼能看到）。
+#   只影响【下单时】的商品名 -> 只对新订单生效，已支付的老订单账单仍是旧名字。
+#   微信 body 上限 128 字符，本串 25 字/55 字节，安全。改这一个常量即可全局生效。
+PAY_GOODS_NAME = '寄存柜预付款（人工加急电话：4006981080）'
+
+
 def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, openid=None,
                        payment_channel=None, payment_channel_id=None, _retry_count=0):
     """获取微信支付参数"""
@@ -1009,7 +1016,7 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
         wxpay, ch_type = get_channel_wxpay(current_channel, use_mp_appid=False, openid=openid)
         if ch_type == 'third_party' and wxpay:
             third_party_type = 'alipay' if not is_wechat_browser() else 'wechat'
-            result = wxpay.unifiedorder(trade_type=third_party_type, body='使用储物柜预付款',
+            result = wxpay.unifiedorder(trade_type=third_party_type, body=PAY_GOODS_NAME,
                                          total_fee=int(deposit_amount * 100), out_trade_no=order_no)
             if result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS':
                 # 更新渠道统计（用于轮转）
@@ -1047,7 +1054,7 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
     total_fee = int(deposit_amount * 100)
     time_expire = (datetime.now() + timedelta(minutes=15)).strftime('%Y%m%d%H%M%S')
 
-    result = wxpay.unifiedorder(trade_type=trade_type, body='使用储物柜预付款',
+    result = wxpay.unifiedorder(trade_type=trade_type, body=PAY_GOODS_NAME,
                                  total_fee=total_fee, out_trade_no=order_no,
                                  notify_url=_wx_payurl(), openid=openid,
                                  scene_info=scene_info, time_expire=time_expire)
@@ -1425,7 +1432,7 @@ def is_new_mp_identity(appid='', openid='', mp_openid=''):
 
 
 def get_mp_jsapi_params(order_id, order_no, amount, mp_openid,
-                        payment_channel_id=None, body='使用储物柜预付款'):
+                        payment_channel_id=None, body=PAY_GOODS_NAME):
     """[S319] 取【微信小程序】wx.requestPayment 需要的支付参数（统一下单 JSAPI + 签名）。
 
     为什么不复用 get_payment_params()：
@@ -1505,11 +1512,25 @@ def get_mp_jsapi_params(order_id, order_no, amount, mp_openid,
                 _rowc = _curc.fetchone()
                 _dbc.close()
                 _old_ch = _rowc.get('payment_channel_id') if _rowc else None
-                if _rowc and _old_ch != channel['id']:
-                    logger.warning('[mp-jsapi] 订单渠道与下单渠道不一致(当前未回写): order=%s 订单=%s 下单=%s',
-                                   order_id, _old_ch, channel['id'])
+                # [S556-20260922] bug① 开回写：小程序微信【统一下单已经成功】-> channel 就是这笔
+                #   真实的收款渠道。只在"订单当前渠道 != 下单渠道"时才 UPDATE（一致时什么都不写），
+                #   并打 WARNING + 写 alarms，便于统计历史脏单。
+                #   实证：订单 137663 挂支付宝 113、微信侧 mch 1750896171 实收 ¥21.70，
+                #   本条日志当时只提示"当前未回写"，于是退款按支付宝发起必然 ACQ.TRADE_NOT_EXIST。
+                if _rowc:
+                    _s556_correct_order_channel(order_id, channel['id'], source='mp-jsapi-prepay',
+                                                order_no=order_no, ch_type='wechat',
+                                                mode='jsapi')
             except Exception as _e:
                 logger.error('[mp-jsapi] 渠道一致性检查失败: %s', _e)
+            # [S569-20260922] 统一下单已成功 = 微信已确认这个 mp_openid 就是付款人。
+            #   若订单身份缺失（下单时客户端没带 openid -> user_id=0），用这个强键补回来，
+            #   否则钱包页 calc_balance 按 user_id 现算会显示 0、客服自助也查不到单。
+            #   正常单（user_id>0 且 mp_openid 非空）在函数内直接返回，一个字都不写。
+            try:
+                _backfill_order_identity(order_id, mp_openid=mp_openid, source='mp-jsapi-prepay')
+            except Exception as _e569:
+                logger.error('[S569] 统一下单后身份回填失败(不影响支付): %s', _e569)
 
         jsapi = wxpay.get_jsapi_params(prepay_id) or {}
         out = {'ok': True, 'mode': 'jsapi', 'order_id': order_id, 'order_no': order_no,
@@ -2938,6 +2959,285 @@ def do_withdraw_order_refund(order_id=None, order_no=None, payment_channel_id=No
                           out_refund_no=_out_no, write_payment=True)
 
 
+def _s556_write_alarm(alarm_type, content, device_id=None, level=1):
+    """[S556-20260922] 写一条后台告警（alarms 表）。任何异常都吃掉，绝不影响主流程。"""
+    try:
+        from database import get_db as _gdb556
+        _a = _gdb556()
+        try:
+            _c = _a.cursor()
+            _c.execute("INSERT INTO alarms (type, device_id, content, status, created_at) "
+                       "VALUES (%s, %s, %s, '0', NOW())",
+                       (str(alarm_type)[:64], device_id, str(content)[:500]))
+        finally:
+            try:
+                _a.close()
+            except Exception:
+                pass
+        logger.warning('[S556] 告警已写: type=%s content=%s', alarm_type, str(content)[:200])
+        return True
+    except Exception as _e:
+        logger.error('[S556] 写 alarms 失败(不影响主流程): %s', _e)
+        return False
+
+
+def _s556_correct_order_channel(order_id, new_channel_id, source='', order_no='',
+                                transaction_id=None, ch_type='', mode='') -> bool:
+    """[S556-20260922] bug① —— 用【真实收款渠道】纠正订单渠道。
+
+    只在 "new_channel_id 非空 且 != 订单当前 payment_channel_id" 时才 UPDATE；
+    相等时一个字都不写（正常同渠道支付的既有行为零变化）。
+    纠正时同时打 WARNING + 写 alarms(type='payment_channel_mismatch')，便于统计历史脏单。
+    """
+    try:
+        _nid = int(new_channel_id or 0)
+    except Exception:
+        return False
+    if not order_id or _nid <= 0:
+        return False
+    conn = None
+    try:
+        from database import get_db as _gdb556
+        conn = _gdb556()
+        cur = conn.cursor()
+        cur.execute('SELECT payment_channel_id FROM orders WHERE id=%s', (order_id,))
+        _r = cur.fetchone()
+        _old = None
+        if _r:
+            _old = _r.get('payment_channel_id') if hasattr(_r, 'get') else _r[0]
+        try:
+            _oldi = int(_old) if _old is not None else None
+        except Exception:
+            _oldi = None
+        if _oldi == _nid:
+            return False                      # 一致 -> 不写，零变化
+        _oldname = str(_oldi) if _oldi is not None else 'NULL'
+        if _oldi:
+            try:
+                cur.execute('SELECT name FROM payment_channels WHERE id=%s', (_oldi,))
+                _r2 = cur.fetchone()
+                if _r2:
+                    _oldname = '%s(%s)' % (_oldi, (_r2.get('name') if hasattr(_r2, 'get') else _r2[0]))
+            except Exception:
+                pass
+        cur.execute('UPDATE orders SET payment_channel_id=%s WHERE id=%s', (_nid, order_id))
+        logger.warning('[S556] 订单渠道纠正: order=%s 订单记账=%s -> 实收=%s 来源=%s 渠道类型=%s',
+                       ('%s(%s)' % (order_id, order_no)) if order_no else order_id,
+                       _oldname, _nid, source or '?', ch_type or '?')
+        conn.close()
+        conn = None
+        _s556_write_alarm(
+            'payment_channel_mismatch',
+            '订单渠道纠正 [%s] order_id=%s order_no=%s 订单记账渠道=%s -> 真实收款渠道=%s '
+            '渠道类型=%s 交易号=%s（历史脏单，退款按真实渠道走）'
+            % (source or '?', order_id, order_no or '', _oldname, _nid, ch_type or '?',
+               transaction_id or ''))
+        return True
+    except Exception as _e:
+        logger.error('[S556] 纠正订单渠道失败 order=%s new=%s err=%s', order_id, _nid, _e)
+        return False
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+# ============================================
+# [S569-20260922] 订单身份回填（支付环节，只用强键）
+# ============================================
+def _backfill_order_identity(order_id, mp_openid='', unionid='', openid='', source='') -> bool:
+    """[S569-20260922] 支付环节把【下单时缺失的订单身份】补回来（只用强键，绝不用手机号）。
+
+    根因（2026-09-22 订单 138288 / order_no=20260922095311408576 / ¥21.80 / phone=17723008231）：
+      下单时客户端没带 openid -> 后端只能按手机号认人；该手机号名下挂着两套微信身份
+      （新主体小程序 wx281a9540a6a5b64d 的 oXTD3x… + 7 月老身份 oLhbm2…/oWrA811Z…），
+      resolve_user_identity 判出 multiple_phone_user_ids -> _resolve_user 拒绝自动选择
+      -> 订单 user_id=0 / mp_openid='' / openid='' / unionid=''。
+      钱包页 /api/user/balance 显示的是 calc_balance() 按身份【现算】的值（SQL 里
+      AND o.user_id = <身份>），user_id=0 匹配不上 -> 账本上有钱却显示 0；客服自助页
+      按订单 openid 匹配也查不到 -> 用户只能打电话。
+    为什么在支付环节补：微信统一下单/支付回调都已经拿【付款人真实 openid】跟微信校验过
+      （unifiedorder 用不匹配的 openid 会直接报错），这是比手机号强得多的身份证据。
+
+    保护（正常单零变化）：
+      1) 订单 user_id>0 且 mp_openid 非空 -> 一个字都不写，直接返回 False；
+      2) 只用强键 mp_openid -> unionid -> openid 逐个调 resolve_user_identity，**绝不传手机号**；
+      3) 任一步解出 ambiguous -> 立刻放弃（绝不猜另一个账号）；
+      4) 解不出 user_id>0 -> 不写库；
+      5) 只有【一条】UPDATE，且 WHERE 带 COALESCE(mp_openid,'')='' ；
+         每列都是"只在当前为空时写"（COALESCE(NULLIF(列,''), 新值)），已有值绝不覆盖；
+      6) 任何异常只记日志，绝不抛、绝不影响支付主流程。
+    返回 True 表示确实写了库。
+    """
+    try:
+        _oid = int(order_id or 0)
+    except Exception:
+        return False
+    if _oid <= 0:
+        return False
+    _mp = _clean(mp_openid)
+    _un = _clean(unionid)
+    _op = _clean(openid)
+    if not (_mp or _un or _op):
+        return False
+    _conn = None
+    try:
+        from database import get_db as _gdb569
+        _conn = _gdb569()
+        _cur = _conn.cursor()
+        _cur.execute("""SELECT COALESCE(order_no, '') AS order_no,
+                               COALESCE(user_id, 0) AS user_id,
+                               COALESCE(mp_openid, '') AS mp_openid,
+                               COALESCE(openid, '') AS openid,
+                               COALESCE(unionid, '') AS unionid
+                        FROM orders WHERE id = %s""", (_oid,))
+        _row = _cur.fetchone()
+        if not _row:
+            return False
+        _d = dict(_row)
+        _order_no = _d.get('order_no') or ''
+        if int(_d.get('user_id') or 0) > 0 and _clean(_d.get('mp_openid')):
+            return False                       # 正常单：一个字都不写
+        # 强键逐个认人（顺序固定 mp_openid -> unionid -> openid；绝不带 phone）
+        _uid = 0
+        _hit_mp = ''
+        _hit_un = ''
+        for _key, _val in (('mp_openid', _mp), ('unionid', _un), ('openid', _op)):
+            if not _val:
+                continue
+            _kw = {'mp_openid': '', 'unionid': '', 'openid': '', 'user_id': 0}
+            _kw[_key] = _val
+            try:
+                _ident = resolve_user_identity(_cur, **_kw)
+            except Exception as _re:
+                logger.warning('[S569] 身份回填：强键(%s)解析异常 order=%s err=%s', _key, _oid, _re)
+                continue
+            if _ident.get('ambiguous'):
+                logger.warning('[S569] 身份回填：强键(%s)多义，拒绝猜测 order=%s/%s', _key, _oid, _order_no)
+                return False
+            if int(_ident.get('user_id') or 0) > 0:
+                _uid = int(_ident['user_id'])
+                _hit_mp = _clean(_ident.get('mp_openid'))
+                _hit_un = _clean(_ident.get('unionid'))
+                break
+        if _uid <= 0 and _mp:
+            # 退路：按 mp_openid 在 users 表里唯一命中一行 -> 那行的 id 就是 user_id
+            try:
+                _cur.execute('SELECT id FROM users WHERE mp_openid = %s AND id > 0 ORDER BY id', (_mp,))
+                _rs = _cur.fetchall()
+                if len(_rs) == 1:
+                    _r0 = _rs[0]
+                    _uid = int((_r0.get('id') if hasattr(_r0, 'get') else _r0[0]) or 0)
+                    _hit_mp = _mp
+            except Exception:
+                _uid = 0
+        if _uid <= 0:
+            logger.info('[S569] 身份回填：强键解不出 user_id，不写库 order=%s/%s src=%s (mp=%s...)',
+                        _oid, _order_no, source or '?', (_mp or '-')[:8])
+            return False
+        # 一条 UPDATE，逐列"只在空时写"，已有值绝不覆盖
+        _sets = ['user_id = CASE WHEN COALESCE(user_id, 0) > 0 THEN user_id ELSE %s END']
+        _params = [_uid]
+        _new_mp = _mp or _hit_mp
+        if _new_mp:
+            _sets.append("mp_openid = COALESCE(NULLIF(mp_openid, ''), %s)")
+            _params.append(_new_mp)
+        _new_un = _un or _hit_un
+        if _new_un:
+            _sets.append("unionid = COALESCE(NULLIF(unionid, ''), %s)")
+            _params.append(_new_un)
+        if _op:
+            _sets.append("openid = COALESCE(NULLIF(openid, ''), %s)")
+            _params.append(_op)
+        _params.append(_oid)
+        _cur.execute('UPDATE orders SET ' + ', '.join(_sets)
+                     + " WHERE id = %s AND COALESCE(mp_openid, '') = ''", tuple(_params))
+        _n = int(getattr(_cur, 'rowcount', 0) or 0)
+        if _n <= 0:
+            logger.info('[S569] 身份回填：UPDATE 未命中（已被并发补全或 mp_openid 非空）order=%s', _oid)
+            return False
+        logger.info('[S569] 订单身份回填成功: order=%s/%s src=%s user_id=%s mp_openid=%s... unionid=%s...',
+                    _oid, _order_no, source or '?', _uid, (_new_mp or '-')[:8], (_new_un or '-')[:8])
+        _s556_write_alarm(
+            'order_identity_backfilled',
+            '订单身份回填 [%s] order_id=%s order_no=%s user_id=%s mp_openid=%s...(前8位) '
+            'openid=%s...(前8位)（下单时身份缺失，支付环节用微信确认的付款人 openid 补回；'
+            '此前钱包页显示 0、客服自助查不到单）'
+            % (source or '?', _oid, _order_no, _uid, (_new_mp or '-')[:8], (_op or _mp or '-')[:8]))
+        return True
+    except Exception as _e:
+        logger.error('[S569] 订单身份回填失败(不影响支付主流程): order=%s src=%s err=%s',
+                     order_id, source or '?', _e)
+        return False
+    finally:
+        if _conn is not None:
+            try:
+                _conn.close()
+            except Exception:
+                pass
+
+
+def _s556_detect_real_channel(order_no, cur_ch_type, amount=0, cur_channel_id=None):
+    """[S556-20260922] bug② —— 用 out_trade_no 去【另一个渠道】查单，确认真实收款渠道。
+
+    只认"渠道明确回单笔交易成功"才算数（微信 trade_state=SUCCESS / 支付宝 TRADE_SUCCESS）。
+    返回 dict(channel_id, ch_type, name, transaction_id) 或 None。只读，不发起任何写请求。
+    """
+    if not order_no:
+        return None
+    try:
+        from database import get_db as _gdb556
+        conn = _gdb556()
+        cur = conn.cursor()
+        if cur_ch_type == 'alipay':
+            cur.execute("SELECT * FROM payment_channels WHERE channel_type='wechat' "
+                        "AND is_active=1 ORDER BY weight DESC, id ASC")
+        elif cur_ch_type == 'wechat':
+            cur.execute("SELECT * FROM payment_channels WHERE channel_type='alipay' "
+                        "AND is_active=1 ORDER BY weight DESC, id ASC")
+        else:
+            cur.execute("SELECT * FROM payment_channels "
+                        "WHERE channel_type IN ('wechat','alipay') AND is_active=1 "
+                        "ORDER BY weight DESC, id ASC")
+        cands = [dict(r) for r in cur.fetchall()]
+        conn.close()
+    except Exception as _e:
+        logger.error('[S556] 反查候选渠道失败: %s', _e)
+        return None
+    for ch in cands:
+        try:
+            if int(ch.get('id') or 0) == int(cur_channel_id or 0):
+                continue
+            client, ctype = get_channel_wxpay(ch)
+            if client is None or ctype not in ('wechat', 'alipay'):
+                continue
+            if ctype == 'wechat':
+                r = client.order_query(out_trade_no=order_no) or {}
+                _ok = (str(r.get('return_code') or '') == 'SUCCESS'
+                       and str(r.get('trade_state') or '').upper() == 'SUCCESS')
+                _txn = r.get('transaction_id') or ''
+                _detail = 'trade_state=%s total_fee=%s' % (r.get('trade_state'),
+                                                           r.get('total_fee'))
+            else:
+                r = client.query(out_trade_no=order_no) or {}
+                _ok = (str(r.get('code') or '') == '10000'
+                       and str(r.get('trade_status') or '').upper() in ('TRADE_SUCCESS',
+                                                                        'TRADE_FINISHED'))
+                _txn = r.get('trade_no') or ''
+                _detail = 'trade_status=%s total_amount=%s' % (r.get('trade_status'),
+                                                               r.get('total_amount'))
+            logger.warning('[S556] 反查渠道%s(%s) 订单 %s -> %s%s', ch.get('id'), ctype, order_no,
+                           ('命中 ' if _ok else ''), _detail)
+            if _ok:
+                return {'channel_id': ch.get('id'), 'ch_type': ctype,
+                        'name': ch.get('name') or '', 'transaction_id': _txn or ''}
+        except Exception as _e:
+            logger.warning('[S556] 反查渠道%s异常(继续试下一个): %s', ch.get('id'), _e)
+    return None
+
+
 def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=None, skip_balance=False,
                    out_refund_no=None, write_payment=False, **kwargs):
     # [S541-20260922] 只新增 2 个【可选】参数(默认 None/False)，不传时本函数行为与改动前逐字节一致：
@@ -2961,6 +3261,12 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
         payer = None
         # [S538-20260922] 记录渠道实例类型(wechat/alipay), 供后面按渠道分流退款调用
         _s538_ch_type = ''
+        # [S556-20260922] bug② 换渠道重试后会改写 payer/_s538_ch_type，这里先给初值
+        _s556_alt = None
+        _s556_swapped = False
+        _s556_ord_ch = 0
+        _s556_ch_used = 0
+        _s556_retry_no = ''
         if payment_channel_id:
             try:
                 conn2 = get_db()
@@ -3007,34 +3313,84 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
             order_row = cursor3.fetchone()
             conn3.close()
             if order_row:
-                total_fee = int((float(order_row['deposit_amount']) + float(order_row.get('per_use_price') or 0)) * 100)
+                total_fee = int(round((float(order_row['deposit_amount']) + float(order_row.get('per_use_price') or 0)) * 100))
             else:
-                total_fee = int(float(amount) * 100)
+                total_fee = int(round(float(amount) * 100))
         else:
-            total_fee = int(float(amount) * 100)
-        refund_fee = int(float(amount) * 100)
-        # [S538-20260922] 按【订单实际渠道】分流退款调用:
-        #   原来无论什么渠道都按【微信退款】口径调用 payer.refund(total_fee/refund_fee),
-        #   支付宝单(channel_type='alipay') 拿到的是 AlipayClient ->
-        #   TypeError: refund() got an unexpected keyword argument 'total_fee'
-        #   -> 退使用费/提现审批/投诉退款等所有走本函数的支付宝单全部失败。
-        #   此处只【新增】支付宝分支, 微信分支的调用参数一字未改。
-        _s538_req_no = ''
-        if _s538_ch_type == 'alipay':
-            # out_request_no 用【确定性唯一串】(订单ID/订单号 + 金额分), 同单同额重试幂等, 防重复退款
-            # out_request_no 用【确定性唯一串】(订单ID/订单号 + 金额分), 同单同额重试幂等, 防重复退款
-            # [S541-20260922] 调用方给了确定性单号(out_refund_no)就优先用它; 没给=原样(S538 的生成式)
-            _s538_req_no = out_refund_no or ('RF%s_%d' % (order_id or order_no, int(round(float(amount) * 100))))
-            result = payer.refund(out_trade_no=order_no, refund_amount=float(amount),
-                                  out_request_no=_s538_req_no, refund_reason='原路退款')
-        else:
-            # [S541-20260922] 只多一个"给确定性幂等号"的分支：调用方没传 out_refund_no 时，
-            #   这里执行的仍是改动前那一行（同一函数、同一参数），微信路径行为完全不变。
-            if out_refund_no:
-                result = payer.refund(out_trade_no=order_no, total_fee=total_fee, refund_fee=refund_fee,
-                                      out_refund_no=out_refund_no)
+            total_fee = int(round(float(amount) * 100))
+        refund_fee = int(round(float(amount) * 100))
+        # [S556-20260922] bug② —— 跨渠道重试必须沿用【同一个确定性退款单号】才算渠道内幂等，
+        #   所以微信(out_refund_no) 与支付宝(out_request_no) 共用下面这一个串。
+        #   （原来支付宝走 'RF<id>_<分>'、微信走 wxpay 内部随机单号，两条串不一致 -> 重试那次
+        #     在渠道侧是一笔全新退款，不再受幂等保护。）
+        _s556_retry_no = out_refund_no or ('S556RF%s_%d' % (order_no, refund_fee))
+        def _s556_attempt(ch_type, ch_payer):
+            """[S556] 单次渠道退款调用。微信与支付宝共用【同一个确定性单号】_s556_retry_no：
+            换渠道重试时两次必须同号才算渠道内幂等，否则重试那次在渠道侧是一笔全新退款。
+            其余参数与 S541 口径逐字一致（支付宝 refund_amount 传元、微信传分）。"""
+            if ch_type == 'alipay':
+                _r = ch_payer.refund(out_trade_no=order_no, refund_amount=float(amount),
+                                     out_request_no=_s556_retry_no, refund_reason='原路退款')
             else:
-                result = payer.refund(out_trade_no=order_no, total_fee=total_fee, refund_fee=refund_fee)
+                _r = ch_payer.refund(out_trade_no=order_no, total_fee=total_fee,
+                                     refund_fee=refund_fee, out_refund_no=_s556_retry_no)
+            _b = ' '.join([str(_r.get('err_code') or ''), str(_r.get('err_code_des') or ''),
+                           str(_r.get('return_msg') or ''), str(_r.get('sub_code') or ''),
+                           str(_r.get('sub_msg') or ''), str(_r.get('msg') or ''),
+                           str(_r.get('_raw_body') or '')[:600]]).upper()
+            _ne = (('ORDERNOTEXIST' in _b) or ('ORDER_NOT_EXIST' in _b)
+                   or ('TRADE_NOT_EXIST' in _b) or ('交易不存在' in _b) or ('订单不存在' in _b))
+            return _r, _ne
+
+        # [S541-20260922] 保留原名给下面支付宝的 fund_change 复核用（值就是那个确定性单号）
+        _s538_req_no = _s556_retry_no
+        result, _s556_not_exist = _s556_attempt(_s538_ch_type, payer)
+        # [S556-20260922] bug② —— 退款渠道按【实际支付流水】自动识别，兜历史脏单：
+        #   只有渠道【明确回"交易不存在"】时（这种失败绝无资金变动）才用 out_trade_no 反查另一渠道；
+        #   查到真实收款渠道就用【同一个确定性退款单号】重试一次。
+        if _s556_not_exist:
+            try:
+                _s556_alt = _s556_detect_real_channel(order_no, _s538_ch_type, amount=amount,
+                                                      cur_channel_id=_s556_ord_ch)
+            except Exception as _s556_de:
+                _s556_alt = None
+                logger.error('[S556] 反查真实收款渠道异常: order=%s err=%s', order_no, _s556_de)
+            if _s556_alt:
+                logger.warning('[S556] 渠道记账有误: order=%s 订单渠道=%s(%s) 但真实收款=%s(%s) '
+                               '-> 换渠道重试退款（沿用同一个确定性退款单号 %s）',
+                               order_no, _s556_ord_ch, _s538_ch_type,
+                               _s556_alt.get('channel_id'), _s556_alt.get('ch_type'),
+                               _s556_retry_no)
+                _c2 = None
+                try:
+                    _c2 = get_db()
+                    _c2c = _c2.cursor()
+                    _c2c.execute('SELECT * FROM payment_channels WHERE id=%s',
+                                 (_s556_alt.get('channel_id'),))
+                    _r2 = _c2c.fetchone()
+                    _c2.close()
+                    _c2 = None
+                    if _r2:
+                        _p2, _t2 = get_channel_wxpay(dict(_r2))
+                        if _p2 is not None and _t2:
+                            payer = _p2
+                            _s538_ch_type = _t2
+                            _s556_swapped = True
+                            _s556_ch_used = int(_s556_alt.get('channel_id') or 0)
+                            result, _s556_not_exist = _s556_attempt(_t2, _p2)
+                except Exception as _s556_ee:
+                    logger.error('[S556] 换渠道重试异常(按本次结果处理): order=%s err=%s',
+                                 order_no, _s556_ee)
+                finally:
+                    if _c2 is not None:
+                        try:
+                            _c2.close()
+                        except Exception:
+                            pass
+            else:
+                logger.error('[S556] 订单渠道 %s 报"交易不存在"，反查微信/支付宝也没查到真实收款: '
+                             'order=%s（疑似未收款或交易号异常，不再盲目重试）',
+                             _s556_ord_ch, order_no)
         if _s538_ch_type == 'alipay':
             # [S541-20260922] 官方口径：code=10000 只代表"本次退款请求成功", 不代表退款成功。
             #   必须 fund_change=Y 才算退成功；fund_change=N 或无此字段时用退款查询接口复核。
@@ -3064,6 +3420,15 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
             _s538_refund_ok = result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS'
         if _s538_refund_ok:
             refund_id = result.get('refund_id') or result.get('out_refund_no', '') or _s538_req_no
+            # [S556-20260922] bug② —— 若这次成功是"换渠道重试"换来的，把订单渠道纠正成真实渠道
+            if _s556_swapped:
+                try:
+                    _s556_correct_order_channel(
+                        order_id, _s556_alt.get('channel_id'), source='refund-detect',
+                        order_no=order_no, ch_type=_s556_alt.get('ch_type') or '',
+                        transaction_id=_s556_alt.get('transaction_id') or '')
+                except Exception as _s556_se:
+                    logger.error('[S556] 退款后纠正渠道失败(不影响退款): %s', _s556_se)
             logger.info('[do_real_refund] Success: order=%s, refund_id=%s' % (order_no, refund_id))
             # 更新订单退款状态（calc_balance 模式：余额实时计算，无需操作 user_balances）
             if order_id:

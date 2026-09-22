@@ -104,12 +104,13 @@ const unionid = new URLSearchParams(window.location.search).get('unionid') || lo
 function togglePwd(){var p=document.getElementById('pwd');p.type=p.type==='password'?'text':'password';}
 function confirmInfo(){var phone=document.getElementById('phone').value.trim();var pwd=document.getElementById('pwd').value.trim();if(!phone||phone.length<11){alert('请输入正确的手机号');return;}if(!pwd||pwd.length!==4){alert('请输入4位密码');return;}document.getElementById('confirmPhone').textContent=phone;document.getElementById('confirmPwd').textContent=pwd.split('').join(' ');document.getElementById('confirmOverlay').classList.add('show');}
 function closeConfirm(){document.getElementById('confirmOverlay').classList.remove('show');}
-function doStore(){closeConfirm();var phone=document.getElementById('phone').value.trim();var pwd=document.getElementById('pwd').value.trim();fetch('/api/h5/store?openid=' + openid,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:phone,pwd:pwd,device:DEVICE,openid:openid,unionid:unionid,wechat_name:wechatName})}).then(function(r){return r.json();}).then(function(d){if(d.code==200){storeData=d.data;
+function doStore(){closeConfirm();var phone=document.getElementById('phone').value.trim();var pwd=document.getElementById('pwd').value.trim();fetch('/api/h5/store?openid=' + openid,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:phone,pwd:pwd,device:DEVICE,openid:openid,unionid:unionid,wechat_name:wechatName})}).then(function(r){return r.json();}).then(function(d){if(d.code==200){storeData=d.data;savePendingOrder();
 if(storeData.need_redirect){fetch("/api/wx/generate-scheme",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:"pages/deposit/deposit",query:"openid="+encodeURIComponent(openid||"")+"&device="+encodeURIComponent(DEVICE||"")+"&orderId="+(storeData.order_id||"")})}).then(function(r){return r.json();}).then(function(d){var sc=(d.data&&d.data.scheme)||"";if(sc){location.href=sc;}else{location.href="weixin://dl/business/?appid="+'wxcabd4cbdb3096c4b'+"&path="+encodeURIComponent('pages/deposit/deposit');}}).catch(function(){location.href="weixin://dl/business/?appid="+'wxcabd4cbdb3096c4b'+"&path="+encodeURIComponent('pages/deposit/deposit');});return;}document.getElementById('inputPage').style.display='none';document.getElementById('payPage').classList.add('show');document.getElementById('payAmount').textContent=d.data.deposit||'0';document.getElementById('paySlot').textContent=d.data.slot_number||'--';var sec=300;payTimer=setInterval(function(){sec--;var m=Math.floor(sec/60);var s=sec%60;document.getElementById('payCountdown').textContent='\u652f\u4ed8\u5269\u4f59\u65f6\u95f4 '+(m<10?'0':'')+m+':'+(s<10?'0':'')+s;if(sec<=0){clearInterval(payTimer);alert('\u652f\u4ed8\u8d85\u65f6\uff0c\u8bf7\u91cd\u65b0\u64cd\u4f5c');location.reload();}},1000);}else{alert(d.message||'\u64cd\u4f5c\u5931\u8d25');}}).catch(function(e){alert('\u7f51\u7edc\u9519\u8bef');});}
 function doPay(){
 if(payTimer)clearInterval(payTimer);
 if(storeData.pay_params){
 var pp=storeData.pay_params;
+if(pp.mode==="alipay"){alipayPay(pp);return;}
 if(pp.mode==="h5"&&pp.mweb_url){location.href=pp.mweb_url;return;}
 else if(pp.mode==="jsapi"&&pp.jsapi_params){
 if(typeof WeixinJSBridge!=="undefined"){
@@ -137,6 +138,49 @@ if(d.code==200){if(d.data&&d.data.pay_url){location.href=d.data.pay_url;}else{sh
 else if(d.code==301){if(d.data&&d.data.pay_url){var w=window.open(d.data.pay_url,"_blank");var cw=setInterval(function(){if(w.closed){clearInterval(cw);location.reload();}},500);}}
 else{alert(d.message||"支付失败");}}).catch(function(e){alert("网络错误");});
 }
+/* [S513-20260921] 支付宝 H5 支付：先跳支付宝小程序拿订阅，回来再走手机网站支付 */
+var ALIPAY_MP_APPID='2021006199688688';
+function isAlipayEnv(){return /AlipayClient/i.test(navigator.userAgent||"");}
+function savePendingOrder(){
+  try{
+    if(!storeData||!storeData.order_id)return;
+    sessionStorage.setItem("locker_alipay_pending",JSON.stringify({order_id:storeData.order_id,pwd:storeData.pwd||"",slot_number:storeData.slot_number||""}));
+  }catch(e){}
+}
+function alipayPay(pp){
+  /* 已有待提交表单（说明刚从支付宝小程序回来）-> 直接去收银台 */
+  var f=sessionStorage.getItem("alipay_form")||"";
+  if(f){submitAlipayForm();return;}
+  /* 第一次：把表单存好，跳支付宝小程序拿订阅；失败/超时则直接支付（订阅是加分项，不能挡住付款） */
+  try{
+    sessionStorage.setItem("alipay_form",pp.form||"");
+    sessionStorage.setItem("alipay_url",pp.pay_url||"");
+  }catch(e){}
+  savePendingOrder();
+  var phone=(document.getElementById("phone")||{}).value||"";
+  var code=(document.getElementById("pwd")||{}).value||"";
+  var q="source=h5&order_id="+encodeURIComponent((storeData&&storeData.order_id)||"")+"&phone="+encodeURIComponent(phone)+"&code="+encodeURIComponent(code);
+  var u="alipays://platformapi/startapp?appId="+ALIPAY_MP_APPID+"&page="+encodeURIComponent("pages/subscribe/subscribe")+"&query="+encodeURIComponent(q);
+  var jumped=false;
+  try{location.href=u;jumped=true;}catch(e){}
+  if(!jumped){submitAlipayForm();return;}
+  setTimeout(function(){ if(!document.hidden){ submitAlipayForm(); } },4000);
+}
+function submitAlipayForm(){
+  var f="",u="";
+  try{ f=sessionStorage.getItem("alipay_form")||""; u=sessionStorage.getItem("alipay_url")||""; }catch(e){}
+  try{ sessionStorage.removeItem("alipay_form"); sessionStorage.removeItem("alipay_url"); }catch(e){}
+  if(f){ document.open(); document.write(f); document.close(); return; }
+  if(u){ location.href=u; return; }
+  alert("支付宝下单失败，请重试");
+}
+/* 用户关掉支付宝小程序回到本页 -> 自动继续支付 */
+document.addEventListener("visibilitychange",function(){
+  if(!document.hidden&&isAlipayEnv()){
+    var f="";try{f=sessionStorage.getItem("alipay_form")||"";}catch(e){}
+    if(f){submitAlipayForm();}
+  }
+});
 function pollPayStatus(){
 var count=0;var si=setInterval(function(){count++;
 if(count>30){clearInterval(si);alert("支付超时");location.reload();return;}
@@ -154,7 +198,30 @@ document.getElementById("successSlot").textContent="柜门号："+(storeData.slo
 document.getElementById("successPwd").textContent="取包密码："+storeData.pwd.split("").join(" ");
 }
 
-    var _sp = localStorage.getItem('locker_saved_phone');
+    /* [S513] 从支付宝收银台/小程序回来：有待完成订单就查状态，已支付直接显示成功 */
+(function(){
+  var raw="";try{raw=sessionStorage.getItem("locker_alipay_pending")||"";}catch(e){}
+  if(!raw)return;
+  var info={};try{info=JSON.parse(raw)||{};}catch(e){info={};}
+  if(!info.order_id)return;
+  var tries=0;
+  var t=setInterval(function(){
+    tries++;
+    if(tries>40){clearInterval(t);return;}
+    fetch("/api/store/pay",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({order_id:info.order_id})}).then(function(r){return r.json();}).then(function(d){
+        if(d&&d.code==200){
+          clearInterval(t);
+          try{sessionStorage.removeItem("locker_alipay_pending");}catch(e){}
+          storeData={order_id:info.order_id,pwd:info.pwd||"",slot_number:info.slot_number||"",pay_params:null};
+          var ip=document.getElementById("inputPage"); if(ip){ip.style.display="none";}
+          var pp2=document.getElementById("payPage"); if(pp2){pp2.classList.remove("show");pp2.style.display="none";}
+          showSuccess();
+        }
+      }).catch(function(){});
+  },3000);
+})();
+var _sp = localStorage.getItem('locker_saved_phone');
     if (_sp) { var _pe = document.getElementById('phone'); if (_pe) _pe.value = _sp; }
 </script>
 </body>

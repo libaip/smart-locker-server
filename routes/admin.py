@@ -1439,6 +1439,28 @@ def withdrawal_apply():
         user_openid = data.get('openid', '') or ''
         if not user_phone:
             return json_response(message='参数不完整', code=400)
+
+        def _s557_notify_applied(_oid, _amount, _openid, _phone, _order_no):
+            """[S557c-20260922] 老板口径：用户【提交提现申请】时就发一条"退款成功通知"
+            （不看退款是否成功、不看网点审批模式）；同一张提现单只在创建它的那一处发这一条。
+            客观发不出去(无 openid)由这里记日志，其余由 send_wx_subscribe_message 内部记。"""
+            if not _openid:
+                logger.info('[S557] 提现申请无可用小程序openid, 跳过通知 order_id=%s phone=%s', _oid, _phone)
+                return
+            try:
+                from helpers import send_wx_subscribe_message
+                _d = {
+                    'amount2': {'value': '¥{:.2f}'.format(float(_amount or 0))},
+                    'time5': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
+                    'thing4': {'value': '原路退回支付账户'},
+                    'thing3': {'value': '预计0-3个工作日到账'},
+                    'character_string1': {'value': str(_order_no or _oid or '0')[:32]},   # [S557] 缺它必 47003
+                }
+                logger.info('[S557] 提现申请通知发送 order_id=%s order_no=%s openid=%s', _oid, _order_no, str(_openid)[:8])
+                send_wx_subscribe_message(_openid, _wx_tpl('subscribe_refund', 'mp', 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c'), _d, phone=_phone, page='pages/mine/mine', order_id=_oid)  # [S525]
+            except Exception as _e:
+                logger.error(f'[S557] 提现申请通知失败 order_id={_oid}: {_e}')
+
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute('SELECT o.*, c.cabinet_code, l.id as location_id, l.withdraw_enabled, l.anti_test_minutes, l.anti_test_auto_refund, l.show_refunding_status FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE o.id = %s AND o.user_phone = %s', (order_id, user_phone))
@@ -1518,7 +1540,8 @@ def withdrawal_apply():
                                 'amount2': {'value': '¥' + f'{amount:.2f}'},
                                 'time5': {'value': now_str},
                                 'thing4': {'value': '原路退回支付账户'},
-                                'thing3': {'value': '预计0-3个工作日到账，请耐心等待'}
+                                'thing3': {'value': '预计0-3个工作日到账，请耐心等待'},
+                                'character_string1': {'value': str(eligible['order_no'] or order_id)[:32]}
                             }
                             send_wx_subscribe_message(user_openid, _wx_tpl('subscribe_refund', 'mp', 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c'), refund_notify_data, phone=user_phone, page='pages/mine/mine', order_id=order_id)  # [S525]
                         except Exception as e:
@@ -1531,6 +1554,10 @@ def withdrawal_apply():
                         withdrawal_id = cursor.lastrowid
                         conn.commit()
                         conn.close()
+                        # [S557b-20260922] 回滚 P3：按老板口径，提现动作发生即发通知，
+                        #   【不以"退款是否成功"作为发送前置条件】—— 退款失败(落 status=4、
+                        #   待重试/转人工)的场景同样照发这一条（恢复原行为）。
+                        #   同时保留 47003 修复：报文必须带 character_string1(订单编号)。
                         # 发送退款成功订阅消息（用户点击提现时立即发送）
                         try:
                             from helpers import send_wx_subscribe_message
@@ -1540,7 +1567,8 @@ def withdrawal_apply():
                                 'amount2': {'value': '¥' + f'{amount:.2f}'},
                                 'time5': {'value': now_str},
                                 'thing4': {'value': '原路退回支付账户'},
-                                'thing3': {'value': '预计0-3个工作日到账，请耐心等待'}
+                                'thing3': {'value': '预计0-3个工作日到账，请耐心等待'},
+                                'character_string1': {'value': str(eligible['order_no'] or order_id)[:32]}
                             }
                             send_wx_subscribe_message(user_openid, _wx_tpl('subscribe_refund', 'mp', 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c'), refund_notify_data, phone=user_phone, page='pages/mine/mine', order_id=order_id)  # [S525]
                         except Exception as e:
@@ -1569,7 +1597,8 @@ def withdrawal_apply():
                             'amount2': {'value': '¥' + f'{amount:.2f}'},
                             'time5': {'value': now_str},
                             'thing4': {'value': '原路退回支付账户'},
-                            'thing3': {'value': '预计0-3个工作日到账，请耐心等待'}
+                            'thing3': {'value': '预计0-3个工作日到账，请耐心等待'},
+                            'character_string1': {'value': str(eligible['order_no'] or order_id)[:32]}
                         }
                         send_wx_subscribe_message(user_openid, _wx_tpl('subscribe_refund', 'mp', 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c'), refund_notify_data, phone=user_phone, page='pages/mine/mine', order_id=order_id)  # [S525]
                     except Exception as e:
@@ -1594,12 +1623,14 @@ def withdrawal_apply():
                             consume_whitelist(openid_for_wl)
                         except Exception:
                             pass
+                        _s557_notify_applied(order_id, amount, user_openid, user_phone, eligible['order_no'])   # [S557c] 申请时发一条
                         return json_response({'withdrawal_id': 0, 'order_id': order_id, 'amount': amount, 'status': 'auto_approved', 'message': '白名单免审，已自动退款'})
                     else:
                         cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, error_msg, openid) VALUES (%s, %s, %s, 0, 1, %s, %s)', (order_id, user_phone, amount, msg, user_openid))
                         withdrawal_id = cursor.lastrowid
                         conn.commit()
                         conn.close()
+                        _s557_notify_applied(order_id, amount, user_openid, user_phone, eligible['order_no'])   # [S557c] 申请时发一条(退款失败也发)
                         return json_response({'withdrawal_id': withdrawal_id, 'order_id': order_id, 'amount': amount, 'status': 'pending', 'message': '退款接口异常，转人工审核'})
                 # 检查是否被拒绝后重提
                 cursor.execute('SELECT COUNT(*) as cnt FROM withdrawal_records wr WHERE user_phone = %s AND status = 3', (user_phone,))  # noqa
@@ -1614,12 +1645,14 @@ def withdrawal_apply():
                         cursor.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, approver, openid) VALUES (%s, %s, %s, 2, 1, %s, %s)", (order_id, user_phone, amount, 'whitelist_auto', user_openid))
                         conn.commit()
                         conn.close()
+                        _s557_notify_applied(order_id, amount, user_openid, user_phone, eligible['order_no'])   # [S557c] 申请时发一条
                         return json_response({'withdrawal_id': 0, 'order_id': order_id, 'amount': amount, 'status': 'auto_approved', 'message': '已加入白名单，自动退款'})
                     else:
                         cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, error_msg, openid) VALUES (%s, %s, %s, 0, 1, %s, %s)', (order_id, user_phone, amount, msg, user_openid))
                         withdrawal_id = cursor.lastrowid
                         conn.commit()
                         conn.close()
+                        _s557_notify_applied(order_id, amount, user_openid, user_phone, eligible['order_no'])   # [S557c] 申请时发一条(退款失败也发)
                         return json_response({'withdrawal_id': withdrawal_id, 'order_id': order_id, 'amount': amount, 'status': 'pending', 'message': '退款接口异常，转人工审核'})
                 # 人工审批：创建待审核记录
                 cursor.execute('INSERT INTO withdrawal_records (order_id, user_phone, amount, status, click_count, openid) VALUES (%s, %s, %s, 0, %s, %s)',
@@ -1636,7 +1669,8 @@ def withdrawal_apply():
                         'amount2': {'value': '¥' + f'{amount:.2f}'},
                         'time5': {'value': now_str},
                         'thing4': {'value': '原路退回支付账户'},
-                        'thing3': {'value': '预计0-3个工作日到账，请耐心等待'}
+                        'thing3': {'value': '预计0-3个工作日到账，请耐心等待'},
+                        'character_string1': {'value': str(eligible['order_no'] or order_id)[:32]}
                     }
                     send_wx_subscribe_message(user_openid, _wx_tpl('subscribe_refund', 'mp', 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c'), refund_notify_data, phone=user_phone, page='pages/mine/mine', order_id=order_id)  # [S525]
                 except Exception as e:

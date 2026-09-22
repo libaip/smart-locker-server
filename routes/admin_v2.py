@@ -5007,6 +5007,94 @@ def admin_oa_subscribe_setting():
         return json_response(message=str(e), code=500)
 
 
+# [S601-20260922] 「订阅通知」后台可视化：老板自己点，不用再找人改库。
+#   为什么单开一个接口、而不是走下面的 /settings/save：
+#     本文件的 /settings 与 /settings/save 读写的是 **SQLite(locker.db)**，而程序运行时
+#     helpers.get_setting() 读的是 **PostgreSQL** —— 这两条路早就分叉了（与上面
+#     /admin/oa-subscribe-setting 注释里踩的是同一个坑）。所以订阅这 5 个键必须直接读写 PG，
+#     保存后立即生效（get_setting 无缓存，每个请求现读），不需要重启。
+#   只白名单这 5 个键可观可改；其余设置项一律不碰、也不会被本接口覆盖。
+_S601_SUBSCRIBE_SETTINGS = (
+    ('mp_subscribe_scene_enabled', '1', ('0', '1'),
+     '订阅按使用场景固定模板的总开关。开=按场景发（默认）；关=忽略场景，回到老的随机 A/B 逻辑。'),
+    ('mp_subscribe_scene_pay', 'general', ('general', 'both'),
+     '支付/存包环节弹窗要几条：「账户余额」1 条（默认），或「账户余额」+「退款成功」两条都要。'),
+    ('mp_subscribe_scene_withdraw', 'refund', ('refund', 'both'),
+     '提现环节弹窗要几条：「退款成功」1 条（默认），或「账户余额」+「退款成功」两条都要。'),
+    ('mp_subscribe_prompt', 'step1', ('step1', 'pay', 'off'),
+     '弹出订阅窗口的时机：存包第 1 步（默认）/ 点支付时 / 不弹。'),
+    ('mp_subscribe_ab', 'ab', ('1', '2', 'ab'),
+     '不带场景的老版本小程序怎么要模板：1=只要一条；2=总是两条；ab=按分钟奇偶随机（默认）。'),
+)
+
+
+@bp.route('/admin/subscribe-notify-setting', methods=['GET', 'POST'])
+@require_auth
+def admin_subscribe_notify_setting():
+    """订阅通知配置：GET 查当前值(含默认值/可选项/说明) / POST 改。
+    直接读写 PostgreSQL → 保存后立即生效，不需要重启。"""
+    from config import DATABASE_URL as _S601_DB_URL
+    import psycopg2
+    _def601 = {k: d for k, d, _v, _x in _S601_SUBSCRIBE_SETTINGS}
+    _opt601 = {k: v for k, _d, v, _x in _S601_SUBSCRIBE_SETTINGS}
+    _dsc601 = {k: x for k, _d, _v, x in _S601_SUBSCRIBE_SETTINGS}
+    _keys601 = list(_def601.keys())
+    try:
+        if request.method == 'POST':
+            data = request.get_json(silent=True) or {}
+            items = {}
+            if data.get('key') is not None:
+                items[str(data.get('key'))] = data.get('value')
+            if isinstance(data.get('settings'), dict):
+                for _k, _v in data['settings'].items():
+                    items[str(_k)] = _v
+            if not items:
+                return json_response(message='没有要保存的配置项', code=400)
+            _unknown = [k for k in items if k not in _def601]
+            if _unknown:
+                return json_response(message='不支持的配置项：%s' % ','.join(sorted(_unknown)), code=400)
+            _clean = {}
+            for _k, _v in items.items():
+                _sv = str('' if _v is None else _v).strip().lower()
+                if _sv not in _opt601[_k]:
+                    return json_response(
+                        message='「%s」取值不合法，只能是 %s' % (_k, ' / '.join(_opt601[_k])), code=400)
+                _clean[_k] = _sv
+            _conn = psycopg2.connect(_S601_DB_URL, connect_timeout=5)
+            _cur = _conn.cursor()
+            for _k, _sv in _clean.items():
+                _cur.execute(
+                    "INSERT INTO system_settings (setting_key, setting_value, description) "
+                    "VALUES (%s, %s, %s) "
+                    "ON CONFLICT (setting_key) DO UPDATE SET "
+                    "setting_value = EXCLUDED.setting_value, description = EXCLUDED.description",
+                    (_k, _sv, _dsc601[_k]))
+            _conn.commit()
+            _conn.close()
+            logger.info('[S601][subscribe_notify_setting] 保存 %s', _clean)
+            _msg601 = '已保存，立即生效（不用重启）'
+            return json_response({'code': 0, 'saved': _clean, 'message': _msg601})
+        _conn = psycopg2.connect(_S601_DB_URL, connect_timeout=5)
+        _cur = _conn.cursor()
+        _ph601 = ','.join(['%s'] * len(_keys601))
+        _cur.execute("SELECT setting_key, setting_value FROM system_settings "
+                     "WHERE setting_key IN (%s)" % _ph601, tuple(_keys601))
+        _rows = {r[0]: r[1] for r in _cur.fetchall()}
+        _conn.close()
+        _out = {}
+        for _k in _keys601:
+            _raw = _rows.get(_k)
+            _val = str(_def601[_k] if _raw is None or str(_raw).strip() == '' else _raw).strip().lower()
+            if _val not in _opt601[_k]:
+                _val = _def601[_k]          # 库里是脏值 -> 按默认显示（与线上实际行为一致）
+            _out[_k] = {'value': _val, 'default': _def601[_k],
+                        'options': list(_opt601[_k]), 'desc': _dsc601[_k], 'raw': _raw}
+        return json_response({'code': 0, 'settings': _out})
+    except Exception as e:
+        logger.error('[S601][subscribe_notify_setting] %s', e)
+        return json_response(message=str(e), code=500)
+
+
 @bp.route('/settings/save', methods=['POST'])
 def save_settings():
     try:

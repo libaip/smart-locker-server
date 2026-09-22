@@ -1876,6 +1876,22 @@ Vue.component('page-system-settings',{template:`
 <div style="font-size:12px;color:#909399;line-height:1.6;margin:-6px 0 6px">开启后: 存包页(H5)会让用户订阅微信通知, 并由公众号下发"寄存成功/押金退还/退款成功"。关闭后存包流程与以前完全一致。建议小程序不可用时再开启。</div>
 </div>
 </div>
+<div style="border-bottom:1px solid #ebeef5;padding-bottom:20px;margin-bottom:20px">
+<h4 style="margin:0 0 12px;font-size:15px;color:#303133">订阅通知（微信订阅消息）</h4>
+<div style="max-width:640px">
+<div class="form-group"><label>支付/存包环节</label><select v-model="$parent.subNotify.mp_subscribe_scene_pay.value" @change="$parent.saveSubscribeNotify('mp_subscribe_scene_pay',$event.target.value)"><option value="general">只要「账户余额」1 条（默认）</option><option value="both">两条都要（账户余额 + 退款成功）</option></select></div>
+<div style="font-size:12px;color:#909399;line-height:1.6;margin:-6px 0 6px">用户在支付/存包时弹出的订阅窗口，问他要哪条通知。选「两条都要」= 一次请求两个模板（用户往往只勾一个，另一个就没额度）。</div>
+<div class="form-group"><label>提现环节</label><select v-model="$parent.subNotify.mp_subscribe_scene_withdraw.value" @change="$parent.saveSubscribeNotify('mp_subscribe_scene_withdraw',$event.target.value)"><option value="refund">只要「退款成功」1 条（默认）</option><option value="both">两条都要（账户余额 + 退款成功）</option></select></div>
+<div style="font-size:12px;color:#909399;line-height:1.6;margin:-6px 0 6px">用户在提现时弹出的订阅窗口，问他要哪条通知。同上，「两条都要」会一次请求两个模板。</div>
+<div class="form-group"><label>场景固定总开关</label><select v-model="$parent.subNotify.mp_subscribe_scene_enabled.value" @change="$parent.saveSubscribeNotify('mp_subscribe_scene_enabled',$event.target.value)"><option value="1">开（按上面两个环节的设置发，默认）</option><option value="0">关（忽略场景，回到老逻辑）</option></select></div>
+<div style="font-size:12px;color:#909399;line-height:1.6;margin:-6px 0 6px">关掉后小程序按老规矩请求模板（不分支付还是提现），上面两项设置暂时不生效。平时保持「开」。</div>
+<div class="form-group"><label>弹窗时机</label><select v-model="$parent.subNotify.mp_subscribe_prompt.value" @change="$parent.saveSubscribeNotify('mp_subscribe_prompt',$event.target.value)"><option value="step1">存包第 1 步就弹（默认）</option><option value="pay">点「支付」时才弹</option><option value="off">不弹（不要通知）</option></select></div>
+<div style="font-size:12px;color:#909399;line-height:1.6;margin:-6px 0 6px">什么时候让用户授权收通知。选「不弹」= 用户不会收到微信订阅通知。</div>
+<div class="form-group"><label>老版本小程序(A/B)</label><select v-model="$parent.subNotify.mp_subscribe_ab.value" @change="$parent.saveSubscribeNotify('mp_subscribe_ab',$event.target.value)"><option value="ab">按分钟随机（默认）</option><option value="1">只要一条</option><option value="2">总是两条</option></select></div>
+<div style="font-size:12px;color:#909399;line-height:1.6;margin:-6px 0 6px">只影响<b>没有带场景</b>的老版本小程序请求（新版本走上面两个环节的设置）。「按分钟随机」= 奇数分钟要一条、偶数分钟要两条，用于做对比实验。</div>
+<div style="font-size:12px;color:#909399;line-height:1.6;margin:6px 0 0">这 5 项<b>选完立即保存、立即生效，不用重启</b>；与页面最下面那个「保存设置」按钮无关，也不会互相影响。</div>
+</div>
+</div>
 <div style="padding-bottom:20px">
 <h4 style="margin:0 0 12px;font-size:15px;color:#303133">订单隐藏设置</h4>
 <div style="max-width:500px">
@@ -1902,7 +1918,7 @@ Vue.component('page-system-settings',{template:`
 <button class="btn btn-blue" @click="$parent.saveSettings()">保存设置</button>
 </div>
 </div>
-</div>`,created(){this.$parent.loadSettings();this.$parent.loadFreeUse();this.$parent.loadOaSubscribe();this.$parent.loadEntryMode();}});
+</div>`,created(){this.$parent.loadSettings();this.$parent.loadFreeUse();this.$parent.loadOaSubscribe();this.$parent.loadEntryMode();this.$parent.loadSubscribeNotify();}});
 
 Vue.component('page-cabinet-groups',{template:`
 <div class="page-box">
@@ -2081,7 +2097,7 @@ settingsActiveTab:'basic',settings:{system_name:'智能寄存柜'},smsEnabled:fa
 // Toast/Confirm
 toastMsg:'',toastType:'success',toastTimer:null,confirmVisible:false,confirmMsg:'',confirmCb:null,
 // P1 Data
-settingsData:{},settingsLoading:false,orderVisibility:{order_hide_rate:0,order_hide_whitelist:''},dupFilter:{duplicate_filter_enabled:0,duplicate_days:7,duplicate_limit:5},cabinetGroups:[],cabinetGroupsTotal:0,cabinetGroupsPage:1,cabinetGroupForm:{},cabinetGroupModal:false,offlineOrders:[],offlineOrdersTotal:0,offlineOrdersPage:1,
+settingsData:{},settingsLoading:false,subNotify:{mp_subscribe_scene_enabled:{value:'1'},mp_subscribe_scene_pay:{value:'general'},mp_subscribe_scene_withdraw:{value:'refund'},mp_subscribe_prompt:{value:'step1'},mp_subscribe_ab:{value:'ab'}},orderVisibility:{order_hide_rate:0,order_hide_whitelist:''},dupFilter:{duplicate_filter_enabled:0,duplicate_days:7,duplicate_limit:5},cabinetGroups:[],cabinetGroupsTotal:0,cabinetGroupsPage:1,cabinetGroupForm:{},cabinetGroupModal:false,offlineOrders:[],offlineOrdersTotal:0,offlineOrdersPage:1,
 // P2 Data
 remoteOpenLogs:[],remoteOpenLogsTotal:0,remoteOpenLogsPage:1,remoteOpenLogsFilter:{location_id:'',device_id:'',date_start:'',date_end:''},deviceLogList:[],deviceLogTotal:0,deviceLogPage:1,doorRecords:[],doorRecordsTotal:0,doorRecordsPage:1,orderDoorRecords:[],pendingCmds:[],alerts:[],alertTotal:0,alertPage:1,alertFilterDevice:'',alertFilterType:'',alertDays:3,alertDeviceSummaries:[],pendingCmdsTotal:0,pendingCmdsPage:1
 },
@@ -2278,6 +2294,9 @@ toggleFreeUse:function(checked){var self=this;this.api('/admin/free-use-setting'
 loadEntryMode:function(){var self=this;this.api('/admin/entry-mode-setting').then(function(d){var x=(d&&d.data)||{};if(x.mode)self.entryMode=x.mode;}).catch(function(){});},
 saveEntryMode:function(mode){var self=this;if(!mode)return;this.api('/admin/entry-mode-setting',{mode:mode},'POST').then(function(d){self.entryMode=mode;self.toast((d&&d.data&&d.data.message)||(d&&d.message)||'已保存');}).catch(function(e){self.toast(e.message||'切换失败','error');self.loadEntryMode();});},
 loadSettings:function(){var self=this;this.api('/settings').then(function(d){var sd={};var src=(d&&d.data&&typeof d.data==='object')?d.data:(Array.isArray(d)?d:[]);if(Array.isArray(src)){src.forEach(function(r){sd[r.setting_key]={value:r.setting_value,desc:r.description||r.setting_key};});}else{Object.keys(src).forEach(function(k){sd[k]={value:(src[k]&&src[k].value!==undefined)?src[k].value:'',desc:(src[k]&&src[k].desc)||k};});}if(!sd.whitelist_daily_use_limit)sd.whitelist_daily_use_limit={value:'3',desc:'当天投诉用户今日可用次数'};if(!sd.complaint_blacklist_limit)sd.complaint_blacklist_limit={value:'3',desc:'累计投诉禁止使用次数'};self.settingsData=sd;}).catch(function(e){self.toast(e.message||'加载失败','error');});},
+// [S601-20260922] 订阅通知区块：走独立的 PG 接口（不是下面的 /settings/save，那条路写的是 sqlite、不生效）
+loadSubscribeNotify:function(){var self=this;this.api('/admin/subscribe-notify-setting').then(function(d){var x=(d&&d.data&&d.data.settings)||{};if(x&&typeof x==='object'){var n={};for(var k in x){n[k]={value:(x[k]&&x[k].value!==undefined)?x[k].value:'',desc:(x[k]&&x[k].desc)||k};}self.subNotify=n;}}).catch(function(){});},
+saveSubscribeNotify:function(key,val){var self=this;if(!key)return;this.api('/admin/subscribe-notify-setting',{key:key,value:val},'POST').then(function(d){self.toast((d&&d.data&&d.data.message)||(d&&d.message)||'已保存');self.loadSubscribeNotify();}).catch(function(e){self.toast(e.message||'保存失败','error');self.loadSubscribeNotify();});},
 saveSettings:function(){var self=this;var arr=[];for(var k in this.settingsData){arr.push({setting_key:k,setting_value:this.settingsData[k].value});}this.api('/settings/save',{settings:arr}).then(function(){self.toast('保存成功');}).catch(function(e){self.toast(e.message||'保存失败','error');});},
 loadOfflineOrders:function(){var self=this;this.api('/admin/offline-orders',{page:this.offlineOrdersPage},'GET').then(function(d){self.offlineOrders=d.data&&d.data.list||[];self.offlineOrdersTotal=d.data&&d.data.total||0;}).catch(function(e){self.toast(e.message||'加载失败','error');});},
 restartDevice:function(dev){var self=this;if(!confirm("确定重启设备 "+dev.mainboard_device_id+" 吗？设备将重启，约2分钟恢复。"))return;self.api('/admin/device/restart',{device_id:dev.mainboard_device_id}).then(function(d){self.toast(d.message||"已推送重启指令","success");setTimeout(function(){self.loadMachines();},10000);}).catch(function(e){self.toast(e.message||"重启失败","error");});},showDeviceDetail:function(dev){var self=this;this.api('/admin/device/detail',{id:dev.id}).then(function(d){self.deviceDetail=d.data;self.deviceDetailModal=true;}).catch(function(e){self.toast(e.message||'加载失败','error');});},unbindDevice:function(dev){var self=this;if(!confirm("确定解绑该设备吗？解绑后屏幕上需要重新设置。"))return;self.api("/admin/device/unbind",{"cabinet_id":dev.id}).then(function(d){self.toast(d.message||"解绑成功");self.deviceDetailModal=false;self.loadMachines();}).catch(function(e){self.toast(e.message||"解绑失败","error");});},showDeviceQrcode:function(dev){var self=this;this.api('/admin/device/qrcode',{id:dev.id}).then(function(d){self.deviceQrcode=d.data;if(typeof QRCode!=='undefined'){try{var qr=new QRCode(document.createElement('div'),{text:d.data.qr_url,width:200,height:200});setTimeout(function(){var img=qr._el.querySelector('img');if(img){self.$set(self.deviceQrcode,'qrcode_img',img.src);}self.deviceQrcodeModal=true;},100);}catch(ee){self.deviceQrcodeModal=true;}}else{self.deviceQrcodeModal=true;}}).catch(function(e){self.toast(e.message||'加载失败','error');});},downloadDeviceQrcode:function(){var self=this;if(!self.deviceQrcode||!self.deviceQrcode.qrcode_img)return;var link=document.createElement('a');link.download='ID'+(self.deviceQrcode.id||'')+'_'+(self.deviceQrcode.cabinet_code||'device')+'_qrcode.png';link.href=self.deviceQrcode.qrcode_img;link.click();},

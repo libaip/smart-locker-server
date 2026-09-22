@@ -4089,15 +4089,32 @@ def get_subscribe_templates():
         except Exception:
             _scene_on587 = True
     if _scene_on587 and _scene587 in ('pay', 'withdraw'):
-        if _scene587 == 'pay':
-            _tpls = [_general]
-            _ab_group = 'fixed_pay_1tpl'
+        # [S601-20260922] 场景里"要 1 条 / 2 条"改为后台可配（默认=现状，仍各 1 条，行为不变）。
+        #   mp_subscribe_scene_pay      = general(默认，只「账户余额」) | both(账户余额+退款成功)
+        #   mp_subscribe_scene_withdraw = refund (默认，只「退款成功」) | both
+        #   取值非法/为空 -> 按默认；读库异常 -> 按默认（绝不因配置问题影响模板下发）。
+        #   注意：只在 scene 命中时才会读这两个键，不带 scene 的老版本路径一次库都不多读。
+        _s601_key = 'mp_subscribe_scene_pay' if _scene587 == 'pay' else 'mp_subscribe_scene_withdraw'
+        _s601_def = 'general' if _scene587 == 'pay' else 'refund'
+        _s601_val = _s601_def
+        try:
+            _s601_raw = get_setting(_s601_key, _s601_def)
+            _s601_val = str(_s601_def if _s601_raw is None else _s601_raw).strip().lower()
+        except Exception as _e601:
+            logger.warning('[S601][subscribe_templates] 读 %s 失败(按默认 %s): %s',
+                           _s601_key, _s601_def, _e601)
+            _s601_val = _s601_def
+        if _s601_val not in (_s601_def, 'both'):
+            _s601_val = _s601_def
+        if _s601_val == 'both':
+            _tpls = [_general, _withdraw]
+            _ab_group = 'fixed_%s_2tpl' % _scene587
         else:
-            _tpls = [_withdraw]
-            _ab_group = 'fixed_withdraw_1tpl'
+            _tpls = [_general] if _scene587 == 'pay' else [_withdraw]
+            _ab_group = 'fixed_%s_1tpl' % _scene587
         _ab_mode = 'fixed_scene'
-        logger.info('[S587][subscribe_templates] scene=%s 命中 -> templates=%s ab_group=%s',
-                    _scene587, _tpls, _ab_group)
+        logger.info('[S601][subscribe_templates] scene=%s 命中 -> %s=%s templates=%d ab_group=%s',
+                    _scene587, _s601_key, _s601_val, len(_tpls), _ab_group)
     elif _scene587:
         logger.info('[S587][subscribe_templates] scene=%s 忽略(未启用或未识别) -> 走老 A/B: '
                     'ab_mode=%s ab_group=%s templates=%s',

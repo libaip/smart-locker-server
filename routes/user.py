@@ -4068,6 +4068,36 @@ def get_subscribe_templates():
         _ab_group = 'A_2tpl'
     else:
         _tpls = [_general] if _landing else [_withdraw]
+    # [S587-20260922] scene 固定单模板：支付/存包环节只请求「账户余额」，提现环节只请求「退款成功」。
+    #   老板定死：每个环节各 1 条，不再按分钟奇偶 A/B。
+    #   scene 缺失或取值不认识 -> 上面 A/B(含 landing) 的结果原样使用，老版本小程序行为一字不变。
+    #   应急开关 system_settings.mp_subscribe_scene_enabled='0' -> 忽略 scene 回到老逻辑(读不到按开)。
+    _scene587 = ''
+    try:
+        _scene587 = str(request.args.get('scene') or '').strip().lower()
+    except Exception:
+        _scene587 = ''
+    _scene_on587 = True
+    if _scene587:
+        try:
+            _sv587 = get_setting('mp_subscribe_scene_enabled', '1')
+            _scene_on587 = str('1' if _sv587 is None else _sv587).strip() != '0'
+        except Exception:
+            _scene_on587 = True
+    if _scene_on587 and _scene587 in ('pay', 'withdraw'):
+        if _scene587 == 'pay':
+            _tpls = [_general]
+            _ab_group = 'fixed_pay_1tpl'
+        else:
+            _tpls = [_withdraw]
+            _ab_group = 'fixed_withdraw_1tpl'
+        _ab_mode = 'fixed_scene'
+        logger.info('[S587][subscribe_templates] scene=%s 命中 -> templates=%s ab_group=%s',
+                    _scene587, _tpls, _ab_group)
+    elif _scene587:
+        logger.info('[S587][subscribe_templates] scene=%s 忽略(未启用或未识别) -> 走老 A/B: '
+                    'ab_mode=%s ab_group=%s templates=%s',
+                    _scene587, _ab_mode, _ab_group, _tpls)
     return json_response(data={
         'templates': _tpls,
         'withdraw_notify': _withdraw,
@@ -6523,6 +6553,146 @@ def mp_push_receive():
         #   导致 07:44 客服消息开始返回 errcode=45094 时查不到处罚内容。
         if event == 'wxa_punish_event':
             logger.warning('[mp_push] 收到 wxa_punish_event 完整报文: %s', (body or '')[:1500])
+
+        # [S582-20260922] 订阅消息【弹窗勾选事件 / 发送结果事件】落库 mp_subscribe_event。
+        #   目的：把"谁勾了哪几条模板"变成可统计的数据 -> 算 A/B(A_2tpl vs B_1tpl) 真实授权率，
+        #        以及"只勾了账户余额、没勾退款成功"的人数。
+        #   背景：这两类事件原先只 logger.info 写 journal，content= 恒空、openid 只打前 8 位，拿不到勾选结果。
+        #   约束：字段名不做任何假设（JSON/XML 两种推送格式都试）；纯新增，不改上面任何分支/返回/日志语义；
+        #        整段 try/except 兜底，任何异常只 warning，绝不影响 handler 返回。
+        try:
+            if event in ('subscribe_msg_popup_event', 'subscribe_msg_sent_event'):
+                import json as _s582json
+                import hashlib as _s582hash
+                _s582_raw = (body or '')[:2000]
+                _s582_etype = 'popup' if 'popup' in event else 'sent'
+                _s582_etime = str(data.get('CreateTime') or '')[:20] if isinstance(data, dict) else ''
+                _s582_cands = []
+                _s582_fuzzy = []      # 兜底候选：任何"条目里有 TemplateId"的 List（只在主规则全落空时才用，避免重复取条）
+                _s582_stack = [data] if isinstance(data, (dict, list)) else []
+                while _s582_stack:
+                    _s582node = _s582_stack.pop()
+                    if isinstance(_s582node, dict):
+                        for _s582k, _s582v in list(_s582node.items()):
+                            _s582kl = str(_s582k or '').lower()
+                            if 'subscribemsgpopupevent' in _s582kl or 'subscribemsgsentevent' in _s582kl:
+                                # 值可能是 dict/list(JSON 推送)，也可能是 JSON 文本；空串/纯空白(XML 浅解析的典型结果)不算命中
+                                if isinstance(_s582v, (dict, list)):
+                                    _s582_cands.append(_s582v)
+                                elif isinstance(_s582v, str) and _s582v.strip() and ('{' in _s582v or '[' in _s582v):
+                                    try:
+                                        _s582_cands.append(_s582json.loads(_s582v))
+                                    except Exception:
+                                        pass
+                            if isinstance(_s582v, (dict, list)):
+                                _s582_stack.append(_s582v)
+                            elif isinstance(_s582v, str) and 'list' in _s582v.lower() and ('{' in _s582v or '[' in _s582v):
+                                try:
+                                    _s582_stack.append(_s582json.loads(_s582v))
+                                except Exception:
+                                    pass
+                    elif isinstance(_s582node, list):
+                        for _s582v in list(_s582node):
+                            if isinstance(_s582v, dict) and any('templateid' in str(_s582kk).lower() for _s582kk in _s582v.keys()):
+                                _s582_fuzzy.append(_s582node)   # 兜底：任何含 TemplateId 的 List
+                                break
+                            if isinstance(_s582v, (dict, list)):
+                                _s582_stack.append(_s582v)
+                if not _s582_cands:
+                    _s582_cands.extend(_s582_fuzzy)
+                if not _s582_cands:
+                    # XML 兜底：_mp_parse_push 对"带子元素"的节点只取 ch.text(空)，结构只剩在原文里
+                    try:
+                        import xml.etree.ElementTree as _s582ET
+                        for _s582el in _s582ET.fromstring(body or '<xml/>').iter():
+                            _s582tl = str(_s582el.tag).lower()
+                            if 'subscribemsgpopupevent' in _s582tl or 'subscribemsgsentevent' in _s582tl:
+                                _s582lst = []
+                                for _s582it in list(_s582el):
+                                    _s582d = dict((str(_s582c.tag), _s582c.text or '') for _s582c in list(_s582it))
+                                    if _s582d:
+                                        _s582lst.append(_s582d)
+                                if not _s582lst:
+                                    # 有的格式不套 List 外层，条目字段就是该节点的直接子元素
+                                    _s582d = dict((str(_s582c.tag), _s582c.text or '') for _s582c in list(_s582el))
+                                    if _s582d:
+                                        _s582lst.append(_s582d)
+                                if _s582lst:
+                                    _s582_cands.append({'List': _s582lst})
+                    except Exception:
+                        pass
+                _s582_items = []
+                for _s582c in _s582_cands:
+                    _s582ls = _s582c.get('List') if isinstance(_s582c, dict) else _s582c
+                    if isinstance(_s582ls, dict):
+                        _s582ls = [_s582ls]
+                    for _s582it in (_s582ls if isinstance(_s582ls, list) else []):
+                        if not isinstance(_s582it, dict):
+                            continue
+                        _s582low = dict((str(_s582k).lower(), _s582v) for _s582k, _s582v in _s582it.items())
+                        _s582_items.append({
+                            'tpl': str(_s582low.get('templateid') or '')[:64],
+                            'status': str(_s582low.get('subscribestatusstring') or _s582low.get('errorstatus') or '')[:16],
+                            'scene': str(_s582low.get('popupscene') or '')[:16],
+                            'msg_id': str(_s582low.get('msgid') or '')[:64],
+                            'err_code': _s582low.get('errorcode'),
+                            'err_status': str(_s582low.get('errorstatus') or '')[:64],
+                        })
+                if not _s582_items:
+                    logger.warning('[S582] 事件未解析出条目 event=%s body=%s', event, _s582_raw[:300])
+                else:
+                    _s582_ok = 0
+                    _s582_conn = None
+                    try:
+                        from config import DATABASE_URL as _s582url
+                        _s582_conn = psycopg2.connect(_s582url)   # 短连接 + 显式 commit，异常不外泄
+                    except Exception as _s582ce:
+                        logger.warning('[S582] 连库失败(忽略): %s', _s582ce)
+                    if _s582_conn is not None:
+                        try:
+                            _s582_cur = _s582_conn.cursor()
+                            for _s582it in _s582_items:
+                                try:
+                                    _s582ec = _s582it['err_code']
+                                    try:
+                                        _s582ec = int(_s582ec) if str(_s582ec).strip() != '' else None
+                                    except Exception:
+                                        _s582ec = None
+                                    _s582st = _s582it['status']
+                                    if _s582_etype == 'sent':
+                                        # sent 事件的 ErrorStatus 有时是整句话(会被截断)，统一按 ErrorCode 归成 ok/fail，
+                                        # 原文仍然完整存在 err_status 列里，便于事后查具体原因
+                                        _s582st = ('ok' if _s582ec == 0 else 'fail') if _s582ec is not None else (_s582st or '')
+                                    _s582_dk = _s582hash.md5(('%s|%s|%s|%s|%s' % (
+                                        str(openid), _s582_etype, _s582it['tpl'], _s582st, _s582_etime)
+                                    ).encode('utf-8')).hexdigest()
+                                    _s582_cur.execute(
+                                        "INSERT INTO mp_subscribe_event (openid, event_type, template_id, status,"
+                                        " scene, msg_id, err_code, err_status, event_time, raw, dedup_key)"
+                                        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+                                        " ON CONFLICT (dedup_key) DO NOTHING",
+                                        (str(openid)[:64], _s582_etype, _s582it['tpl'], _s582st, _s582it['scene'],
+                                         _s582it['msg_id'], _s582ec, _s582it['err_status'], _s582_etime,
+                                         _s582_raw, _s582_dk))
+                                    _s582_ok += max(_s582_cur.rowcount, 0)
+                                except Exception as _s582ie:
+                                    logger.warning('[S582] 单条事件落库失败(跳过): %s', _s582ie)
+                            _s582_conn.commit()
+                        except Exception as _s582we:
+                            logger.warning('[S582] 落库写入异常(忽略): %s', _s582we)
+                            try:
+                                _s582_conn.rollback()
+                            except Exception:
+                                pass
+                        finally:
+                            try:
+                                _s582_conn.close()
+                            except Exception:
+                                pass
+                        logger.info('[S582] 订阅事件落库 event=%s openid=%s... 解析=%s 新增=%s',
+                                    event, str(openid)[:8], len(_s582_items), _s582_ok)
+        except Exception as _s582e:
+            logger.warning('[S582] 订阅事件落库整体异常(忽略): %s', _s582e)
 
         # 1) 用户进入客服会话 → [S546b-20260922] 默认【不主动推送】，不再调 custom/send。
         #    原因：45094 文案点名 "when user enter session"，"进入即推送"极可能就是本次处罚原因。

@@ -2564,6 +2564,21 @@ def order_reopen():
         if not order:
             conn.close()
             return json_response(message='订单不存在', code=404)
+        # [S630-20260923] 支付宝归属校验（老板要求：与 S309 同一口径，给两个 reopen 写接口补上）。
+        #   本接口原先【完全没有】归属校验 —— 传 order_id 就能开门。这里只对支付宝请求加严，
+        #   身份只用 alipay_uid（支付宝 user_id 形态，含字母/横线），绝不使用手机号。
+        #   微信/H5（不传 platform=alipay 且不传 alipay_uid）两个分支都进不去：
+        #   一条新增 SQL 都不执行，原有语句文本+参数+顺序逐字节不变。
+        _s630_plat = str(data.get('platform') or '').strip().lower()
+        _s630_ali = str(data.get('alipay_uid') or data.get('alipay_mp_uid') or '').strip()
+        if _s630_plat == 'alipay' or _s630_ali:
+            if not _s630_ali:
+                conn.close()
+                return _s309_alipay_403('order-reopen', order_id, '')
+            _s630_ok, _ = _s309_alipay_order_owned(cursor, order, _s630_ali)
+            if not _s630_ok:
+                conn.close()
+                return _s309_alipay_403('order-reopen', order_id, _s630_ali)
         _reopen_limit = order.get('reopen_times')
         if _reopen_limit is None or _reopen_limit == '' or int(_reopen_limit) <= 0:
             _reopen_limit = order.get('location_reopen_times')
@@ -5336,6 +5351,25 @@ def order_reopen_by_url(order_id):
         if not order:
             conn.close()
             return json_response(message='\u8ba2\u5355\u4e0d\u5b58\u5728', code=404)
+        # [S630-20260923] 支付宝归属校验（老板要求：与 S309 同一口径，给两个 reopen 写接口补上）。
+        #   本接口原先【完全没有】归属校验 —— 改 URL 里的 order_id 就能开门。
+        #   身份只用 alipay_uid（支付宝 user_id 形态，含字母/横线），绝不使用手机号。
+        #   本接口 order_id 来自 URL 路径、函数内没有 data 变量，故身份依次从 JSON body /
+        #   query string 取；两者都没有 = 微信/H5 老路径 -> 一条新增 SQL 都不执行。
+        _s630_body = request.get_json(silent=True) or {}
+        if not isinstance(_s630_body, dict):
+            _s630_body = {}
+        _s630_plat = str(_s630_body.get('platform') or request.args.get('platform') or '').strip().lower()
+        _s630_ali = str(_s630_body.get('alipay_uid') or _s630_body.get('alipay_mp_uid')
+                       or request.args.get('alipay_uid') or '').strip()
+        if _s630_plat == 'alipay' or _s630_ali:
+            if not _s630_ali:
+                conn.close()
+                return _s309_alipay_403('order-reopen-url', order_id, '')
+            _s630_ok, _ = _s309_alipay_order_owned(cursor, order, _s630_ali)
+            if not _s630_ok:
+                conn.close()
+                return _s309_alipay_403('order-reopen-url', order_id, _s630_ali)
         _reopen_limit2 = order.get('reopen_times')
         if _reopen_limit2 is None or _reopen_limit2 == '' or int(_reopen_limit2) <= 0:
             _reopen_limit2 = order.get('location_reopen_times')

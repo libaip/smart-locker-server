@@ -219,14 +219,20 @@ class AlipayClient(object):
             'form': self.build_page_form('alipay.trade.wap.pay', biz, notify_url, return_url),
         }
 
-    def trade_create(self, out_trade_no, total_amount, subject, buyer_id,
-                     body='', timeout_express='15m', product_code='', op_app_id=''):
+    def trade_create(self, out_trade_no, total_amount, subject, buyer_open_id='',
+                     buyer_id='', body='', timeout_express='15m', product_code='',
+                     op_app_id=''):
         """[S334] 支付宝【小程序支付】创建交易：alipay.trade.create
 
         与 alipay.trade.wap.pay（H5 手机网站支付）的区别：
           · 小程序支付是「服务端创建交易 → 客户端 my.tradePay({tradeNO}) 拉起收银台」，
             不跳转页面、不需要 form/url；
-          · buyer_id 必传 = 买家的支付宝 user_id（本项目 = users.alipay_uid）；
+          · [S618] 买家标识按官方口径二选一：buyer_open_id 优先、buyer_id 兜底，
+            两者都空 → 直接返回失败（绝不发出无买家标识的请求）；
+            buyer_open_id = 用户在本小程序(appid)下的 openid（本项目 = users.alipay_uid）；
+            buyer_id      = 2088 开头 16 位支付宝 user_id（老字段，保留兼容）；
+          · [S618] 小程序支付必传 product_code='JSAPI_PAY' 与
+            op_app_id=「唤起收银台支付所在的小程序 appid」（须先在产品中心绑定该 appid）；
           · 返回的 trade_no 交给前端；真正的付款结果以异步通知
             /api/pay/notify/alipay 为准（未配置回调时可用 alipay.trade.query 核对）。
 
@@ -235,12 +241,23 @@ class AlipayClient(object):
               requests 会把中文 URL 编码，签名内容与实际传输对不上 →
               支付宝报 isv.invalid-signature（S287 修过的坑）。
         """
+        buyer_open_id = str(buyer_open_id or '').strip()
+        buyer_id = str(buyer_id or '').strip()
+        if not buyer_open_id and not buyer_id:
+            return {'code': '40004', 'msg': 'Business Failed',
+                    'sub_code': 'isv.missing-parameter',
+                    'sub_msg': '缺少买家标识: buyer_open_id 与 buyer_id 不能同时为空'}
         biz = {
             'out_trade_no': str(out_trade_no),
             'total_amount': '%.2f' % float(total_amount),
             'subject': (subject or '储物柜预付款')[:256],
-            'buyer_id': str(buyer_id),
         }
+        # [S618] 官方口径：buyer_open_id 与 buyer_id 二选一
+        #   （新商户推荐 buyer_open_id；本项目 users.alipay_uid 存的就是 openid）
+        if buyer_open_id:
+            biz['buyer_open_id'] = buyer_open_id
+        else:
+            biz['buyer_id'] = buyer_id
         if product_code:
             biz['product_code'] = str(product_code)
         if op_app_id:

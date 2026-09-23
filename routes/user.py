@@ -2304,6 +2304,39 @@ def deposit_end_storage():
             except Exception as e:
                 logger.error(f"[deposit_end_storage发送订阅消息失败] {e}")
 
+        # [S631-20260923] 支付宝单：微信侧已由 S525 拦掉，这里补发支付宝小程序订阅消息。
+        #   入口先做一次【内存判断】（订单自带支付宝身份列 order 是 SELECT o.* 取回的），
+        #   微信单因此连一句 SQL 都不多跑 —— 行为与改动前逐字节一致。
+        #   真正的平台闸门在 helpers.notify_alipay_order 内部（与 S525 拦截严格互为反面）。
+        #   · 结束订单(寄存结束) -> subscribe_general（对应微信 subscribe_general）
+        #   · 退款成功          -> subscribe_refund（对应微信 oa_tplmsg_refund_ok / subscribe_refund）
+        #   字段名用模板【真实字段】（老板纠正，[S631b]；依据 helpers.py:5575-5577）：
+        #     subscribe_general: amount1金额 / time2时间 / thing4变动原因 / thing3温馨提示
+        #     subscribe_refund : amount2金额 / time5时间 / thing4退款方式 / thing3备注
+        if str(order.get('alipay_pay_uid') or order.get('alipay_mp_uid') or '').strip():
+            try:
+                from helpers import notify_alipay_order as _s631_notify
+                # 寄存结束(押金退还)：thing4/thing3 与微信侧【同一调用点】routes/user.py:2296-2297
+                # 的 _thing7/_thing2 逐字一致，唯一改动是把"请留意微信到账"的平台词换成"支付宝"。
+                _s631_thing4 = "已原路退回支付账户" if _direct_refund else "已退还至小程序用户钱包"
+                _s631_thing3 = ("无需提现，请留意支付宝到账" if _direct_refund
+                                else "请自行点击此通知消息跳转“我的钱包”提现")
+                _s631_notify(order=order, order_id=order_id, biz="subscribe_general", data={
+                    "amount1": {"value": "¥{:.2f}".format(float(order.get("deposit_amount") or 0))},
+                    "time2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
+                    "thing4": {"value": _s631_thing4},
+                    "thing3": {"value": _s631_thing3},
+                })
+                if float(refund_amount or 0) > 0:
+                    _s631_notify(order=order, order_id=order_id, biz="subscribe_refund", data={
+                        "amount2": {"value": "¥{:.2f}".format(float(refund_amount or 0))},
+                        "time5": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
+                        "thing4": {"value": "原路退回支付账户"},
+                        "thing3": {"value": "预计0-3个工作日到账"},
+                    })
+            except Exception as _s631_e:
+                logger.warning("[S631] 支付宝订阅消息接线失败(不影响主流程): %s", _s631_e)
+
         # S106: 结束订单退押金短信通知(网点开关控制)
         try:
             from helpers import send_smsbao_smart

@@ -5236,6 +5236,13 @@ def oa_notify_order_end(order_id=None, amount=None, when=None, openid='', phone=
         # [S525] 平台分流：支付宝单不发微信公众号模板消息
         if order_notify_blocked(order_id=order_id):
             logger.info('[S525] 支付宝单跳过结束订单公众号模板消息 order_id=%s', order_id)
+            # [S631-20260923] 微信侧拦掉的同时，补发支付宝小程序订阅消息。
+            #   原来这里只拦不发 -> 支付宝用户这条"结束订单"通知两头都没有。
+            #   覆盖：离线取包 routes/offline.py(2处) + 设备侧结束 routes/device.py。
+            try:
+                notify_alipay_order(order_id=order_id, biz='subscribe_general')
+            except Exception as _s631_e:
+                logger.warning('[S631] 支付宝订阅消息失败(不影响业务): %s', _s631_e)
             return False
         from database import get_db as _g
         _o = {}
@@ -5453,6 +5460,116 @@ def order_notify_target(order=None, order_id=None, cursor=None):
 
 
 # ============================================================
+# [S631-20260923] 支付宝订阅消息【接线】
+#   背景：S525 已把"支付宝单"的微信侧通知全部拦掉（正确），但支付宝侧
+#         send_alipay_subscribe_message 自 S526 引入后【0 个调用点】
+#         -> 支付宝用户两头都收不到通知（订单 139006 实测）。
+#   口径：本函数是支付宝订阅消息的【唯一接线点】。
+#         · 闸门复用 order_notify_blocked()：与"微信侧被拦"严格互为反面，
+#           即"微信侧被拦 <=> 这里发"，不会出现两边都发或两边都不发。
+#         · uid 只用 orders.alipay_pay_uid / orders.alipay_mp_uid，
+#           **绝不按手机号反查微信身份**；两者都空 -> warning 后跳过。
+#         · template_id 一律传 ''，由 send_alipay_subscribe_message 按 biz 查库兜底。
+#         · 本函数绝不抛异常、绝不改变调用方返回值，失败只记日志。
+# ============================================================
+def notify_alipay_order(order=None, order_id=None, order_ids=None, biz='',
+                        data=None, page='pages/mine/mine', cursor=None):
+    """[S631] 支付宝单 -> 发支付宝小程序订阅消息；非支付宝单 = 纯 no-op（返回 False）。
+
+    biz : 'subscribe_general'（结束订单/押金退还）| 'subscribe_refund'（退款成功）
+    data: None 时按 biz 自动构造【真实模板字段】（依据 helpers.py:5575-5577，[S631b] 老板纠正）：
+          general -> amount1金额 / time2时间 / thing4变动原因 / thing3温馨提示
+          refund  -> amount2金额 / time5时间 / thing4退款方式 / thing3备注
+          ⚠️ 不要传 keyword1..keywordN：支付宝这两条模板没有这些关键词，会按字段不匹配拒收。
+    """
+    try:
+        _biz = str(biz or '').strip()
+        # 应急开关放最前面：关掉后本函数完全惰性（一次查询都不做、一个请求都不发）
+        try:
+            import wx_config as _wc631
+            if str(_wc631.get_config('alipay_subscribe_enabled', 'true')).strip().lower() in (
+                    '0', 'false', 'off', 'no'):
+                logger.info('[S631] 开关 alipay_subscribe_enabled=off，notify_alipay_order 整体跳过')
+                return False
+        except Exception:
+            pass
+        _o = dict(order) if order else None
+        _oid = order_id or ((_o or {}).get('id'))
+        # 闸门 = "微信侧被拦"的同一判据（严格互为反面）
+        if not order_notify_blocked(order=_o, order_id=_oid, order_ids=order_ids, cursor=cursor):
+            return False
+        # 只给了 order_id / order_ids 时，补一次只读 SELECT 取支付宝身份
+        if _o is None:
+            _qid = _oid
+            if not _qid and order_ids:
+                try:
+                    _qid = list(order_ids)[0]
+                except Exception:
+                    _qid = None
+            if _qid:
+                try:
+                    _c631 = cursor
+                    _own631 = False
+                    if _c631 is None:
+                        from database import get_db as _g631
+                        _c631 = _g631()
+                        _own631 = True
+                    _cu631 = _c631.cursor()
+                    _cu631.execute("SELECT id, deposit_amount, refund_amount, "
+                                   "alipay_mp_uid, alipay_pay_uid FROM orders WHERE id=%s", (_qid,))
+                    _r631 = _cu631.fetchone()
+                    if _r631:
+                        _o = dict(_r631)
+                    if _own631:
+                        try:
+                            _c631.close()
+                        except Exception:
+                            pass
+                except Exception as _e631:
+                    logger.warning('[S631] 补查订单失败 id=%s: %s', _qid, _e631)
+        _o = _o or {}
+        # uid：只认支付宝身份列，绝不使用手机号
+        _uid = str(_o.get('alipay_pay_uid') or _o.get('alipay_mp_uid') or '').strip()
+        if not _uid:
+            logger.warning('[S631] 支付宝单缺 alipay uid，跳过订阅消息 '
+                           'order_id=%s order_ids=%s（不按手机号反查微信身份）', _oid, order_ids)
+            return False
+        if data is None:
+            # [S631b-20260923] 字段名按 helpers.py:5575-5577 记载的【真实模板字段】（老板纠正）：
+            #   subscribe_general：amount1 金额 / time2 时间 / thing4 变动原因 / thing3 温馨提示
+            #   subscribe_refund ：amount2 金额 / time5 时间 / thing4 退款方式 / thing3 备注
+            #   首版(S631)误用 keyword1/keyword2 —— 源头是下面那段注释里自相矛盾的"直接给 keyword1..keywordN"。
+            if _biz == 'subscribe_refund':
+                _amt631 = float(_o.get('refund_amount') or 0) or float(_o.get('deposit_amount') or 0)
+                data = {
+                    'amount2': {'value': '¥{:.2f}'.format(_amt631)},
+                    'time5': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
+                    'thing4': {'value': '原路退回支付账户'},
+                    'thing3': {'value': '预计0-3个工作日到账'},
+                }
+            else:
+                _amt631 = float(_o.get('deposit_amount') or 0)
+                data = {
+                    'amount1': {'value': '¥{:.2f}'.format(_amt631)},
+                    'time2': {'value': datetime.now().strftime('%Y-%m-%d %H:%M')},
+                    'thing4': {'value': '已退还至小程序用户钱包'},
+                    'thing3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'},
+                }
+        _ok631 = send_alipay_subscribe_message(_uid, '', data,
+                                               page=page or 'pages/mine/mine', biz=_biz)
+        if _ok631:
+            logger.info('[S631] 支付宝订阅消息已发 order_id=%s biz=%s uid=%s...',
+                        _oid, _biz, _uid[:8])
+        else:
+            logger.warning('[S631] 支付宝订阅消息未发出 order_id=%s biz=%s'
+                           '（详见 [alipay_subscribe] 日志）', _oid, _biz)
+        return bool(_ok631)
+    except Exception as _e:
+        logger.warning('[S631] notify_alipay_order 异常(不影响主流程): %s', _e)
+        return False
+
+
+# ============================================================
 # [S526-20260921] 支付宝小程序【订阅消息】发送
 #   与微信 send_wx_subscribe_message 一一对应，但口径不同：
 #     · 收件人 = 支付宝 user_id（users.alipay_uid / phone_openids.alipay_uid），不是 openid
@@ -5460,16 +5577,22 @@ def order_notify_target(order=None, order_id=None, cursor=None):
 #         subscribe_general = c142ac2357774daab8994a0f5a91faa4  账户余额通知
 #         subscribe_refund  = de68d98e94c84477b1b9e116fcb8cbfa  寄存押金退还通知
 #       调用方取模板ID：wx_config.template_id('subscribe_general', 'alipay', '')
-#     · data 的关键词名是 keyword1..keywordN，名称/顺序由"申请模板时选的关键词"决定
+#     · data 的字段名用模板【真实字段】：general = amount1/time2/thing4/thing3、
+#       refund = amount2/time5/thing4/thing3（对照下方 _ALIPAY_SUBSCRIBE_FIELD_MAP 注释）；
+#       ⚠️ 不是 keyword1..keywordN（[S631b-20260923] 老板纠正）。
 #   安全口径：任何异常只记日志、绝不抛出；alipay_uid 为空直接返回 False。
 # ============================================================
 _ALIPAY_TPL_GENERAL = 'c142ac2357774daab8994a0f5a91faa4'   # 账户余额通知（兜底值）
 _ALIPAY_TPL_REFUND = 'de68d98e94c84477b1b9e116fcb8cbfa'    # 寄存押金退还通知（兜底值）
 
 # 微信字段名 -> 支付宝关键词名。
-#   ★ 值【待老板提供 / 待实测】：库里 wx_templates.fields 是 {}，项目文档里也没有关键词说明，
-#     所以两条先留空 {}。留空 = 不做任何转换，调用方直接给 keyword1..keywordN（最安全的默认）。
-#   现有微信字段（来自各处 send_wx_subscribe_message 调用点）：
+#   ★ 两条支付宝模板的字段名与微信侧【同名】（见下方"现有字段"），所以留空 {} = 不做任何转换，
+#     调用方把这些字段名原样传进来即可。
+#   ⚠️ 勘误（[S631b-20260923]）：本注释原写"调用方直接给 keyword1..keywordN"，那是错的（老板指正）。
+#     支付宝这两条模板的关键词就是 amount1/time2/thing4/thing3（general）与
+#     amount2/time5/thing4/thing3（refund）；传 keyword1/keyword2 会被支付宝按字段不匹配拒收。
+#     首版接线(S631)正是照抄了那句错注释，已在 S631b 改正。
+#   现有字段（来自各处 send_wx_subscribe_message 调用点，与支付宝模板同名）：
 #     subscribe_general：amount1 金额 / time2 时间 / thing4 变动原因 / thing3 温馨提示
 #     subscribe_refund ：amount2 金额 / time5 时间 / thing4 退款方式 / thing3 备注
 _ALIPAY_SUBSCRIBE_FIELD_MAP = {
@@ -5599,8 +5722,15 @@ def send_alipay_subscribe_message(alipay_uid, template_id, data, page='pages/min
                     取法：wx_config.template_id('subscribe_general'|'subscribe_refund', 'alipay', '')
                     ★ [S530] 但该取法对 alipay 通道**永远返回空**（配置中心 CHANNELS 只有 mp/oa）。
                       为兼容旧调用方，参数保持原样；**传空时本函数自动按 biz 查库兜底**。
-      data        = dict，推荐 {'keyword1': {'value': '¥30.00'}, 'keyword2': {'value': '2026-09-21 21:00'}}
-                    （也接受微信字段名，前提是 _ALIPAY_SUBSCRIBE_FIELD_MAP 里配好了映射）
+      data        = dict，用模板【真实字段】（[S631b-20260923] 老板纠正）：
+                    general -> {'amount1': {'value': '¥30.00'}, 'time2': {'value': '2026-09-21 21:00'},
+                                'thing4': {'value': '已退还至小程序用户钱包'},
+                                'thing3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}}
+                    refund  -> {'amount2': {'value': '¥30.00'}, 'time5': {'value': '2026-09-21 21:00:00'},
+                                'thing4': {'value': '原路退回支付账户'},
+                                'thing3': {'value': '预计0-3个工作日到账'}}
+                    ⚠️ 不要传 keyword1..keywordN：支付宝这两条模板没有这些关键词，会按字段不匹配拒收。
+                       _ALIPAY_SUBSCRIBE_FIELD_MAP 留空 = 不做改名，字段名原样透传。
       page        = 点击消息跳转的小程序页，默认 pages/mine/mine
       dry_run     = True 时只构造 + 签名、不发网络请求（离线自检用）
       biz         = [S530] 可选。'subscribe_general' / 'subscribe_refund'；

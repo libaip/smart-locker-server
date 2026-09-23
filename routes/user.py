@@ -2310,29 +2310,40 @@ def deposit_end_storage():
         #   真正的平台闸门在 helpers.notify_alipay_order 内部（与 S525 拦截严格互为反面）。
         #   · 结束订单(寄存结束) -> subscribe_general（对应微信 subscribe_general）
         #   · 退款成功          -> subscribe_refund（对应微信 oa_tplmsg_refund_ok / subscribe_refund）
-        #   字段名用模板【真实字段】（老板纠正，[S631b]；依据 helpers.py:5575-5577）：
-        #     subscribe_general: amount1金额 / time2时间 / thing4变动原因 / thing3温馨提示
-        #     subscribe_refund : amount2金额 / time5时间 / thing4退款方式 / thing3备注
+        #   [S633-20260923] 键名/顺序 = 支付宝【真实模板关键词】（只读接口 batchquery 实测）：
+        #     subscribe_general（c142ac.. 账户余额通知）
+        #       keyword1 账户余额 / keyword2 变动时间 / keyword3 温馨提示 / keyword4 温馨提醒
+        #     subscribe_refund （de68d9.. 寄存押金退还通知）
+        #       keyword1 寄存单号 / keyword2 退还时间 / keyword3 退还状态 / keyword4 退还金额
+        #   ⚠️ amount1/time2/thing3/thing4 是【微信】订阅消息的字段名，支付宝侧一个都不能用
+        #      （S631b 把它们搬到支付宝接口上是错的，已在 S633 改回 keywordN）。
         if str(order.get('alipay_pay_uid') or order.get('alipay_mp_uid') or '').strip():
             try:
                 from helpers import notify_alipay_order as _s631_notify
-                # 寄存结束(押金退还)：thing4/thing3 与微信侧【同一调用点】routes/user.py:2296-2297
-                # 的 _thing7/_thing2 逐字一致，唯一改动是把"请留意微信到账"的平台词换成"支付宝"。
-                _s631_thing4 = "已原路退回支付账户" if _direct_refund else "已退还至小程序用户钱包"
-                _s631_thing3 = ("无需提现，请留意支付宝到账" if _direct_refund
-                                else "请自行点击此通知消息跳转“我的钱包”提现")
+                # 寄存结束(押金退还)：两段文案与微信侧【同一调用点】routes/user.py:2296-2297
+                # 的 _thing7(短状态)/_thing2(长提示) 逐字一致，唯一改动是把"请留意微信到账"
+                # 的平台词换成"支付宝"。落位按支付宝关键词名：长提示 -> keyword3 温馨提示、
+                # 短状态 -> keyword4 温馨提醒。
+                _s633_kw4 = "已原路退回支付账户" if _direct_refund else "已退还至小程序用户钱包"
+                _s633_kw3 = ("无需提现，请留意支付宝到账" if _direct_refund
+                             else "请自行点击此通知消息跳转“我的钱包”提现")
                 _s631_notify(order=order, order_id=order_id, biz="subscribe_general", data={
-                    "amount1": {"value": "¥{:.2f}".format(float(order.get("deposit_amount") or 0))},
-                    "time2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
-                    "thing4": {"value": _s631_thing4},
-                    "thing3": {"value": _s631_thing3},
+                    "keyword1": {"value": "¥{:.2f}".format(float(order.get("deposit_amount") or 0))},
+                    "keyword2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")},
+                    "keyword3": {"value": _s633_kw3},
+                    "keyword4": {"value": _s633_kw4},
                 })
                 if float(refund_amount or 0) > 0:
+                    # keyword1 寄存单号 = 订单号（模板必需，缺它必 USER_TEMPLATE_LACK_KEYWORD）；
+                    # order 是 SELECT o.* 取回的，order_no 一定有；兜底用订单 id。
+                    # keyword3 退还状态 <- 原 thing4「原路退回支付账户」（旧 thing3「预计0-3个工作日
+                    # 到账」在该模板里没有对应关键词，只能不带）。
+                    _s633_ono = str(order.get("order_no") or order_id or "0")[:32]
                     _s631_notify(order=order, order_id=order_id, biz="subscribe_refund", data={
-                        "amount2": {"value": "¥{:.2f}".format(float(refund_amount or 0))},
-                        "time5": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
-                        "thing4": {"value": "原路退回支付账户"},
-                        "thing3": {"value": "预计0-3个工作日到账"},
+                        "keyword1": {"value": _s633_ono},
+                        "keyword2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
+                        "keyword3": {"value": "原路退回支付账户"},
+                        "keyword4": {"value": "¥{:.2f}".format(float(refund_amount or 0))},
                     })
             except Exception as _s631_e:
                 logger.warning("[S631] 支付宝订阅消息接线失败(不影响主流程): %s", _s631_e)

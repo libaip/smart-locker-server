@@ -5477,10 +5477,17 @@ def notify_alipay_order(order=None, order_id=None, order_ids=None, biz='',
     """[S631] 支付宝单 -> 发支付宝小程序订阅消息；非支付宝单 = 纯 no-op（返回 False）。
 
     biz : 'subscribe_general'（结束订单/押金退还）| 'subscribe_refund'（退款成功）
-    data: None 时按 biz 自动构造【真实模板字段】（依据 helpers.py:5575-5577，[S631b] 老板纠正）：
-          general -> amount1金额 / time2时间 / thing4变动原因 / thing3温馨提示
-          refund  -> amount2金额 / time5时间 / thing4退款方式 / thing3备注
-          ⚠️ 不要传 keyword1..keywordN：支付宝这两条模板没有这些关键词，会按字段不匹配拒收。
+    data: None 时按 biz 自动构造【支付宝真实模板关键词】（[S633-20260923] 已按只读接口实测改正）：
+          general（c142ac..「账户余额通知」）
+              -> keyword1 账户余额 / keyword2 变动时间 / keyword3 温馨提示 / keyword4 温馨提醒
+          refund （de68d9..「寄存押金退还通知」）
+              -> keyword1 寄存单号 / keyword2 退还时间 / keyword3 退还状态 / keyword4 退还金额
+          依据 = alipay.open.mini.message.template.batchquery(biz_type=sub_msg) 返回的
+          keyword_desc：「账户余额,变动时间,温馨提示,温馨提醒」/「寄存单号,退还时间,退还状态,退还金额」；
+          官方 data 的 notice：「选用模板时配置的关键字顺序与 keyword_x 相互对应」；
+          个数不符 -> USER_TEMPLATE_LACK_KEYWORD；单个 value 上限 50 字符。
+          ⚠️ amount1/time2/thing3/thing4/amount2/time5 是【微信】订阅消息的字段名，支付宝侧
+             一次都不要用（S631b 曾把它们当支付宝字段名，那是错的）。
     """
     try:
         _biz = str(biz or '').strip()
@@ -5515,7 +5522,7 @@ def notify_alipay_order(order=None, order_id=None, order_ids=None, biz='',
                         _c631 = _g631()
                         _own631 = True
                     _cu631 = _c631.cursor()
-                    _cu631.execute("SELECT id, deposit_amount, refund_amount, "
+                    _cu631.execute("SELECT id, order_no, deposit_amount, refund_amount, "
                                    "alipay_mp_uid, alipay_pay_uid FROM orders WHERE id=%s", (_qid,))
                     _r631 = _cu631.fetchone()
                     if _r631:
@@ -5535,25 +5542,35 @@ def notify_alipay_order(order=None, order_id=None, order_ids=None, biz='',
                            'order_id=%s order_ids=%s（不按手机号反查微信身份）', _oid, order_ids)
             return False
         if data is None:
-            # [S631b-20260923] 字段名按 helpers.py:5575-5577 记载的【真实模板字段】（老板纠正）：
-            #   subscribe_general：amount1 金额 / time2 时间 / thing4 变动原因 / thing3 温馨提示
-            #   subscribe_refund ：amount2 金额 / time5 时间 / thing4 退款方式 / thing3 备注
-            #   首版(S631)误用 keyword1/keyword2 —— 源头是下面那段注释里自相矛盾的"直接给 keyword1..keywordN"。
+            # [S633-20260923] 键名/顺序按支付宝【真实模板关键词】构造（S631b 用微信字段名是错的）：
+            #   subscribe_general（c142ac2357774daab8994a0f5a91faa4 账户余额通知）
+            #       keyword1 账户余额 / keyword2 变动时间 / keyword3 温馨提示 / keyword4 温馨提醒
+            #   subscribe_refund （de68d98e94c84477b1b9e116fcb8cbfa 寄存押金退还通知）
+            #       keyword1 寄存单号 / keyword2 退还时间 / keyword3 退还状态 / keyword4 退还金额
+            #   依据：只读接口 alipay.open.mini.message.template.batchquery 的 keyword_desc
+            #         =「账户余额,变动时间,温馨提示,温馨提醒」/「寄存单号,退还时间,退还状态,退还金额」；
+            #         官方 data notice「选用模板时配置的关键字顺序与 keyword_x 相互对应」；
+            #         官方错误码 USER_TEMPLATE_LACK_KEYWORD「必须有 keyword1~keywordN 的对象和 value」。
+            #   键名与顺序【不要照搬微信】：amount*/time*/thing* 是微信订阅消息的字段名。
+            #   value 上限 50 字符（USER_KEYWORD_LENGTH_ERROR），下面各值最长 22 字符。
+            _now633 = datetime.now()
             if _biz == 'subscribe_refund':
                 _amt631 = float(_o.get('refund_amount') or 0) or float(_o.get('deposit_amount') or 0)
                 data = {
-                    'amount2': {'value': '¥{:.2f}'.format(_amt631)},
-                    'time5': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
-                    'thing4': {'value': '原路退回支付账户'},
-                    'thing3': {'value': '预计0-3个工作日到账'},
+                    # keyword1 寄存单号：模板必需；order 是 SELECT o.* 时直接有，兜底用订单 id。
+                    'keyword1': {'value': str(_o.get('order_no') or _oid or '0')[:32]},
+                    'keyword2': {'value': _now633.strftime('%Y-%m-%d %H:%M:%S')},
+                    'keyword3': {'value': '原路退回支付账户'},
+                    'keyword4': {'value': '¥{:.2f}'.format(_amt631)},
                 }
             else:
                 _amt631 = float(_o.get('deposit_amount') or 0)
                 data = {
-                    'amount1': {'value': '¥{:.2f}'.format(_amt631)},
-                    'time2': {'value': datetime.now().strftime('%Y-%m-%d %H:%M')},
-                    'thing4': {'value': '已退还至小程序用户钱包'},
-                    'thing3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'},
+                    'keyword1': {'value': '¥{:.2f}'.format(_amt631)},
+                    'keyword2': {'value': _now633.strftime('%Y-%m-%d %H:%M')},
+                    # keyword3 温馨提示 <- 原 thing3（长提示）；keyword4 温馨提醒 <- 原 thing4（短状态）
+                    'keyword3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'},
+                    'keyword4': {'value': '已退还至小程序用户钱包'},
                 }
         _ok631 = send_alipay_subscribe_message(_uid, '', data,
                                                page=page or 'pages/mine/mine', biz=_biz)
@@ -5572,36 +5589,52 @@ def notify_alipay_order(order=None, order_id=None, order_ids=None, biz='',
 # ============================================================
 # [S526-20260921] 支付宝小程序【订阅消息】发送
 #   与微信 send_wx_subscribe_message 一一对应，但口径不同：
-#     · 收件人 = 支付宝 user_id（users.alipay_uid / phone_openids.alipay_uid），不是 openid
+#     · 收件人 = users.alipay_uid / phone_openids.alipay_uid / orders.alipay_*_uid。
+#       该列存的是【47 位 openid】（/alipay/login 的 oauth_token 返回 open_id），
+#       发送时由 alipay.AlipayClient.mini_template_message_send 按形状分流：
+#       2088 开头 16 位 -> to_user_id；否则 -> to_open_id（[S633-20260923] 改正）。
 #     · 模板走 wx_templates 里 channel='alipay' 的两条（account_id=0 通用）
 #         subscribe_general = c142ac2357774daab8994a0f5a91faa4  账户余额通知
 #         subscribe_refund  = de68d98e94c84477b1b9e116fcb8cbfa  寄存押金退还通知
 #       调用方取模板ID：wx_config.template_id('subscribe_general', 'alipay', '')
-#     · data 的字段名用模板【真实字段】：general = amount1/time2/thing4/thing3、
-#       refund = amount2/time5/thing4/thing3（对照下方 _ALIPAY_SUBSCRIBE_FIELD_MAP 注释）；
-#       ⚠️ 不是 keyword1..keywordN（[S631b-20260923] 老板纠正）。
+#     · data 的字段名 = 支付宝的 keyword1..keywordN，顺序 = 模板后台配置顺序：
+#         subscribe_general：keyword1 账户余额 / keyword2 变动时间 /
+#                            keyword3 温馨提示 / keyword4 温馨提醒
+#         subscribe_refund ：keyword1 寄存单号 / keyword2 退还时间 /
+#                            keyword3 退还状态 / keyword4 退还金额
+#       ⚠️ amount1/time2/thing3/thing4（微信字段名）**支付宝侧一个都不要用**。
 #   安全口径：任何异常只记日志、绝不抛出；alipay_uid 为空直接返回 False。
 # ============================================================
 _ALIPAY_TPL_GENERAL = 'c142ac2357774daab8994a0f5a91faa4'   # 账户余额通知（兜底值）
 _ALIPAY_TPL_REFUND = 'de68d98e94c84477b1b9e116fcb8cbfa'    # 寄存押金退还通知（兜底值）
 
-# 微信字段名 -> 支付宝关键词名。
-#   ★ 两条支付宝模板的字段名与微信侧【同名】（见下方"现有字段"），所以留空 {} = 不做任何转换，
-#     调用方把这些字段名原样传进来即可。
-#   ⚠️ 勘误（[S631b-20260923]）：本注释原写"调用方直接给 keyword1..keywordN"，那是错的（老板指正）。
-#     支付宝这两条模板的关键词就是 amount1/time2/thing4/thing3（general）与
-#     amount2/time5/thing4/thing3（refund）；传 keyword1/keyword2 会被支付宝按字段不匹配拒收。
-#     首版接线(S631)正是照抄了那句错注释，已在 S631b 改正。
-#   现有字段（来自各处 send_wx_subscribe_message 调用点，与支付宝模板同名）：
-#     subscribe_general：amount1 金额 / time2 时间 / thing4 变动原因 / thing3 温馨提示
-#     subscribe_refund ：amount2 金额 / time5 时间 / thing4 退款方式 / thing3 备注
+# 微信字段名 -> 支付宝关键词名（改名表）。两条模板一律留空 {} = 不做改名的直通路径；
+#   ★ 现在调用方直接给的就是支付宝 keyword1..keywordN（见上），所以这里不需要映射。
+#   ⚠️⚠️ 勘误（[S633-20260923]，这是本文件历史上被写错两次的地方，后来人别再被带偏）：
+#     ① S526 原注释写「调用方直接给 keyword1..keywordN」——**这句是对的**；
+#     ② S631b 把它改成「支付宝这两条模板的关键词就是 amount1/time2/thing4/thing3」——**这句是错的**：
+#        amount*/time*/thing* 是【微信】订阅消息的字段名（见 helpers.py 的 _SUBSCRIBE_FIELD_MAP
+#        上方注释，那里明写「目标字段名来自微信官方 wxaapi/newtmpl/gettemplate 的 content」）。
+#        S631b 把微信字段名原样搬到支付宝接口上，是张冠李戴。
+#     ③ 支付宝侧的正确依据（官方三处 + 一条实测）：
+#        · 官方 data example：{"keyword1":{"value":"12:00"},"keyword2":{...},"keyword3":{...}}
+#        · 官方 data notice：「选用模板时配置的关键字顺序与 keyword_x 相互对应」「value 最长 50 字符」
+#        · 官方错误码 USER_TEMPLATE_LACK_KEYWORD：「必须和上送的关键词匹配，例如申请了 5 个关键词，
+#          则 data 数据域必须有 keyword1~keyword5 的对象和 value」
+#        · 实测（只读接口 alipay.open.mini.message.template.batchquery，biz_type=sub_msg）：
+#          c142ac… keyword_desc=「账户余额,变动时间,温馨提示,温馨提醒」
+#          de68d9… keyword_desc=「寄存单号,退还时间,退还状态,退还金额」
+#   历史值（仅作对照，勿再使用）：general 曾用 amount1/time2/thing4/thing3；
+#     refund 曾用 amount2/time5/thing4/thing3。
 _ALIPAY_SUBSCRIBE_FIELD_MAP = {
     _ALIPAY_TPL_GENERAL: {},
     _ALIPAY_TPL_REFUND: {},
 }
 
 # [S530-20260921] 微信字段名 -> biz：调用方没给 biz 时，用 data 里带的微信字段名反推
-#   （这两组字段来自各处 send_wx_subscribe_message 调用点，见上面 _ALIPAY_SUBSCRIBE_FIELD_MAP 注释）
+#   ⚠️ [S633-20260923] 现在 data 是 keyword1..keywordN，两组 biz 的键名完全相同、无法再按字段名区分，
+#      所以这条反推对本项目已失效。**所有现存调用点都显式传 biz**（notify_alipay_order 恒传），
+#      故实际不受影响；缺 biz 时会推不出 -> template_id 为空 -> 安全跳过（不发送），不会发错模板。
 _ALIPAY_TPL_BIZ_HINTS = (
     ('amount1', 'subscribe_general'),
     ('time2', 'subscribe_general'),
@@ -5717,24 +5750,31 @@ def send_alipay_subscribe_message(alipay_uid, template_id, data, page='pages/min
     """[S526] 发送支付宝小程序订阅消息（对应微信的 send_wx_subscribe_message）
 
     入参：
-      alipay_uid  = 用户支付宝 user_id（users.alipay_uid / phone_openids.alipay_uid）
+      alipay_uid  = 收件人支付宝标识（users.alipay_uid / phone_openids.alipay_uid）。
+                    本列实际存的是 47 位 **openid**；由底层按形状分流到 to_open_id / to_user_id。
       template_id = wx_templates channel='alipay' 里那条的 template_id；
                     取法：wx_config.template_id('subscribe_general'|'subscribe_refund', 'alipay', '')
                     ★ [S530] 但该取法对 alipay 通道**永远返回空**（配置中心 CHANNELS 只有 mp/oa）。
                       为兼容旧调用方，参数保持原样；**传空时本函数自动按 biz 查库兜底**。
-      data        = dict，用模板【真实字段】（[S631b-20260923] 老板纠正）：
-                    general -> {'amount1': {'value': '¥30.00'}, 'time2': {'value': '2026-09-21 21:00'},
-                                'thing4': {'value': '已退还至小程序用户钱包'},
-                                'thing3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}}
-                    refund  -> {'amount2': {'value': '¥30.00'}, 'time5': {'value': '2026-09-21 21:00:00'},
-                                'thing4': {'value': '原路退回支付账户'},
-                                'thing3': {'value': '预计0-3个工作日到账'}}
-                    ⚠️ 不要传 keyword1..keywordN：支付宝这两条模板没有这些关键词，会按字段不匹配拒收。
-                       _ALIPAY_SUBSCRIBE_FIELD_MAP 留空 = 不做改名，字段名原样透传。
+      data        = dict，键名必须是**支付宝的 keyword1..keywordN**，顺序 = 模板配置顺序
+                    （[S633-20260923] 按只读接口 batchquery 实测改正；S631b 用微信字段名是错的）：
+                    general（c142ac.. 账户余额通知）
+                      -> {'keyword1': {'value': '¥30.00'},        # 账户余额
+                          'keyword2': {'value': '2026-09-23 10:00'},  # 变动时间
+                          'keyword3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'},  # 温馨提示
+                          'keyword4': {'value': '已退还至小程序用户钱包'}}                  # 温馨提醒
+                    refund （de68d9.. 寄存押金退还通知）
+                      -> {'keyword1': {'value': '20260922233049039873'},  # 寄存单号（模板必需）
+                          'keyword2': {'value': '2026-09-23 10:00:00'},   # 退还时间
+                          'keyword3': {'value': '原路退回支付账户'},       # 退还状态
+                          'keyword4': {'value': '¥30.00'}}                # 退还金额
+                    ⚠️ 不要传 amount1/time2/thing3/thing4/amount2/time5 —— 那是【微信】的字段名，
+                       支付宝侧会按 USER_TEMPLATE_LACK_KEYWORD 拒收。value 上限 50 字符。
+                       _ALIPAY_SUBSCRIBE_FIELD_MAP 留空 = 不做改名，键名原样透传。
       page        = 点击消息跳转的小程序页，默认 pages/mine/mine
       dry_run     = True 时只构造 + 签名、不发网络请求（离线自检用）
       biz         = [S530] 可选。'subscribe_general' / 'subscribe_refund'；
-                    template_id 为空时按它查库取模板ID。不给则由 data 入参反推。
+                    template_id 为空时按它查库取模板ID。**必须显式传**（data 已无法反推 biz）。
 
     返回：dry_run=False -> True/False；dry_run=True -> 参数字典。**绝不抛异常。**
     """

@@ -342,8 +342,16 @@ class AlipayClient(object):
         """[S526] 支付宝小程序【订阅消息】发送：alipay.open.app.mini.templatemessage.send
 
         biz_content 参数：
-          · to_user_id       必填 = 收件人的支付宝 user_id（本项目 = users.alipay_uid /
-                              phone_openids.alipay_uid，由 /api/alipay/login 的 oauth_token 取得）
+          · to_user_id / to_open_id  二选一必填 = 收件人。本参数【既收 uid 也收 openid】，
+                              按形状自动分流（[S633-20260923]）：
+                                · 2088 开头的 16 位数字 -> 发 to_user_id（支付宝 user_id）
+                                · 其它（本项目实际存的是 47 位 openid，如 022f-_ka...）
+                                  -> 发 to_open_id（支付宝 openId，String(128)）
+                              ★ 我们库里 users.alipay_uid / phone_openids.alipay_uid 存的是
+                                /api/alipay/login 的 oauth_token 返回的 open_id（47 位）；
+                                S526~S631 一律塞进 to_user_id -> 支付宝恒回 USER_ID_INVALID。
+                                官方 to_user_id 描述：「新商户建议使用 to_open_id 替代该字段」；
+                                官方 inputRequiredConfig = CHOOSE_ONE(to_open_id, to_user_id)。
           · user_template_id 必填 = 商家平台领用的【订阅消息模板ID】（本项目 = wx_templates 里
                               channel='alipay' 的两条：subscribe_general / subscribe_refund）
           · page             必填 = 用户点击消息后跳转的小程序页面（例 pages/mine/mine）
@@ -388,12 +396,17 @@ class AlipayClient(object):
         if len(data_str.encode('utf-8')) > 2048:
             raise ValueError('data 超过 2048 字节（支付宝上限）')
 
+        # [S633-20260923] 收件人按【形状】分流（官方 inputRequiredConfig = CHOOSE_ONE(to_open_id,
+        #   to_user_id)）：2088 开头 16 位 = user_id，走 to_user_id；否则按 openid 走 to_open_id。
+        #   我们库里存的是 47 位 openid，所以实际走 to_open_id —— 这是原来 USER_ID_INVALID 的根因。
+        #   `re` 已在文件顶部 import（第 17 行），不新增任何依赖。
+        _is_uid_shape = bool(re.fullmatch(r'2088\d{12}', to_user_id))
         biz = {
-            'to_user_id': to_user_id,
             'user_template_id': user_template_id,
             'page': str(page or '')[:128],
             'data': data_str,
         }
+        biz['to_user_id' if _is_uid_shape else 'to_open_id'] = to_user_id
         if form_id:
             biz['form_id'] = str(form_id)
 

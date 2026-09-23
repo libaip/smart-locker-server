@@ -969,7 +969,7 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
     mock_mode = is_mock_mode()
 
     if mock_mode:
-        return {'mode': 'mock', 'order_id': order_id, 'order_no': order_no, 'total_fee': int(deposit_amount * 100)}
+        return {'mode': 'mock', 'order_id': order_id, 'order_no': order_no, 'total_fee': int(round(deposit_amount * 100))}
 
     if openid or user_phone:
         try:
@@ -1018,7 +1018,7 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
         if ch_type == 'third_party' and wxpay:
             third_party_type = 'alipay' if not is_wechat_browser() else 'wechat'
             result = wxpay.unifiedorder(trade_type=third_party_type, body=PAY_GOODS_NAME,
-                                         total_fee=int(deposit_amount * 100), out_trade_no=order_no)
+                                         total_fee=int(round(deposit_amount * 100)), out_trade_no=order_no)
             if result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS':
                 # 更新渠道统计（用于轮转）
                 if current_channel:
@@ -1052,7 +1052,7 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
     else:
         return {'mode': 'error', 'error_msg': '无可用活跃商户，请联系管理员'}
 
-    total_fee = int(deposit_amount * 100)
+    total_fee = int(round(deposit_amount * 100))
     time_expire = (datetime.now() + timedelta(minutes=15)).strftime('%Y%m%d%H%M%S')
 
     result = wxpay.unifiedorder(trade_type=trade_type, body=PAY_GOODS_NAME,
@@ -3442,6 +3442,35 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
         else:
             total_fee = int(round(float(amount) * 100))
         refund_fee = int(round(float(amount) * 100))
+        # [S641-20260923] 退款前先向微信【只读查单】拿真实收款金额, 用它当 total_fee, 并把
+        #   refund_fee 夹到"不超过微信实际收款额"。微信侧的 total_fee 是【唯一可信】的金额来源。
+        #   起因 order 137043(order_no 20260921111820684143, 押金 20.24)：下单侧老缺陷
+        #   int(20.24*100)=2023 让用户实际只付了 2023 分, 而我们库里记 20.24, 退款时我们报
+        #   total_fee=2024/refund_fee=2024 -> 微信回
+        #   "订单金额或退款金额与之前请求不一致，请核实后再试", 一直退不了。
+        #   查单失败/超时/字段缺失/非微信渠道 一律【回落】到上面的原算法 —— 绝不因查单失败拒退或退错;
+        #   查单是只读接口, 不改任何本地状态, 异常只记 warning。支付宝分支一个字都不动。
+        if _s538_ch_type == 'wechat' and payer is not None:
+            try:
+                _s641_q = payer.order_query(out_trade_no=order_no) or {}
+                _s641_tf = str(_s641_q.get('total_fee') or '').strip()
+                if str(_s641_q.get('return_code') or '') == 'SUCCESS' and _s641_tf.isdigit() and int(_s641_tf) > 0:
+                    _s641_real = int(_s641_tf)
+                    logger.info('[S641] 微信实收查单: order=%s total_fee=%d 分 cash_fee=%s '
+                                '(本地算出 total_fee=%d refund_fee=%d)',
+                                order_no, _s641_real, _s641_q.get('cash_fee'), total_fee, refund_fee)
+                    total_fee = _s641_real
+                    if refund_fee > _s641_real:
+                        logger.warning('[S641] 退款金额>微信实收, 按实收退: order=%s refund_fee %d -> %d 分',
+                                       order_no, refund_fee, _s641_real)
+                        refund_fee = _s641_real
+                else:
+                    logger.warning('[S641] 微信查单未取到 total_fee(回落原算法): order=%s rc=%s err=%s total_fee=%r',
+                                   order_no, _s641_q.get('return_code'),
+                                   _s641_q.get('err_code') or _s641_q.get('return_msg'),
+                                   _s641_q.get('total_fee'))
+            except Exception as _s641_qe:
+                logger.warning('[S641] 微信查单异常(回落原算法): order=%s err=%s', order_no, _s641_qe)
         # [S556-20260922] bug② —— 跨渠道重试必须沿用【同一个确定性退款单号】才算渠道内幂等，
         #   所以微信(out_refund_no) 与支付宝(out_request_no) 共用下面这一个串。
         #   （原来支付宝走 'RF<id>_<分>'、微信走 wxpay 内部随机单号，两条串不一致 -> 重试那次

@@ -2584,13 +2584,20 @@ def admin_complaint_retry_refund():
         if not payment_channel_id:
             payment_channel_id = data.get("payment_channel_id")
 
-        try:
-            _passed_amt = float(data.get("deposit_amount") or 0)
-        except (TypeError, ValueError):
-            _passed_amt = None
+        # [S642b-20260923 纯日志修正, 不碰金额取值逻辑] 改前 `float(data.get("deposit_amount") or 0)`
+        # 在【调用方没传金额】时得到 0.0 -> 每次点按钮都误报"传入金额与订单金额不一致"
+        # (实测 传参=None 订单=20.0), 且文案对"没传"这种场景与事实不符。
+        # 现在只有调用方真的传了【非 0】金额才比较/告警; 文案与事实对齐。
+        _raw_passed_amt = data.get("deposit_amount")
+        _passed_amt = None
+        if _raw_passed_amt not in (None, ''):
+            try:
+                _passed_amt = float(_raw_passed_amt) or None
+            except (TypeError, ValueError):
+                _passed_amt = None
         if order_row and _passed_amt is not None and _passed_amt != float(order_row.get('deposit_amount') or 0):
-            logger.warning('[retry_refund] 调用方传入金额与订单金额不一致(本函数仍按调用方传入值走, 请人工确认) complaint_id=%s 传参=%s 订单=%s order_id=%s',
-                           complaint_id, data.get("deposit_amount"), order_row.get('deposit_amount'),
+            logger.warning('[retry_refund] 调用方传入金额与订单金额不一致(本函数按调用方传入金额走, 请人工确认) complaint_id=%s 传参=%s 订单=%s order_id=%s',
+                           complaint_id, _raw_passed_amt, order_row.get('deposit_amount'),
                            order_row.get('id'))
 
         if not order_row:

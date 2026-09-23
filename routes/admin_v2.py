@@ -1610,12 +1610,51 @@ def admin_member_refund():
                         else:
                             wxpay_inst = None
                             wx_err_msg = '无可用活跃商户'
+                    # [S641-20260923] 微信 V2 退款硬规定：total_fee = 【该订单的订单总额】、
+                    #   refund_fee = 【本次退款额】。原来两者都被写成"本次退款额"，
+                    #   于是只要退的金额小于订单全额，微信必然回
+                    #   "订单金额或退款金额与之前请求不一致，请核实后再试" —— 这是既有设计错误，与 1 分差无关。
+                    #   本次同时修两件事（**不改变"退多少钱"**，调用方传的 refund_amount 还是"本次退多少"）：
+                    #     (1) total_fee 改成【向微信只读查单拿到的真实订单总额】；
+                    #     (2) refund_fee 仍是"本次要退多少"，只夹到不超过订单总额。
+                    #   查单失败/超时/字段缺失 -> 回落现有算法(total_fee=refund_fee=int(round(...)))，绝不因此拒退。
+                    #   支付宝分支在本 if/else 之外, 一个字都不动; out_refund_no 生成规则不动。
                     total_fee = int(round(refund_amount * 100))
+                    refund_fee = total_fee
+                    if wxpay_inst is not None:
+                        try:
+                            _s641_q = wxpay_inst.order_query(out_trade_no=order['order_no']) or {}
+                            _s641_tf = str(_s641_q.get('total_fee') or '').strip()
+                            if str(_s641_q.get('return_code') or '') == 'SUCCESS' and _s641_tf.isdigit() and int(_s641_tf) > 0:
+                                _s641_real = int(_s641_tf)
+                                logger.info('[S641] 微信订单总额查单(会员退款): order=%s total_fee=%d 分 cash_fee=%s '
+                                            '(本地算出 %d 分)',
+                                            order['order_no'], _s641_real, _s641_q.get('cash_fee'), total_fee)
+                                total_fee = _s641_real
+                                refund_fee = int(round(refund_amount * 100))
+                                if refund_fee > _s641_real:
+                                    logger.warning('[S641] 退款金额>微信订单总额, 按总额退: order=%s refund_fee %d -> %d 分',
+                                                   order['order_no'], refund_fee, _s641_real)
+                                    refund_fee = _s641_real
+                                    # 只提醒、不改扣减逻辑：本函数的本地余额扣减发生在退款之前，且用的是
+                                    # 调用方传的 refund_amount。若"本次要退"就超过该订单实收，则本地会多扣、
+                                    # 渠道会少退 —— 这是既有结构问题，改它属产品决定，本次【故意不动】。
+                                    logger.warning('[S641] 注意: 本次要退 %s 元 > 该订单微信实收 %d 分, '
+                                                   '本地余额仍会按 %s 元扣减, 会出现"本地多扣/渠道少退"的账实不符, '
+                                                   '请人工核对该会员余额（本次未改扣减逻辑）',
+                                                   refund_amount, _s641_real, refund_amount)
+                            else:
+                                logger.warning('[S641] 微信查单未取到 total_fee(回落原算法): order=%s rc=%s err=%s total_fee=%r',
+                                               order['order_no'], _s641_q.get('return_code'),
+                                               _s641_q.get('err_code') or _s641_q.get('return_msg'),
+                                               _s641_q.get('total_fee'))
+                        except Exception as _s641_qe:
+                            logger.warning('[S641] 微信查单异常(回落原算法): order=%s err=%s', order['order_no'], _s641_qe)
                     if not wxpay_inst:
                         wx_err_msg = wx_err_msg or '无可用支付实例'
                         logger.error(f'[member_refund] {wx_err_msg}')
                     else:
-                        refund_result = wxpay_inst.refund(out_trade_no=order['order_no'], total_fee=total_fee, refund_fee=total_fee, out_refund_no=refund_no, refund_desc='')
+                        refund_result = wxpay_inst.refund(out_trade_no=order['order_no'], total_fee=total_fee, refund_fee=refund_fee, out_refund_no=refund_no, refund_desc='')
                     if refund_result and refund_result.get('return_code') == 'SUCCESS' and refund_result.get('result_code') == 'SUCCESS':
                         wx_refund_ok = True
                     else:

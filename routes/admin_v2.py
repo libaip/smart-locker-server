@@ -2579,15 +2579,18 @@ def admin_complaint_retry_refund():
                     order_row.get('order_no') if order_row else None,
                     order_row.get('deposit_amount') if order_row else None)
 
-        if not deposit_amount:
-            deposit_amount = data.get("deposit_amount") or 0
         if not payment_channel_id:
             payment_channel_id = data.get("payment_channel_id")
 
-        # [S642b-20260923 纯日志修正, 不碰金额取值逻辑] 改前 `float(data.get("deposit_amount") or 0)`
-        # 在【调用方没传金额】时得到 0.0 -> 每次点按钮都误报"传入金额与订单金额不一致"
-        # (实测 传参=None 订单=20.0), 且文案对"没传"这种场景与事实不符。
-        # 现在只有调用方真的传了【非 0】金额才比较/告警; 文案与事实对齐。
+        # [S644-20260923 P0 资金安全] 退款金额口径: 一律以【解析出来的那个订单】的押金为准,
+        # 调用方传什么都不生效。改前这里(含 S642b 只改了文案)是三级取值:
+        #   ① deposit_amount = row.get('deposit_amount', 0)   # LEFT JOIN(c.order_id=o.id) 那一单的押金
+        #   ② if not deposit_amount: deposit_amount = data.get("deposit_amount") or 0   # 调用方传值
+        #   ③ deposit_amount = deposit_amount or order_row["deposit_amount"] or 0       # 真正被退的那一单
+        # 即: 投诉没绑 order_id(LEFT JOIN 出来是 NULL)时, 调用方传了非 0 值就按调用方走
+        #     (投诉 11320 实测传 25 就退 25); 而且 JOIN 那一单的金额也会压过真正被退订单的金额。
+        # 现在: 金额恒等于 order_row(解析出来的订单).deposit_amount;
+        #       调用方传入值【只用于记日志】, 传了非 0 且与订单金额不同就打 WARNING 说明已忽略。
         _raw_passed_amt = data.get("deposit_amount")
         _passed_amt = None
         if _raw_passed_amt not in (None, ''):
@@ -2596,9 +2599,9 @@ def admin_complaint_retry_refund():
             except (TypeError, ValueError):
                 _passed_amt = None
         if order_row and _passed_amt is not None and _passed_amt != float(order_row.get('deposit_amount') or 0):
-            logger.warning('[retry_refund] 调用方传入金额与订单金额不一致(本函数按调用方传入金额走, 请人工确认) complaint_id=%s 传参=%s 订单=%s order_id=%s',
-                           complaint_id, _raw_passed_amt, order_row.get('deposit_amount'),
-                           order_row.get('id'))
+            logger.warning('[retry_refund] 已忽略调用方传入金额, 按订单金额执行 complaint_id=%s order_id=%s 传参=%s 订单金额=%s',
+                           complaint_id, order_row.get('id'), _raw_passed_amt,
+                           order_row.get('deposit_amount'))
 
         if not order_row:
             conn.close()
@@ -2606,7 +2609,7 @@ def admin_complaint_retry_refund():
 
         oid = order_row["id"]
         ono = order_row["order_no"]
-        deposit_amount = deposit_amount or order_row["deposit_amount"] or 0
+        deposit_amount = order_row["deposit_amount"] or 0
         payment_channel_id = payment_channel_id or order_row["payment_channel_id"]
         _r_phone = order_row["user_phone"] or row.get("user_phone") or ""
         refund_status = order_row["refund_status"] or ""
@@ -8432,10 +8435,33 @@ def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id="", p
             c.execute('SELECT id, order_no, transaction_id, deposit_amount, refund_amount, refund_mark, refund_status, status, slot_id, payment_channel_id, user_phone FROM orders WHERE transaction_id=%s LIMIT 1', (transaction_id,))
             order = c.fetchone()
         if not order and payer_phone:
-            like_phone = payer_phone.replace('*', '_')
-            if len(like_phone) >= 7:
-                c.execute('SELECT id, order_no, transaction_id, deposit_amount, refund_amount, refund_mark, refund_status, status, slot_id, payment_channel_id, user_phone FROM orders WHERE user_phone LIKE %s ORDER BY id DESC LIMIT 1', (like_phone,))
-                order = c.fetchone()
+            # [S644-20260923 P0 资金安全] 手机号兜底: 精确 + 唯一, 否则一律拒绝。
+            # 改前 `payer_phone.replace('*','_')` 之后 `user_phone LIKE %s ORDER BY id DESC LIMIT 1` 有两个致命缺陷:
+            #   ① 微信投诉的 payer_phone 常是掩码号(如 152****6359), replace 后 LIKE '152____6359'
+            #      会通配匹配到多个不同用户, 再取"最新一笔" -> 自动退给陌生人;
+            #      而且这条是调度器每 5 分钟自动跑的(不需要任何人点击), 比人工点击路径更危险。
+            #   ② 即使 payer_phone 是真手机号, LIKE '<11位数字>' 无通配也照样取"该用户最新一笔",
+            #      可能退掉他正在使用中的另一单。
+            # 现在: 必须"看起来是真手机号"(strip 后 11 位纯数字且以 1 开头)才允许用于定位;
+            #       用精确等值 user_phone = %s (禁止 LIKE) + status IN (2,3) + 未退款;
+            #       恰好 1 笔才用; 0 笔/多笔 -> 拒绝退款, 并把候选(id/order_no/手机/状态/金额)打进 WARNING。
+            #       含 '*'、含非数字、长度 != 11 的掩码号/加密长串/邮箱一律视为不能定位。绝不猜。
+            _s644_phone = (payer_phone or '').strip()
+            if not (len(_s644_phone) == 11 and _s644_phone.isdigit() and _s644_phone[0] == '1'):
+                logger.warning('[auto_refund_complaint] 拒绝退款(投诉手机号不是可定位的11位真手机号, 掩码/加密/邮箱一律不猜) order_no=%s transaction_id=%s complaint_id=%s phone_len=%s',
+                               order_no, transaction_id, complaint_id, len(_s644_phone))
+                conn.close()
+                return False, '订单无法唯一确定，已拒绝自动退款并转人工处理(手机号不可定位)'
+            c.execute("SELECT id, order_no, transaction_id, deposit_amount, refund_amount, refund_mark, refund_status, status, slot_id, payment_channel_id, user_phone FROM orders WHERE user_phone = %s AND status IN (2,3) AND COALESCE(refund_status,'') NOT IN ('success','refunded') ORDER BY id DESC LIMIT 20", (_s644_phone,))
+            _s644_cands = c.fetchall()
+            if len(_s644_cands) == 1:
+                order = _s644_cands[0]
+            else:
+                logger.warning('[auto_refund_complaint] 拒绝退款(手机号未能唯一定位可退订单) order_no=%s transaction_id=%s complaint_id=%s 手机号=%s 候选数=%s 候选(id,order_no,手机,状态,金额)=%s',
+                               order_no, transaction_id, complaint_id, _s644_phone, len(_s644_cands),
+                               [(r.get('id'), r.get('order_no'), r.get('user_phone'), r.get('status'), r.get('deposit_amount')) for r in _s644_cands])
+                conn.close()
+                return False, '订单无法唯一确定，已拒绝自动退款并转人工处理(候选数=%s)' % len(_s644_cands)
         if not order:
             # 本地无订单：查微信侧真实交易状态，REFUND=已退直接结案，避免无限重试
             _wx_state = ''
@@ -9308,7 +9334,7 @@ def _complaint_scheduler():
                 logger.error("[complaint_scheduler] sync complaint status error: %s", _se)
             conn = get_db()
             c = conn.cursor()
-            c.execute("SELECT * FROM complaints WHERE status IN ('0','1','2') AND type IN ('wechat') AND COALESCE(refund_retry,0) < 3 AND created_at < NOW() - INTERVAL '2 minutes' AND created_at > NOW() - INTERVAL '7 days' AND NOT (status='2' AND POSITION('订单缺失终态' IN COALESCE(refund_fail_reason,'')) > 0) ORDER By created_at LIMIT 100")
+            c.execute("SELECT * FROM complaints WHERE status IN ('0','1','2') AND type IN ('wechat') AND COALESCE(refund_retry,0) < 3 AND created_at < NOW() - INTERVAL '2 minutes' AND created_at > NOW() - INTERVAL '7 days' AND NOT (status='2' AND (POSITION('订单缺失终态' IN COALESCE(refund_fail_reason,'')) > 0 OR POSITION('自动退款拒绝终态' IN COALESCE(refund_fail_reason,'')) > 0)) ORDER By created_at LIMIT 100")
             rows = c.fetchall()
             conn.close()
             conn = None
@@ -9525,7 +9551,10 @@ def _complaint_scheduler():
                         logger.warning('[complaint_scheduler] 退款失败 id=%s msg=%s 第%s次', cid, refund_msg, _retry_n)
                         # 订单不存在类：本地/微信均无此订单，重试无意义，直接转人工且不再自动重试
                         _no_order = ('订单不存在' in str(refund_msg)) or ('未找到对应订单' in str(refund_msg))
-                        if _retry_n >= 3 or _no_order:
+                        # [S644-20260923 P0 资金安全] "订单无法唯一确定"=确定性拒绝(不是瞬时故障):
+                        # 同样立即转人工, 不再重试, 更不会被当成"无需退款"错误结案。
+                        _rejected = ('无法唯一确定' in str(refund_msg)) or ('拒绝自动退款' in str(refund_msg))
+                        if _retry_n >= 3 or _no_order or _rejected:
                             if _cmch:
                                 _auto_reply_complaint(wxid, order_no=ono, transaction_id=_txn, mch_id=cmch, cert_serial=ccert, private_key_path=ckey, content=WECHAT_MANUAL_REPLY, complete_now=False)
                             _u_conn = get_db()
@@ -9533,6 +9562,16 @@ def _complaint_scheduler():
                             _u.execute("UPDATE complaints SET status=2, reply=%s, reply_time=CURRENT_TIMESTAMP WHERE id=%s", (WECHAT_MANUAL_REPLY, cid))
                             _u_conn.commit()
                             _u_conn.close()
+                            if _rejected:
+                                # 确定性拒绝: 打上"拒绝终态"标记, 后续轮次彻底跳过(不重试、不结案)
+                                try:
+                                    _s644_rj_conn = get_db()
+                                    _s644_rj = _s644_rj_conn.cursor()
+                                    _s644_rj.execute("UPDATE complaints SET refund_fail_reason=CONCAT(COALESCE(refund_fail_reason,''), '|自动退款拒绝终态'), reply=COALESCE(reply,'') WHERE id=%s AND status='2'", (cid,))
+                                    _s644_rj_conn.commit()
+                                    _s644_rj_conn.close()
+                                except Exception as _s644_rje:
+                                    logger.warning('[complaint_scheduler] 标记自动退款拒绝终态失败: %s', _s644_rje)
                             if _no_order:
                                 # 打上标记，后续轮次跳过该投诉不再重试
                                 try:
@@ -9690,6 +9729,21 @@ def _complaint_scheduler():
                         continue
 
                     fail_text2 = str(refund_msg2)
+                    # [S644-20260923 P0 资金安全] "订单无法唯一确定"=确定性拒绝(不是瞬时故障):
+                    # 立即转人工(状态2)、不重试; 必须放在下面"当作无需退款结案"的判断之前,
+                    # 否则钱没退、投诉却被 reply=受理通知/已退款 结掉, 人工永远看不到。
+                    if ('无法唯一确定' in fail_text2) or ('拒绝自动退款' in fail_text2):
+                        logger.warning("[complaint_scheduler] non-wechat 订单无法唯一确定, 拒绝自动退款并转人工 id=%s order=%s phone=%s msg=%s", cid2, ono2, phone2, refund_msg2)
+                        try:
+                            _s644_mr_conn = get_db()
+                            _s644_mr = _s644_mr_conn.cursor()
+                            _s644_mr.execute("UPDATE complaints SET refund_fail_reason=%s WHERE id=%s", ('订单无法唯一确定终态|' + fail_text2[:200], cid2))
+                            _s644_mr_conn.commit()
+                            _s644_mr_conn.close()
+                        except Exception as _s644_mre:
+                            logger.warning("[complaint_scheduler] 记录拒绝原因失败: %s", _s644_mre)
+                        _finish_nonwechat(cid2, '自动退款失败(订单无法唯一确定)，已转人工处理，请联系人工客服4006981080。')
+                        continue
                     if ('\u5df2\u5168\u989d\u9000\u6b3e' in fail_text2 or '\u8bb0\u5f55\u4e0d\u5b58\u5728' in fail_text2
                             or 'ORDERNOTEXIST' in fail_text2 or '\u8ba2\u5355\u4e0d\u5b58\u5728' in fail_text2
                             or '\u672a\u627e\u5230\u5bf9\u5e94\u8ba2\u5355' in fail_text2):

@@ -1212,6 +1212,34 @@ def admin_order_refund():
                             wxpay_inst, _ = get_channel_wxpay(dict(active_ch))
                         else:
                             return json_response(message='无可用活跃商户，无法退款', code=400)
+                    # [S641-20260923] 同 do_real_refund：退款前先向微信【只读查单】拿真实收款金额。
+                    #   为什么必须问渠道：我们库里的金额与微信实收可能【两个方向都不一致】——
+                    #     P1 类(如 20.06, 微信实收 2006)：改前 int(20.06*100)=2005 -> 400，round 才对；
+                    #     P2 类(如 20.24, 微信实收 2023)：改前 int(20.24*100)=2023 恰好一致 -> 能退，
+                    #                                   S316 改成 round=2024 -> 反而变 400。
+                    #   即 int() 与 round() 各只对一半订单正确, 唯一可靠解 = 问微信真实值。
+                    #   查单失败/超时/字段缺失 -> 一律【回落】到现在的算法, 绝不因此拒退; 异常只记 warning。
+                    #   支付宝分支在本 if 之外, 一个字都不动; out_refund_no 生成规则不动。
+                    try:
+                        _s641_q = wxpay_inst.order_query(out_trade_no=order_no) or {}
+                        _s641_tf = str(_s641_q.get('total_fee') or '').strip()
+                        if str(_s641_q.get('return_code') or '') == 'SUCCESS' and _s641_tf.isdigit() and int(_s641_tf) > 0:
+                            _s641_real = int(_s641_tf)
+                            logger.info('[S641] 微信实收查单(后台订单退款): order=%s total_fee=%d 分 cash_fee=%s '
+                                        '(本地算出 total_fee=%d refund_fee=%d)',
+                                        order_no, _s641_real, _s641_q.get('cash_fee'), total_fee, refund_fee)
+                            total_fee = _s641_real
+                            if refund_fee > _s641_real:
+                                logger.warning('[S641] 退款金额>微信实收, 按实收退: order=%s refund_fee %d -> %d 分',
+                                               order_no, refund_fee, _s641_real)
+                                refund_fee = _s641_real
+                        else:
+                            logger.warning('[S641] 微信查单未取到 total_fee(回落原算法): order=%s rc=%s err=%s total_fee=%r',
+                                           order_no, _s641_q.get('return_code'),
+                                           _s641_q.get('err_code') or _s641_q.get('return_msg'),
+                                           _s641_q.get('total_fee'))
+                    except Exception as _s641_qe:
+                        logger.warning('[S641] 微信查单异常(回落原算法): order=%s err=%s', order_no, _s641_qe)
                     refund_result = wxpay_inst.refund(
                         out_trade_no=order_no,
                         total_fee=total_fee,

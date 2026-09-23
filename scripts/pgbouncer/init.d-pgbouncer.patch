@@ -1,0 +1,10 @@
+--- a/etc/init.d/pgbouncer	(S646-B 改前, md5 c668252e7f10e9ab3c5813e2ba5d4d1d)
++++ b/etc/init.d/pgbouncer	(S646-B 改后, md5 decff3cbb757e7027e02a20431f154de)
+@@ -18 +18 @@
+-PIDDIR=/var/run/postgresql
++# [S646-20260924] 与 /etc/pgbouncer/pgbouncer.ini 的 pidfile 对齐:
++#   该 ini 写的是 pidfile = /tmp/pgbouncer.pid, 而原值是 /var/run/postgresql,
++#   导致 start-stop-daemon 认为实例没在跑 -> 重复拉起第二个 pgbouncer ->
++#   抢不到 127.0.0.1:6432 的 unix socket, 打 FATAL 自杀 -> unit 被标 failed。
++#   S646-C 会把 ini 与启动脚本一起还原为包默认(/var/run/postgresql), 届时删除本行补丁。
++PIDDIR=/tmp

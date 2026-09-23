@@ -1,0 +1,15 @@
+# [S646-20260924] pgbouncer 的 logfile 写在 /tmp(见 /etc/pgbouncer/pgbouncer.ini),
+# 包自带规则指的是 /var/log/postgresql/pgbouncer.log(该文件一直 0 字节) -> 实际没人管,
+# 实测 33 天涨到 4.6G/3066 万行。此处补上规则: copytruncate 无需 pgbouncer 重开文件。
+# 注: S646-C 把 logfile 迁到 /var/log/postgresql/ 后, 本文件会被脚本改写为指向新路径。
+/tmp/pgbouncer.log
+{
+    size 200M
+    rotate 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su postgres postgres
+}

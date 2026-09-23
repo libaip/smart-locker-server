@@ -1,0 +1,6 @@
+# [S646-C] 一次性计划任务: pgbouncer 配置正规化(计划内重启一次).
+# 脚本成功/已迁移/回滚完成时自删本文件; 若因"待处理投诉>0"或服务未就绪而中止, 保留 04:40 的重试.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+0  4 * * * root /home/ubuntu/s646_pgbouncer_c.sh
+40 4 * * * root /home/ubuntu/s646_pgbouncer_c.sh

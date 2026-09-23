@@ -3807,7 +3807,7 @@ def do_balance_transfer(phone, amount, openid=None, user_id=0):
         result = payer.transfer(
             partner_trade_no=partner_trade_no,
             openid=openid,
-            amount=int(float(amount) * 100),
+            amount=int(round(float(amount) * 100)),
             desc='Locker balance withdrawal'
         )
         if result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS':

@@ -1119,10 +1119,10 @@ def admin_order_refund():
         c.execute("SELECT amount FROM payments WHERE order_id=%s AND type=1 AND status=1 AND amount<=1000 ORDER BY id LIMIT 1", (order_id,))
         _paid_row = c.fetchone()
         if _paid_row and _paid_row[0]:
-            total_fee = int(float(_paid_row[0]) * 100)
+            total_fee = int(round(float(_paid_row[0]) * 100))
         else:
-            total_fee = int((float(amount) + float(order_dict.get('per_use_price') or 0)) * 100)
-        refund_fee = int(float(amount) * 100)
+            total_fee = int(round((float(amount) + float(order_dict.get('per_use_price') or 0)) * 100))
+        refund_fee = int(round(float(amount) * 100))
         transaction_id = order_dict.get('transaction_id', '')
         order_no = order_dict.get('order_no', '')
         payment_channel_id = order_dict.get('payment_channel_id')
@@ -1582,7 +1582,7 @@ def admin_member_refund():
                         else:
                             wxpay_inst = None
                             wx_err_msg = '无可用活跃商户'
-                    total_fee = int(refund_amount * 100)
+                    total_fee = int(round(refund_amount * 100))
                     if not wxpay_inst:
                         wx_err_msg = wx_err_msg or '无可用支付实例'
                         logger.error(f'[member_refund] {wx_err_msg}')

@@ -2448,7 +2448,7 @@ def admin_complaint_retry_refund():
             return json_response(message='id为空', code=400)
         conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT c.*, o.id as order_id, o.order_no, o.deposit_amount, o.payment_channel_id FROM complaints c LEFT JOIN orders o ON c.order_id=o.id WHERE c.id=%s", (complaint_id,))
+        c.execute("SELECT c.*, c.order_id as c_order_id, c.order_no as c_order_no, c.openid as c_openid, c.user_phone as c_user_phone, o.id as order_id, o.order_no, o.deposit_amount, o.payment_channel_id FROM complaints c LEFT JOIN orders o ON c.order_id=o.id WHERE c.id=%s", (complaint_id,))
         row = c.fetchone()
         if not row:
             conn.close()
@@ -2457,43 +2457,142 @@ def admin_complaint_retry_refund():
         ono = row.get('order_no')
         deposit_amount = row.get('deposit_amount', 0)
         payment_channel_id = row.get('payment_channel_id')
-        if not oid or not ono:
-            # 自有投诉可能没有order_id，尝试通过用户手机号查最近订单
-            if row.get('openid') or row.get('user_phone'):
-                _phones = []
-                _oid = row.get('openid', '')
-                if _oid:
-                    c.execute('SELECT DISTINCT phone FROM users WHERE unionid = (SELECT unionid FROM users WHERE mp_openid = %s AND unionid IS NOT NULL LIMIT 1) AND phone IS NOT NULL AND phone != chr(39)||chr(39)', (_oid,))
-                    _phones = [r[0] for r in c.fetchall()]
-                if not _phones and row.get('user_phone'):
-                    _phones = [row['user_phone']]
-                ord_row = None
-                if _phones:
-                    phs = ','.join(['%s'] * len(_phones))
-                    c.execute('SELECT id, order_no, deposit_amount, payment_channel_id FROM orders WHERE user_phone IN (' + phs + ') AND status IN (2,3) ORDER BY id DESC LIMIT 1', tuple(_phones))
-                    ord_row = c.fetchone()
-                if ord_row:
-                    oid = ord_row[0]
-                    ono = ord_row[1]
-                    deposit_amount = ord_row[2] or 0
-                    payment_channel_id = ord_row[3]
+        # [S642-20260923 P0 资金安全] 订单解析：要么唯一确定，要么拒绝。
+        # 改前这里有一段 unionid 兜底：用户的 unionid 是空串('')而不是 NULL，内层
+        # unionid IS NOT NULL 命中 '' -> 外层 unionid='' 匹配全站 unionid 为空的用户
+        # -> 再按这批手机号 ORDER BY id DESC LIMIT 1 取"全站最新一笔挂单"当本投诉的订单。
+        # 投诉 11320(order_id 为空、openid 用户 unionid='') 就是这样退掉了别人的订单 140867。
+        # 该路径已【彻底删除】：绝不猜、绝不取"最新一笔"；无法唯一确定一律拒绝并返回人话。
+        _c_phone = (row.get('c_user_phone') or '').strip()
+        _c_openid = (row.get('c_openid') or '').strip()
+        _c_order_id = row.get('c_order_id')
+        _c_order_no = (row.get('c_order_no') or '').strip()
+        _explicit_id = data.get("complaint_order_id")
+        _explicit_no = data.get("order_no")
 
-        if not oid:
-            oid = data.get("complaint_order_id")
-        if not ono:
-            ono = data.get("order_no")
+        def _same_id(_a, _b):
+            return _a is not None and _b is not None and str(_a) == str(_b)
+
+        def _looks_like_phone(_p):
+            return bool(_p) and len(_p) == 11 and _p.isdigit() and _p[0] == '1'
+
+        _c_identity_known = bool(_c_openid) or _looks_like_phone(_c_phone)
+        _ORDER_COLS = ('id, order_no, user_phone, deposit_amount, refund_status, status, '
+                       'refund_id, transaction_id, payment_channel_id, openid, mp_openid')
+
+        def _order_ownership(_o):
+            """归属校验 -> (是否放行, 原因)。身份可核对就必须对上；投诉没有任何可核对身份
+            (微信投诉 user_phone 是加密长串、openid 为空)时才认投诉自带的唯一单据号。"""
+            if not _o:
+                return False, 'no_order'
+            _o_phone = (_o.get('user_phone') or '').strip()
+            _o_mp = (_o.get('mp_openid') or '').strip()
+            _o_open = (_o.get('openid') or '').strip()
+            if (_c_phone and _c_phone == _o_phone) or (_c_openid and _c_openid in (_o_mp, _o_open)):
+                return True, 'identity'
+            if _c_identity_known:
+                return False, 'identity_mismatch'
+            if _c_order_no and _c_order_no == (_o.get('order_no') or '').strip():
+                return True, 'complaint_order_no'
+            if _same_id(_c_order_id, _o.get('id')):
+                return True, 'complaint_order_id'
+            return False, 'no_proof'
+
+        def _fetch_order_by_id(_q_id):
+            c.execute("SELECT " + _ORDER_COLS + " FROM orders WHERE id=%s", (_q_id,))
+            return c.fetchone()
+
+        def _fetch_order_by_no(_q_no):
+            c.execute("SELECT " + _ORDER_COLS + " FROM orders WHERE order_no=%s", (_q_no,))
+            return c.fetchone()
+
+        order_row = None
+        _src = ''
+        _own_ok = False
+        _own_why = ''
+        if _explicit_id or _explicit_no:
+            # P0 调用方显式传参(后台"未退款订单"弹窗里管理员手选的单)优先级最高, 但同样必须过归属校验
+            order_row = _fetch_order_by_id(_explicit_id) if _explicit_id else None
+            if not order_row and _explicit_no:
+                order_row = _fetch_order_by_no(_explicit_no)
+            _src = 'explicit'
+            if not order_row:
+                conn.close()
+                return json_response(message='未找到所选订单，请核对订单号后重试', code=400)
+            _own_ok, _own_why = _order_ownership(order_row)
+            if not _own_ok:
+                logger.warning('[retry_refund] 拒绝退款(所选订单与投诉用户不匹配, 原因=%s) complaint_id=%s 投诉手机号=%s 投诉openid=%s 订单id=%s 订单号=%s 订单手机号=%s 订单openid=%s',
+                               _own_why, complaint_id, _c_phone, _c_openid, order_row.get('id'),
+                               order_row.get('order_no'), order_row.get('user_phone'),
+                               order_row.get('mp_openid') or order_row.get('openid'))
+                conn.close()
+                return json_response(message='所选订单与该投诉的用户不匹配，请人工核对', code=400)
+        elif _c_order_id:
+            order_row = _fetch_order_by_id(_c_order_id)
+            _src = 'complaint.order_id'
+            if not order_row:
+                conn.close()
+                return json_response(message='该投诉关联的订单不存在，请人工核对', code=400)
+            _own_ok, _own_why = _order_ownership(order_row)
+            if not _own_ok:
+                logger.warning('[retry_refund] 拒绝退款(投诉自带order_id归属不符, 原因=%s) complaint_id=%s 投诉手机号=%s 投诉openid=%s 订单id=%s 订单号=%s 订单手机号=%s',
+                               _own_why, complaint_id, _c_phone, _c_openid, order_row.get('id'),
+                               order_row.get('order_no'), order_row.get('user_phone'))
+                conn.close()
+                return json_response(message='该投诉关联的订单与其用户不匹配，请人工核对', code=400)
+        elif _c_order_no:
+            order_row = _fetch_order_by_no(_c_order_no)
+            _src = 'complaint.order_no'
+            if not order_row:
+                conn.close()
+                return json_response(message='该投诉关联的订单号查不到订单，请人工核对', code=400)
+            _own_ok, _own_why = _order_ownership(order_row)
+            if not _own_ok:
+                logger.warning('[retry_refund] 拒绝退款(投诉自带order_no归属不符, 原因=%s) complaint_id=%s 投诉手机号=%s 投诉openid=%s 投诉订单号=%s 订单id=%s 订单手机号=%s',
+                               _own_why, complaint_id, _c_phone, _c_openid, _c_order_no,
+                               order_row.get('id'), order_row.get('user_phone'))
+                conn.close()
+                return json_response(message='该投诉关联的订单与其用户不匹配，请人工核对', code=400)
+        elif _c_openid:
+            # P3 只能用 openid 精确匹配：恰好 1 笔可退订单才放行；0 笔/多笔一律拒绝并把候选记日志
+            _src = 'openid'
+            c.execute("SELECT " + _ORDER_COLS + " FROM orders WHERE (mp_openid=%s OR openid=%s)"
+                      " AND status IN (2,3) AND COALESCE(refund_status,'') NOT IN ('success','refunded')"
+                      " ORDER BY id DESC LIMIT 20", (_c_openid, _c_openid))
+            _cands = c.fetchall()
+            if len(_cands) == 1:
+                order_row = _cands[0]
+                _own_ok, _own_why = True, 'openid'
+            else:
+                logger.warning('[retry_refund] 拒绝退款(openid 未能唯一确定订单) complaint_id=%s 投诉openid=%s 候选数=%s 候选(id,order_no,phone,status,amount)=%s',
+                               complaint_id, _c_openid, len(_cands),
+                               [(r.get('id'), r.get('order_no'), r.get('user_phone'), r.get('status'),
+                                 r.get('deposit_amount')) for r in _cands])
+                conn.close()
+                return json_response(message='该投诉未关联唯一订单，请在订单页选定订单后重试', code=400)
+        else:
+            conn.close()
+            return json_response(message='该投诉没有可识别的用户身份(手机号/openid)，无法确定退款订单，请人工核对', code=400)
+
+        logger.info('[retry_refund] 订单解析来源=%s 归属依据=%s complaint_id=%s order_id=%s order_no=%s amount=%s',
+                    _src, _own_why, complaint_id, order_row.get('id') if order_row else None,
+                    order_row.get('order_no') if order_row else None,
+                    order_row.get('deposit_amount') if order_row else None)
+
         if not deposit_amount:
             deposit_amount = data.get("deposit_amount") or 0
         if not payment_channel_id:
             payment_channel_id = data.get("payment_channel_id")
 
-        order_row = None
-        if oid:
-            c.execute("SELECT id, order_no, user_phone, deposit_amount, refund_status, status, refund_id, transaction_id, payment_channel_id FROM orders WHERE id=%s", (oid,))
-            order_row = c.fetchone()
-        if not order_row and ono:
-            c.execute("SELECT id, order_no, user_phone, deposit_amount, refund_status, status, refund_id, transaction_id, payment_channel_id FROM orders WHERE order_no=%s", (ono,))
-            order_row = c.fetchone()
+        try:
+            _passed_amt = float(data.get("deposit_amount") or 0)
+        except (TypeError, ValueError):
+            _passed_amt = None
+        if order_row and _passed_amt is not None and _passed_amt != float(order_row.get('deposit_amount') or 0):
+            logger.warning('[retry_refund] 调用方传入金额与订单金额不一致(本函数仍按调用方传入值走, 请人工确认) complaint_id=%s 传参=%s 订单=%s order_id=%s',
+                           complaint_id, data.get("deposit_amount"), order_row.get('deposit_amount'),
+                           order_row.get('id'))
+
         if not order_row:
             conn.close()
             return json_response(message='未找到可退款订单', code=400)

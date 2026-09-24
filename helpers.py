@@ -880,18 +880,100 @@ def get_wxpay(use_mp_appid=False):
 #   NOAUTH, 全程 0 条通知。
 # 本函数只在"已无任何可用微信渠道"时告警, 避免正常轮转时打扰。
 # 去重靠 DB(system_settings 一条 key), 跨 8 个 worker/跨进程有效。
+# [S657-20260924] S531 的三个判断条件(标题 / 去重 key / "无其它活跃渠道")全部保留不动;
+#   本次只加"按 err_code_des 分流": 产品级(该产品权限未开通)不再当作账号被封告警。
+#   生产实证: system_settings['[S531]mch_restricted_alert'] 里 121/122/124 三个渠道
+#   最后一次告警的 desc 都是"商户号该产品权限未开通", 却发了"商户号被封/收款受限"。
 _MCH_RESTRICTED_ALERT_KEY = '[S531]mch_restricted_alert'
 _MCH_RESTRICTED_ALERT_GAP = 600      # 同渠道 10 分钟内只告警一次
 
+# [S657-20260924] 未知 NOAUTH 的中性告警单独一把去重锁, 不污染 [S531] 那把
+_MCH_NOAUTH_ALERT_KEY = '[S657]mch_noauth_alert'
 
-def _alert_mch_restricted(channel, err_code, err_desc):
-    """微信回 NOAUTH/收款受限 -> 若无其他可用微信渠道则告警(不产生任何支付副作用)"""
+# [S657-20260924] trade_type -> 人话产品名(告警正文与落库都用它)
+_MCH_PRODUCT_NAMES = {'JSAPI': '小程序支付', 'MWEB': 'H5支付', 'NATIVE': '扫码支付'}
+
+# [S657-20260924] 被动记录的 key 前缀 + err_desc 截断长度(避免 setting_value 无限膨胀)
+_MCH_LAST_ERROR_KEY_PREFIX = 'mch_last_error_'
+_MCH_LAST_ERROR_DESC_MAX = 200
+
+# [S657-20260924] 分类枚举(固定 6 值)
+_MCH_ERR_CLASSES = ('ok', 'account_restricted', 'product_not_open',
+                    'appid_mchid_mismatch', 'sign_error', 'other')
+
+
+def _mch_product_of(trade_type):
+    """trade_type -> 人话产品名; 认不出来原样返回; 空 -> 未知"""
+    _tt = (trade_type or '').strip()
+    if not _tt:
+        return '未知'
+    return _MCH_PRODUCT_NAMES.get(_tt.upper(), _tt)
+
+
+def _mch_noauth_kind(err_code, err_desc):
+    """[S657] 只对 NOAUTH/NO_AUTH 按 err_code_des 细分; 其余返回 None(交回原有行为)。
+
+      'account'        账号级: 收款功能已被限制 / 暂无法支付  -> 这才是"商户被限制收款"
+      'product'        产品级: 该产品权限未开通              -> 只是这个支付产品没开通
+      'unknown_noauth' 其它 NOAUTH 描述                      -> 中性告警
+    """
+    if (err_code or '').upper() not in ('NOAUTH', 'NO_AUTH'):
+        return None
+    _ed = err_desc or ''
+    if ('收款功能已被限制' in _ed) or ('暂无法支付' in _ed):
+        return 'account'
+    if '该产品权限未开通' in _ed:
+        return 'product'
+    return 'unknown_noauth'
+
+
+def _classify_mch_err(err_code, err_desc, return_code=None, result_code=None):
+    """[S657] 把一次微信下单结果归类为 _MCH_ERR_CLASSES 之一(纯函数, 不碰库不联网)"""
+    if return_code == 'SUCCESS' and result_code == 'SUCCESS':
+        return 'ok'
+    _ec = (err_code or '').upper()
+    _ed = err_desc or ''
+    _kind = _mch_noauth_kind(_ec, _ed)
+    if _kind == 'account':
+        return 'account_restricted'
+    if _kind == 'product':
+        return 'product_not_open'
+    if _kind == 'unknown_noauth':
+        return 'other'
+    if _ec == 'APPID_MCHID_NOT_MATCH':
+        return 'appid_mchid_mismatch'
+    if _ec in ('SIGN_ERROR', 'SIGNERROR') or ('签名错误' in _ed):
+        return 'sign_error'
+    return 'other'
+
+
+def _alert_mch_restricted(channel, err_code, err_desc, trade_type=None):
+    """微信回 NOAUTH/收款受限 -> 若无其他可用微信渠道则告警(不产生任何支付副作用)
+
+    [S657-20260924] 修掉"产品级未开通被报成账号级被封"(生产实锤见 S657 报告):
+      · 账号级(收款功能已被限制/暂无法支付): [S531] 原行为原文案逐字节保留
+        (标题 / 10 分钟去重 / "无其它活跃微信渠道"闸门 / 去重 key 全不动), 正文只追加一行"失败产品"
+      · 产品级(该产品权限未开通): 只记日志, 一律【不告警】—— 这正是本次要消灭的误导
+      · 其它 NOAUTH: 中性文案(不写"被封"、不给产品级/账号级结论)
+      · 非 NOAUTH(MCH_NOT_EXIST / APPID_MCHID_NOT_MATCH / 签名错误 等): 行为逐字节不变
+    """
     import json as _json
     import time as _time
     try:
         cid = (channel or {}).get('id')
         cname = (channel or {}).get('name', '未知')
         cmch = (channel or {}).get('mch_id', '未知')
+        _kind = _mch_noauth_kind(err_code, err_desc)
+        _prod = _mch_product_of(trade_type)
+
+        # [S657] 产品级未开通: 不是账号问题, 只记日志; 落库交给 _record_mch_last_error, 绝不告警
+        if _kind == 'product':
+            logger.warning('[MchRestricted] 渠道 %s 商户号该产品权限未开通(%s), 属产品级, 不告警: %s'
+                           % (cid, _prod, err_desc))
+            return False
+
+        # [S657] 账号级/非 NOAUTH 沿用 [S531] 那把锁; 其它 NOAUTH 用单独一把, 互不干扰
+        _alert_key = _MCH_RESTRICTED_ALERT_KEY if _kind != 'unknown_noauth' else _MCH_NOAUTH_ALERT_KEY
 
         from database import get_db
         conn = get_db()
@@ -908,7 +990,7 @@ def _alert_mch_restricted(channel, err_code, err_desc):
 
         # 去重: 同渠道 10 分钟内只告警一次
         cur.execute("SELECT setting_value FROM system_settings WHERE setting_key=%s",
-                    (_MCH_RESTRICTED_ALERT_KEY,))
+                    (_alert_key,))
         row = cur.fetchone()
         st = {}
         if row:
@@ -924,22 +1006,39 @@ def _alert_mch_restricted(channel, err_code, err_desc):
             conn.close()
             return False
 
-        title = '【寄存柜】微信商户号被封/收款受限'
-        content = ('微信支付商户号被限制收款，且当前已无其他可用微信渠道。\n'
-                   '商户名称: %s\n'
-                   '商户号(mch_id): %s\n'
-                   '渠道ID: %s\n'
-                   '错误码: %s\n'
-                   '错误描述: %s\n'
-                   '\n请立刻登录 pay.weixin.qq.com 查看，并到后台"支付渠道"启用备用商户号。') % (
-            cname, cmch, cid, err_code, err_desc)
+        if _kind == 'unknown_noauth':
+            # [S657] 中性文案: 只报事实, 不下"被封"/"产品未开通"任何一种结论
+            title = '【寄存柜】微信商户号下单失败(NOAUTH)'
+            content = ('微信商户号下单返回 NOAUTH（未归类）。\n'
+                       '商户名称: %s\n'
+                       '商户号(mch_id): %s\n'
+                       '渠道ID: %s\n'
+                       '失败产品: %s\n'
+                       '错误码: %s\n'
+                       '错误描述: %s\n'
+                       '\n该描述不属于已知的两种 NOAUTH 情形，请人工确认商户号状态。') % (
+                cname, cmch, cid, _prod, err_code, err_desc)
+        else:
+            # [S531] 原文案逐字节保留(账号级 / 非 NOAUTH 都走这里)
+            title = '【寄存柜】微信商户号被封/收款受限'
+            content = ('微信支付商户号被限制收款，且当前已无其他可用微信渠道。\n'
+                       '商户名称: %s\n'
+                       '商户号(mch_id): %s\n'
+                       '渠道ID: %s\n'
+                       '错误码: %s\n'
+                       '错误描述: %s\n'
+                       '\n请立刻登录 pay.weixin.qq.com 查看，并到后台"支付渠道"启用备用商户号。') % (
+                cname, cmch, cid, err_code, err_desc)
+            # [S657] 只有账号级才追加这一行(非 NOAUTH 保持逐字节不变)
+            if _kind == 'account':
+                content = content + '\n失败产品: %s' % _prod
         ok = send_pushplus(title, content)
         st[str(cid)] = {'ts': now, 'name': cname, 'mch': cmch, 'err': err_code, 'desc': err_desc}
         try:
             cur.execute(
                 "INSERT INTO system_settings (setting_key, setting_value) VALUES (%s, %s) "
                 "ON CONFLICT (setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value",
-                (_MCH_RESTRICTED_ALERT_KEY, _json.dumps(st, ensure_ascii=False)))
+                (_alert_key, _json.dumps(st, ensure_ascii=False)))
             conn.commit()
         except Exception as _we:
             logger.warning('[MchRestricted] 告警状态写库失败: %s' % _we)
@@ -950,6 +1049,67 @@ def _alert_mch_restricted(channel, err_code, err_desc):
         logger.error('[MchRestricted] 告警失败: %s' % e)
         return False
 
+
+def _record_mch_last_error(channel, result, trade_type, source, order_no=None):
+    """[S657-20260924] 把【真实下单】的结果被动记到 system_settings.mch_last_error_<渠道id>。
+
+    老板口径(2026-09-24): 不做定时主动探针, 只用"真实下单时微信回的报错"判断商户状态。
+      · 只记录被真实流量尝试过的渠道; 不遍历/不探测停用渠道、不写 payment_channels、不做 DDL
+      · 任何异常都在函数内吞掉只记日志 —— 绝不影响支付链路
+      · 分类见 _classify_mch_err(); 产品名见 _mch_product_of()
+      · account_restricted -> 立即告警(复用 [S531] 原文案/原去重/原"无其它渠道"闸门)
+      · product_not_open   -> 只落库, 不告警(消灭"产品未开通被报成被封"的误导)
+      · ok                 -> 也落一笔(用于看"最后成功时间")
+    返回分类字符串(出错时返回 'other')
+    """
+    import json as _json
+    import time as _time
+    try:
+        cid = (channel or {}).get('id')
+        if not cid:
+            return 'other'
+        result = result or {}
+        _rc = result.get('return_code')
+        _res = result.get('result_code')
+        _ec = result.get('err_code') or ''
+        _ed = result.get('err_code_des') or result.get('return_msg') or ''
+        _cls = _classify_mch_err(_ec, _ed, _rc, _res)
+        _payload = {
+            'at': int(_time.time()),
+            'product': _mch_product_of(trade_type),
+            'trade_type': (trade_type or ''),
+            'class': _cls,
+            'err_code': _ec,
+            'err_desc': str(_ed)[:_MCH_LAST_ERROR_DESC_MAX],
+            'source': source,
+            'order_no': (order_no or ''),
+            'return_code': _rc or '',
+            'result_code': _res or '',
+            'mch_id': (channel or {}).get('mch_id', ''),
+            'name': (channel or {}).get('name', ''),
+        }
+        try:
+            from database import get_db as _gdb657
+            _c657 = _gdb657()
+            _cur657 = _c657.cursor()
+            _cur657.execute(
+                "INSERT INTO system_settings (setting_key, setting_value) VALUES (%s, %s) "
+                "ON CONFLICT (setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value",
+                (_MCH_LAST_ERROR_KEY_PREFIX + str(cid), _json.dumps(_payload, ensure_ascii=False)))
+            _c657.commit()
+            _c657.close()
+        except Exception as _we657:
+            logger.warning('[S657] 落库 mch_last_error 失败(不影响支付): %s' % _we657)
+        if _cls == 'account_restricted':
+            # 账号级 -> 立即告警(不等到巡检; 文案/去重/闸门沿用 [S531] 原逻辑)
+            try:
+                _alert_mch_restricted(channel, _ec, _ed, trade_type)
+            except Exception as _ae657:
+                logger.error('[S657] 账号级告警失败: %s' % _ae657)
+        return _cls
+    except Exception as _e657:
+        logger.error('[S657] _record_mch_last_error 异常(不影响支付): %s' % _e657)
+        return 'other'
 
 _mch_fail_poll_count = {}
 
@@ -1060,6 +1220,10 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
                                  notify_url=_wx_payurl(), openid=openid,
                                  scene_info=scene_info, time_expire=time_expire)
 
+    # [S657-20260924] 被动记录本次【真实下单】结果(成功也记一笔 -> 可看"最后成功时间")。
+    #   账号级受限会立即告警; 产品级只落库不告警。异常在函数内吞掉, 绝不影响支付链路。
+    _record_mch_last_error(current_channel, result, trade_type, 'h5-unifiedorder', order_no=order_no)
+
     if result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS':
         # 更新订单的实际支付渠道（防止轮转导致不一致）
         try:
@@ -1115,7 +1279,8 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
             # [S531-20260921] 原来的"商户号被封通知"就断在这里: 只切渠道、从不告警。
             #   现在若无其他可用微信渠道, 立刻推送给管理员(带 10 分钟去重)。
             _alert_mch_restricted(current_channel, result.get('err_code'),
-                                  result.get('err_code_des') or result.get('return_msg', ''))
+                                  result.get('err_code_des') or result.get('return_msg', ''),
+                                  trade_type)
         next_ch = select_payment_channel(exclude_channel_id=current_channel['id'])
         if next_ch and next_ch.get('id') and next_ch['id'] != current_channel['id']:
             logger.info(f'[渠道] 切换到下一个渠道重试: {next_ch["name"]}')
@@ -1489,6 +1654,8 @@ def get_mp_jsapi_params(order_id, order_no, amount, mp_openid,
                                     total_fee=total_fee, out_trade_no=order_no,
                                     notify_url=_wx_payurl(), openid=mp_openid,
                                     scene_info=None, time_expire=time_expire)
+        # [S657-20260924] 同上: 被动记录本次真实下单结果(小程序支付 JSAPI)
+        _record_mch_last_error(channel, result, 'JSAPI', 'mp-jsapi', order_no=order_no)
         if not (result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS'):
             logger.error('[mp-jsapi] 统一下单失败 order=%s channel=%s ret=%s/%s err=%s/%s',
                          order_no, channel.get('id'), result.get('return_code'), result.get('return_msg'),

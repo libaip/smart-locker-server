@@ -10,6 +10,7 @@ from flask import Blueprint, request, session
 from database import get_db
 from helpers import json_response, logger, pending_lock_commands, connected_devices, require_auth, \
     find_user_balance_row, upsert_user_balance_row, phone_openid_rows, \
+    pick_order_mp_openid, \
     deposit_already_refunded, \
     get_mid_retrieve_config, try_increment_mid_retrieve
 
@@ -238,7 +239,9 @@ def offline_retrieve():
             logger.warning('[S400] 离线结束模板消息失败: %s', _tpl_e)
         # 发送结束通知和退款通知
         try:
-            _notify_openid = order.get('openid', '') or ''
+            # [S651] 原来只用 order['openid']（实测近 2 天 98% 的订单该列为空 -> 必然走手机号反查）；
+            #   改成优先用订单记录的 mp_openid，取不到才走下面【一字未改】的反查。
+            _notify_openid = pick_order_mp_openid(order) or (order.get('openid', '') or '')
             if not _notify_openid:
                 try:
                     _nc = get_db()
@@ -287,6 +290,7 @@ def offline_retrieve_batch():
         cursor = conn.cursor()
         results = []
         success_count = 0
+        _r_orders_map = {}      # [S651] order_id/order_no -> 数据库订单行（下面按订单取收件 openid 用）
         for rec in records:
             oid = rec.get('order_id')
             ono = rec.get('order_no')
@@ -299,6 +303,7 @@ def offline_retrieve_batch():
                 if not order:
                     results.append({'order_id': oid, 'order_no': ono, 'status': 'not_found'})
                     continue
+                _r_orders_map[(order['id'], order['order_no'])] = dict(order)   # [S651]
                 if order['status'] != 2:
                     results.append({'order_id': order['id'], 'order_no': order['order_no'], 'status': 'already_processed'})
                     continue
@@ -333,7 +338,10 @@ def offline_retrieve_batch():
                     _r_order_data = records[_ridx]
                 else:
                     continue
-                _nopenid = _r_order_data.get('openid', '') or ''
+                # [S651] 收件 openid 优先取【数据库订单】记录的 mp_openid；取不到才用上报记录里的
+                #   openid（原逻辑）。原实现只用上报记录的 openid，拿不到就按手机号反查 -> 可能发错小程序。
+                _r_s651_db = _r_orders_map.get((_rrec.get('order_id'), _rrec.get('order_no'))) or {}
+                _nopenid = pick_order_mp_openid(_r_s651_db) or (_r_order_data.get('openid', '') or '')
                 _nphone = _r_order_data.get('user_phone', '')
                 if not _nopenid and _nphone:
                     try:

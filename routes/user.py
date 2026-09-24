@@ -25,6 +25,7 @@ from helpers import (json_response, get_setting, is_mock_mode, is_wechat_browser
                      logger,
                      check_withdraw_auto_approve, mark_user_withdraw, get_withhold_hours,
                      phone_openid_rows, resolve_user_identity, find_user_balance_row,
+                     pick_order_mp_openid,          # [S651] 收件 openid 优先取订单记录的 mp_openid
                      upsert_user_balance_row, upsert_phone_openid_row,
                      deposit_already_refunded,
                      is_new_mp_identity, new_mp_openid_prefix,
@@ -1064,7 +1065,9 @@ def retrieve():
                     cursor.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status) VALUES (%s, %s, %s, 'available') ON CONFLICT (order_id) DO NOTHING",
                                (order['user_phone'], order['id'], _deposit_amount))
                 cursor.execute('UPDATE orders SET refund_mark = 1 WHERE id = %s', (order["id"],))
-            _openid = order.get("mp_openid") or order.get("openid")
+            # [S651] 收件 openid 优先取【订单上记录的小程序 openid】（能解析出已登记账号才认）；
+            #   取不到才走下面【一字未改】的手机号反查兜底，绝不让反查覆盖订单值。
+            _openid = pick_order_mp_openid(order) or (order.get("mp_openid") or order.get("openid"))
             if not _openid:
                 try:
                     _po_rows = phone_openid_rows(cursor, phone=order.get('user_phone'), unionid=order.get('unionid', ''))
@@ -1343,7 +1346,8 @@ def retrieve_confirm():
         conn.commit()
         conn.close()
         # 发送寄存结束订阅消息
-        _openid = _openid or order.get("openid")
+        # [S651] 订单上记录的小程序 openid 优先（原来可能被 _resolve_order_identity 的手机号反查结果顶掉）
+        _openid = pick_order_mp_openid(order) or _openid or order.get("openid")
         if not _openid:
             try:
                 _po_rows = phone_openid_rows(cursor, phone=order.get('user_phone'), unionid=order.get('unionid', ''))
@@ -1964,6 +1968,8 @@ def deposit_retrieve():
                             _noid = _n_row[0]
                     except:
                         pass
+                # [S651] 订单上记录的小程序 openid 优先；反查（上面那段）只作兜底，绝不覆盖订单值
+                _noid = pick_order_mp_openid(order_dict) or _noid
                 _n_amt = (order_dict or {}).get('deposit_amount', 0)
                 if _noid:
                     try:
@@ -2239,7 +2245,8 @@ def deposit_end_storage():
         else:
             logger.info('[end_storage] device offline, skip remote open cmd: order=' + str(order_id))
         # 发送寄存结束订阅消息
-        _openid = order.get("mp_openid") or order.get("openid")
+        # [S651] 收件 openid 优先取【订单上记录的小程序 openid】；取不到才走下面原样保留的反查
+        _openid = pick_order_mp_openid(order) or (order.get("mp_openid") or order.get("openid"))
         if not _openid:
             _nconn = None
             try:

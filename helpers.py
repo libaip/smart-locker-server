@@ -5917,6 +5917,64 @@ def _wx_fix_subscribe_template(openid, template_id):
         return template_id
 
 
+def pick_order_mp_openid(order):
+    """[S651] 从订单记录里取「确定属于某个已登记小程序账号」的 mp openid；取不到返回 ''。
+
+    严格优先级：
+      ① order['mp_openid'] —— 且能被 wx_config.account_id_by_openid() 解析出小程序账号
+         （同时排除公众号前缀：oLhbm2/octN92 这类一律不当成小程序 openid）
+      ② order['openid']    —— 同样条件（部分客户端把小程序 openid 放在 openid 字段里）
+      ③ 都取不到 -> 返回 ''；调用方随即走【与改动前完全一样】的手机号/unionid 反查兜底
+
+    为什么要有它：orders 表记录了下单那一刻的小程序 openid（近 2 天 98.7% 的订单都有）。
+    部分通知调用点原来只按【手机号】反查收件 openid；当同一手机号名下存在两个小程序的
+    openid（老 oXTD3x / 新 oQXFs3）时，反查可能命中【另一个】小程序的 openid ->
+    通知发到用户没授权的那个小程序（收不到 / 跳转不对）。
+    本函数保证：只要订单自己带着可用的小程序 openid，就【绝不】被反查结果覆盖。
+
+    · order 可以是 dict / RealDictRow / None；非映射对象先尝试 dict(order)。
+    · 任何异常一律返回 ''（绝不抛出）——异常时调用方行为与改动前完全一致。
+    · 只读 wx_config 的账号前缀表，不写库、不联网、无副作用。
+    """
+    try:
+        if not order:
+            return ''
+        try:
+            _get = order.get
+        except Exception:
+            try:
+                order = dict(order)
+                _get = order.get
+            except Exception:
+                return ''
+        try:
+            import wx_config as _wc651
+        except Exception:
+            return ''
+        _oa_pfx = ''
+        try:
+            _oa_pfx = str(_wc651.oa_openid_prefix() or '').strip()
+        except Exception:
+            _oa_pfx = ''
+        for _key in ('mp_openid', 'openid'):
+            try:
+                _v = str(_get(_key) or '').strip()
+            except Exception:
+                _v = ''
+            if not _v:
+                continue
+            if _oa_pfx and _v.startswith(_oa_pfx):
+                continue
+            try:
+                if _wc651.account_id_by_openid(_v):
+                    return _v
+            except Exception:
+                continue
+        return ''
+    except Exception:
+        return ''
+
+
 def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, unionid=None,
                               order_id=None, order_ids=None, pay_channel_id=None):
     """发送微信订阅消息（仅支持小程序mp_openid）

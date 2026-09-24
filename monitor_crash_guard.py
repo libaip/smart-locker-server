@@ -3,7 +3,8 @@
 """
 防崩溃监控脚本（2026-08-18 添加）
 每分钟由 crontab 调用，监控昨天(8-17)全站 499 崩溃的前兆指标：
-  1. idle in transaction 卡死连接数（>=3 告警，>=10 立即杀）
+  1. idle in transaction 卡死连接数（>=3 告警，>=10 严重告警；
+     kill 需显式开关 system_settings.crash_guard_kill_idle_txn=1，默认只告警）
   2. 未授予锁数量（>=5 告警）
   3. 最近1分钟 499/5xx 数量（>=20 告警，>=100 严重）
   4. gunicorn worker 数异常（<7 告警）
@@ -103,6 +104,22 @@ def _run(cmd):
         logging.error('命令执行失败 %s: %s', cmd, e)
         return ''
 
+# [S654-20260924] idle-in-transaction 的 kill 行为收进显式开关。
+#   老板口径：自愈不要反过来伤业务 —— 默认【只告警、不 kill】。
+#   只有 system_settings.crash_guard_kill_idle_txn 的值恰为 '1' 才恢复 kill。
+#   读不到 / 表中无该键 / 查询异常 一律按 0(关) 处理（故障时偏保守，绝不动业务连接）。
+_KILL_IDLE_TXN_KEY = 'crash_guard_kill_idle_txn'
+
+
+def _kill_switch_on():
+    try:
+        v = _run("""sudo -u postgres psql -d smart_locker -t -A -c "SELECT setting_value FROM system_settings WHERE setting_key='%s' LIMIT 1" 2>/dev/null""" % _KILL_IDLE_TXN_KEY)
+        return str(v).strip() == '1'
+    except Exception as e:
+        logging.warning('读取 %s 失败(按只告警模式处理): %s', _KILL_IDLE_TXN_KEY, e)
+        return False
+
+
 def main():
     issues = []
 
@@ -113,11 +130,19 @@ def main():
     except ValueError:
         idle_n = 0
     if idle_n >= 10:
-        # 严重：立即杀卡死连接（复用 kill_stuck_txn 逻辑）
-        _run("sudo -u postgres psql -d smart_locker -t -A -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='smart_locker' AND state='idle in transaction' AND NOW()-xact_start > interval '30 seconds'\" > /dev/null 2>&1")
+        # [S654-20260924] 原行为=无条件立即杀；现改为「先看显式开关，默认只告警不 kill」。
+        #   阈值(>=10)与告警文案结构保持原样，只在只告警模式下把文案改写成事实。
+        _kill_on = _kill_switch_on()
+        if _kill_on:
+            # 严重：立即杀卡死连接（复用 kill_stuck_txn 逻辑）—— 仅在开关=1 时执行
+            _run("sudo -u postgres psql -d smart_locker -t -A -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='smart_locker' AND state='idle in transaction' AND NOW()-xact_start > interval '30 seconds'\" > /dev/null 2>&1")
         if _should_alert('idle_critical'):
-            _alert('【严重】数据库卡死连接%d个，已自动清理' % idle_n,
-                   'smart-locker idle in transaction=%d（>=10 已自动 kill）。\n时间: %s' % (idle_n, time.strftime('%Y-%m-%d %H:%M:%S')))
+            if _kill_on:
+                _alert('【严重】数据库卡死连接%d个，已自动清理' % idle_n,
+                       'smart-locker idle in transaction=%d（>=10 已自动 kill）。\n时间: %s' % (idle_n, time.strftime('%Y-%m-%d %H:%M:%S')))
+            else:
+                _alert('【严重】数据库卡死连接%d个（当前为只告警模式，未执行 kill）' % idle_n,
+                       'smart-locker idle in transaction=%d（>=10）。当前为只告警模式（system_settings.%s 未设为 1），未执行 kill。\n时间: %s' % (idle_n, _KILL_IDLE_TXN_KEY, time.strftime('%Y-%m-%d %H:%M:%S')))
         issues.append('idle_txn=%d(严重)' % idle_n)
     elif idle_n >= 3:
         if _should_alert('idle_warn'):

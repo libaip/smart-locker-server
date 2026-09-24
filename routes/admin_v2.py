@@ -37,8 +37,14 @@ WECHAT_FINAL_REPLY = '您好，您的预付款已全额退款，请注意查收�
 #         公众号 openid(oLhbm2/ov47M3) 不能发订阅消息，已停用小程序账号3(oWrA8) 也不发
 #         （否则微信 40003 invalid openid / 40037 invalid template_id，白刷日志）。
 #   以后再加小程序：把账号 id 加进 _SENDABLE_MP_ACCOUNT_IDS，或在后台把它切成生效账号。
+#   [S649-20260924] 账号11 = 老小程序 wx281a9540a6a5b64d（重庆卓蓝时科技有限公司）。
+#     2026-09-24 生效账号切成新小程序(9) 后，老用户 openid 前缀 oXTD3x 既不等于
+#     "当前生效前缀"(oQXFs3)、账号11 也不在白名单 -> 老用户的
+#     「订单关闭通知 / 自动提现通知」会被 _is_sendable_mp_openid 直接判 False 而跳过
+#     （订单关闭处随后按手机号回查也只会用 _sendable_mp_prefixes()，同样查不到 oXTD3x）。
+#     所以账号11 必须一起留在白名单里，否则老用户一条通知都收不到。
 # ============================================================
-_SENDABLE_MP_ACCOUNT_IDS = (9,)      # 新小程序「 重庆清域智科技有限公司」wx0be09d4de1417e01
+_SENDABLE_MP_ACCOUNT_IDS = (9, 11)   # 9=新小程序「 重庆清域智科技有限公司」wx0be09d4de1417e01；11=老小程序 wx281a9540a6a5b64d 重庆卓蓝时科技有限公司（必须保留）
 
 
 def _sendable_mp_prefixes():

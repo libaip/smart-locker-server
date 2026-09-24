@@ -3854,12 +3854,22 @@ def do_balance_transfer(phone, amount, openid=None, user_id=0):
 
 
 def get_access_token(force_refresh=False):
+    # [S649-20260924] 缓存键必须带 appid（根因）。
+    #   原来读/写都用固定键 'wx_mp_access_token'（不含 appid）：后台把生效小程序切成
+    #   另一个账号后，缓存里那条"切换前"的 token 仍会被当成本账号的 token 使用 ->
+    #   微信返回 40003 invalid openid（2026-09-24 12:29~12:41 生产实测，
+    #   该缓存直到 12:58:56 才过期）。
+    #   改成 'wx_mp_access_token_<当前生效appid>'，与其它小程序互不干扰；
+    #   旧键既不再读、也不再写。appid 只取一次，缓存键与请求体必定同源。
+    #   除"缓存键"与"appid 只取一次"外，返回值 / 失败返回 None / 异常处理与改前一致。
     from datetime import datetime, timedelta
     try:
+        _appid = _wx_mp_id()
+        _token_key = 'wx_mp_access_token_' + (_appid or '')
         conn = get_db()
         cur = conn.cursor()
         if not force_refresh:
-            cur.execute("SELECT setting_value FROM system_settings WHERE setting_key = 'wx_mp_access_token'")
+            cur.execute("SELECT setting_value FROM system_settings WHERE setting_key = %s", (_token_key,))
             row = cur.fetchone()
             if row and row['setting_value']:
                 try:
@@ -3873,7 +3883,7 @@ def get_access_token(force_refresh=False):
                     pass
         import requests as _r
         url = 'https://api.weixin.qq.com/cgi-bin/stable_token'
-        payload = dict(grant_type='client_credential', appid=_wx_mp_id(), secret=_wx_mp_secret(), force_refresh=force_refresh)
+        payload = dict(grant_type='client_credential', appid=_appid, secret=_wx_mp_secret(), force_refresh=force_refresh)
         resp = _r.post(url, json=payload, timeout=5)
         result = resp.json()
         if 'access_token' in result:
@@ -3882,7 +3892,7 @@ def get_access_token(force_refresh=False):
             ea = (datetime.now() + timedelta(seconds=ei)).isoformat()
             import json as _j2
             cd = _j2.dumps(dict(token=token, expires_at=ea))
-            cur.execute("INSERT OR REPLACE INTO system_settings (setting_key, setting_value) VALUES (%s, %s)", ('wx_mp_access_token', cd))
+            cur.execute("INSERT OR REPLACE INTO system_settings (setting_key, setting_value) VALUES (%s, %s)", (_token_key, cd))
             conn.commit()
             conn.close()
             return token
@@ -5953,8 +5963,8 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
             _eff_id = _eff.get('id') or 0
         except Exception:
             _aid, _eff_id = 0, 0
-        if _aid and _eff_id and _aid != _eff_id:
-            logger.info('[subscribe_msg] openid 属于其它小程序(账号id=%s, 当前生效=%s)，走新路径', _aid, _eff_id)
+        if _aid:
+            logger.info('[subscribe_msg] openid 属于小程序(账号id=%s, 当前生效=%s)，走按账号发送路径', _aid, _eff_id)
             return _send_subscribe_for_account(_aid, openid, template_id, data, page, phone, unionid)
     except Exception as _e0:
         logger.warning('[subscribe_msg] 小程序分流判断失败(按原逻辑): %s', _e0)

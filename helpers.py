@@ -959,7 +959,7 @@ _mch_fail_poll_count = {}
 #   原因：电话/营销词（原「人工加急电话：4006981080」）属微信支付商品描述的风控弱信号，
 #   而全站微信收款只有一个商户号（1750896171），一旦被限制=全站收不到钱，风险收益不划算。
 #   只影响【下单时】的商品名 -> 只对新订单生效，已支付的老订单账单不变。改这一个常量即可全局生效。
-PAY_GOODS_NAME = '小云伧存-寄存服务预付款(请确认订单结束后，余额在小程序【小云伧存】我的钱包提现)'
+PAY_GOODS_NAME = '【小云伧存】寄存预付款'
 
 
 def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, openid=None,

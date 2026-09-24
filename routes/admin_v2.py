@@ -10148,8 +10148,8 @@ def admin_feedback_user_orders():
         phones = []
         if openid:
             c.execute("""SELECT DISTINCT phone FROM phone_openids
-                WHERE (openid=%s OR mp_openid=%s OR unionid=%s)
-                  AND phone IS NOT NULL AND phone!=''""", (openid, openid, openid))
+                WHERE (openid=%s OR mp_openid=%s)
+                  AND phone IS NOT NULL AND phone!=''""", (openid, openid))
             phones = [r[0] for r in c.fetchall()]
         if phone:
             phones.append(phone)
@@ -10204,7 +10204,7 @@ def admin_feedback_refund():
             return json_response(message='缺订单id', code=400)
         conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT id, order_no, user_phone, deposit_amount, status, refund_status, refund_id, transaction_id, payment_channel_id FROM orders WHERE id=%s", (order_id,))
+        c.execute("SELECT id, order_no, user_phone, deposit_amount, status, refund_status, refund_id, transaction_id, payment_channel_id, openid, mp_openid FROM orders WHERE id=%s", (order_id,))
         order = c.fetchone()
         if not order:
             conn.close()
@@ -10217,6 +10217,52 @@ def admin_feedback_refund():
         if refund_status in ('success', 'refunded'):
             conn.close()
             return json_response(message='订单已退款', code=400)
+
+        # [S655-20260924 资金安全] 订单归属校验: 与 S642「投诉重试退款」同一套口径。
+        # 改前这里拿到调用方传来的 order_id 后【直接】do_real_refund, 完全不校验这单是不是
+        # 这个反馈用户的 -> 前端/人工传错单号就会把押金退给不相干的人(与 S642 的"投诉重试
+        # 退款退错单"同类, 区别是这里要人传错单号才触发, 属低危但该补)。
+        # 反馈侧身份只认 wx_feedback 里的两种可核对身份:
+        #   ① 11 位真手机号(^1\d{10}$)  ② 非空 openid(微信小程序 openid)
+        # 订单对不上 = 拒绝; 反馈侧一个可核对身份都没有(phone 为空/不是真手机号即加密长串
+        # 或邮箱、openid 为空) = 同样拒绝。绝不猜、绝不拿"最新一笔"顶替, 一律转人工核对。
+        _f_phone, _f_openid = '', ''
+        if feedback_id:
+            c.execute("SELECT phone, openid FROM wx_feedback WHERE id=%s", (feedback_id,))
+            _f_row = c.fetchone()
+            if _f_row:
+                _f_phone = (_f_row.get('phone') or '').strip()
+                _f_openid = (_f_row.get('openid') or '').strip()
+
+        def _looks_like_phone(_p):
+            return bool(_p) and len(_p) == 11 and _p.isdigit() and _p[0] == '1'
+
+        _f_identity_known = bool(_f_openid) or _looks_like_phone(_f_phone)
+        _o_phone = (order.get('user_phone') or '').strip()
+        _o_mp_openid = (order.get('mp_openid') or '').strip()
+        _o_openid = (order.get('openid') or '').strip()
+
+        def _order_ownership(_o):
+            """归属校验 -> (是否放行, 原因)。与 S642 admin_complaint_retry_refund 同口径:
+            身份能核对就必须对上; 反馈侧没有可核对身份时不猜, 一律拒绝。"""
+            if not _o:
+                return False, 'no_order'
+            _x_phone = (_o.get('user_phone') or '').strip()
+            _x_mp = (_o.get('mp_openid') or '').strip()
+            _x_open = (_o.get('openid') or '').strip()
+            if _looks_like_phone(_f_phone) and _f_phone == _x_phone:
+                return True, 'identity_phone'
+            if _f_openid and _f_openid in (_x_mp, _x_open):
+                return True, 'identity_openid'
+            if _f_identity_known:
+                return False, 'identity_mismatch'
+            return False, 'no_proof'
+
+        _own_ok, _own_why = _order_ownership(order)
+        if not _own_ok:
+            logger.warning('[feedback_refund] 拒绝退款(该订单与该反馈的用户不匹配, 原因=%s) feedback_id=%s order_id=%s 订单号=%s 反馈手机号=%s 反馈openid=%s 订单手机号=%s 订单mp_openid=%s 订单openid=%s', _own_why, feedback_id, oid, ono, _f_phone, _f_openid, _o_phone, _o_mp_openid, _o_openid)
+            conn.close()
+            return json_response(message='该订单与该反馈的用户不匹配，请人工核对', code=400)
 
         ok, rid, msg = do_real_refund(order_id=oid, order_no=ono, amount=amount, payment_channel_id=payment_channel_id)
         if not ok:

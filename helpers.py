@@ -1393,18 +1393,44 @@ def _appid_rows():
 
     读不到库 -> 返回 []，调用方回落到原行为。60 秒缓存，避免支付热路径每次都查库。
 
-    ⚠️ 这里【故意不 conn.close()】：get_db() 在请求上下文里返回的是 flask.g 复用的
-       连接，close() 会把这条连接 putconn 归还池子，而调用链上别处可能还持有同一个
-       conn 对象在用 -> 归还后另一线程可能同时拿到同一条连接 = 串号/竞态。
-       请求结束由 teardown 统一回收；非请求上下文（脚本/巡检）最多每 60 秒漏 1 条，可忽略。
+    ⚠️ 连接归还规则（[S659-20260924] 修连接池泄漏，只动"归不归还"，别的都不动）：
+       · 请求上下文：get_db() 返回的是 flask.g 复用的那条连接，调用链上别处可能还持有
+         同一个 conn 对象在用 -> 本函数**绝不 close()**（close() 会 putconn 归还池子，
+         归还后另一线程可能同时拿到同一条连接 = 串号/竞态），请求结束由 teardown 统一回收。
+       · 非请求上下文（脚本/巡检）：get_db() 每次新建一条只属于本函数的连接 ->
+         用完**必须** close() 归还池子。
+       老注释曾说"非请求上下文最多每 60 秒漏 1 条，可忽略"——这条假设是错的：
+       商户健康巡检线程每 60 秒跑一轮并走到这里（check_merchant_health ->
+       get_channel_wxpay -> appid_by_openid -> 本函数），于是每 60 秒漏 1 条，
+       约 50 分钟把 ThreadedConnectionPool(10,50) 漏干；池干后该 worker 的 get_db()
+       全部失败 -> 3 次触发 SIGTERM 自愈重启。2026-09-24 生产实测：
+       `connection pool exhausted` 333 条 / 自愈重启 21 次。
     """
     now = time.time()
     cached = _APPID_BY_PREFIX_CACHE.get('rows')
     if cached is not None and (now - _APPID_BY_PREFIX_CACHE.get('ts', 0.0)) < _APPID_BY_PREFIX_TTL:
         return cached
     rows = []
+    conn = None
+    # [S659-20260924] _own_conn = "这条连接归本函数归还"。判不出来时按"不归我"处理
+    #   （保守：行为与改动前完全一致，绝不因为判不出上下文而误归还请求连接）。
+    _own_conn = False
+    try:
+        from flask import has_request_context as _has_req_ctx
+        _own_conn = not bool(_has_req_ctx())
+    except Exception:
+        _own_conn = False
     try:
         conn = get_db()
+        if _own_conn:
+            # 双保险：若存在"有 app 上下文但没有请求上下文"的调用点，get_db() 仍会复用
+            #   flask.g 上的连接；只要这条连接就是 g 上那条，就一律不归还。
+            try:
+                from flask import g as _g
+                if getattr(_g, '_db_conn', None) is conn:
+                    _own_conn = False
+            except Exception:
+                pass
         cursor = conn.cursor()
         # [S415-20260921] 已停用的公众号(oa)不再参与"按 openid 取 appid"：
         #   它的 appid 跟现在在用的商户没有绑定，拿来下单必然 APPID_MCHID_NOT_MATCH。
@@ -1421,6 +1447,15 @@ def _appid_rows():
     except Exception as _e:
         logger.error('[S357] 取 openid 前缀->appid 映射失败，回落原逻辑: %s', _e)
         rows = []
+    finally:
+        # [S659-20260924] 只归还【非请求上下文】下【本次新建】的连接；请求上下文与
+        #   "有 app 上下文无请求上下文"两种情形一律不动（_own_conn=False）。
+        #   归还失败只记日志，绝不吞掉主流程的异常，也绝不影响本次 return 的 rows。
+        if _own_conn and conn is not None:
+            try:
+                conn.close()
+            except Exception as _ce:
+                logger.error('[S659] 归还 _appid_rows 的连接失败(不影响本次返回值): %s', _ce)
     _APPID_BY_PREFIX_CACHE['rows'] = rows
     _APPID_BY_PREFIX_CACHE['ts'] = now
     return rows

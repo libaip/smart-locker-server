@@ -426,7 +426,7 @@
             2. 输入手机号和4位取件码<br>
             3. 支付预付款后柜门自动打开<br>
             4. 取包时点击「取」，输入手机号+取件码<br>
-            5. 取出物品关好柜门，预付款原路退回
+            5. 取出物品关好柜门，预付款退回至余额，可在钱包提现
         </div>
         <div class="action-cards">
             <div class="action-card action-card-store" onclick="goToStoreStep1()">
@@ -516,7 +516,7 @@
             <div id="oaSubWrap" style="display:none;position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.55);z-index:99998;align-items:center;justify-content:center;padding:22px;box-sizing:border-box">
                 <div style="background:#fff;border-radius:16px;padding:22px 20px;max-width:340px;width:100%;box-sizing:border-box;text-align:center">
                     <div style="font-size:19px;font-weight:700;color:#1a1a1a;margin-bottom:8px">订阅通知</div>
-                    <div style="font-size:13px;color:#666;line-height:1.7;margin-bottom:14px">订阅后，“押金退还 / 退款到账”会用微信“服务通知”提醒你<br>只点这一次，以后不再打扰</div>
+                    <div style="font-size:13px;color:#666;line-height:1.7;margin-bottom:14px">订阅后，“预付款退还 / 退款到账”会用微信“服务通知”提醒你<br>只点这一次，以后不再打扰</div>
                     <wx-open-subscribe id="oaSubBtn" template="RyvAHJzC46JDEk_w8nAJHlLppNtNiAgkqP_GdHGWEUg,pG1ieUsHgBg5y0ZJCfjNiUrF7QuftlSWwDYXSpAp6js,nDTX0vT_wODrTnM4A1qSNnSXDUTNgw2Fm0CMF0eZe-o" style="display:block;width:100%">
                         <script type="text/wxtag-template">
                             <style>.oa-hit{display:block;width:100%;padding:14px;background:#FFC107;color:#1a1a1a;border:0;border-radius:24px;font-size:17px;font-weight:700;text-align:center;box-sizing:border-box}</style>
@@ -569,7 +569,7 @@
         </div>
         <div class="pay-warning">
             <span class="pay-warning-icon">⚠️</span>
-            <span>请支付后使用设备，结束使用后预付款可申请原路退回。</span>
+            <span>请支付后使用设备，结束使用后预付款退回至余额，可随时提现。</span>
         </div>
         <div class="pay-action-area">
             <button class="pay-open-btn" id="payBtn" onclick="payDeposit()">支付开门</button>
@@ -635,7 +635,7 @@
         </div>
         <div class="rc-actions">
             <button class="rc-btn-mid" onclick="midOpen()">中途开柜</button>
-            <button class="rc-btn-end" onclick="alert('请在小程序或订单中心结束订单退押金')" style="display:none">取包结束</button>
+            <button class="rc-btn-end" onclick="alert('请在小程序或订单中心结束订单退预付款')" style="display:none">取包结束</button>
         </div>
     </div>
 
@@ -754,7 +754,7 @@
     <div id="mpTipModal" class="modal-overlay" onclick="if(event.target===this){closeMpTipModal()}">
         <div class="modal-box">
             <div class="modal-title">请跳转小程序进行下一步</div>
-            <p id="mpTipDesc" style="text-align:center;font-size:14px;color:#666;margin-bottom:10px">请在弹出的“即将打开小程序”里点【允许】；进入后再允许“订阅通知”，这样才能收到押金退还 / 退款到账的微信提醒</p>
+            <p id="mpTipDesc" style="text-align:center;font-size:14px;color:#666;margin-bottom:10px">请在弹出的“即将打开小程序”里点【允许】；进入后再允许“订阅通知”，这样才能收到预付款退还 / 退款到账的微信提醒</p>
             <p id="mpRetryHint" style="display:none;text-align:center;font-size:13px;color:#e6a23c;margin-bottom:10px">没跳过去？再点一次【去小程序】就行（点几次都可以）</p>
             <div class="modal-btns">
                 <button id="mpOpenBtn" class="modal-btn modal-btn-confirm" onclick="launchMp()">去小程序</button>
@@ -785,9 +785,9 @@
                 <p>2. 预付款仅作为寄存期间的有效使用担保，不属于寄存费用。</p>
                 <p>3. 当前预付款标准：小柜¥10、中柜¥20、大柜¥30，具体以页面显示为准。</p>
                 <h3>二、预付款退还</h3>
-                <p>1. 用户取包并关好柜门后，预付款将在0-3个工作日内原路退回至支付账户。</p>
+                <p>1. 用户取包并关好柜门后，预付款将即时退回至小程序余额，可在钱包提现。</p>
                 <p>2. 如超时未取包，系统将根据网点规则处理，预付款退还规则以网点公示为准。</p>
-                <p>3. 退款仅支持原路退回，不支持更换退款账户。</p>
+                <p>3. 提现仅支持退回原支付账户，不支持更换账户。</p>
                 <h3>三、用户责任</h3>
                 <p>1. 请勿存放违禁物品、贵重物品及易腐烂变质的物品。</p>
                 <p>2. 用户应妥善保管取包凭证（手机号+密码），因凭证泄露导致的损失由用户自行承担。</p>
@@ -828,7 +828,7 @@
                 <p><strong>Q: 取件密码忘记了怎么办？</strong></p>
                 <p>A: 联系客服400-698-1080，提供手机号核实后可查询。</p>
                 <p><strong>Q: 预付款多久能退回？</strong></p>
-                <p>A: 取包成功后0-3个工作日内原路退回。</p>
+                <p>A: 取包成功后预付款即时退回小程序余额，可在「我的余额」提现。</p>
             </div>
         </div>
     </div>

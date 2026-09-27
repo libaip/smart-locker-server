@@ -1084,7 +1084,7 @@ def retrieve():
                         "thing4": {"value": "已退还至小程序用户钱包"},
                         "thing3": {"value": "请自行点击此通知消息跳转“我的钱包”提现"}
                     }
-                    send_wx_subscribe_message(_openid, _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), subscribe_data, phone=order.get("user_phone"), page="pages/withdraw/withdraw", order_id=order["id"])  # [S525]
+                    send_wx_subscribe_message(_openid, _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), subscribe_data, phone=order.get("user_phone"), unionid=(order.get("unionid") or ''), page="pages/withdraw/withdraw", order_id=order["id"])  # [S525][S682]
                 except Exception as e:
                     logger.error(f"[retrieve发送订阅消息失败] {e}")
             conn.commit()
@@ -1366,7 +1366,7 @@ def retrieve_confirm():
                     "thing4": {"value": _thing7},
                     "thing3": {"value": _thing2}
                 }
-                send_wx_subscribe_message(_openid, _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), subscribe_data, phone=order.get("user_phone"), page='pages/withdraw/withdraw', order_id=order_id)  # [S525]
+                send_wx_subscribe_message(_openid, _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), subscribe_data, phone=order.get("user_phone"), unionid=(order.get("unionid") or ''), page='pages/withdraw/withdraw', order_id=order_id)  # [S525][S682]
             except Exception as e:
                 logger.error(f"[retrieve_confirm发送订阅消息失败] {e}")
         if _direct_refund:
@@ -1981,7 +1981,7 @@ def deposit_retrieve():
                             'thing4': {'value': '已退还至小程序用户钱包'},
                             'thing3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'}
                         }
-                        send_wx_subscribe_message(_noid, _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'), _nsd, phone=_n_phone, page='pages/withdraw/withdraw', order_id=order_dict['id'])  # [S525]
+                        send_wx_subscribe_message(_noid, _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'), _nsd, phone=_n_phone, unionid=(order_dict.get('unionid') or ''), page='pages/withdraw/withdraw', order_id=order_dict['id'])  # [S525][S682]
                     except Exception as _ne:
                         logger.error('[deposit_retrieve_notify1] '+ str(_ne))
                 else:
@@ -2303,7 +2303,7 @@ def deposit_end_storage():
                 _thing7 = "已原路退回支付账户" if _direct_refund else "已退还至小程序用户钱包"
                 _thing2 = "无需提现，请留意微信到账" if _direct_refund else "请自行点击此通知消息跳转“我的钱包”提现"
                 subscribe_data = {"amount1": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))}, "time2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}, "thing4": {"value": _thing7}, "thing3": {"value": _thing2}}
-                _sent = send_wx_subscribe_message(_openid, _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), subscribe_data, phone=order.get("user_phone"), page="pages/withdraw/withdraw", order_id=order_id)  # [S525]
+                _sent = send_wx_subscribe_message(_openid, _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), subscribe_data, phone=order.get("user_phone"), unionid=(order.get("unionid") or ''), page="pages/withdraw/withdraw", order_id=order_id)  # [S525][S682]
                 if _sent:
                     logger.info(f"[deposit_end_storage] 订阅消息已发送: order={order_id}")
                 else:

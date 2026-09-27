@@ -6658,24 +6658,35 @@ def calc_balance(user_id=None, phone=None, openid=None, mp_openid=None, unionid=
             return 0.0
         if ident['user_id'] == 0:
             return 0.0
-        # 身份条件：先按 user_id（unionid 换出的户口本编号），没有才退 unionid/mp_openid/openid/手机号
+        # [S682-20260927] 原来是 if/elif —— 【只用一把钥匙】，先按 user_id，
+        #   认到了就完全忽略 unionid / 小程序卡 / 公众号卡。
+        #   后果实例（生产实测）：测试号 A(18888889999) 名下 7 笔单的内部编号被写成
+        #   118488，而 A 自己的编号是 94835 -> 按 94835 算出来 ¥0.00，
+        #   按 unionid 算却是 ¥20.64。用户看到的正是"我明明有单，余额是 0"。
+        # 现在改成：【通行证 / 小程序卡 / 公众号卡 三把卡级 ID 的 OR】，
+        #   任何一把对上就算这笔单是本人的。
+        #   · **不含手机号**（老板红线：手机号不做识别）；
+        #   · **不把 user_id 放进 OR**（实测 31.89% 的订单编号指向不存在的用户、
+        #     7,446 个编号跨多个 openid，放进去会把别人的单算给本人）；
+        #   · 三把都空时才退回 user_id —— 保证原来靠编号能算到的人不会变少。
         cond = []
         params = []
-        if ident['user_id']:
-            cond.append('o.user_id = %s')
-            params.append(ident['user_id'])
-        elif ident['unionid']:
+        if ident['unionid']:
             cond.append('o.unionid = %s')
             params.append(ident['unionid'])
-        elif ident['mp_openid']:
+        if ident['mp_openid']:
             cond.append('o.mp_openid = %s')
             params.append(ident['mp_openid'])
-        elif openid:
+        if openid:
             cond.append('o.openid = %s')
             params.append(openid)
-        elif phone:
-            cond.append('o.user_phone = %s')
-            params.append(phone)
+        if not cond and ident['user_id']:
+            cond.append('o.user_id = %s')
+            params.append(ident['user_id'])
+        if not cond:
+            # 一把钥匙都没有 -> 匹配不到任何订单（返回 0），绝不放开成"全表"
+            cond.append('o.openid = %s')
+            params.append('')
         where = ' OR '.join(cond)
         # [S541-20260922] 支付宝排除改为【开关控制】(withdraw_refund_alipay，默认 0=维持现状)：
         #   关(默认)时下面拼出的 SQL 与改动前逐字节相同；开时不再排除支付宝单，

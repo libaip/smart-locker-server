@@ -202,6 +202,22 @@ def api_account_switch(account_id):
         reason = (reason + '｜已显式跳过探活')[:255]
     done, msg = C.switch_to(row['acct_type'], account_id, operator='local-admin', reason=reason,
                             probe_first=_pf, prober=_PROBER)
+    # [S684-20260927] 切【小程序】成功后，自动把所有公众号菜单指向新小程序。
+    #   为什么：公众号菜单里"跳小程序"的 appid 是写死的，不重配的话用户点菜单还是进老号。
+    #   注意：这里【只加不改】—— 整个同步包在 try 里，失败只往消息里追加一句，
+    #        绝不影响切换本身是否成功（切换已经在上面做完了）。
+    if done and row.get('acct_type') == 'mp':
+        try:
+            from helpers import sync_oa_menus
+            _res, _txt = sync_oa_menus()
+            msg = (msg or '') + '；' + _txt
+        except Exception as _e684:
+            try:
+                from helpers import logger as _lg684
+                _lg684.warning('[S684] 切小程序后同步公众号菜单失败(不影响切换): %s', _e684)
+            except Exception:
+                pass
+            msg = (msg or '') + '；（公众号菜单自动同步失败：%s，可在服务器上手动跑 scripts/sync_oa_menu.py）' % str(_e684)[:80]
     return ok({'effective': C.resolve(row['acct_type'])}, msg) if done else err(msg)
 
 

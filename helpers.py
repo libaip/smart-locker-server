@@ -6787,3 +6787,124 @@ def send_smsbao_smart(phone, fee=0, amount=0):
     if SMS_PROVIDER == 'smsbao':
         return send_smsbao(phone, fee=fee, amount=amount)
     return send_yunpian(phone, fee=fee, amount=amount)
+
+
+# ============================================================
+# [S684-20260927] 公众号菜单同步：让"存包/钱包/个人中心"三项都跳【当前使用的小程序】
+# ============================================================
+# 背景：公众号自定义菜单里"跳小程序"项的 appid 是写死在菜单里的。换小程序后，
+#   老菜单还指着老小程序 -> 用户点菜单进不去/进错地方。
+# 本函数把"菜单指向哪个小程序"改成【现读现用】（读 wx_config.mp_appid()），
+#   所以以后切换小程序，只要重新调一次本函数，所有已关联的公众号菜单都会指向新号。
+# 安全：① 逐个号先 menu/get 备份原菜单；② 逐号独立 try（一个号失败不影响其它号）；
+#       ③ 微信侧"创建失败不会覆盖原菜单"，所以没关联的号菜单保持原样，无下行风险；
+#       ④ 全程只调用微信官方接口，不写数据库。
+def sync_oa_menus(oa_id=None, dry_run=False, backup=True, backup_dir='/home/ubuntu/oa_menu_backup'):
+    """把公众号菜单同步成"三项都跳当前使用的小程序"。
+
+    :param oa_id:  只处理某个公众号账号 id；None = 全部
+    :param dry_run: True = 只看要做什么，不调用任何写接口
+    :param backup:  是否先把原菜单备份到 backup_dir
+    :return: (results, text)  results=[{id,name,result,detail}], text=给人看的一句话
+    """
+    import os as _os
+    import json as _json
+    import urllib.request as _ur
+    import psycopg2 as _pg
+    try:
+        from psycopg2.extras import RealDictCursor as _RDC
+    except Exception:
+        _RDC = None
+    _API = 'https://api.weixin.qq.com/cgi-bin/'
+    _H5 = 'https://kelaiwei.top'
+
+    def _call(path, token, body=None, method='GET'):
+        _url = _API + path + '?access_token=' + token
+        if method == 'GET' and body is None:
+            _req = _ur.Request(_url)
+        else:
+            _req = _ur.Request(_url, data=_json.dumps(body or {}, ensure_ascii=False).encode('utf-8'),
+                               headers={'Content-Type': 'application/json'})
+        return _json.loads(_ur.urlopen(_req, timeout=15).read().decode())
+
+    # 当前使用的小程序（现读现用）
+    try:
+        import wx_config as _wc
+        _mp_appid = _wc.mp_appid() or ''
+        try:
+            _mine = _wc.get_config('mp_mine_path') or 'pages/mine/mine'
+        except Exception:
+            _mine = 'pages/mine/mine'
+    except Exception as _e:
+        return [], '公众号菜单同步：读不到当前小程序编号（%s），未处理' % _e
+    if not _mp_appid:
+        return [], '公众号菜单同步：当前小程序编号为空，未处理'
+
+    _paths = [('存包', 'pages/index/index', _H5 + '/store'),
+              ('钱包', 'pages/wallet/wallet', _H5 + '/static/user-h5.html?page=wallet'),
+              ('个人中心', _mine, _H5 + '/static/user-h5.html')]
+
+    # [S684 修正] helpers 里没有 DATABASE_URL，而且 get_db() 的游标本身就返回 dict 行
+    #   （app 其它地方如 find_user_balance_row 就是直接 dict(row) 用的），
+    #   所以这里统一走 get_db()，不要自己 psycopg2.connect。
+    _conn = get_db()
+    _cur = _conn.cursor()
+    if oa_id:
+        _cur.execute("SELECT id,name,appid,secret FROM wx_accounts WHERE acct_type='oa' AND id=%s", (oa_id,))
+    else:
+        _cur.execute("SELECT id,name,appid,secret FROM wx_accounts WHERE acct_type='oa' ORDER BY id")
+    _rows = [dict(r) for r in _cur.fetchall()]
+    _conn.close()
+    _rows = [r for r in _rows if r.get('appid') and not str(r['appid']).startswith('REPLACE')]
+
+    _results = []
+    for _a in _rows:
+        _r = {'id': _a['id'], 'name': _a['name'], 'result': '', 'detail': ''}
+        try:
+            _tk = get_access_token_for(_a['appid'], _a['secret'] or '')
+        except Exception as _e:
+            _r['result'] = 'token失败'; _r['detail'] = str(_e)[:120]
+            _results.append(_r); continue
+        if not _tk:
+            _r['result'] = 'token失败'; _r['detail'] = '取 token 返回空'
+            _results.append(_r); continue
+        if not dry_run and backup:
+            try:
+                _old = _call('menu/get', _tk)
+                _os.makedirs(backup_dir, exist_ok=True)
+                _fn = _os.path.join(backup_dir, 'oa_menu_%s_%s.json'
+                                    % (_a['id'], __import__('time').strftime('%Y%m%d_%H%M%S')))
+                with open(_fn, 'w', encoding='utf-8') as _f:
+                    _json.dump(_old, _f, ensure_ascii=False, indent=2)
+                _r['detail'] = '备份 ' + _os.path.basename(_fn)
+            except Exception as _e:
+                _r['detail'] = '备份失败(继续) ' + str(_e)[:60]
+        if dry_run:
+            _r['result'] = 'dry-run'
+            _results.append(_r); continue
+        try:
+            _res = _call('menu/create', _tk,
+                         {"button": [{"type": "miniprogram", "name": _nm, "url": _u,
+                                      "appid": _mp_appid, "pagepath": _pp}
+                                     for _nm, _pp, _u in _paths]}, method='POST')
+        except Exception as _e:
+            _r['result'] = '异常'; _r['detail'] = str(_e)[:120]
+            _results.append(_r); continue
+        if _res.get('errcode') == 0:
+            _r['result'] = 'ok'
+        elif _res.get('errcode') == 45064:
+            _r['result'] = '没关联小程序'
+        else:
+            _r['result'] = '失败%s' % _res.get('errcode')
+            _r['detail'] = str(_res.get('errmsg') or '')[:80]
+        _results.append(_r)
+
+    _ok = [x for x in _results if x['result'] == 'ok']
+    _bad = [x for x in _results if x['result'] not in ('ok', 'dry-run')]
+    _txt = '公众号菜单已同步到小程序 %s：成功 %d 个' % (_mp_appid, len(_ok))
+    if _bad:
+        _txt += '；未成功 %d 个（' % len(_bad) + '、'.join(
+            '%s:%s' % (x['name'], x['result']) for x in _bad) + '）'
+    if dry_run:
+        _txt = '[dry-run] ' + _txt
+    return _results, _txt

@@ -3171,7 +3171,14 @@ def user_check_follow():
     带 5 秒内存缓存, 避免前端轮询把微信接口打爆。"""
     import time as _t
     openid = (request.args.get('openid') or '').strip()
-    if not openid or not openid.startswith(oa_openid_prefix()):
+    # [S697-20260927] 同 S696/S697：只认"当前生效"那一个前缀，会把 oLhbm2/octN92
+    #   两代公众号的用户全判成"没关注"，强制关注引导会误伤。改成认全部已登记公众号前缀。
+    try:
+        _s697_follow_is_oa = _s696_is_oa_openid(openid) or (
+            bool(openid) and openid.startswith(oa_openid_prefix()))
+    except Exception:
+        _s697_follow_is_oa = False
+    if not openid or not _s697_follow_is_oa:
         return json_response({'follow': False, 'known': False})
     _ck = getattr(user_check_follow, '_cache', None)
     if _ck is None:
@@ -4621,8 +4628,15 @@ def get_user_balance():
         #   现在：识别出公众号前缀时改按 openid 认人；两列都试——find_user_balance_row 内部
         #   仍会先试 mp_openid 列（= 该账号真实的 mp_openid），再试 openid 列。
         #   非公众号前缀（小程序 openid）走 else 分支，入参与改动前【逐字节相同】。
+        # [S697-20260927] 原实现只认"当前生效"的那一个公众号前缀（生产实测 oa_openid_prefix()
+        #   只返回 ov47M3 景钧达），而线上同时有 3 代公众号在用（oLhbm2/ov47M3/octN92）——
+        #   另外两代会被误判成小程序身份。改成遍历 wx_accounts 里【全部】已登记公众号前缀
+        #   （复用 S696 的 _s696_is_oa_openid），并保留老口径作兜底。
+        #   只读 A/B 已验证：公众号前缀翻过来后余额逐人不变，小程序前缀判定结果不变。
         try:
-            _s673_is_oa = bool(openid) and str(openid).startswith(oa_openid_prefix())
+            _s673_is_oa = _s696_is_oa_openid(openid)
+            if not _s673_is_oa:
+                _s673_is_oa = bool(openid) and str(openid).startswith(oa_openid_prefix())
         except Exception:
             _s673_is_oa = False
         if _s673_is_oa:

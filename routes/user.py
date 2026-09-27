@@ -35,6 +35,45 @@ from models import BRAND_DEFAULTS
 
 bp = Blueprint('user', __name__)
 
+
+# ============================================================
+# [S696-20260927] 判断一个 openid 是不是「某个已登记公众号」的
+#   干嘛用的：写 orders.openid（公众号身份列）之前，必须确认来源确实是公众号身份。
+#   为什么不直接用 helpers.appid_by_openid(x, acct_type='oa')：线上实测它只认
+#     「当前生效」的账号 —— oLhbm2(智能寄存柜)、octN92(卓蓝时) 都判为空，只有生效的
+#     ov47M3(景钧达) 判得出。线上同时有 3 代公众号 openid 在用，用它做校验会误伤。
+#   这里遍历 wx_accounts 里【全部】oa 账号的 openid_prefix（不看 is_active），60 秒缓存。
+#   读不到库时返回空集合 -> 校验一律不通过 -> 只会「少补」不会「写错」，方向是安全的。
+# ============================================================
+_S696_OA_PREFIX_CACHE = {'ts': 0.0, 'ps': ()}
+
+
+def _s696_oa_prefixes():
+    import time as _t696
+    _now = _t696.time()
+    if _S696_OA_PREFIX_CACHE['ps'] and (_now - _S696_OA_PREFIX_CACHE['ts']) < 60:
+        return _S696_OA_PREFIX_CACHE['ps']
+    _ps = ()
+    try:
+        import wx_config as _wc696
+        _ps = tuple(sorted(
+            {str(_a.get('openid_prefix') or '').strip()
+             for _a in (_wc696.list_accounts('oa') or [])
+             if str(_a.get('openid_prefix') or '').strip()},
+            key=len, reverse=True))
+    except Exception:
+        _ps = ()
+    _S696_OA_PREFIX_CACHE['ts'] = _now
+    _S696_OA_PREFIX_CACHE['ps'] = _ps
+    return _ps
+
+
+def _s696_is_oa_openid(openid):
+    _x = (openid or '').strip()
+    if not _x:
+        return False
+    return any(_x.startswith(_p) for _p in _s696_oa_prefixes())
+
 def _is_miniprogram_request():
     referer = request.headers.get('Referer', '') or ''
     return 'servicewechat.com' in referer
@@ -908,17 +947,20 @@ def get_pay_params_api():
                                              openid=mp_openid or openid)
             openid, unionid, mp_openid = _resolve_order_identity(cursor, phone, openid, unionid, mp_openid,
                                                                  strict_identity=_strict_new)
+            # [S696-20260927] openid 可能来自「按手机号/unionid 反查的历史身份」，写进
+            #   orders.openid（公众号身份列）前必须确认它确实是公众号 openid，且只在列空时补。
+            _s696_oid_is_oa = _s696_is_oa_openid(openid)
             if openid or unionid or mp_openid:
                 _pay_uid = _resolve_user(cursor, openid=openid, mp_openid=mp_openid, phone=phone,
                                          unionid=unionid, strict_openid=_strict_new)
                 cursor.execute("""
                     UPDATE orders SET
-                      openid = COALESCE(NULLIF(%s, ''), openid),
-                      unionid = COALESCE(NULLIF(%s, ''), unionid),
-                      mp_openid = COALESCE(NULLIF(%s, ''), mp_openid),
+                      openid = COALESCE(NULLIF(openid, ''), CASE WHEN %s THEN NULLIF(%s, '') ELSE NULL END),
+                      unionid = COALESCE(NULLIF(unionid, ''), NULLIF(%s, '')),
+                      mp_openid = COALESCE(NULLIF(mp_openid, ''), NULLIF(%s, '')),
                       user_id = COALESCE(NULLIF(%s, 0), user_id)
                     WHERE id = %s
-                """, (openid, unionid, mp_openid, _pay_uid, order_id))
+                """, (_s696_oid_is_oa, openid, unionid, mp_openid, _pay_uid, order_id))
                 conn.commit()
         conn.close()
         pay_params = get_payment_params(order_id, order['order_no'], float(order['deposit_amount']) + float(order['per_use_price'] or 0), phone, openid, payment_channel_id=order.get('payment_channel_id'))
@@ -5334,6 +5376,9 @@ def link_mp_openid_from_mini():
         unionid = result.get('unionid', '')
         gzh_openid = data.get('gzh_openid', '')
         nickname = data.get('nickname', '')
+        # [S696-20260927] 本接口由小程序侧调用，它自报的 gzh_openid 不能无条件写进
+        #   orders.openid（公众号身份列）。先确认它确实是【某个已登记公众号】的 openid。
+        _s696_gzh_is_oa = _s696_is_oa_openid(gzh_openid)
         if not mp_openid:
             logger.error(f'[link_mp_openid] jscode2session失败: {result}')
             return json_response(message='获取小程序openid失败', code=500)
@@ -5375,27 +5420,29 @@ def link_mp_openid_from_mini():
         # 把小程序身份写回已经创建的订单，H5 跳小程序订阅后订单就能带上 unionid
         if phone and mp_openid:
             if order_id:
+                # [S696-20260927] 原来是「新值非空就覆盖」，会把 H5 刚写对的公众号 openid
+                #   盖成小程序 openid。改成「只在列空时补」+ 公众号身份校验。
                 cursor.execute("""
                     UPDATE orders SET
-                      openid = COALESCE(NULLIF(%s, ''), openid),
-                      unionid = COALESCE(NULLIF(%s, ''), unionid),
-                      mp_openid = COALESCE(NULLIF(%s, ''), mp_openid),
+                      openid = COALESCE(NULLIF(openid, ''), CASE WHEN %s THEN NULLIF(%s, '') ELSE NULL END),
+                      unionid = COALESCE(NULLIF(unionid, ''), NULLIF(%s, '')),
+                      mp_openid = COALESCE(NULLIF(mp_openid, ''), NULLIF(%s, '')),
                       user_id = COALESCE(NULLIF(%s, 0), user_id)
                     WHERE id = %s
-                """, (gzh_openid, unionid, mp_openid, _mp_uid, order_id))
+                """, (_s696_gzh_is_oa, gzh_openid, unionid, mp_openid, _mp_uid, order_id))
             else:
                 cursor.execute("""
                     UPDATE orders SET
-                      openid = COALESCE(NULLIF(%s, ''), openid),
-                      unionid = COALESCE(NULLIF(%s, ''), unionid),
-                      mp_openid = COALESCE(NULLIF(%s, ''), mp_openid),
+                      openid = COALESCE(NULLIF(openid, ''), CASE WHEN %s THEN NULLIF(%s, '') ELSE NULL END),
+                      unionid = COALESCE(NULLIF(unionid, ''), NULLIF(%s, '')),
+                      mp_openid = COALESCE(NULLIF(mp_openid, ''), NULLIF(%s, '')),
                       user_id = COALESCE(NULLIF(%s, 0), user_id)
                     WHERE id = (
                       SELECT id FROM orders
                       WHERE user_phone = %s AND status = 1
                       ORDER BY id DESC LIMIT 1
                     )
-                """, (gzh_openid, unionid, mp_openid, _mp_uid, phone))
+                """, (_s696_gzh_is_oa, gzh_openid, unionid, mp_openid, _mp_uid, phone))
         if phone and nickname:
             cursor.execute("UPDATE orders SET wechat_name = %s WHERE user_phone = %s AND (wechat_name IS NULL OR wechat_name = chr(39)||chr(39))", (nickname, phone))
             # [FIX-20260911] 昵称同样不能按手机号跨微信号写(订单按手机号存没问题, users 行必须限定 unionid)

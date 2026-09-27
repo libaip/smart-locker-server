@@ -2386,64 +2386,11 @@ def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='',
         out['phone'] = row['phone'] or phone or ''
         return out
 
-    if not strong_keys and phone and not strict_openid and not _s673_nophone:
-        try:
-            cursor.execute(
-                "SELECT id, unionid, phone, openid, mp_openid FROM users WHERE phone = %s AND id > 0 ORDER BY id",
-                (phone,),
-            )
-            phone_apps = [dict(r) for r in cursor.fetchall()]
-            if len(phone_apps) > 1:
-                out['ambiguous'] = True
-                out['reason'] = 'multiple_users_by_phone'
-                return out
-            if phone_apps:
-                row = phone_apps[0]
-                out['user_id'] = row['id']
-                out['unionid'] = row['unionid'] or unionid or ''
-                out['mp_openid'] = row['mp_openid'] or mp_openid or ''
-                out['phone'] = row['phone'] or phone or ''
-                return out
-        except Exception:
-            pass
-        try:
-            cursor.execute("""
-                SELECT count(DISTINCT x) FROM (
-                  SELECT NULLIF(unionid,'') AS x FROM users WHERE phone = %s AND NULLIF(unionid,'') IS NOT NULL
-                  UNION ALL
-                  SELECT NULLIF(unionid,'') FROM users WHERE phone = %s AND NULLIF(unionid,'') IS NOT NULL
-                  UNION ALL
-                  SELECT NULLIF(unionid,'') FROM orders WHERE user_phone = %s AND NULLIF(unionid,'') IS NOT NULL
-                  UNION ALL
-                  SELECT NULLIF(unionid,'') FROM user_balances WHERE phone = %s AND NULLIF(unionid,'') IS NOT NULL
-                ) t
-            """, (phone, phone, phone, phone))
-            distinct_unions = cursor.fetchone()[0]
-            if distinct_unions and int(distinct_unions) > 1:
-                out['ambiguous'] = True
-                out['reason'] = 'multiple_phone_identities'
-                return out
-        except Exception:
-            pass
-        try:
-            cursor.execute("""
-                SELECT count(DISTINCT x) FROM (
-                  SELECT NULLIF(id,0) AS x FROM users WHERE phone = %s AND id > 0
-                  UNION ALL
-                  SELECT id FROM users WHERE phone = %s AND id > 0
-                  UNION ALL
-                  SELECT user_id FROM orders WHERE user_phone = %s AND id > 0
-                  UNION ALL
-                  SELECT user_id FROM user_balances WHERE phone = %s AND id > 0
-                ) t
-            """, (phone, phone, phone, phone))
-            distinct_uids = cursor.fetchone()[0]
-            if distinct_uids and int(distinct_uids) > 1:
-                out['ambiguous'] = True
-                out['reason'] = 'multiple_phone_user_ids'
-                return out
-        except Exception:
-            pass
+    # [S680-20260927] 第2批：这里原本是「一个强键都没有时，按【手机号】查名册认人」，
+    #   连带两段"手机号底下有多个身份/多个编号就报 ambiguous"的检查，整段删除。
+    #   理由（老板 09-27 定稿）：手机号不做识别 —— 一个手机号最多挂过 3 张小程序的卡 /
+    #   10 张公众号卡，且换号会被运营商回收给新人 -> 按手机号认人会认错人、甚至继承余额。
+    #   删掉后：认人只用 UN / 小程序卡 / 公众号卡（+ 支付宝路径的 users.id）。
 
     po_candidates = []
     if strong_keys:
@@ -2457,16 +2404,12 @@ def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='',
                     po_candidates.append(dict(row))
             except Exception:
                 pass
-    if not strong_keys and phone and not strict_openid and not _s673_nophone:
-        try:
-            cursor.execute("SELECT * FROM users WHERE phone = %s ORDER BY id", (phone,))
-            po_candidates = [dict(r) for r in cursor.fetchall()]
-        except Exception:
-            pass
+    # [S680-20260927] 第2批：原来这里还有一段"按手机号取 po_candidates"，一并删除（理由同 R1）。
 
     if po_candidates:
-        if phone:
-            po_candidates = [r for r in po_candidates if r['phone'] == phone]
+        # [S680-20260927] 第2批：删掉原来的「按手机号过滤候选行」（`if phone: po_candidates = [...]`）。
+        #   手机号不做识别。下面的去重逻辑保留：同一 UN 多行且 unionid/openid 都一致 -> 取第一行；
+        #   否则报 ambiguous（绝不猜）。实测同一个 UN 占多行的只有 66 个，其中仅 5 个带不同手机号。
         if len(po_candidates) > 1:
             unions = {r['unionid'] for r in po_candidates if r['unionid']}
             if len(unions) <= 1 and len({r['openid'] or r['mp_openid'] for r in po_candidates if r['openid'] or r['mp_openid']}) <= 1:
@@ -2493,11 +2436,9 @@ def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='',
             if openid:
                 _ucond.append('openid = %s')
                 _uparams.append(openid)
-            # [S320] strict_openid(新小程序) 时绝不把 phone 当身份条件 ——
-            #   这一步正是"新 openid 查不到 -> 用手机号捞出老 unionid -> 认成老账号"的桥。
-            if phone and not strict_openid and not _s673_nophone:
-                _ucond.append('phone = %s')
-                _uparams.append(phone)
+            # [S680-20260927] 第2批：这里原本还有一支「按【手机号】去 user_balances 捞 unionid」
+            #   （原注释：这一步正是"新 openid 查不到 -> 用手机号捞出老 unionid -> 认成老账号"的桥）。
+            #   按老板"手机号不做识别"的红线，删除。保留 mp_openid / openid 两支（都是 ID）。
             if _ucond:
                 cursor.execute(
                     "SELECT DISTINCT unionid FROM user_balances WHERE NULLIF(unionid, '') IS NOT NULL AND ("
@@ -2554,75 +2495,63 @@ def find_user_balance_row(cursor, phone='', openid='', mp_openid='', unionid='',
         _s673_nomoney = balance_strict_identity_enabled()
     except Exception:
         _s673_nomoney = False
-    uid = int(user_id or 0)
-    if uid:
-        try:
-            cursor.execute("SELECT * FROM user_balances WHERE user_id = %s ORDER BY id LIMIT 1", (uid,))
-            row = cursor.fetchone()
-            if row:
-                return _m(dict(row), 'user_id')
-        except Exception:
-            pass
+    # [S680-20260927] 第2批：删掉原来的第 1 档「按 user_id 取第一行」。
+    #   这是【盲命中】—— 不校验任何东西。而入账时传进来的正是【订单上的那个编号】，
+    #   实测：orders.user_id 有 44,687 行(31.89%)指向 users 里不存在的编号；
+    #   7,446 个编号名下跨多个 openid，最极端 user_id=36823 名下 35 张卡 / 470 单。
+    #   靠它认行会把别人的记录认成你的 -> 串号。整档删除。
     if unionid:
-        # [S673-C] ON 时 phone 不再参与选行
-        if phone and not _s673_nomoney:
-            try:
-                cursor.execute("SELECT * FROM user_balances WHERE phone = %s AND unionid = %s ORDER BY id LIMIT 1", (phone, unionid))
-                row = cursor.fetchone()
-                if row:
-                    return _m(dict(row), 'unionid+phone')
-            except Exception:
-                pass
+        # [S680-20260927] 第2批：删掉「先用 (手机号, unionid) 试一行」那一档 —— 手机号不做识别。
+        #   多行时也【不再用手机号挑】，改成取【余额最大】那行 + 告警留痕。
+        #   为什么可以取余额最大：user_balances 的唯一约束是 (phone, unionid)，
+        #   所以同一个 UN 的多行必然是【同一个人的不同手机号】（历史换号遗留），
+        #   不是两个人。实测只有 3 个 UN 会走到多行分支。
         try:
             cursor.execute("SELECT * FROM user_balances WHERE unionid = %s ORDER BY id", (unionid,))
             rows = [dict(r) for r in cursor.fetchall()]
             if len(rows) == 1:
                 return _m(rows[0], 'unionid')
-            if len(rows) > 1 and phone and not _s673_nomoney:
-                rows = [r for r in rows if r['phone'] == phone]
-                if len(rows) == 1:
-                    return _m(rows[0], 'unionid+phone')
-            # [S673-C] ON 且 unionid 指向多行 -> 落空（绝不猜），交给上层按"身份待确认"处理
+            if len(rows) > 1:
+                _best = max(rows, key=lambda r: float(r.get('balance') or 0))
+                logger.warning('[S680] unionid=%s... 指向 %s 行，取余额最大行 id=%s 余额=%s（留痕）',
+                               str(unionid)[:10], len(rows), _best.get('id'), _best.get('balance'))
+                return _m(_best, 'unionid(multi)')
         except Exception:
             pass
     if mp_openid:
+        # [S680-20260927] 第2批：多行时不再用手机号挑，改取余额最大 + 告警（理由同 R5）。
+        #   实测同一 mp_openid 占 2 行的只有 8 张卡。
         try:
             cursor.execute("SELECT * FROM user_balances WHERE mp_openid = %s ORDER BY id", (mp_openid,))
             rows = [dict(r) for r in cursor.fetchall()]
             if len(rows) == 1:
                 return _m(rows[0], 'mp_openid')
-            if len(rows) > 1 and phone:
-                rows = [r for r in rows if r['phone'] == phone]
-                if len(rows) == 1:
-                    return _m(rows[0], 'mp_openid+phone')
+            if len(rows) > 1:
+                _best = max(rows, key=lambda r: float(r.get('balance') or 0))
+                logger.warning('[S680] mp_openid=%s... 指向 %s 行，取余额最大行 id=%s 余额=%s（留痕）',
+                               str(mp_openid)[:10], len(rows), _best.get('id'), _best.get('balance'))
+                return _m(_best, 'mp_openid(multi)')
         except Exception:
             pass
     if openid:
+        # [S680-20260927] 第2批：多行时不再用手机号挑，改取余额最大 + 告警（理由同 R5）。
+        #   注意 openid 列有唯一约束（user_balances_openid_uk），实际恒为 1 行。
         try:
             cursor.execute("SELECT * FROM user_balances WHERE openid = %s ORDER BY id", (openid,))
             rows = [dict(r) for r in cursor.fetchall()]
             if len(rows) == 1:
                 return _m(rows[0], 'openid')
-            if len(rows) > 1 and phone:
-                rows = [r for r in rows if r['phone'] == phone]
-                if len(rows) == 1:
-                    return _m(rows[0], 'openid+phone')
-        except Exception:
-            pass
-    # [S320] strict_identity(新小程序) 时不做"按手机号认余额行"的兜底
-    # [S673-C] 开关 ON 时同样不做"按手机号认行"这一档
-    if phone and not strict_identity and not _s673_nomoney:
-        try:
-            cursor.execute("SELECT * FROM user_balances WHERE phone = %s ORDER BY id", (phone,))
-            rows = [dict(r) for r in cursor.fetchall()]
-            if len(rows) == 1:
-                return _m(rows[0], 'phone')
             if len(rows) > 1:
-                legacy = [r for r in rows if not r.get('unionid')]
-                if len(legacy) == 1:
-                    return _m(legacy[0], 'phone(legacy)')
+                _best = max(rows, key=lambda r: float(r.get('balance') or 0))
+                logger.warning('[S680] openid=%s... 指向 %s 行，取余额最大行 id=%s 余额=%s（留痕）',
+                               str(openid)[:10], len(rows), _best.get('id'), _best.get('balance'))
+                return _m(_best, 'openid(multi)')
         except Exception:
             pass
+    # [S680-20260927] 第2批：删掉原来的最后一档「按【手机号】兜底认行」
+    #   （会把新小程序用户按手机号认到老账号的行上 -> 余额/身份被串）。
+    #   到这里还找不到，就返回 None；上层用 INSERT ... ON CONFLICT 仍能把钱加到
+    #   该手机号那一行（不会丢钱），只是"读"的时候认不出来 —— 这正是老板接受的取舍。
     return None
 
 
@@ -2796,13 +2725,12 @@ def upsert_user_balance_row(cursor, phone='', openid='', unionid='', mp_openid='
                 total_deposited = COALESCE(total_deposited,0) + %s,
                 total_withdrawn = COALESCE(total_withdrawn,0) + %s,
                 wechat_name = COALESCE(NULLIF(%s,''), wechat_name),
-                user_id = CASE WHEN %s > 0 THEN %s ELSE user_id END,
                 openid    = COALESCE(NULLIF(openid,''),    NULLIF(%s,'')),
                 mp_openid = COALESCE(NULLIF(mp_openid,''), NULLIF(%s,'')),
                 unionid   = COALESCE(NULLIF(unionid,''),   NULLIF(%s,''))
               WHERE id = %s""",
             (balance, total_deposited, total_withdrawn, wechat_name,
-             user_id, user_id, _s679_oa, _s679_mp, _s679_un, row_id),
+             _s679_oa, _s679_mp, _s679_un, row_id),
         )
         return row_id
     if unionid:

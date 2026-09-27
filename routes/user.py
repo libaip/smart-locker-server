@@ -4020,6 +4020,81 @@ def wx_decrypt_phone():
 # 用户订单和余额API - H5个人中心用
 # ============================================
 
+# ============================================
+# [S677-20260927] 第2步：记录可见性统一为"按人看"（老板 2026-09-27 定稿第 8 条）
+# ============================================
+# 背景：S551(2026-09-22) 把 /user/orders 改成"严格 openid 匹配"，并给提现记录加了
+#   "必须手机号匹配"的硬条件。副作用是：**同一个人**在公众号 / 小程序 / 换主体前后的
+#   记录互相看不见（S551 当时实测：少显示 4,301 单、涉及 3,083 个用户）。
+# 本步按老板定稿统一口径：订单 / 提现 / 交易记录都按【同一个人的全部"卡"级 ID】匹配。
+#   - 参与匹配的键：unionid / 小程序 openid / 公众号 openid
+#     （**不含 user_id** —— 实测 orders.user_id 有 31.89% 是脏的、7,446 个编号跨多个 openid，
+#      放进 OR 会跨人可见；也**不含手机号**）；
+#   - **手机号不参与身份识别**（老板红线）；提现记录里手机号只作"显示本人记录"的弱匹配；
+#   - 身份取自 users 表的权威行（resolve_user_identity 的回读结果），
+#     不是客户端带上来的弱键 -> 不会把陌生人兜进来。
+def _s677_resolve_view_identity(cur, openid, phone='', user_id=0):
+    """按"人"认身份（H5 传的是公众号 openid，小程序传的是小程序 openid）。
+
+    **故意不看前缀**：线上同时在用的公众号 openid 至少有 3 代
+    （oLhbm2 / ov47M3 / octN92），而 oa_openid_prefix() 只返回
+    **当前生效**的那一个（生产实测 = octN92）-> 只按前缀判会把
+    oLhbm2 / ov47M3 两代老主体用户全部漏掉，而他们正是"换主体前的老用户"，
+    也最需要按人看。
+    做法：先当小程序卡认一次，认不到人再当公众号卡认一次。
+      第 1 次 (mp_openid=openid)：与改动前**逐字节相同**，小程序用户走这里，结果不变；
+      第 2 次 (openid=openid)  ：仅当第 1 次既没认到人也不 ambiguous 时才执行。
+    返回 resolve_user_identity 的 dict（user_id / unionid / mp_openid / phone）。
+    """
+    _first = None
+    try:
+        _first = resolve_user_identity(cur, mp_openid=openid, phone=phone, user_id=user_id)
+    except Exception:
+        _first = None
+    if _first and (_first.get('user_id') or _first.get('ambiguous')):
+        return _first
+    _second = None
+    try:
+        _second = resolve_user_identity(cur, openid=openid, phone=phone, user_id=user_id)
+    except Exception:
+        _second = None
+    if _second and _second.get('user_id'):
+        return _second
+    if _second:
+        return _second
+    if _first:
+        return _first
+    return {'user_id': 0, 'unionid': '', 'mp_openid': '', 'phone': '', 'ambiguous': False}
+
+
+def _s677_order_identity_pairs(ident, request_openid):
+    """把"这个人"的强键整理成 [(orders 列名, 值)]：已去重、已剔除空值。
+
+    订单 / 交易记录 / 提现记录都按这些键匹配 -> "按人看"。**不含手机号**（老板红线）。
+
+    ！！**故意不含 user_id**（2026-09-27 生产只读实测，见 S677 留档）：
+      · `orders.user_id` 有 44,687 行（31.89%）指向 `users` 里根本不存在的编号；
+      · 有 7,446 个 user_id 名下的订单带着多个不同 openid，最极端 user_id=36823
+        名下 35 个不同 mp_openid / 470 笔订单；
+      · `user_balances` 里 `user_id = 0` 那一行覆盖 1,788 个不同手机号。
+      -> 把 `o.user_id = ?` 放进 OR 会**跨人可见**（A 看到 B 的单），所以不用它。
+      只用"卡"级 ID：unionid + 小程序 openid + 公众号 openid。
+    """
+    _pairs = []
+    _ident = ident or {}
+    for _k, _v in (('mp_openid', request_openid), ('openid', request_openid),
+                   ('mp_openid', _ident.get('mp_openid')),
+                   ('openid', _ident.get('mp_openid')),
+                   ('unionid', _ident.get('unionid'))):
+        if not _v:
+            continue
+        _p = (_k, str(_v))
+        if _p in _pairs:
+            continue
+        _pairs.append(_p)
+    return _pairs
+
+
 @bp.route('/user/orders', methods=['GET'])
 def get_user_orders():
     """获取用户订单列表"""
@@ -4056,8 +4131,29 @@ def get_user_orders():
         params = []
         _matched = []
         if _platform in ('wechat', '') and _wx_id and not _wx_is_ali:
-            where_parts.append('(o.mp_openid = %s OR o.openid = %s)')
-            params.extend([_wx_id, _wx_id])
+            # [S677-20260927] 第2步·可见性统一为"按人看"（老板 09-27 定稿第 8 条）。
+            #   改前 = S551 严格口径，只按本次渠道的 openid 匹配 -> 同一个人在公众号 /
+            #   小程序 / 换主体前后的订单互相看不见。现在按【同一个人的全部强键】匹配。
+            #   身份取自 users 表权威行；**手机号不传、不参与**（老板红线）。
+            #   解析失败或解析不到 -> 自动退回改前的单渠道条件，绝不 400、绝不报错。
+            _s677_ident = {}
+            try:
+                _s677_ident = _s677_resolve_view_identity(cur, _wx_id, '')
+            except Exception as _s677_e:
+                logger.warning('[S677][user/orders] 身份解析失败，退回单渠道匹配: %s', _s677_e)
+                _s677_ident = {}
+            _s677_pairs = _s677_order_identity_pairs(_s677_ident, _wx_id)
+            _s677_sub = []
+            for _s677_k, _s677_v in _s677_pairs:
+                _s677_sub.append('o.' + _s677_k + ' = %s')
+                params.append(_s677_v)
+            if _s677_sub:
+                where_parts.append('(' + ' OR '.join(_s677_sub) + ')')
+                logger.info('[S677][user/orders] 按人匹配 keys=%s',
+                            ','.join(_k for _k, _ in _s677_pairs))
+            else:
+                where_parts.append('(o.mp_openid = %s OR o.openid = %s)')
+                params.extend([_wx_id, _wx_id])
             _matched.append('wechat')
         if _platform in ('alipay', '') and _ali_id:
             where_parts.append('(o.alipay_mp_uid = %s OR o.alipay_pay_uid = %s)')
@@ -5496,27 +5592,24 @@ def get_user_transactions():
             return json_response(message='????', code=400)
         conn = get_db()
         cur = conn.cursor()
-        ident = resolve_user_identity(cur, mp_openid=openid, phone=phone)
+        # [S677-20260927] 第2步：改用统一的"按人"认身份（H5 的公众号 openid 认对列），
+        #   与 /user/balance 的 S673-B1 口径一致。**不传手机号**做识别（老板红线）。
+        ident = _s677_resolve_view_identity(cur, openid, '')
         if ident['ambiguous'] or (not ident['user_id'] and not ident['unionid'] and not ident['mp_openid']):
             conn.close()
             return json_response(message='账号身份待确认，请重新登录', code=400)
+        # [S677-20260927] 第2步：交易记录按"人"匹配（unionid / 小程序 openid /
+        #   公众号 openid，**不含 user_id**），并**去掉手机号兜底**（老板红线：手机号不做识别）。
+        #   改前只在"一个 ID 都没有"时才用手机号，且 H5 的公众号 openid 被当成小程序卡
+        #   传给认人函数 -> 与 S673-B1 修的是同一个"读写看错列"问题，这里一并修正。
         id_conds = []
         id_params = []
-        if ident['user_id']:
-            id_conds.append('o.user_id = %s')
-            id_params.append(ident['user_id'])
-        if ident['unionid']:
-            id_conds.append('o.unionid = %s')
-            id_params.append(ident['unionid'])
-        if ident['mp_openid']:
-            id_conds.append('o.mp_openid = %s')
-            id_params.append(ident['mp_openid'])
-        if openid:
+        for _s677_k, _s677_v in _s677_order_identity_pairs(ident, openid):
+            id_conds.append('o.' + _s677_k + ' = %s')
+            id_params.append(_s677_v)
+        if not id_conds:
             id_conds.append('o.openid = %s')
             id_params.append(openid)
-        if not id_conds:
-            id_conds.append('o.user_phone = %s')
-            id_params.append(phone)
         if tp == 'income':
             where_extra = ' AND d.amount > 0'
         elif tp == 'expense':
@@ -5559,28 +5652,44 @@ def get_user_withdrawals():
             return json_response(message='????', code=400)
         conn = get_db()
         cur = conn.cursor()
-        ident = resolve_user_identity(cur, mp_openid=openid, phone=phone)
+        # [S677-20260927] 第2步：改用统一的"按人"认身份（H5 的公众号 openid 认对列），
+        #   与 /user/balance 的 S673-B1 口径一致。**不传手机号**做识别（老板红线）。
+        ident = _s677_resolve_view_identity(cur, openid, '')
         if ident['ambiguous'] or (not ident['user_id'] and not ident['unionid'] and not ident['mp_openid']):
             conn.close()
             return json_response(message='账号身份待确认，请重新登录', code=400)
         # 手机号限定 + (身份匹配 或 无身份关联的历史记录也显示)
-        wd_conds = ['w.user_phone = %s']
-        wd_params = [phone]
+        # [S677-20260927] 第2步：提现记录**去掉"必须手机号匹配"的硬条件**
+        #   （老板 09-27 定稿第 8 条）。
+        #   改前 = `w.user_phone = ? AND (身份匹配 OR 无归属历史记录)`
+        #          -> 手机号对不上就一条都看不到；且 phone 为空串时会命中所有空手机号记录。
+        #   现在 = 下面条件 **OR 关系**，命中任意一条即显示（**只放宽、不收紧，且不泄露**）：
+        #     a) w.openid 是本人；
+        #     b) 关联订单属于本人（unionid / 小程序 openid / 公众号 openid，**不含 user_id**）；
+        #     c) w.user_phone 是本人 **且** 该记录无归属（order_id 为空，或订单没有任何身份
+        #        标识）—— 手机号必须写在括号**里面**。
+        #   ！！[S677 实测踩坑] 绝不能把"无归属历史记录"单独放成一个 OR 分支：
+        #       那样它会不附带任何身份条件，把全库 260 条无归属提现记录显示给**每一个**
+        #       带手机号的人（本补丁第一版就是这么写的，2026-09-27 只读对比当场抓到）。
+        #       必须写成 `(w.user_phone = %s AND 无归属)`，手机号与非空判断同时成立才兜。
+        #   与改前的关系：改前 = `phone AND (openid 或 订单身份 或 无归属)`，
+        #       上面三条正好是它的**超集**（手机号变的记录能看到了，别人的记录仍然看不到）。
         wd_sub = []
+        wd_params = []
         if openid:
             wd_sub.append('w.openid = %s')
             wd_params.append(openid)
-        if ident['user_id']:
-            wd_sub.append('EXISTS (SELECT 1 FROM orders o WHERE o.id = w.order_id AND o.user_id = %s)')
-            wd_params.append(ident['user_id'])
-        if ident['unionid']:
-            wd_sub.append('EXISTS (SELECT 1 FROM orders o WHERE o.id = w.order_id AND o.unionid = %s)')
-            wd_params.append(ident['unionid'])
-        if ident['mp_openid']:
-            wd_sub.append('EXISTS (SELECT 1 FROM orders o WHERE o.id = w.order_id AND o.mp_openid = %s)')
-            wd_params.append(ident['mp_openid'])
-        wd_sub.append("(w.order_id IS NULL OR NOT EXISTS (SELECT 1 FROM orders o WHERE o.id = w.order_id AND (o.user_id > 0 OR NULLIF(o.unionid,'') IS NOT NULL OR NULLIF(o.mp_openid,'') IS NOT NULL OR NULLIF(o.openid,'') IS NOT NULL)))")
-        wd_conds.append('(' + ' OR '.join(wd_sub) + ')')
+        for _s677_k, _s677_v in _s677_order_identity_pairs(ident, openid):
+            wd_sub.append('EXISTS (SELECT 1 FROM orders o WHERE o.id = w.order_id AND o. '
+                          + _s677_k + ' = %s)')
+            wd_params.append(_s677_v)
+        if phone:
+            wd_sub.append("(w.user_phone = %s AND (w.order_id IS NULL OR NOT EXISTS (SELECT 1 FROM orders o WHERE o.id = w.order_id AND (o.user_id > 0 OR NULLIF(o.unionid,'') IS NOT NULL OR NULLIF(o.mp_openid,'') IS NOT NULL OR NULLIF(o.openid,'') IS NOT NULL))))")
+            wd_params.append(phone)
+        if not wd_sub:
+            # 一个可匹配键都没有 -> 不放开（宁可空白，也不泄露）
+            wd_sub.append('w.id IS NULL')
+        wd_conds = ['(' + ' OR '.join(wd_sub) + ')']
         wd_conds.append("w.status != 3")  # 被拒绝(自动拒绝)的记录不在提现记录中展示
         cur.execute('''
             SELECT w.id, w.amount, w.status, w.apply_time, w.approve_time, w.error_msg

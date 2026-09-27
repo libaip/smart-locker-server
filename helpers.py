@@ -2175,6 +2175,104 @@ def resolve_user_by_ident(cursor, kind, ident, auto_create=True):
     return 0
 
 
+# ============================================
+# [S673-20260927] 余额/身份改造 第一步止血 —— 开关（两个都默认 OFF = 现状）
+# ============================================
+S673_BALANCE_ID_AUDIT_KEY = 'balance_id_audit_guard'          # B2：默认 0=OFF
+S673_BALANCE_STRICT_IDENTITY_KEY = 'balance_strict_identity'  # C 组：默认 0=OFF
+
+
+def balance_id_audit_guard_enabled():
+    """[S673-B2] 纯 ID 安全网：入账时【只留痕】（靠哪把钥匙命中 / user_id 是否符合 / 新建行）。
+
+    老板口径（2026-09-27 定稿）：手机号不做识别、不判断"一样不一样"，只看 ID 是否符合；
+    本安全网【只记录，不拦截、不改变入账成败】。
+    默认 0=OFF：返回 False -> 不传 trace、不写审计，行为与改动前逐字节一致。
+    """
+    try:
+        return str(get_setting(S673_BALANCE_ID_AUDIT_KEY, '0') or '0').strip().lower() \
+            in ('1', 'true', 'yes', 'on')
+    except Exception:
+        return False
+
+
+def balance_strict_identity_enabled():
+    """[S673-C] 收窄后的 C 范围（老板 2026-09-27 定稿）：**只去掉"手机号兜底"这一档**。
+
+    · 认人：resolve_user_identity 里三处 `not strong_keys and phone` 的 phone 兜底；
+    · 钱  ：find_user_balance_row 末尾的 phone 兜底段 + unionid 段里"用 phone 辅助选行"；
+    · **保留** unionid / mp_openid / openid 三段（预演显示：把 unionid 也删掉会一次废掉
+      ¥702,068.90 的余额行可达性）；
+    · unionid 段带"唯一才采纳"：指向多个 users / 多行 -> ambiguous 或落空，**绝不猜**。
+
+    默认 0=OFF：返回 False，各处条件与改动前逐字节等价。本次【不打开】。
+    """
+    try:
+        return str(get_setting(S673_BALANCE_STRICT_IDENTITY_KEY, '0') or '0').strip().lower() \
+            in ('1', 'true', 'yes', 'on')
+    except Exception:
+        return False
+
+
+def _s673_audit_id_hit(kind, row_id, key, in_user_id, row_user_id, signal, amount):
+    """[S673-B2] 纯 ID 安全网留痕（只在开关 ON 时被调用）。
+
+    · **只记录**：不判断手机号、不拦截、不改变入账成败（老板定稿口径）；
+    · 落 system_settings 计数键 balance_id_audit（不新建表、不做 DDL）；
+    · 独立连接 + 独立提交 + 全程 try/except —— 绝不可能污染入账事务；
+    · 载荷只含 ID 类字段，**不含手机号**（手机号不做识别、也不在此留痕）。
+    """
+    import json as _j
+    import time as _t
+    _k = 'balance_id_audit'
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT setting_value FROM system_settings WHERE setting_key=%s", (_k,))
+        r = cur.fetchone()
+        if r is None:
+            raw = ''
+        elif isinstance(r, dict):
+            raw = r.get('setting_value') or ''
+        else:
+            raw = r[0] or ''
+        try:
+            st = _j.loads(raw or '{}') or {}
+        except Exception:
+            st = {}
+        if not isinstance(st, dict):
+            st = {}
+        st['count'] = int(st.get('count') or 0) + 1
+        if kind == 'new_row':
+            st['new_row'] = int(st.get('new_row') or 0) + 1
+        else:
+            st['hit'] = int(st.get('hit') or 0) + 1
+        _by = st.get('by_key')
+        if not isinstance(_by, dict):
+            _by = {}
+        _by[key] = int(_by.get(key) or 0) + 1
+        st['by_key'] = _by
+        if signal:
+            _sg = st.get('signals')
+            if not isinstance(_sg, dict):
+                _sg = {}
+            _sg[signal] = int(_sg.get(signal) or 0) + 1
+            st['signals'] = _sg
+        st['last_ts'] = _t.strftime('%Y-%m-%d %H:%M:%S')
+        st['last'] = {'kind': kind, 'row_id': row_id, 'key': key, 'in_user_id': in_user_id,
+                      'row_user_id': row_user_id, 'signal': signal,
+                      'amount': round(float(amount or 0), 2)}
+        cur.execute("INSERT INTO system_settings (setting_key, setting_value) VALUES (%s,%s) "
+                    "ON CONFLICT (setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value",
+                    (_k, _j.dumps(st, ensure_ascii=False)))
+        conn.commit()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='', user_id=0,
                           strict_openid=False):
     """Resolve one WeChat identity instead of blindly trusting phone_openids.user_id.
@@ -2215,6 +2313,13 @@ def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='',
             mp_openid = ''
         openid = ''      # 丢掉公众号 openid（老账号 users.openid 的值）
         unionid = ''     # 丢掉客户端 unionid（同一个人的老身份）
+    # [S673-C 骨架] 开关 balance_strict_identity（默认 0=OFF）。
+    #   OFF 时 _s673_nophone=False，下面三处条件与改动前逐字节等价。
+    #   ON  时认人不再按手机号兜底（"认人只看卡"）——本次【不打开】。
+    try:
+        _s673_nophone = balance_strict_identity_enabled()
+    except Exception:
+        _s673_nophone = False
     out = {
         'user_id': 0,
         'unionid': unionid or '',
@@ -2223,6 +2328,19 @@ def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='',
         'ambiguous': False,
         'reason': '',
     }
+    # [S673-C] ON 时 unionid 必须"唯一才采纳"：指向多个 users -> 身份待确认，绝不猜。
+    #   OFF 时这一段一条 SQL 都不执行，行为与改动前逐字节等价。本次【不打开】。
+    if _s673_nophone and _clean(unionid):
+        try:
+            cursor.execute("SELECT count(*) FROM users WHERE unionid = %s AND id > 0", (unionid,))
+            _s673_cu = cursor.fetchone()
+            _s673_cu = (_s673_cu[0] if _s673_cu else 0)
+            if _s673_cu and int(_s673_cu) > 1:
+                out['ambiguous'] = True
+                out['reason'] = 'multiple_users_by_unionid'
+                return out
+        except Exception:
+            pass
     uid = int(user_id or 0)
     if uid:
         try:
@@ -2268,7 +2386,7 @@ def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='',
         out['phone'] = row['phone'] or phone or ''
         return out
 
-    if not strong_keys and phone and not strict_openid:
+    if not strong_keys and phone and not strict_openid and not _s673_nophone:
         try:
             cursor.execute(
                 "SELECT id, unionid, phone, openid, mp_openid FROM users WHERE phone = %s AND id > 0 ORDER BY id",
@@ -2339,7 +2457,7 @@ def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='',
                     po_candidates.append(dict(row))
             except Exception:
                 pass
-    if not strong_keys and phone and not strict_openid:
+    if not strong_keys and phone and not strict_openid and not _s673_nophone:
         try:
             cursor.execute("SELECT * FROM users WHERE phone = %s ORDER BY id", (phone,))
             po_candidates = [dict(r) for r in cursor.fetchall()]
@@ -2377,7 +2495,7 @@ def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='',
                 _uparams.append(openid)
             # [S320] strict_openid(新小程序) 时绝不把 phone 当身份条件 ——
             #   这一步正是"新 openid 查不到 -> 用手机号捞出老 unionid -> 认成老账号"的桥。
-            if phone and not strict_openid:
+            if phone and not strict_openid and not _s673_nophone:
                 _ucond.append('phone = %s')
                 _uparams.append(phone)
             if _ucond:
@@ -2406,40 +2524,65 @@ def resolve_user_identity(cursor, openid='', mp_openid='', phone='', unionid='',
 
 
 def find_user_balance_row(cursor, phone='', openid='', mp_openid='', unionid='', user_id=0,
-                          strict_identity=False):
+                          strict_identity=False, _s673_trace=None):
     """Find the balance row belonging to one identity. Returns dict or None.
 
     strict_identity=True（[S320] 新小程序专用）：跳过"最后按 phone 兜底认行"那一段，
       否则新小程序用户会按手机号命中老账号的 user_balances 行，余额/身份被串。
       默认 False -> 现有调用（含 H5、老小程序）行为一字不变。
+
+    [S673-B2] _s673_trace：可选 dict。传入时把"本次靠哪把钥匙命中"写进
+      _s673_trace['step']（user_id / unionid / unionid+phone / mp_openid / mp_openid+phone /
+      openid / openid+phone / phone / phone(legacy)）。**默认 None 时行为与返回值都不变**
+      （返回的行不带任何额外键）——只有 upsert 的留痕需要它。
     """
+    def _m(_row, _step):
+        # [S673-B2] 纯留痕：只写调用方给的 trace 容器，绝不改动返回的行本身
+        if _s673_trace is not None:
+            try:
+                _s673_trace['step'] = _step
+            except Exception:
+                pass
+        return _row
+
+    # [S673-C] 开关 balance_strict_identity（默认 0=OFF）。
+    #   OFF 时 _s673_nomoney=False，下面每一处条件与改动前逐字节等价。
+    #   ON  时【只去掉"按手机号认行"这一档】：末尾 phone 段 + unionid 段里"用 phone 辅助选行"；
+    #   保留 unionid / mp_openid / openid 三段；且 unionid 段要求"唯一才采纳"，多行绝不猜。
+    #   本次【不打开】。
+    try:
+        _s673_nomoney = balance_strict_identity_enabled()
+    except Exception:
+        _s673_nomoney = False
     uid = int(user_id or 0)
     if uid:
         try:
             cursor.execute("SELECT * FROM user_balances WHERE user_id = %s ORDER BY id LIMIT 1", (uid,))
             row = cursor.fetchone()
             if row:
-                return dict(row)
+                return _m(dict(row), 'user_id')
         except Exception:
             pass
     if unionid:
-        if phone:
+        # [S673-C] ON 时 phone 不再参与选行
+        if phone and not _s673_nomoney:
             try:
                 cursor.execute("SELECT * FROM user_balances WHERE phone = %s AND unionid = %s ORDER BY id LIMIT 1", (phone, unionid))
                 row = cursor.fetchone()
                 if row:
-                    return dict(row)
+                    return _m(dict(row), 'unionid+phone')
             except Exception:
                 pass
         try:
             cursor.execute("SELECT * FROM user_balances WHERE unionid = %s ORDER BY id", (unionid,))
             rows = [dict(r) for r in cursor.fetchall()]
             if len(rows) == 1:
-                return rows[0]
-            if len(rows) > 1 and phone:
+                return _m(rows[0], 'unionid')
+            if len(rows) > 1 and phone and not _s673_nomoney:
                 rows = [r for r in rows if r['phone'] == phone]
                 if len(rows) == 1:
-                    return rows[0]
+                    return _m(rows[0], 'unionid+phone')
+            # [S673-C] ON 且 unionid 指向多行 -> 落空（绝不猜），交给上层按"身份待确认"处理
         except Exception:
             pass
     if mp_openid:
@@ -2447,11 +2590,11 @@ def find_user_balance_row(cursor, phone='', openid='', mp_openid='', unionid='',
             cursor.execute("SELECT * FROM user_balances WHERE mp_openid = %s ORDER BY id", (mp_openid,))
             rows = [dict(r) for r in cursor.fetchall()]
             if len(rows) == 1:
-                return rows[0]
+                return _m(rows[0], 'mp_openid')
             if len(rows) > 1 and phone:
                 rows = [r for r in rows if r['phone'] == phone]
                 if len(rows) == 1:
-                    return rows[0]
+                    return _m(rows[0], 'mp_openid+phone')
         except Exception:
             pass
     if openid:
@@ -2459,24 +2602,25 @@ def find_user_balance_row(cursor, phone='', openid='', mp_openid='', unionid='',
             cursor.execute("SELECT * FROM user_balances WHERE openid = %s ORDER BY id", (openid,))
             rows = [dict(r) for r in cursor.fetchall()]
             if len(rows) == 1:
-                return rows[0]
+                return _m(rows[0], 'openid')
             if len(rows) > 1 and phone:
                 rows = [r for r in rows if r['phone'] == phone]
                 if len(rows) == 1:
-                    return rows[0]
+                    return _m(rows[0], 'openid+phone')
         except Exception:
             pass
     # [S320] strict_identity(新小程序) 时不做"按手机号认余额行"的兜底
-    if phone and not strict_identity:
+    # [S673-C] 开关 ON 时同样不做"按手机号认行"这一档
+    if phone and not strict_identity and not _s673_nomoney:
         try:
             cursor.execute("SELECT * FROM user_balances WHERE phone = %s ORDER BY id", (phone,))
             rows = [dict(r) for r in cursor.fetchall()]
             if len(rows) == 1:
-                return rows[0]
+                return _m(rows[0], 'phone')
             if len(rows) > 1:
                 legacy = [r for r in rows if not r.get('unionid')]
                 if len(legacy) == 1:
-                    return legacy[0]
+                    return _m(legacy[0], 'phone(legacy)')
         except Exception:
             pass
     return None
@@ -2503,10 +2647,50 @@ def upsert_user_balance_row(cursor, phone='', openid='', unionid='', mp_openid='
     if strict_identity:
         # [S320] 新小程序：不采信客户端带来的老 unionid，也不按手机号认老余额行
         unionid = ''
+    # [S673-B2-20260927] 纯 ID 安全网 —— 【只留痕，不改变任何行为】。
+    #   老板定稿口径：手机号不做识别、不判断"一样不一样"，只看 ID 是否符合；
+    #   绝不拦截、绝不改成败。记录四件事：
+    #     ① 本次靠哪把钥匙命中（user_id / unionid / mp_openid / openid / phone 兜底 / 新建行）
+    #     ② 入参 user_id>0 且命中行 user_id>0 且两者不等  -> "弱键把人带到另一行"的信号
+    #     ③ 入参 user_id=0 却命中了一个有主的行
+    #     ④ 新建行（便于统计"新建了多少账户"）
+    #   开关 balance_id_audit_guard，默认 0=OFF：OFF 时不传 trace、不写审计，
+    #   入参与行为与改动前逐字节一致。
+    _s673_trace = None
+    try:
+        if balance_id_audit_guard_enabled():
+            _s673_trace = {}
+    except Exception:
+        _s673_trace = None
     existing = find_user_balance_row(cursor, phone=phone, openid=openid, mp_openid=mp_openid,
-                                    unionid=unionid, user_id=user_id, strict_identity=strict_identity)
+                                    unionid=unionid, user_id=user_id, strict_identity=strict_identity,
+                                    _s673_trace=_s673_trace)
     if existing:
         row_id = existing['id']
+        if _s673_trace is not None:
+            try:
+                _s673_row_uid = int(existing.get('user_id') or 0)
+                _s673_key = str(_s673_trace.get('step') or 'unknown')
+                _s673_signal = ''
+                if user_id > 0 and _s673_row_uid > 0 and _s673_row_uid != user_id:
+                    _s673_signal = 'user_id_mismatch'
+                    logger.warning(
+                        '[S673][B2] 入参 user_id=%s 但命中行 user_id=%s 且不等 -> 弱键带到另一行(只留痕): '
+                        'row_id=%s key=%s amount=%s',
+                        user_id, _s673_row_uid, row_id, _s673_key, balance)
+                elif user_id <= 0 and _s673_row_uid > 0:
+                    _s673_signal = 'input_uid_zero_row_owned'
+                    logger.warning(
+                        '[S673][B2] 入参 user_id=0 却命中已属 user_id=%s 的行(只留痕): '
+                        'row_id=%s key=%s amount=%s',
+                        _s673_row_uid, row_id, _s673_key, balance)
+                try:
+                    _s673_audit_id_hit('hit', row_id, _s673_key, user_id, _s673_row_uid,
+                                       _s673_signal, balance)
+                except Exception as _s673_ae:
+                    logger.warning('[S673][B2] 审计写入失败(不影响入账): %s', _s673_ae)
+            except Exception as _s673_te:
+                logger.warning('[S673][B2] 留痕失败(不影响入账): %s', _s673_te)
         cursor.execute(
             """UPDATE user_balances SET
                 balance = COALESCE(balance,0) + %s,
@@ -2584,6 +2768,12 @@ def upsert_user_balance_row(cursor, phone='', openid='', unionid='', mp_openid='
             (phone, openid, unionid, mp_openid, wechat_name, balance, total_deposited, total_withdrawn, user_id),
         )
     row = cursor.fetchone()
+    if _s673_trace is not None:
+        try:
+            _s673_audit_id_hit('new_row', (row['id'] if row else None), 'new_row', user_id, 0,
+                               '', balance)
+        except Exception as _s673_ae2:
+            logger.warning('[S673][B2] 新建行留痕失败(不影响入账): %s', _s673_ae2)
     return row['id'] if row else None
 
 
@@ -6190,6 +6380,32 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
         logger.info('[S525] 支付宝单跳过微信订阅消息(不按手机号反查微信身份) order_id=%s order_ids=%s openid=%s...',
                     order_id, order_ids, str(openid or '')[:8])
         return False
+    # [S673-D-20260927] 只读断言（任务 D 防护，纯 logger，不改任何取值、不联网）：
+    #   把"本次订阅消息的发送目标 openid + 它属于哪个已登记小程序账号 + 两个止血开关状态"
+    #   记一条日志，用于在观察窗里证明【本次改动没有改变发送目标】。
+    #   注意：本函数与 pick_order_mp_openid / _resolve_mp_openid / orders 身份字段
+    #   在 S673 里【一行未动】；这里只新增读取性日志。
+    try:
+        _s673_aid = 0
+        try:
+            import wx_config as _wc673
+            _s673_aid = _wc673.account_id_by_openid(openid or '') or 0
+        except Exception:
+            _s673_aid = 0
+        try:
+            _s673_guard = balance_id_audit_guard_enabled()
+        except Exception:
+            _s673_guard = False
+        try:
+            _s673_strict = balance_strict_identity_enabled()
+        except Exception:
+            _s673_strict = False
+        logger.info('[S673][D] 订阅发送目标 openid=%s acct=%s phone=%s order_id=%s order_ids=%s '
+                    'balance_id_audit_guard=%s balance_strict_identity=%s',
+                    str(openid or '')[:10], _s673_aid, phone, order_id, order_ids,
+                    _s673_guard, _s673_strict)
+    except Exception:
+        pass
     # [S420-20260921] 订阅通知不再靠人工"全局关"，改为【跟随入口模式自动联动】：
     #   纯公众号(oa) / 纯支付宝(alipay) -> 小程序订阅消息根本没有发送场景，自动跳过；
     #   其它模式(mp / h5) -> 正常发送。

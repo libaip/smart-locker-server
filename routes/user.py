@@ -4475,7 +4475,24 @@ def get_user_balance():
         except Exception as _s625_e:
             logger.warning('[S625][user/balance] alipay_uid 解析失败(按未登录处理): %s', _s625_e)
 
-        ident = resolve_user_identity(cur, mp_openid=openid, phone=request_phone, user_id=_s625_alipay_user_id)
+        # [S673-B1-20260927] "读写看同一列"：H5 传上来的 openid 是【公众号 openid】
+        #   (ov47M3…/oLhbm2…)。它只可能落在 user_balances.openid 列
+        #   （线上实测：openid 列 607 行 / mp_openid 列 0 行），也对应 users.openid 列。
+        #   原实现把它当 mp_openid 传 -> 认人查 users.mp_openid、认行查 user_balances.mp_openid，
+        #   而写入时公众号 openid 写在 openid 列 -> 读写看错列，永远对不上，只能靠手机号兜底。
+        #   现在：识别出公众号前缀时改按 openid 认人；两列都试——find_user_balance_row 内部
+        #   仍会先试 mp_openid 列（= 该账号真实的 mp_openid），再试 openid 列。
+        #   非公众号前缀（小程序 openid）走 else 分支，入参与改动前【逐字节相同】。
+        try:
+            _s673_is_oa = bool(openid) and str(openid).startswith(oa_openid_prefix())
+        except Exception:
+            _s673_is_oa = False
+        if _s673_is_oa:
+            ident = resolve_user_identity(cur, openid=openid, phone=request_phone,
+                                          user_id=_s625_alipay_user_id)
+        else:
+            ident = resolve_user_identity(cur, mp_openid=openid, phone=request_phone,
+                                          user_id=_s625_alipay_user_id)
         if ident['ambiguous']:
             conn.close()
             return json_response(message='账号身份待确认，请重新登录', code=400)

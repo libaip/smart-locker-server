@@ -2656,15 +2656,20 @@ def upsert_user_balance_row(cursor, phone='', openid='', unionid='', mp_openid='
     #     ④ 新建行（便于统计"新建了多少账户"）
     #   开关 balance_id_audit_guard，默认 0=OFF：OFF 时不传 trace、不写审计，
     #   入参与行为与改动前逐字节一致。
+    # [S679-20260927] 第1批：trace 现在【总是】传下去 ——
+    #   补位护栏必须知道"这条记录是靠哪把钥匙认到的"（step）。
+    #   注意：审计留痕仍然只受 balance_id_audit_guard 开关控制（_s673_trace 仍为 None 时不写审计），
+    #         所以这一处【不改变任何留痕行为】。
+    _s679_probe = {}
     _s673_trace = None
     try:
         if balance_id_audit_guard_enabled():
-            _s673_trace = {}
+            _s673_trace = _s679_probe
     except Exception:
         _s673_trace = None
     existing = find_user_balance_row(cursor, phone=phone, openid=openid, mp_openid=mp_openid,
                                     unionid=unionid, user_id=user_id, strict_identity=strict_identity,
-                                    _s673_trace=_s673_trace)
+                                    _s673_trace=_s679_probe)
     if existing:
         row_id = existing['id']
         if _s673_trace is not None:
@@ -2691,16 +2696,113 @@ def upsert_user_balance_row(cursor, phone='', openid='', unionid='', mp_openid='
                     logger.warning('[S673][B2] 审计写入失败(不影响入账): %s', _s673_ae)
             except Exception as _s673_te:
                 logger.warning('[S673][B2] 留痕失败(不影响入账): %s', _s673_te)
+        # ============================================================
+        # [S679-20260927] 第1批 v2：入账"补位" + 护栏（老板 09-27 拍定）
+        # ============================================================
+        # 改前：命中已有余额记录时【只加钱】，不补 openid/mp_openid/unionid
+        #   -> 老记录（只有 UN + 公众号卡）的小程序卡格子永远是空的，
+        #      用户从小程序口就永远查不到这条记录（实测 53,462 行 / ¥647,856.25）。
+        # 改后：加钱的同时，把这次带来的钥匙【插到空着的格子里】；已有值一个字不动。
+        #
+        # 护栏①（哪些档位允许补）：主键是"通行证/卡"的档才补。
+        #   ！！v1 的教训：v1 只放行 unionid / mp_openid / openid 三个【不带 phone】的档，
+        #   但真实入账走的几乎都是 `unionid+phone`（find_user_balance_row 优先试
+        #   (phone,unionid)）-> 补位实际一次都没发生。端到端实测才抓到，单元测试抓不到。
+        #   现在的口径：+phone 只是"多行时消歧"，主键仍是 ID，所以放行；
+        #   只挡两类：phone / phone(legacy)（纯手机号认行，换号会认错人）、
+        #             user_id（订单上的脏编号）。
+        # 护栏②（ID 唯一性）：命中用的那把 ID 若在余额表里指向【多行】，
+        #   说明靠它认行本身有歧义 -> 保守不补 + 告警。（实测多行极少：UN 3 个、卡 8 张。）
+        # 护栏③（目标值占用）：目标列有唯一约束（user_balances_openid_uk /
+        #   idx_user_balances_phone_mp_openid / idx_user_balances_phone_unionid），
+        #   撞了会让 UPDATE 抛异常 = 入账失败。所以先查，被占用就不补。
+        #   用【命中行自己的手机号】去比，不用入参手机号。
+        # 另外：本批【不删】原来那句 user_id 覆盖 —— 见下面说明。
+        # 兜底：补位这段任何异常都只打日志，金额三栏照加，绝不影响入账。
+        #
+        # ！！为什么本批不动 user_id 覆盖（2026-09-27 部署前核实发现）：
+        #   `calc_balance()` 里有一道闸 —— `if ident['user_id'] == 0: return 0.0`
+        #   （余额是按"订单的 user_id"算的）；而 `/user/balance` 里会
+        #   `ident['user_id'] = row.get('user_id')` 从余额行回捞编号补上。
+        #   一旦入账不再写编号，"认不到人、只能靠手机号认行"的那部分用户
+        #   ident['user_id'] 就会是 0 -> 余额显示 0。
+        #   所以"编号停用"必须和"认人收窄（第 2 批）"一起做。
+        _s679_step = str((_s679_probe or {}).get('step') or '')
+        _s679_ok_steps = ('unionid', 'unionid+phone', 'mp_openid', 'mp_openid+phone',
+                          'openid', 'openid+phone')
+        _s679_backfill = _s679_step in _s679_ok_steps
+        _s679_oa = _s679_mp = _s679_un = ''
+        _s679_row_phone = str(existing.get('phone') or '')
+        if _s679_backfill:
+            # 护栏②：命中用的 ID 是否只对应这一行
+            try:
+                if _s679_step.startswith('unionid'):
+                    _s679_id_col, _s679_id_val = 'unionid', unionid
+                elif _s679_step.startswith('mp_openid'):
+                    _s679_id_col, _s679_id_val = 'mp_openid', mp_openid
+                else:
+                    _s679_id_col, _s679_id_val = 'openid', openid
+                if _s679_id_val:
+                    cursor.execute(
+                        "SELECT COUNT(*) AS c FROM user_balances WHERE " + _s679_id_col + " = %s",
+                        (_s679_id_val,))
+                    _s679_c = cursor.fetchone()
+                    if isinstance(_s679_c, dict):
+                        _s679_c = _s679_c.get('c') or 0
+                    elif _s679_c:
+                        _s679_c = _s679_c[0] or 0
+                    else:
+                        _s679_c = 0
+                    if int(_s679_c) > 1:
+                        logger.warning('[S679] %s=%s... 指向多行(%s)，保守不补位 row_id=%s',
+                                       _s679_id_col, str(_s679_id_val)[:10], _s679_c, row_id)
+                        _s679_backfill = False
+            except Exception as _s679_ue:
+                logger.warning('[S679] ID 唯一性校验失败，本次不补位(不影响入账): %s', _s679_ue)
+                _s679_backfill = False
+        if _s679_backfill:
+            # 护栏③：目标值是否已被别的行占用
+            try:
+                _s679_cur_oa = str(existing.get('openid') or '').strip()
+                _s679_cur_mp = str(existing.get('mp_openid') or '').strip()
+                _s679_cur_un = str(existing.get('unionid') or '').strip()
+                if openid and not _s679_cur_oa:
+                    cursor.execute(
+                        "SELECT 1 FROM user_balances WHERE openid = %s AND id <> %s LIMIT 1",
+                        (openid, row_id))
+                    if not cursor.fetchone():
+                        _s679_oa = openid
+                if mp_openid and not _s679_cur_mp:
+                    cursor.execute(
+                        "SELECT 1 FROM user_balances WHERE mp_openid = %s AND phone = %s AND id <> %s LIMIT 1",
+                        (mp_openid, _s679_row_phone, row_id))
+                    if not cursor.fetchone():
+                        _s679_mp = mp_openid
+                if unionid and not _s679_cur_un:
+                    cursor.execute(
+                        "SELECT 1 FROM user_balances WHERE unionid = %s AND phone = %s AND id <> %s LIMIT 1",
+                        (unionid, _s679_row_phone, row_id))
+                    if not cursor.fetchone():
+                        _s679_un = unionid
+            except Exception as _s679_ce:
+                logger.warning('[S679] 补位前占用检查失败，本次不补位(不影响入账): %s', _s679_ce)
+                _s679_oa = _s679_mp = _s679_un = ''
+            if _s679_oa or _s679_mp or _s679_un:
+                logger.info('[S679] 入账补位 row_id=%s step=%s 补公众号卡=%s 补小程序卡=%s 补通行证=%s',
+                            row_id, _s679_step, bool(_s679_oa), bool(_s679_mp), bool(_s679_un))
         cursor.execute(
             """UPDATE user_balances SET
                 balance = COALESCE(balance,0) + %s,
                 total_deposited = COALESCE(total_deposited,0) + %s,
                 total_withdrawn = COALESCE(total_withdrawn,0) + %s,
                 wechat_name = COALESCE(NULLIF(%s,''), wechat_name),
-                user_id = CASE WHEN %s > 0 THEN %s ELSE user_id END
+                user_id = CASE WHEN %s > 0 THEN %s ELSE user_id END,
+                openid    = COALESCE(NULLIF(openid,''),    NULLIF(%s,'')),
+                mp_openid = COALESCE(NULLIF(mp_openid,''), NULLIF(%s,'')),
+                unionid   = COALESCE(NULLIF(unionid,''),   NULLIF(%s,''))
               WHERE id = %s""",
-            (balance, total_deposited, total_withdrawn,
-             wechat_name, user_id, user_id, row_id),
+            (balance, total_deposited, total_withdrawn, wechat_name,
+             user_id, user_id, _s679_oa, _s679_mp, _s679_un, row_id),
         )
         return row_id
     if unionid:

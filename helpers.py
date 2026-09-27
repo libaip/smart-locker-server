@@ -5407,31 +5407,105 @@ def get_oa_access_token():
         return ''
 
 
+# ============================================================
+# [S700-20260927] 公众号/小程序的【全部】已登记前缀（不看 is_active）
+#   为什么要它：oa_openid_prefix() / mp_openid_prefix() 只返回"当前生效"的那一个，
+#   而线上同时有 3 代公众号（oLhbm2/ov47M3/octN92）和 4 代小程序
+#   （ooTcRx/oWrA8/oXTD3x/oQXFs3）的 openid 在库里，只认一个会漏掉其它代。
+#   读不到库时返回空 -> 判定一律不通过 -> 只"少做"不"做错"，方向是安全的。
+# ============================================================
+_OA_ALL_PREFIX_CACHE = {'ts': 0.0, 'ps': ()}
+_MP_ALL_PREFIX_CACHE = {'ts': 0.0, 'ps': ()}
+
+
+def _all_prefixes(acct_type, cache):
+    import time as _t700
+    _now = _t700.time()
+    if cache['ps'] and (_now - cache['ts']) < 60:
+        return cache['ps']
+    _ps = ()
+    try:
+        import wx_config as _wc700
+        _ps = tuple(sorted({str(r.get('openid_prefix') or '').strip()
+                            for r in (_wc700.list_accounts(acct_type) or [])
+                            if str(r.get('openid_prefix') or '').strip()}, key=len, reverse=True))
+    except Exception:
+        _ps = ()
+    cache['ts'] = _now
+    cache['ps'] = _ps
+    return _ps
+
+
+def oa_prefixes_all():
+    """全部已登记公众号的 openid 前缀（含已停用账号）"""
+    return _all_prefixes('oa', _OA_ALL_PREFIX_CACHE)
+
+
+def mp_prefixes_all():
+    """全部已登记小程序的 openid 前缀（含已停用的旧号）"""
+    return _all_prefixes('mp', _MP_ALL_PREFIX_CACHE)
+
+
+def is_oa_openid_any(openid):
+    """这个 openid 是不是【任意一代已登记公众号】的"""
+    _x = (openid or '').strip()
+    try:
+        return bool(_x) and any(_x.startswith(p) for p in oa_prefixes_all())
+    except Exception:
+        return False
+
+
+def is_mp_openid_any(openid):
+    """这个 openid 是不是【任意一代已登记小程序】的"""
+    _x = (openid or '').strip()
+    try:
+        return bool(_x) and any(_x.startswith(p) for p in mp_prefixes_all())
+    except Exception:
+        return False
+
+
+def _s700_same_person(cur, new_openid, unionid):
+    """同人护栏：unionid 非空、且换出来的 openid 确实挂在这个 unionid 名下，才算同一个人。
+    确认不了就返回 False —— 宁可不换（发不出），也绝不发错人。"""
+    if not new_openid or not unionid:
+        return False
+    try:
+        cur.execute("SELECT 1 FROM users WHERE (openid=%s OR mp_openid=%s) AND unionid=%s LIMIT 1",
+                    (new_openid, new_openid, unionid))
+        return bool(cur.fetchone())
+    except Exception:
+        return False
+
+
 def find_oa_openid(phone='', unionid=''):
     """找该用户的【公众号】openid（前缀 oLhbm2）：phone_openids.gzh_openid -> users.openid -> phone_openids.openid -> 按 unionid 跨手机号"""
     try:
         from database import get_db
         _c = get_db()
         _cur = _c.cursor()
-        _pref = oa_openid_prefix()
+        # [S700-20260927] 原来只找"当前生效"的那一个公众号前缀（生产实测 = ov47M3），
+        #   而线上同时有 3 代公众号（oLhbm2/ov47M3/octN92）在用 -> 另外两代用户
+        #   "找不到公众号身份"，连"小程序发不出就降级发公众号通知"那条兜底也一起失败。
+        #   S699 A/B：抽 300 个手机号，旧口径找得到 7 个，新口径 243 个，零回退零污染。
+        _prefs = [p + '%' for p in oa_prefixes_all()] or [oa_openid_prefix() + '%']
         _oid = ''
         if phone:
-            _cur.execute("SELECT gzh_openid FROM phone_openids WHERE phone=%s AND COALESCE(gzh_openid,'')<>'' AND gzh_openid LIKE %s ORDER BY id ASC LIMIT 1", (phone, _pref + '%'))
+            _cur.execute("SELECT gzh_openid FROM phone_openids WHERE phone=%s AND COALESCE(gzh_openid,'')<>'' AND gzh_openid LIKE ANY(%s) ORDER BY id ASC LIMIT 1", (phone, _prefs))
             _r = _cur.fetchone()
             if _r and _r.get('gzh_openid'):
                 _oid = _r['gzh_openid']
             if not _oid:
-                _cur.execute("SELECT openid FROM users WHERE phone=%s AND COALESCE(openid,'')<>'' AND openid LIKE %s ORDER BY id ASC LIMIT 1", (phone, _pref + '%'))
+                _cur.execute("SELECT openid FROM users WHERE phone=%s AND COALESCE(openid,'')<>'' AND openid LIKE ANY(%s) ORDER BY id ASC LIMIT 1", (phone, _prefs))
                 _r = _cur.fetchone()
                 if _r and _r.get('openid'):
                     _oid = _r['openid']
             if not _oid:
-                _cur.execute("SELECT openid FROM phone_openids WHERE phone=%s AND COALESCE(openid,'')<>'' AND openid LIKE %s ORDER BY id ASC LIMIT 1", (phone, _pref + '%'))
+                _cur.execute("SELECT openid FROM phone_openids WHERE phone=%s AND COALESCE(openid,'')<>'' AND openid LIKE ANY(%s) ORDER BY id ASC LIMIT 1", (phone, _prefs))
                 _r = _cur.fetchone()
                 if _r and _r.get('openid'):
                     _oid = _r['openid']
         if not _oid and unionid:
-            _cur.execute("SELECT gzh_openid FROM phone_openids WHERE unionid=%s AND COALESCE(gzh_openid,'')<>'' AND gzh_openid LIKE %s ORDER BY id ASC LIMIT 1", (unionid, _pref + '%'))
+            _cur.execute("SELECT gzh_openid FROM phone_openids WHERE unionid=%s AND COALESCE(gzh_openid,'')<>'' AND gzh_openid LIKE ANY(%s) ORDER BY id ASC LIMIT 1", (unionid, _prefs))
             _r = _cur.fetchone()
             if _r and _r.get('gzh_openid'):
                 _oid = _r['gzh_openid']
@@ -6488,11 +6562,13 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
                 # [FIX-20260716] 必须查 mp_openid（小程序openid），禁止查 openid（可能是公众号openid会导致40003）
                 # ???? oLhbm2 ??????openid????? ooTcRx ??????openid
                 _ub_row = find_user_balance_row(_cur, phone=phone, unionid=unionid or '')
-                if _ub_row and _ub_row.get('mp_openid') and _ub_row['mp_openid'] not in ('', None) and not _ub_row['mp_openid'].startswith(oa_openid_prefix()):
+                # [S700-20260927] 原来只排除"当前生效"那一个公众号前缀，别的代会被
+                #   误当成小程序 openid 拿去发（微信 40003）。改成排除全部已登记公众号前缀。
+                if _ub_row and _ub_row.get('mp_openid') and _ub_row['mp_openid'] not in ('', None) and not is_oa_openid_any(_ub_row['mp_openid']):
                     openid = _ub_row['mp_openid']
                 if not openid:
                     _po_rows = phone_openid_rows(_cur, phone=phone, unionid=unionid or '')
-                    if len(_po_rows) == 1 and _po_rows[0].get('mp_openid') and not _po_rows[0]['mp_openid'].startswith(oa_openid_prefix()):
+                    if len(_po_rows) == 1 and _po_rows[0].get('mp_openid') and not is_oa_openid_any(_po_rows[0]['mp_openid']):
                         openid = _po_rows[0]['mp_openid']
                     elif len(_po_rows) > 1 and not unionid:
                         logger.warning(f'[subscribe_msg] 手机号绑定多个微信，缺少unionid，不猜测: phone={phone}')
@@ -6501,9 +6577,9 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
                     _cur.execute("""
                         SELECT mp_openid, unionid FROM phone_openids
                         WHERE phone = %s AND NULLIF(mp_openid,'') IS NOT NULL
-                          AND mp_openid NOT LIKE %s
+                          AND NOT (mp_openid LIKE ANY(%s))
                         ORDER BY id ASC
-                    """, (phone, oa_openid_prefix() + '%'))
+                    """, (phone, [p + '%' for p in oa_prefixes_all()] or [oa_openid_prefix() + '%']))
                     _po2 = _cur.fetchall()
                     if _po2:
                         _uniqs = {r['unionid'] for r in _po2 if r['unionid']}
@@ -6563,18 +6639,27 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
             except Exception as _e4:
                 logger.warning(f'[subscribe_msg] 旧openid换新失败: {_e4}')
         # 保险：公众号openid不能发小程序订阅消息，按手机号反查正确小程序openid
-        if openid and openid.startswith(oa_openid_prefix()) and phone:
+        # [S700-20260927] 闸门从"只认当前生效公众号"放宽到"认全部已登记公众号"；
+        #   替换候选从"只认当前生效小程序"放宽到"认全部已登记小程序"。
+        #   并对【老口径本来放不进来、新口径才放进来的那批】加同人护栏：
+        #   只有 unionid 能确认是同一个人时才替换，否则不换（宁可不发也不发错人）。
+        #   老口径下本来就换成功的（S699 实测 130 笔）走 else 分支，行为一个字节没变。
+        if openid and is_oa_openid_any(openid) and phone:
+            _s700_newly = not str(openid).startswith(oa_openid_prefix())
             try:
                 _conn3 = get_db()
                 _cur3 = _conn3.cursor()
                 _r3 = None
                 _ub3 = find_user_balance_row(_cur3, phone=phone, unionid=unionid or '')
-                if _ub3 and _ub3.get('mp_openid') and _ub3['mp_openid'].startswith(mp_openid_prefix()):
+                if _ub3 and _ub3.get('mp_openid') and is_mp_openid_any(_ub3['mp_openid']):
                     _r3 = (_ub3['mp_openid'],)
                 if not _r3:
                     _po3 = phone_openid_rows(_cur3, phone=phone, unionid=unionid or '')
-                    if len(_po3) == 1 and _po3[0].get('mp_openid') and _po3[0]['mp_openid'].startswith(mp_openid_prefix()):
+                    if len(_po3) == 1 and _po3[0].get('mp_openid') and is_mp_openid_any(_po3[0]['mp_openid']):
                         _r3 = (_po3[0]['mp_openid'],)
+                if _r3 and _r3[0] and _s700_newly and not _s700_same_person(_cur3, _r3[0], unionid):
+                    logger.warning('[S700] 新口径才放进来的替换，unionid 确认不了同人 -> 不换(避免发错人): phone=%s', phone)
+                    _r3 = None
                 _conn3.close()
                 if _r3 and _r3[0]:
                     openid = _r3[0]

@@ -757,7 +757,7 @@ def get_cabinet_by_mainboard(mainboard_id):
         # 预付款模式：寄存规则自动追加标准收费规则（APK/设备屏幕显示）
         if (result.get('charge_mode') or '') == 'deposit':
             _fee_rules_txt = (result.get('usage_rules') or '').strip()
-            _fee_rules_txt = _fee_rules_txt.replace('保证金', '预付款').replace('押金', '预付款')
+            _fee_rules_txt = _fee_rules_txt.replace('保证金', '预付款').replace('预付款', '预付款')
             _fmt_amt = lambda n: str(int(n)) if float(n).is_integer() else ('%.2f' % float(n)).rstrip('0').rstrip('.')
             _fd = float(result.get('daily_fee') or 0)
             _fdays = int(result.get('free_days') or 1)
@@ -1872,7 +1872,7 @@ def reject_withdrawal(withdrawal_id):
                                 balance=record['amount'], user_id=record.get('user_id') or 0)
         conn.commit()
         conn.close()
-        return json_response(message='已拒绝，押金已添加到用户余额')
+        return json_response(message='已拒绝，预付款已添加到用户余额')
     except Exception as e:
         logger.error(f'[reject_withdrawal] {e}')
         return json_response(message=str(e), code=500)

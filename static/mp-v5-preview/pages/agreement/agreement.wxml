@@ -26,7 +26,7 @@
         （3）输入手机号码并设置4位取物码；
       </text>
       <text class="section-content">
-        （4）支付保证金（押金）后，柜门将自动打开；
+        （4）支付预付款后，柜门将自动打开；
       </text>
       <text class="section-content">
         （5）放入物品并关闭柜门。
@@ -44,17 +44,17 @@
         （3）柜门将自动打开，取走物品并关闭柜门；
       </text>
       <text class="section-content">
-        （4）押金将在取物成功后自动原路退还。
+        （4）预付款将在取物成功后自动原路退还。
       </text>
     </view>
 
     <view class="section">
-      <text class="section-title">三、押金规则</text>
+      <text class="section-title">三、预付款规则</text>
       <text class="section-content">
-        1. 保证金（押金）金额以页面显示为准。
+        1. 预付款金额以页面显示为准。
       </text>
       <text class="section-content">
-        2. 押金将在取物成功后自动原路退还，退款时间根据支付渠道不同可能需要1-7个工作日。
+        2. 预付款将在取物成功后自动原路退还，退款时间根据支付渠道不同可能需要1-7个工作日。
       </text>
       <text class="section-content">
         3. 如柜门异常未关闭，系统可能继续收取费用。

@@ -123,7 +123,7 @@ Page({
     const id = e.currentTarget.dataset.id
     wx.showModal({
       title: '确认',
-      content: '确认要结束订单？押金将退到余额',
+      content: '确认要结束订单？预付款将退到余额',
       success: (res) => {
         if (res.confirm) {
           const phone = wx.getStorageSync('phone') || ''

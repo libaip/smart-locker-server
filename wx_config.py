@@ -83,7 +83,7 @@ ID_TABLES = ('wx_accounts', 'wx_templates', 'wx_switch_log')   # 这三张表有
 BIZ_LABELS = {
     'subscribe_deposit': '小程序·寄存成功订阅',
     'subscribe_refund': '小程序·退款成功订阅',
-    'subscribe_general': '小程序·押金退还订阅',
+    'subscribe_general': '小程序·预付款退还订阅',
     'oa_deposit_ok': '公众号·存储柜寄存成功通知',
     'oa_deposit_end': '公众号·寄存结束通知',
     'oa_refund_ok': '公众号·退款成功通知',
@@ -626,7 +626,7 @@ def account_id_by_openid(openid, acct_type='mp'):
 #      / oa_sub_refund）在 helpers.py 的 _OA_SUB_TPL 里，语义不同，切勿混用。
 # ============================================================
 _TPL_ID_BIZ_FALLBACK = {
-    'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA': 'subscribe_general',   # 押金退还/账户余额（旧写死值）
+    'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA': 'subscribe_general',   # 预付款退还/账户余额（旧写死值）
     'ax-O5Qa05IWt7bbhRVk9Pb9A_SbXfIMfbhm0Hoh4gYc': 'subscribe_general',   # 账户余额（当前库内通用值）
     'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c': 'subscribe_refund',    # 退款成功
     'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk': 'subscribe_deposit',   # 寄存成功

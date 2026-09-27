@@ -2,7 +2,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 """
 用户端API - Blueprint
-包含：存包、取包、押金流程、短信验证、H5存包
+包含：存包、取包、预付款流程、短信验证、H5存包
 """
 import logging
 import random
@@ -1092,7 +1092,7 @@ def retrieve():
             if order['slot_id']:
                 cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (order['slot_id'],))
                 _deposit_amount = order.get('deposit_amount', 0)
-                # [S628-20260923] 已原路退款的订单不再把押金计入余额
+                # [S628-20260923] 已原路退款的订单不再把预付款计入余额
                 if _deposit_amount > 0 and not deposit_already_refunded(order):
                     _r_openid = order.get('openid', '') or ''
                     _r_unionid = order.get('unionid', '') or ''
@@ -1371,7 +1371,7 @@ def retrieve_confirm():
             logger.error(f'[retrieve_confirm] 白名单直接退款异常 order={order_id}: {e}')
         # 结束订单，预付款退到用户余额（不直接退微信）
         # 防重复：如果订单原状态不是status=2(使用中)，说明已被其他路径处理过，跳过余额更新
-        # [S628-20260923] 再加一道：押金已原路退款(refund_status='refunded' 且 refund_amount>=deposit_amount)的不再计入余额
+        # [S628-20260923] 再加一道：预付款已原路退款(refund_status='refunded' 且 refund_amount>=deposit_amount)的不再计入余额
         if orig_status == 2 and not _direct_refund and not deposit_already_refunded(order):
             if not _mp_openid:
                 _mp_openid = _resolve_mp_openid(cursor, mp_openid='', openid=_openid, phone=order['user_phone'])
@@ -1422,7 +1422,7 @@ def retrieve_confirm():
 
 
 # ============================================
-# 押金存包流程
+# 预付款存包流程
 # ============================================
 
 @bp.route('/deposit/create-order', methods=['POST'])
@@ -1895,7 +1895,7 @@ def h5_store():
 
 
 # ============================================
-# 押金取物/续存/结束
+# 预付款取物/续存/结束
 # ============================================
 
 @bp.route('/deposit/retrieve', methods=['POST'])
@@ -1985,7 +1985,7 @@ def deposit_retrieve():
                     if order_dict.get('slot_id'):
                         c2.execute("UPDATE cabinet_slots SET status=1 WHERE id=%s", (order_dict['slot_id'],))
                     _oid_user_id = order_dict.get('user_id') or 0
-                    # [S628-20260923] 已原路退款的订单不再把押金计入余额（两条分支都不写明细）
+                    # [S628-20260923] 已原路退款的订单不再把预付款计入余额（两条分支都不写明细）
                     _s628_skip = deposit_already_refunded(order_dict)
                     if _oid_user_id and not _s628_skip:
                         c2.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status, user_id) VALUES (%s,%s,%s,'available',%s) ON CONFLICT (order_id) DO NOTHING",
@@ -2341,7 +2341,7 @@ def deposit_end_storage():
         if _openid:
             try:
                 from helpers import send_wx_subscribe_message
-                # 发送押金退还通知
+                # 发送预付款退还通知
                 _thing7 = "已原路退回支付账户" if _direct_refund else "已退还至小程序用户钱包"
                 _thing2 = "无需提现，请留意微信到账" if _direct_refund else "请自行点击此通知消息跳转“我的钱包”提现"
                 subscribe_data = {"amount1": {"value": "¥{:.2f}".format(float(order.get("deposit_amount", 0)))}, "time2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M")}, "thing4": {"value": _thing7}, "thing3": {"value": _thing2}}
@@ -2362,14 +2362,14 @@ def deposit_end_storage():
         #   [S633-20260923] 键名/顺序 = 支付宝【真实模板关键词】（只读接口 batchquery 实测）：
         #     subscribe_general（c142ac.. 账户余额通知）
         #       keyword1 账户余额 / keyword2 变动时间 / keyword3 温馨提示 / keyword4 温馨提醒
-        #     subscribe_refund （de68d9.. 寄存押金退还通知）
+        #     subscribe_refund （de68d9.. 寄存预付款退还通知）
         #       keyword1 寄存单号 / keyword2 退还时间 / keyword3 退还状态 / keyword4 退还金额
         #   ⚠️ amount1/time2/thing3/thing4 是【微信】订阅消息的字段名，支付宝侧一个都不能用
         #      （S631b 把它们搬到支付宝接口上是错的，已在 S633 改回 keywordN）。
         if str(order.get('alipay_pay_uid') or order.get('alipay_mp_uid') or '').strip():
             try:
                 from helpers import notify_alipay_order as _s631_notify
-                # 寄存结束(押金退还)：两段文案与微信侧【同一调用点】routes/user.py:2296-2297
+                # 寄存结束(预付款退还)：两段文案与微信侧【同一调用点】routes/user.py:2296-2297
                 # 的 _thing7(短状态)/_thing2(长提示) 逐字一致，唯一改动是把"请留意微信到账"
                 # 的平台词换成"支付宝"。落位按支付宝关键词名：长提示 -> keyword3 温馨提示、
                 # 短状态 -> keyword4 温馨提醒。
@@ -2397,7 +2397,7 @@ def deposit_end_storage():
             except Exception as _s631_e:
                 logger.warning("[S631] 支付宝订阅消息接线失败(不影响主流程): %s", _s631_e)
 
-        # S106: 结束订单退押金短信通知(网点开关控制)
+        # S106: 结束订单退预付款短信通知(网点开关控制)
         try:
             from helpers import send_smsbao_smart
             _sms_on = False
@@ -4272,7 +4272,7 @@ def get_subscribe_templates():
         if str(request.args.get('platform') or '').strip().lower() == 'alipay':
             from wx_config import template_id as _tid522
             _g522 = _tid522('subscribe_general', 'alipay', '')   # 账户余额通知
-            _w522 = _tid522('subscribe_refund', 'alipay', '')    # 寄存押金退还通知
+            _w522 = _tid522('subscribe_refund', 'alipay', '')    # 寄存预付款退还通知
             _ids522 = [x for x in (_g522, _w522) if x]
             logger.info('[subscribe_templates] 支付宝分支: general=%s... refund=%s...',
                         str(_g522)[:8], str(_w522)[:8])
@@ -4319,7 +4319,7 @@ def get_subscribe_templates():
         return _wx_tpl(biz, 'mp', default_id)
 
     _withdraw = _pick('subscribe_refund', 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c')   # 退款成功
-    _general = _pick('subscribe_general', 'ax-O5Qa05IWt7bbhRVk9Pb9A_SbXfIMfbhm0Hoh4gYc')     # 账户余额通知（原"押金退还"，2026-09-17 换模板）
+    _general = _pick('subscribe_general', 'ax-O5Qa05IWt7bbhRVk9Pb9A_SbXfIMfbhm0Hoh4gYc')     # 账户余额通知（原"预付款退还"，2026-09-17 换模板）
     # [S231-20260917] 存包落地页（H5 跳过来的那一页）只请求"账户余额"一个模板；其它位置（提现页 / 小程序存包页）保持两个。
     # 怎么判断：H5 跳转前用 sendBeacon 打过一个"跳转意图"(mp_enter_log.phase='jump_intent')，
     #           这里把 6 秒内最新的一条意图"消费"掉；消费到了 = 这次请求来自存包落地页。
@@ -5839,7 +5839,7 @@ def _auto_process_self_complaint(complaint_id, phone, openid_val, order_no=''):
             cur.execute("UPDATE orders SET refund_status='refunded', status=4, refund_id=%s, refund_amount=%s, refund_time=CURRENT_TIMESTAMP, refund_mark=1 WHERE id=%s", (refund_id or '', order[2], order[0]))
             cur.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order[0],))
             # [S188 2026-09-15] 原来是按单个 order_id 把整张提现单置为已通过 -> 合并提现单只退了一部分却整张标通过,
-            #   剩余押金被隐藏(用户看不到也提不出). 改为逐单扣减(与 admin_v2 订单退款 S102/S111 一致)
+            #   剩余预付款被隐藏(用户看不到也提不出). 改为逐单扣减(与 admin_v2 订单退款 S102/S111 一致)
             try:
                 from helpers import settle_withdrawal_for_order
                 logger.info('[self_complaint] 提现单结算 %s order_id=%s',
@@ -5866,15 +5866,15 @@ def _auto_process_self_complaint(complaint_id, phone, openid_val, order_no=''):
                 pass
 
 
-# ==== [S552-BEGIN] 客服自助页直退押金：POST /api/user/help-refund（新增块，勿手改） ====
+# ==== [S552-BEGIN] 客服自助页直退预付款：POST /api/user/help-refund（新增块，勿手改） ====
 # ============================================================================
-# [S552-20260922] 客服自助页「① 我要退款（退我的押金）」——押金原路【直退】，不走审批。
+# [S552-20260922] 客服自助页「① 我要退款（退我的预付款）」——预付款原路【直退】，不走审批。
 #
 # 设计要点（与《S552_客服自助页与直退_方案_20260922.md》§3 一一对应）：
 #   1) 不走审批：网点审批模式(withdraw_mode=auto_approve/manual/queue_approve)、
 #      "近30天通过率未达标自动拒绝"(admin_v2 批处理)、S541 的支付宝单排除
 #      (withdraw_refund_alipay) —— 都不参与本接口。
-#   2) 底线照留：只退【本人 openid 名下 + 已结束(status=3) + 押金可退 + 未退款】的订单；
+#   2) 底线照留：只退【本人 openid 名下 + 已结束(status=3) + 预付款可退 + 未退款】的订单；
 #      金额恒等于该单 deposit_amount（入参里根本没有金额字段，从根上不可能超额）。
 #      身份口径与 S551 的 /user/orders 完全一致：
 #        微信   -> (o.mp_openid = %s OR o.openid = %s)
@@ -6016,7 +6016,7 @@ def _hr_close(conn):
 
 @bp.route('/user/help-refund', methods=['POST'])
 def help_refund():
-    """[S552-20260922] 客服自助页「① 我要退款（退我的押金）」：押金原路直退，不走审批。
+    """[S552-20260922] 客服自助页「① 我要退款（退我的预付款）」：预付款原路直退，不走审批。
 
     入参(JSON)：
         openid      必填  小程序 openid（严格认人；支付宝可只传 alipay_uid）
@@ -6036,7 +6036,7 @@ def help_refund():
         retryable/today_used_count/today_max_count/today_used_amount/today_max_amount/
         remaining_count/orders[]/failures[]
     开关关闭、没可退的单、额度用完 —— 一律 code=200 + blocked/title/detail（不报错），
-    前端据此显示"功能准备中 / 暂无可退押金 / 明天再来"，绝不白屏。
+    前端据此显示"功能准备中 / 暂无可退预付款 / 明天再来"，绝不白屏。
     """
     from helpers import get_db
     conn = None
@@ -6081,7 +6081,7 @@ def help_refund():
                 'enabled': False, 'dry_run': True, 'platform': platform,
                 'blocked': 'disabled',
                 'title': '自助退款准备中',
-                'detail': '一键原路退押金还没开放，请按「我的钱包 → 提现」申请，我们在后台给您审核退款。',
+                'detail': '一键原路退预付款还没开放，请按「我的钱包 → 提现」申请，我们在后台给您审核退款。',
                 'refundable_count': 0, 'refundable_amount': 0.0,
                 'refunded_count': 0, 'refunded_amount': 0.0, 'failed_count': 0,
                 'retryable': False, 'orders': [], 'failures': [],
@@ -6183,9 +6183,9 @@ def help_refund():
 
         # ---------- 4) 没有可退的单 ----------
         if not rows:
-            base['title'] = '暂无可退押金'
-            base['detail'] = ('您名下没有「已结束、押金可退而且还没退过」的订单。'
-                              '如果押金已经原路退回，可以在「② 查退款/提现进度」里看到账情况。')
+            base['title'] = '暂无可退预付款'
+            base['detail'] = ('您名下没有「已结束、预付款可退而且还没退过」的订单。'
+                              '如果预付款已经原路退回，可以在「② 查退款/提现进度」里看到账情况。')
             logger.info('[S552][help-refund] 无可退单 platform=%s openid=%s... phone=%s',
                         platform, str(_openid or _ali)[:10], _phone_log)
             return json_response(data=base, message='ok', code=200)
@@ -6362,7 +6362,7 @@ def help_refund():
 def refund_by_tool():
     """微信账单“对订单有疑惑-申请退款”常用工具回调 (S121):
     用户从微信账单点申请退款 -> 跳小程序退款页 -> 调此接口:
-    按 order_no 查订单 -> 校验本人(openid/user_id/phone/联系方) -> 原路退押金全额 + 结束订单 + 释放柜门
+    按 order_no 查订单 -> 校验本人(openid/user_id/phone/联系方) -> 原路退预付款全额 + 结束订单 + 释放柜门
     """
     try:
         data = request.get_json(silent=True) or {}
@@ -6412,7 +6412,7 @@ def refund_by_tool():
         if not transaction_id or transaction_id == 'MOCK':
             return json_response(message='订单无微信交易号，无法原路退款', code=400)
 
-        # 原路退押金全额 + do_real_refund 内部会结束订单(status=4)+释放柜闸
+        # 原路退预付款全额 + do_real_refund 内部会结束订单(status=4)+释放柜闸
         success, refund_id, msg = do_real_refund(order_id=order_id, order_no=order_no, amount=deposit_amount, payment_channel_id=payment_channel_id)
         if success:
             return json_response(data={'refunded': True, 'refund_amount': deposit_amount, 'refund_id': refund_id}, message='退款成功，将原路退回支付账户')

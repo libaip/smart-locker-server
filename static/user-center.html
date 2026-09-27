@@ -375,7 +375,7 @@ tr:hover td.action-col{background:#f5f7fa}
 <div class="form-group"><label>客服电话</label><input v-model="cabinetForm.customer_phone" placeholder="客服联系电话"></div>
 <div class="form-group"><label>客户电话</label><input v-model="cabinetForm.merchant_phone" placeholder="商户联系电话"></div>
 </div>
-<div class="form-group"><label>寄存规则</label><textarea v-model="cabinetForm.usage_rules" rows="4" placeholder="存放时间截至到当日23:00，请提前取走物品\n避免无效占用，请支付保证金20元\n寄存结束后押金即可退回，请务必关好柜门" style="width:100%;padding:6px 10px;border:1px solid #dcdfe6;border-radius:4px;resize:vertical"></textarea></div>
+<div class="form-group"><label>寄存规则</label><textarea v-model="cabinetForm.usage_rules" rows="4" placeholder="存放时间截至到当日23:00，请提前取走物品\n避免无效占用，请支付保证金20元\n寄存结束后预付款即可退回，请务必关好柜门" style="width:100%;padding:6px 10px;border:1px solid #dcdfe6;border-radius:4px;resize:vertical"></textarea></div>
 <div class="form-group"><label>备注</label><textarea v-model="cabinetForm.remark" rows="3" placeholder="其他备注信息"></textarea></div>
 </div>
 </div>
@@ -736,9 +736,9 @@ tr:hover td.action-col{background:#f5f7fa}
 <div class="modal-box md">
 <div class="modal-header"><h3>会员详情</h3><span class="close" @click="memberDetailModal=false">×</span></div>
 <div class="modal-body" v-if="memberDetail">
-<table style="margin-bottom:16px"><tr><td style="padding:6px 12px;border:1px solid #ebeef5"><strong>手机号：</strong>{{memberDetail.phone||'-'}}</td><td style="padding:6px 12px;border:1px solid #ebeef5"><strong>押金余额：</strong>¥{{memberDetail.balance||0}}</td></tr><tr><td style="padding:6px 12px;border:1px solid #ebeef5"><strong>累计存入：</strong>¥{{memberDetail.total_deposit||0}}</td><td style="padding:6px 12px;border:1px solid #ebeef5"><strong>累计提现：</strong>¥{{memberDetail.total_withdraw||0}}</td></tr><tr><td style="padding:6px 12px;border:1px solid #ebeef5"><strong>首次使用：</strong>{{memberDetail.first_use_time||'-'}}</td><td style="padding:6px 12px;border:1px solid #ebeef5"><strong>最后使用：</strong>{{memberDetail.last_use_time||'-'}}</td></tr></table>
+<table style="margin-bottom:16px"><tr><td style="padding:6px 12px;border:1px solid #ebeef5"><strong>手机号：</strong>{{memberDetail.phone||'-'}}</td><td style="padding:6px 12px;border:1px solid #ebeef5"><strong>预付款余额：</strong>¥{{memberDetail.balance||0}}</td></tr><tr><td style="padding:6px 12px;border:1px solid #ebeef5"><strong>累计存入：</strong>¥{{memberDetail.total_deposit||0}}</td><td style="padding:6px 12px;border:1px solid #ebeef5"><strong>累计提现：</strong>¥{{memberDetail.total_withdraw||0}}</td></tr><tr><td style="padding:6px 12px;border:1px solid #ebeef5"><strong>首次使用：</strong>{{memberDetail.first_use_time||'-'}}</td><td style="padding:6px 12px;border:1px solid #ebeef5"><strong>最后使用：</strong>{{memberDetail.last_use_time||'-'}}</td></tr></table>
 <h4 style="margin-bottom:10px">最近订单</h4>
-<table><tr><th>订单号</th><th>存包时间</th><th>状态</th></tr><tr v-for="o in (memberDetail.recent_orders||[])"><td>{{o.order_no||'-'}}</td><td>{{o.store_time||'-'}}</td><td><span :class="'status-tag '+statusClass(o.status)">{{statusText(o.status)}}</span></td></tr><tr v-if="!(memberDetail.recent_orders||[]).length"><td colspan="3" style="text-align:center;color:#909399;padding:20px">暂无订单</td></tr></table>
+<table><tr><th>订单号</th><th>存包时间</th><th>状态</th></tr><tr v-for="o in (memberDetail.recent_orders||[])"><td>{{o.order_no||'-'}}</td><td>{{o.store_time||'-'}}</td><td><span :class="'status-tag '+statusClassFor(o)">{{statusTextFor(o)}}</span></td></tr><tr v-if="!(memberDetail.recent_orders||[]).length"><td colspan="3" style="text-align:center;color:#909399;padding:20px">暂无订单</td></tr></table>
 </div>
 <div class="modal-footer"><button class="btn btn-sm" @click="memberDetailModal=false">关闭</button></div>
 </div>
@@ -1031,7 +1031,7 @@ Vue.component('page-online-order',{template:'\
 <div class="search-item"><label>&nbsp;</label><div><button class="btn btn-sm btn-blue" @click="$parent.loadOrders(1)">查询</button> <button class="btn btn-sm" @click="$parent.resetOrderSearch()">重置</button></div></div>\
 </div>\
 <div class="table-scroll"><table><tr><th>订单号</th><th>商家</th><th>支付商户号</th><th>网点</th><th>设备</th><th>柜格</th><th>用户手机</th><th>微信名</th><th>密码</th><th>金额</th><th>退款</th><th>开始时间</th><th>结束时间</th><th>逻辑</th><th>退款标记</th><th>状态</th><th class="action-col">操作</th></tr>\
-<tr v-for="o in $parent.orders"><td>{{o.order_no}}</td><td>{{o.merchant_name||\'-\'}}</td><td>{{o.pay_mch_id||\'-\'}}</td><td>{{o.location_name||\'-\'}}</td><td>{{o.cabinet_code}}</td><td>{{o.compartment_number}}</td><td>{{o.user_phone}}</td><td>{{o.wechat_name||\'-\'}}</td><td>{{o.password}}</td><td>¥{{o.deposit_amount||0}}</td><td>¥{{o.refund_amount||0}}</td><td>{{o.store_time}}</td><td>{{o.retrieve_time||\'-\'}}</td><td><span v-if="o.logic_mark===\'Y\'" class="status-tag red">隐藏</span><span v-else-if="o.logic_mark===\'N\'" class="status-tag green">正常</span><span v-else>-</span></td><td><span v-if="o.refund_mark===\'auto_approve\'" class="status-tag orange">自动</span><span v-else-if="o.refund_mark===\'user_withdraw\'" class="status-tag blue">提现</span><span v-else-if="o.refund_mark===\'manual\'" class="status-tag blue">人工</span><span v-else-if="o.refund_mark===\'none\'" class="status-tag gray">未退</span><span v-else>-</span></td><td><span :class="\'status-tag \'+$parent.statusClass(o.status)">{{$parent.statusText(o.status)}}</span></td><td style="white-space:nowrap" class="action-col">\
+<tr v-for="o in $parent.orders"><td>{{o.order_no}}</td><td>{{o.merchant_name||\'-\'}}</td><td>{{o.pay_mch_id||\'-\'}}</td><td>{{o.location_name||\'-\'}}</td><td>{{o.cabinet_code}}</td><td>{{o.compartment_number}}</td><td>{{o.user_phone}}</td><td>{{o.wechat_name||\'-\'}}</td><td>{{o.password}}</td><td>¥{{o.deposit_amount||0}}</td><td>¥{{o.refund_amount||0}}</td><td>{{o.store_time}}</td><td>{{o.retrieve_time||\'-\'}}</td><td><span v-if="o.logic_mark===\'Y\'" class="status-tag red">隐藏</span><span v-else-if="o.logic_mark===\'N\'" class="status-tag green">正常</span><span v-else>-</span></td><td><span v-if="o.refund_mark===\'auto_approve\'" class="status-tag orange">自动</span><span v-else-if="o.refund_mark===\'user_withdraw\'" class="status-tag blue">提现</span><span v-else-if="o.refund_mark===\'manual\'" class="status-tag blue">人工</span><span v-else-if="o.refund_mark===\'none\'" class="status-tag gray">未退</span><span v-else>-</span></td><td><span :class="\'status-tag \'+$parent.statusClassFor(o)">{{$parent.statusTextFor(o)}}</span></td><td style="white-space:nowrap" class="action-col">\
 <button class="btn-text blue" @click="$parent.viewOrderDetail(o)">详情</button>\
 \
 <button v-if="(o.status===2||o.status===3||o.status===4)&&$parent.isRecent3Days(o.store_time)" class="btn-text blue" @click="$parent.openOrderLock(o)">开门</button> <button class="btn-text blue" @click="$parent.queryOrderDoorStatus(o)">查询</button>\
@@ -1055,7 +1055,7 @@ Vue.component('page-member-list',{template:`
 <div class="search-item"><label>&nbsp;</label><div><button class="btn btn-sm btn-blue" @click="$parent.loadMembers(1)">搜索</button></div></div>
 </div>
 <div style="margin-bottom:10px"><button class="btn btn-sm" style="background:#E57373;color:#000;border:none;border-radius:4px;padding:4px 14px;cursor:pointer" @click="$parent.batchRefundMembers()" :disabled="!$parent.selectedMembers.length">批量退款 ({{$parent.selectedMembers.length}})</button><button class="btn btn-sm" style="background:#4FC3F7;color:#000;border:none;border-radius:4px;padding:4px 14px;cursor:pointer;margin-left:8px" @click="$parent.toggleSelectAllMembers()">{{($parent.members.length&&$parent.selectedMembers.length===$parent.members.length)?'取消全选':'全选'}}</button></div>
-<table><tr><th><input type="checkbox" @change="$parent.toggleSelectAllMembers()" :checked="$parent.members.length&&$parent.selectedMembers.length===$parent.members.length"></th><th>手机号</th><th>押金余额</th><th>累计存入</th><th>累计订单</th><th>操作</th></tr>
+<table><tr><th><input type="checkbox" @change="$parent.toggleSelectAllMembers()" :checked="$parent.members.length&&$parent.selectedMembers.length===$parent.members.length"></th><th>手机号</th><th>预付款余额</th><th>累计存入</th><th>累计订单</th><th>操作</th></tr>
 <tr v-for="m in $parent.members"><td><input type="checkbox" :value="m.phone" v-model="$parent.selectedMembers"></td><td>{{m.phone}}</td><td>¥{{m.balance||0}}</td><td>¥{{m.total_deposit||0}}</td><td>{{m.total_orders||0}}</td><td><button class="btn-sm" style="background:#81C784;color:#000;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px" @click="$parent.viewMemberDetail(m)">详情</button> <button class="btn-sm" style="background:#FFB74D;color:#000;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px" @click="$parent.refundMember(m)" :disabled="!m.balance||m.balance<=0">退款</button></td></tr>
 <tr v-if="!$parent.members.length"><td colspan="6" class="empty-row">暂无数据</td></tr>
 </table>
@@ -1189,7 +1189,7 @@ Vue.component('page-biz-stat',{template:`
 <div class="stat-card"><div class="stat-label">总订单数</div><div class="stat-value">{{$parent.orderStats.total||0}}</div></div>
 <div class="stat-card"><div class="stat-label">可见订单数</div><div class="stat-value" style="color:#667eea">{{$parent.orderStats.visible_count||0}}</div></div>
 <div class="stat-card"><div class="stat-label">进行中订单</div><div class="stat-value" style="color:#667eea">{{$parent.orderStats.active_count||0}}</div></div>
-<div class="stat-card"><div class="stat-label">押金总收入</div><div class="stat-value" style="color:#67c23a">¥{{($parent.orderStats.deposit_total||0).toFixed(2)}}</div></div>
+<div class="stat-card"><div class="stat-label">预付款总收入</div><div class="stat-value" style="color:#67c23a">¥{{($parent.orderStats.deposit_total||0).toFixed(2)}}</div></div>
 <div class="stat-card"><div class="stat-label">退款总额</div><div class="stat-value" style="color:#f56c6c">¥{{($parent.orderStats.refund_total||0).toFixed(2)}}</div></div>
 <div class="stat-card"><div class="stat-label">净收入</div><div class="stat-value" style="color:#e6a23c">¥{{($parent.orderStats.net_income||0).toFixed(2)}}</div></div>
 </div>
@@ -1201,7 +1201,7 @@ Vue.component('page-biz-stat',{template:`
 <div class="page-box" style="margin-top:16px">
 <div class="box-header"><h3>网点明细统计</h3></div>
 <table>
-<tr><th>日期</th><th v-if="$parent.statsFilter.location_id">网点</th><th>订单数(实际)</th><th>订单数(可见)</th><th>押金收入</th><th>退款金额</th><th>余额</th></tr>
+<tr><th>日期</th><th v-if="$parent.statsFilter.location_id">网点</th><th>订单数(实际)</th><th>订单数(可见)</th><th>预付款收入</th><th>退款金额</th><th>余额</th></tr>
 <tr v-for="loc in $parent.locationDetails" :key="loc.stat_date+'-'+(loc.location_id||'')">
 <td>{{loc.stat_date||'-'}}</td>
 <td v-if="$parent.statsFilter.location_id">{{loc.location_name}}</td>
@@ -1258,13 +1258,13 @@ Vue.component('page-settlement',{template:`
 </div>
 <div style="display:flex;gap:15px;margin-bottom:15px">
 <div class="stat-card"><div class="stat-label">总订单</div><div class="stat-value">{{$parent.settleStats.total_orders||0}}</div></div>
-<div class="stat-card"><div class="stat-label">总押金</div><div class="stat-value">¥{{$parent.settleStats.total_deposit||0}}</div></div>
+<div class="stat-card"><div class="stat-label">总预付款</div><div class="stat-value">¥{{$parent.settleStats.total_deposit||0}}</div></div>
 <div class="stat-card"><div class="stat-label">使用中</div><div class="stat-value">{{$parent.settleStats.active_orders||0}}</div></div>
 <div class="stat-card"><div class="stat-label">已完成</div><div class="stat-value">{{$parent.settleStats.completed||0}}</div></div>
 <div class="stat-card"><div class="stat-label">已退款</div><div class="stat-value">{{$parent.settleStats.refunded||0}}</div></div>
 </div>
 <table class="data-table">
-<thead><tr><th>订单号</th><th>手机号</th><th>柜体</th><th>押金</th><th>状态</th><th>存入时间</th><th>取物时间</th></tr></thead>
+<thead><tr><th>订单号</th><th>手机号</th><th>柜体</th><th>预付款</th><th>状态</th><th>存入时间</th><th>取物时间</th></tr></thead>
 <tbody>
 <tr v-for="row in $parent.settleList" :key="row.id">
 <td>{{row.order_no}}</td><td>{{row.user_phone}}</td><td>{{row.cabinet_name||row.cabinet_id}}</td>
@@ -1782,7 +1782,7 @@ return d;
 toast:function(msg,type){this.toastMsg=msg;this.toastType=type||'success';var self=this;clearTimeout(this.toastTimer);this.toastTimer=setTimeout(function(){self.toastMsg='';},2500);},
 confirm2:function(msg,cb){this.confirmMsg=msg;this.confirmCb=cb;this.confirmVisible=true;},
 statusText:function(s){return {1:'待支付',2:'使用中',3:'未退款',4:'已退款',5:'已取消',6:'已关闭'}[s]||'未知';},
-statusClass:function(s){return {1:'orange',2:'blue',3:'green',4:'green',5:'gray',6:'gray'}[s]||'gray';},
+statusClass:function(s){return {1:'orange',2:'blue',3:'green',4:'green',5:'gray',6:'gray'}[s]||'gray';},statusTextFor:function(o){if(!o)return '未知';var s=o.status;var dep=(o.deposit_amount===null||o.deposit_amount===undefined||o.deposit_amount==='')?0:Number(o.deposit_amount);var ref=(o.refund_amount===null||o.refund_amount===undefined||o.refund_amount==='')?0:Number(o.refund_amount);if((s===3||s===4)&&dep<=0&&ref<=0)return '无预付款';return this.statusText(s);},statusClassFor:function(o){var t=this.statusTextFor(o);return t==='无预付款'?'gray':this.statusClass(o&&o.status);},
 closeTab:function(key){var idx=-1;for(var i=0;i<this.tabs.length;i++)if(this.tabs[i].key===key){idx=i;break;}if(idx<0)return;this.tabs.splice(idx,1);if(this.activeTab===key){if(this.tabs.length>0){var ni=Math.min(idx,this.tabs.length-1);this.activeTab=this.tabs[ni].key;this.activeMenu=this.tabs[ni].key;}else{this.activeTab='dashboard';this.activeMenu='dashboard';}}localStorage.setItem('admin_activeMenu',this.activeMenu);localStorage.setItem('admin_activeTab',this.activeTab);localStorage.setItem('admin_tabs',JSON.stringify(this.tabs));},
 switchMenu:function(key){this.activeMenu=key;var label=key;for(var g of menuGroupsData)for(var it of g.items)if(it.key===key)label=it.label;var found=false;for(var t of this.tabs)if(t.key===key){found=true;this.activeTab=key;break;}if(!found){this.tabs.push({key:key,label:label});this.activeTab=key;}localStorage.setItem('admin_activeMenu',this.activeMenu);localStorage.setItem('admin_activeTab',this.activeTab);localStorage.setItem('admin_tabs',JSON.stringify(this.tabs));},
 switchPage:function(key){this.activeMenu=key;if(key==='apk-version')this.loadApkVersion();localStorage.setItem('admin_activeMenu',this.activeMenu);localStorage.setItem('admin_activeTab',this.activeTab);localStorage.setItem('admin_tabs',JSON.stringify(this.tabs));},

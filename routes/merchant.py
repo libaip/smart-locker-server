@@ -270,12 +270,12 @@ def merchant_dashboard():
         prev_month_income = cursor.fetchone()['total']
         cursor.execute(f"SELECT COALESCE(SUM(o.per_use_price), 0) - COALESCE(SUM(CASE WHEN o.refund_amount > o.deposit_amount THEN o.refund_amount - o.deposit_amount ELSE 0 END), 0) as fee FROM orders o JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND o.per_use_price > 0 AND o.status IN (2, 4)  {hide_filter} AND COALESCE(o.free_use,0)=0 AND DATE(o.created_at) BETWEEN %s AND %s", (*mparams, prev_month_start, prev_month_end))
         prev_month_storage_income = cursor.fetchone()['fee']
-        # 押金统计: deposit_held=押金流水(原口径), deposit_refunded=订单维度已退(与后台统计分析一致,含余额退款)
+        # 预付款统计: deposit_held=预付款流水(原口径), deposit_refunded=订单维度已退(与后台统计分析一致,含余额退款)
         cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN p.status=1 THEN p.amount ELSE 0 END),0) as deposit_held FROM payments p JOIN orders o ON p.order_id=o.id JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND p.type=2 AND p.amount < 100000', mparams)
         deposit_held_val = cursor.fetchone()['deposit_held']
         cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END),0) as deposit_refunded FROM orders o JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter}', mparams)
         deposit_row = {'deposit_held': deposit_held_val, 'deposit_refunded': cursor.fetchone()['deposit_refunded']}
-        # 各时间段押金退还（提现金额）：按订单维度(refund_amount,含余额退款)按使用日(DATE(o.created_at))归集，与后台统计分析口径一致
+        # 各时间段预付款退还（提现金额）：按订单维度(refund_amount,含余额退款)按使用日(DATE(o.created_at))归集，与后台统计分析口径一致
         cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END),0) as total FROM orders o JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND DATE(o.created_at)=%s', (*mparams, today))
         today_deposit_refunded = cursor.fetchone()['total']
         cursor.execute(f'SELECT COALESCE(SUM(CASE WHEN o.refund_time IS NOT NULL THEN o.refund_amount ELSE 0 END),0) as total FROM orders o JOIN cabinets c ON o.cabinet_id=c.id JOIN locations l ON c.location_id=l.id WHERE {mfilter} AND DATE(o.created_at)=%s', (*mparams, yesterday))
@@ -951,7 +951,7 @@ def merchant_business_stats():
         pay_where += ' AND p.type = 1 AND p.status = 1 AND p.amount < 100000 AND o.status NOT IN (0, 1, 5)'
         cursor.execute(f'SELECT COALESCE(SUM(p.amount), 0) as total_income FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {pay_where} {hide_filter}', pay_params)
         income_stats = cursor.fetchone()
-        # 押金统计
+        # 预付款统计
         deposit_params = list(params)
         deposit_where = ' AND '.join(where_parts)
         deposit_where += ' AND p.type = 2'
@@ -1099,12 +1099,12 @@ def merchant_business_stats():
         return json_response(message=str(e), code=500)
 
 
-# ==================== 收退押金功能 ====================
+# ==================== 收退预付款功能 ====================
 
 @bp.route('/merchant/deposits', methods=['GET'])
 @require_merchant_auth
 def merchant_deposits():
-    """查询商户下所有押金记录"""
+    """查询商户下所有预付款记录"""
     try:
         merchant_id, mfilter, mparams = _get_merchant_filter()
         status_filter = request.args.get('status', type=int)  # 1=持有中, 2=已退还
@@ -1133,7 +1133,7 @@ def merchant_deposits():
 @bp.route('/merchant/deposits/<int:payment_id>/refund', methods=['POST'])
 @require_merchant_auth
 def merchant_refund_deposit(payment_id):
-    """退还押金"""
+    """退还预付款"""
     try:
         merchant_id, mfilter, mparams = _get_merchant_filter()
         permissions = session.get('permissions') or []
@@ -1149,10 +1149,10 @@ def merchant_refund_deposit(payment_id):
         payment = cursor.fetchone()
         if not payment:
             conn.close()
-            return json_response(message='押金记录不存在或无权操作', code=404)
+            return json_response(message='预付款记录不存在或无权操作', code=404)
         if payment['status'] == 2:
             conn.close()
-            return json_response(message='该押金已退还', code=400)
+            return json_response(message='该预付款已退还', code=400)
         # Update payment status to refunded
         cursor.execute('UPDATE payments SET status = 2 WHERE id = %s', (payment_id,))
         # Update user balance - 统一用 mp_openid 查找
@@ -1175,7 +1175,7 @@ def merchant_refund_deposit(payment_id):
                                     user_id=payment.get('user_id') or 0)
         conn.commit()
         conn.close()
-        return json_response(message='押金退还成功')
+        return json_response(message='预付款退还成功')
     except Exception as e:
         logger.error(f'[merchant_refund_deposit] {e}')
         return json_response(message=str(e), code=500)
@@ -1195,10 +1195,10 @@ def merchant_balance():
         # 总收入
         cursor.execute(f'SELECT COALESCE(SUM(p.amount), 0) as total_income FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND p.type = 1 AND p.status = 1', mparams)
         total_income = cursor.fetchone()['total_income']
-        # 持有押金
+        # 持有预付款
         cursor.execute(f'SELECT COALESCE(SUM(p.amount), 0) as deposit_held FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND p.type = 2 AND p.status = 1', mparams)
         deposit_held = cursor.fetchone()['deposit_held']
-        # 已退押金
+        # 已退预付款
         cursor.execute(f'SELECT COALESCE(SUM(p.amount), 0) as deposit_refunded FROM payments p JOIN orders o ON p.order_id = o.id JOIN cabinets c ON o.cabinet_id = c.id JOIN locations l ON c.location_id = l.id WHERE {mfilter} AND p.type = 2 AND p.status = 2', mparams)
         deposit_refunded = cursor.fetchone()['deposit_refunded']
         # 已提现总额

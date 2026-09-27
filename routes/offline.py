@@ -19,7 +19,7 @@ def _return_balance_to_user(cursor, order_dict):
     deposit_amount = order_dict.get('deposit_amount', 0)
     if deposit_amount <= 0:
         return (0, order_dict.get('openid', '') or '')
-    # [S628-20260923] 已原路退款的订单不再把押金计入余额
+    # [S628-20260923] 已原路退款的订单不再把预付款计入余额
     if deposit_already_refunded(order_dict):
         return (0, order_dict.get('openid', '') or '')
     user_phone = order_dict.get('user_phone', '')
@@ -257,7 +257,7 @@ def offline_retrieve():
             if _notify_openid:
                 from helpers import send_wx_subscribe_message
                 # [FIX-20260913] 原来这里还发一条"结束通知"(旧小程序模板(UT0Peh…)，
-                #   新小程序里不存在必然失败)，老板定案取消，只保留下面的"押金退还"通知。
+                #   新小程序里不存在必然失败)，老板定案取消，只保留下面的"预付款退还"通知。
                 _dep = order.get('deposit_amount', 0)
                 if _dep > 0:
                     send_wx_subscribe_message(_notify_openid, _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'), {
@@ -266,7 +266,7 @@ def offline_retrieve():
                         "thing4": {"value": "已退还至小程序用户钱包"},
                         "thing3": {"value": "请点击本通知进入“我的钱包”提现"}
                     }, page='pages/withdraw/withdraw', order_id=order['id'])  # [S525] 平台分流
-                    logger.info('[offline_retrieve] 押金退还通知已发送')
+                    logger.info('[offline_retrieve] 预付款退还通知已发送')
         except Exception as ne:
             logger.error(f'[offline_retrieve发送通知失败] {ne}')
         return json_response({'message': '\u53d6\u5305\u8bb0\u5f55\u5df2\u540c\u6b65', 'order_id': order['id'], 'order_no': order['order_no'],
@@ -358,7 +358,7 @@ def offline_retrieve_batch():
                 if _nopenid:
                     from helpers import send_wx_subscribe_message
                     # [FIX-20260913] 原来这里还发一条"结束通知"(旧小程序模板(UT0Peh…)，
-                    #   新小程序里不存在必然失败)，老板定案取消，只保留下面的"押金退还"通知。
+                    #   新小程序里不存在必然失败)，老板定案取消，只保留下面的"预付款退还"通知。
                     _dep2 = _r_order_data.get('deposit_amount', 0)
                     if _dep2 > 0:
                         send_wx_subscribe_message(_nopenid, _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'), {
@@ -367,7 +367,7 @@ def offline_retrieve_batch():
                             "thing4": {"value": "已退还至小程序用户钱包"},
                             "thing3": {"value": "请点击本通知进入“我的钱包”提现"}
                         }, page='pages/withdraw/withdraw', order_id=_rrec.get('order_id'))  # [S525] 平台分流
-                        logger.info('[offline_batch] 押金退还通知已发送')
+                        logger.info('[offline_batch] 预付款退还通知已发送')
             except Exception as ne:
                 logger.error(f'[offline_batch发送通知失败] {ne}')
 

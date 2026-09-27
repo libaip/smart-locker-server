@@ -1121,7 +1121,7 @@ def admin_order_refund():
             conn.close()
             return json_response(message='订单已退款，无需重复退款', code=400)
         amount = order_dict.get('deposit_amount', 0)
-        # 原支付金额优先取微信支付流水，兜底用押金+按次费
+        # 原支付金额优先取微信支付流水，兜底用预付款+按次费
         c.execute("SELECT amount FROM payments WHERE order_id=%s AND type=1 AND status=1 AND amount<=1000 ORDER BY id LIMIT 1", (order_id,))
         _paid_row = c.fetchone()
         if _paid_row and _paid_row[0]:
@@ -1291,7 +1291,7 @@ def admin_order_refund():
         _oid_str = str(order_id)
         c.execute("SELECT id, amount, order_ids FROM withdrawal_records WHERE status=0 AND (order_ids::jsonb @> %s OR order_ids::jsonb @> %s OR order_id=%s) ORDER BY id",
                   (_json_wd.dumps([_oid_num]), _json_wd.dumps([_oid_str]), _oid_num))
-        # S102 2026-08-30: 订单退款时, 若该订单在待审核wr里, 从wr移除并扣减金额, 同时补生成一条独立"订单退款"提现记录(金额=押金), 避免提现记录金额变0
+        # S102 2026-08-30: 订单退款时, 若该订单在待审核wr里, 从wr移除并扣减金额, 同时补生成一条独立"订单退款"提现记录(金额=预付款), 避免提现记录金额变0
         _refund_wr_inserted = False
         for _wrow in c.fetchall():
             _wd_matched = True
@@ -1313,7 +1313,7 @@ def admin_order_refund():
                 # 全部订单退完：置成功(金额为扣减后的剩余值, 即0或正)
                 c.execute("UPDATE withdrawal_records SET status=2, amount=%s, order_ids=%s, approver='管理员', approve_time=CURRENT_TIMESTAMP WHERE id=%s",
                           (round(_new_amt, 2), _json_wd.dumps(_oids), _wrow['id']))
-            # 补生成一条独立的"订单退款"提现记录, 金额=该订单押金, 保证提现记录有完整退款流水
+            # 补生成一条独立的"订单退款"提现记录, 金额=该订单预付款, 保证提现记录有完整退款流水
             if not _refund_wr_inserted:
                 try:
                     c.execute("INSERT INTO withdrawal_records (order_id, user_phone, amount, status, approver, order_ids, approve_time, error_msg) VALUES (%s, %s, %s, 2, '管理员-订单退款', %s, NOW(), %s) ON CONFLICT DO NOTHING",
@@ -1384,7 +1384,7 @@ def admin_order_close():
             c.execute('UPDATE cabinet_slots SET status=1 WHERE id=%s', (order_dict['slot_id'],))
         # 保证金退到用户余额
         deposit_amount = order_dict.get('deposit_amount', 0)
-        # [S628-20260923] 已原路退款的订单不再把押金计入余额
+        # [S628-20260923] 已原路退款的订单不再把预付款计入余额
         if deposit_amount > 0 and order_dict.get("user_phone") and not deposit_already_refunded(order_dict):
             c.execute("UPDATE user_balances SET balance = balance + %s, total_deposited = total_deposited + %s WHERE phone = %s",
                       (deposit_amount, deposit_amount, order_dict.get("user_phone")))
@@ -2153,7 +2153,7 @@ def admin_withdrawal_approve():
                 refund_id = 'BALANCE_' + str(order_id)
                 refund_msg = '订单已退款，余额已计入'
             else:
-                # 订单押金退款
+                # 订单预付款退款
                 from helpers import do_real_refund
                 refund_success, refund_id, refund_msg = do_real_refund(order_id=order_id, amount=amount, payment_channel_id=wd.get('payment_channel_id'))
         else:
@@ -2588,9 +2588,9 @@ def admin_complaint_retry_refund():
         if not payment_channel_id:
             payment_channel_id = data.get("payment_channel_id")
 
-        # [S644-20260923 P0 资金安全] 退款金额口径: 一律以【解析出来的那个订单】的押金为准,
+        # [S644-20260923 P0 资金安全] 退款金额口径: 一律以【解析出来的那个订单】的预付款为准,
         # 调用方传什么都不生效。改前这里(含 S642b 只改了文案)是三级取值:
-        #   ① deposit_amount = row.get('deposit_amount', 0)   # LEFT JOIN(c.order_id=o.id) 那一单的押金
+        #   ① deposit_amount = row.get('deposit_amount', 0)   # LEFT JOIN(c.order_id=o.id) 那一单的预付款
         #   ② if not deposit_amount: deposit_amount = data.get("deposit_amount") or 0   # 调用方传值
         #   ③ deposit_amount = deposit_amount or order_row["deposit_amount"] or 0       # 真正被退的那一单
         # 即: 投诉没绑 order_id(LEFT JOIN 出来是 NULL)时, 调用方传了非 0 值就按调用方走
@@ -6100,7 +6100,7 @@ def _process_auto_withdrawal_record(wid):
             _s541_orig = bool((_s541_plan or {}).get(int(oid), {}).get('original'))
             refund_this = float(od['bd_amount'] or od['remain_amount'] or 0)
             if _s541_orig:
-                # [S541] 口径A(老板拍板): 退【全额押金】(deposit_amount)；历史上部分退过的按"押金-已退"封顶
+                # [S541] 口径A(老板拍板): 退【全额预付款】(deposit_amount)；历史上部分退过的按"预付款-已退"封顶
                 _s541_cap = max(0.0, float(od['remain_amount'] or 0))
                 if _s541_cap > 0 and refund_this > _s541_cap:
                     refund_this = _s541_cap
@@ -7636,7 +7636,7 @@ def admin_slots_batch_delete():
 @bp.route('/admin/device/clear-all', methods=['POST'])
 @require_auth
 def admin_device_clear_all():
-    """清柜: 结束所有活跃订单+退押金+通知用户，不开门"""
+    """清柜: 结束所有活跃订单+退预付款+通知用户，不开门"""
     try:
         data = request.get_json()
         cabinet_id = data.get('cabinet_id')
@@ -7667,7 +7667,7 @@ def admin_device_clear_all():
                       (now, now, now, o_dict['id']))
             if o_dict.get('slot_id'):
                 c.execute('UPDATE cabinet_slots SET status=1 WHERE id=%s', (o_dict['slot_id'],))
-            # 只有使用中订单才退押金并通知；已结算的不重复退
+            # 只有使用中订单才退预付款并通知；已结算的不重复退
             if o_dict.get('status') == 2 and deposit_amount > 0 and o_dict.get('user_phone'):
                 refunded, mp_openid, already_credited = refund_deposit_to_balance(c, o_dict)
                 if not refunded:
@@ -8427,7 +8427,7 @@ def _wx_v3_get(url_path, mch_id, cert_serial_no, cert_key_path):
 
 
 def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id="", payer_phone="", mch_id=""):
-    """投诉自动原路退款：找到对应订单，调用微信退款API退回押金"""
+    """投诉自动原路退款：找到对应订单，调用微信退款API退回预付款"""
     conn = None
     try:
         from helpers import do_real_refund
@@ -8524,10 +8524,10 @@ def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id="", p
         
         if deposit <= 0:
             conn.close()
-            logger.info('[auto_refund_complaint] 订单无押金 order_id=%s', order_id)
-            return True, '无押金'
+            logger.info('[auto_refund_complaint] 订单无预付款 order_id=%s', order_id)
+            return True, '无预付款'
         
-        # 投诉退款：退全额押金（之前退到余额的不算微信退款）
+        # 投诉退款：退全额预付款（之前退到余额的不算微信退款）
         refund_amount = deposit
         if refund_amount <= 0:
             conn.close()
@@ -8559,7 +8559,7 @@ def _auto_refund_complaint_order(order_no, transaction_id="", complaint_id="", p
             try:
                 _wr_phone = order.get('user_phone') or ''
                 # [S188 2026-09-15] 原来按单个 order_id 把整张提现单置为已通过 -> 合并提现单只退了一部分却整张标通过,
-                #   剩余押金被隐藏(用户看不到也提不出). 改为逐单扣减, 全退完才置通过(与订单退款 S102/S111 一致)
+                #   剩余预付款被隐藏(用户看不到也提不出). 改为逐单扣减, 全退完才置通过(与订单退款 S102/S111 一致)
                 from helpers import settle_withdrawal_for_order
                 logger.info('[auto_refund_complaint] 提现单结算 %s order_id=%s',
                             settle_withdrawal_for_order(c, order_id, refund_amount, '投诉自动退款', _wr_phone), order_id)
@@ -9508,7 +9508,7 @@ def _complaint_scheduler():
                             pass
                     refund_ok, refund_msg = _auto_refund_complaint_order(ono, transaction_id=_txn, complaint_id=cid, payer_phone=comp.get('user_phone', '') or '', mch_id=cmch)
                     if refund_ok:
-                        if refund_msg in ('订单已退款，无需重复退款', '无押金', '无可退金额'):
+                        if refund_msg in ('订单已退款，无需重复退款', '无预付款', '无可退金额'):
                             # 无需退款，直接结案
                             # 2026-08-28: 必须先回复用户再complete, 否则微信拒绝complete(投诉从未回复过, 手动退款场景会卡死)
                             try:
@@ -9650,7 +9650,7 @@ def _complaint_scheduler():
                             try:
                                 _wa2_conn = get_db()
                                 _wa2_cur = _wa2_conn.cursor()
-                                # [S188 2026-09-15] 改为逐单扣减(原来整张标已通过, 会吞掉同单其它订单的押金)
+                                # [S188 2026-09-15] 改为逐单扣减(原来整张标已通过, 会吞掉同单其它订单的预付款)
                                 from helpers import settle_withdrawal_for_order
                                 _wa2_cur.execute("SELECT id, deposit_amount, user_phone FROM orders WHERE order_no=%s ORDER BY id DESC LIMIT 1", (ono2,))
                                 _sr2 = _wa2_cur.fetchone()
@@ -9709,7 +9709,7 @@ def _complaint_scheduler():
                     if refund_ok2:
                         if str(refund_msg2) == already_reply:
                             _finish_nonwechat(cid2, already_reply)
-                        elif str(refund_msg2) in ('无押金', '无可退金额'):
+                        elif str(refund_msg2) in ('无预付款', '无可退金额'):
                             _finish_nonwechat(cid2, received_reply)
                         else:
                             _finish_nonwechat(cid2, '已自动原路退款')
@@ -10194,7 +10194,7 @@ def admin_feedback_user_orders():
 @bp.route('/admin/feedback/refund', methods=['POST'])
 @require_auth
 def admin_feedback_refund():
-    """对指定的未退款订单原路退押金, 成功后把回复写进反馈的handle_reply"""
+    """对指定的未退款订单原路退预付款, 成功后把回复写进反馈的handle_reply"""
     try:
         from helpers import do_real_refund
         data = request.get_json() or {}
@@ -10220,7 +10220,7 @@ def admin_feedback_refund():
 
         # [S655-20260924 资金安全] 订单归属校验: 与 S642「投诉重试退款」同一套口径。
         # 改前这里拿到调用方传来的 order_id 后【直接】do_real_refund, 完全不校验这单是不是
-        # 这个反馈用户的 -> 前端/人工传错单号就会把押金退给不相干的人(与 S642 的"投诉重试
+        # 这个反馈用户的 -> 前端/人工传错单号就会把预付款退给不相干的人(与 S642 的"投诉重试
         # 退款退错单"同类, 区别是这里要人传错单号才触发, 属低危但该补)。
         # 反馈侧身份只认 wx_feedback 里的两种可核对身份:
         #   ① 11 位真手机号(^1\d{10}$)  ② 非空 openid(微信小程序 openid)

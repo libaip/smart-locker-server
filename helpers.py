@@ -3020,18 +3020,18 @@ def return_to_balance(phone, amount, withdrawal_id=None, openid='', order_id=Non
 
 
 def deposit_already_refunded(order):
-    """[S628-20260923] "结束订单->押金计入余额" 前的一致性闸门。
+    """[S628-20260923] "结束订单->预付款计入余额" 前的一致性闸门。
 
     背景（2026-09-13 生产 4 笔微信单，合计 ¥81.21）：订单先被原路退款
     （投诉自动退款 / 提现退款 / 后台退款都会把 orders.refund_status 置成 'refunded'，
      helpers.do_real_refund 同时把已存在的 user_balance_details 置为 'withdrawn'），
     但退款发生时订单还在使用中(status=2)、余额明细行还没生成，那条 UPDATE 命中 0 行；
-    之后用户取件、订单结束时又走一次"押金进余额"——同一笔押金既退回支付账户、
+    之后用户取件、订单结束时又走一次"预付款进余额"——同一笔预付款既退回支付账户、
     又变成可提现余额。
 
     口径：
       refund_status == 'refunded' 且 refund_amount >= deposit_amount
-        -> 押金已全额原路退回，不再计入余额（本轮任务口径）。
+        -> 预付款已全额原路退回，不再计入余额（本轮任务口径）。
       部分退款 0 < refund_amount < deposit_amount
         -> 这些调用点入账金额用的是整笔 deposit_amount，入账会多给，
            故一律保守跳过并打 WARNING（生产库当前 0 笔，见 S628 报告）。
@@ -3051,19 +3051,19 @@ def deposit_already_refunded(order):
     if _rs != 'refunded' or _da <= 0 or _ra <= 0:
         return False
     if _ra >= _da:
-        logger.warning('[S628] order_id=%s 押金已全额原路退款(refund_amount=%s >= deposit_amount=%s)，跳过计入余额', _oid, _ra, _da)
+        logger.warning('[S628] order_id=%s 预付款已全额原路退款(refund_amount=%s >= deposit_amount=%s)，跳过计入余额', _oid, _ra, _da)
     else:
-        logger.warning('[S628] order_id=%s 押金已部分原路退款(0 < refund_amount=%s < deposit_amount=%s)，保守跳过计入余额，需人工核对', _oid, _ra, _da)
+        logger.warning('[S628] order_id=%s 预付款已部分原路退款(0 < refund_amount=%s < deposit_amount=%s)，保守跳过计入余额，需人工核对', _oid, _ra, _da)
     return True
 
 
 def refund_deposit_to_balance(cursor, order):
-    """清柜/定时清柜统一退押金到余额，返回 (是否退款, mp_openid)"""
+    """清柜/定时清柜统一退预付款到余额，返回 (是否退款, mp_openid)"""
     deposit = float(order.get('deposit_amount') or 0)
     phone = str(order.get('user_phone') or '')
     if deposit <= 0 or not phone:
         return False, '', False
-    # [S628-20260923] 已原路退款的订单不再计入余额（否则同一笔押金既退回支付账户又变成可提现余额）
+    # [S628-20260923] 已原路退款的订单不再计入余额（否则同一笔预付款既退回支付账户又变成可提现余额）
     if deposit_already_refunded(order):
         return False, '', False
     openid = order.get('openid') or ''
@@ -3274,7 +3274,7 @@ def send_oa_template_message(biz, data, openid='', phone='', unionid='', url='',
 
 
 # ============================================================
-# [S541-20260922] 提现"押金原路退回"开关（默认值全部 = 现状行为，上线后行为不变）
+# [S541-20260922] 提现"预付款原路退回"开关（默认值全部 = 现状行为，上线后行为不变）
 #   withdraw_refund_mode              : transfer(默认,现状=仅微信退款且过滤支付宝) / original(逐单按渠道原路退回)
 #   withdraw_refund_alipay            : 0(默认) / 1   支付宝单是否参与提现
 #   withdraw_refund_dry_run           : 0(默认) / 1   干跑：只算计划打日志，不调渠道、不改库
@@ -3866,7 +3866,7 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
         refund_fee = int(round(float(amount) * 100))
         # [S641-20260923] 退款前先向微信【只读查单】拿真实收款金额, 用它当 total_fee, 并把
         #   refund_fee 夹到"不超过微信实际收款额"。微信侧的 total_fee 是【唯一可信】的金额来源。
-        #   起因 order 137043(order_no 20260921111820684143, 押金 20.24)：下单侧老缺陷
+        #   起因 order 137043(order_no 20260921111820684143, 预付款 20.24)：下单侧老缺陷
         #   int(20.24*100)=2023 让用户实际只付了 2023 分, 而我们库里记 20.24, 退款时我们报
         #   total_fee=2024/refund_fee=2024 -> 微信回
         #   "订单金额或退款金额与之前请求不一致，请核实后再试", 一直退不了。
@@ -4114,7 +4114,7 @@ def settle_withdrawal_for_order(cur, order_id, amount, approver='投诉自动退
 
     背景: 原来这条路径是 `UPDATE withdrawal_records SET status=2 WHERE order_id=%s`,
     只按单个 order_id 匹配, 而"合并提现单"的 order_id 只是批次里的第一个订单;
-    于是"只退了一部分却整张单标记已通过", 剩余押金既没退给用户、余额明细又被隐藏(pending),
+    于是"只退了一部分却整张单标记已通过", 剩余预付款既没退给用户、余额明细又被隐藏(pending),
     用户看不到也提不出来. 现在改成与 routes/admin_v2.py 订单退款(S102/S111)一致的做法:
       - 从所有待处理(status 0/1)且包含该订单的单里移除该订单并扣减金额;
       - 扣减后还有别的订单 -> 保持待处理, 只更新金额/订单列表(若移除的正好是单里的 order_id, 换成剩余第一个);
@@ -5354,7 +5354,7 @@ def try_increment_mid_retrieve(cursor, order_id, cabinet_id):
 # ============================================================
 _OA_SUB_TPL = {
     'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk': 'oa_sub_deposit',   # 寄存成功
-    'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA': 'oa_sub_general',   # 押金退还
+    'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA': 'oa_sub_general',   # 预付款退还
     'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c': 'oa_sub_refund',    # 退款成功
 }
 _OA_SUB_TPL_DEFAULT = {
@@ -5522,7 +5522,7 @@ def find_oa_openid(phone='', unionid=''):
 def send_oa_subscribe_notify(mp_template_id, data, phone='', unionid='', reason=''):
     """小程序通道发不出去时的兜底：改发公众号订阅通知。返回 True/False。
 
-    只对我们登记过映射的三个模板生效（寄存成功/押金退还/退款成功），其它模板直接返回 False。
+    只对我们登记过映射的三个模板生效（寄存成功/预付款退还/退款成功），其它模板直接返回 False。
     同一个手机号+同一模板+同一内容 90 秒内只发一次（防调用方重试造成重复消息）。
     """
     try:
@@ -5573,12 +5573,12 @@ def send_oa_subscribe_notify(mp_template_id, data, phone='', unionid='', reason=
 
 
 # ============================================
-# [S231-20260917] "押金退还通知" -> "账户余额通知" 换模板过渡用的两个 ID
+# [S231-20260917] "预付款退还通知" -> "账户余额通知" 换模板过渡用的两个 ID
 # 换模板后老用户手里只有旧模板的授权（微信按模板 ID 记账），新模板会被拒(43101 无额度)，
 # 所以发送失败时用旧模板再发一次，过渡期一条通知都不丢。
 # ============================================
 _TPL_ACCOUNT_NEW = 'ax-O5Qa05IWt7bbhRVk9Pb9A_SbXfIMfbhm0Hoh4gYc'   # 账户余额通知（新）
-_TPL_DEPOSIT_OLD = 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'   # 押金退还通知（旧，仅作过渡回退）
+_TPL_DEPOSIT_OLD = 'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA'   # 预付款退还通知（旧，仅作过渡回退）
 
 
 def get_access_token_for(appid, secret, force_refresh=False):
@@ -6011,11 +6011,11 @@ def notify_alipay_order(order=None, order_id=None, order_ids=None, biz='',
                         data=None, page='pages/mine/mine', cursor=None):
     """[S631] 支付宝单 -> 发支付宝小程序订阅消息；非支付宝单 = 纯 no-op（返回 False）。
 
-    biz : 'subscribe_general'（结束订单/押金退还）| 'subscribe_refund'（退款成功）
+    biz : 'subscribe_general'（结束订单/预付款退还）| 'subscribe_refund'（退款成功）
     data: None 时按 biz 自动构造【支付宝真实模板关键词】（[S633-20260923] 已按只读接口实测改正）：
           general（c142ac..「账户余额通知」）
               -> keyword1 账户余额 / keyword2 变动时间 / keyword3 温馨提示 / keyword4 温馨提醒
-          refund （de68d9..「寄存押金退还通知」）
+          refund （de68d9..「寄存预付款退还通知」）
               -> keyword1 寄存单号 / keyword2 退还时间 / keyword3 退还状态 / keyword4 退还金额
           依据 = alipay.open.mini.message.template.batchquery(biz_type=sub_msg) 返回的
           keyword_desc：「账户余额,变动时间,温馨提示,温馨提醒」/「寄存单号,退还时间,退还状态,退还金额」；
@@ -6080,7 +6080,7 @@ def notify_alipay_order(order=None, order_id=None, order_ids=None, biz='',
             # [S633-20260923] 键名/顺序按支付宝【真实模板关键词】构造（S631b 用微信字段名是错的）：
             #   subscribe_general（c142ac2357774daab8994a0f5a91faa4 账户余额通知）
             #       keyword1 账户余额 / keyword2 变动时间 / keyword3 温馨提示 / keyword4 温馨提醒
-            #   subscribe_refund （de68d98e94c84477b1b9e116fcb8cbfa 寄存押金退还通知）
+            #   subscribe_refund （de68d98e94c84477b1b9e116fcb8cbfa 寄存预付款退还通知）
             #       keyword1 寄存单号 / keyword2 退还时间 / keyword3 退还状态 / keyword4 退还金额
             #   依据：只读接口 alipay.open.mini.message.template.batchquery 的 keyword_desc
             #         =「账户余额,变动时间,温馨提示,温馨提醒」/「寄存单号,退还时间,退还状态,退还金额」；
@@ -6130,7 +6130,7 @@ def notify_alipay_order(order=None, order_id=None, order_ids=None, biz='',
 #       2088 开头 16 位 -> to_user_id；否则 -> to_open_id（[S633-20260923] 改正）。
 #     · 模板走 wx_templates 里 channel='alipay' 的两条（account_id=0 通用）
 #         subscribe_general = c142ac2357774daab8994a0f5a91faa4  账户余额通知
-#         subscribe_refund  = de68d98e94c84477b1b9e116fcb8cbfa  寄存押金退还通知
+#         subscribe_refund  = de68d98e94c84477b1b9e116fcb8cbfa  寄存预付款退还通知
 #       调用方取模板ID：wx_config.template_id('subscribe_general', 'alipay', '')
 #     · data 的字段名 = 支付宝的 keyword1..keywordN，顺序 = 模板后台配置顺序：
 #         subscribe_general：keyword1 账户余额 / keyword2 变动时间 /
@@ -6141,7 +6141,7 @@ def notify_alipay_order(order=None, order_id=None, order_ids=None, biz='',
 #   安全口径：任何异常只记日志、绝不抛出；alipay_uid 为空直接返回 False。
 # ============================================================
 _ALIPAY_TPL_GENERAL = 'c142ac2357774daab8994a0f5a91faa4'   # 账户余额通知（兜底值）
-_ALIPAY_TPL_REFUND = 'de68d98e94c84477b1b9e116fcb8cbfa'    # 寄存押金退还通知（兜底值）
+_ALIPAY_TPL_REFUND = 'de68d98e94c84477b1b9e116fcb8cbfa'    # 寄存预付款退还通知（兜底值）
 
 # 微信字段名 -> 支付宝关键词名（改名表）。两条模板一律留空 {} = 不做改名的直通路径；
 #   ★ 现在调用方直接给的就是支付宝 keyword1..keywordN（见上），所以这里不需要映射。
@@ -6298,7 +6298,7 @@ def send_alipay_subscribe_message(alipay_uid, template_id, data, page='pages/min
                           'keyword2': {'value': '2026-09-23 10:00'},  # 变动时间
                           'keyword3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'},  # 温馨提示
                           'keyword4': {'value': '已退还至小程序用户钱包'}}                  # 温馨提醒
-                    refund （de68d9.. 寄存押金退还通知）
+                    refund （de68d9.. 寄存预付款退还通知）
                       -> {'keyword1': {'value': '20260922233049039873'},  # 寄存单号（模板必需）
                           'keyword2': {'value': '2026-09-23 10:00:00'},   # 退还时间
                           'keyword3': {'value': '原路退回支付账户'},       # 退还状态
@@ -6700,7 +6700,7 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
             return True
         else:
             logger.error(f'[subscribe_msg] 发送失败: openid={openid[:8]}..., phone={phone}, template={template_id}, result={result}')
-            # [S231] 过渡期回退：换成新"账户余额"模板后，老用户只有旧"押金退还"模板的授权 ->
+            # [S231] 过渡期回退：换成新"账户余额"模板后，老用户只有旧"预付款退还"模板的授权 ->
             #        新模板必然被拒(43101)，这里用旧模板再发一次；过渡期结束(大家都重新授权过)可去掉这段。
             if template_id == _TPL_ACCOUNT_NEW:
                 try:
@@ -6787,7 +6787,7 @@ def calc_balance(user_id=None, phone=None, openid=None, mp_openid=None, unionid=
             "SELECT COALESCE(SUM(bd.amount), 0) FROM user_balance_details bd "
             "JOIN orders o ON bd.order_id = o.id "
             "WHERE bd.status = 'available' AND o.status = 3 AND (" + where + ") "
-            # [S273] 渠道隔离(方案B)：支付宝渠道付的押金【不进】微信余额。
+            # [S273] 渠道隔离(方案B)：支付宝渠道付的预付款【不进】微信余额。
             #   用"排除支付宝"而非"只算微信"，这样 payment_channel_id 为空的老订单行为完全不变。
             + _s541_alipay_excl +
             "AND NOT EXISTS (SELECT 1 FROM withdrawal_records w WHERE w.order_id = o.id AND w.status IN (0, 1, 2))"
@@ -6801,7 +6801,7 @@ def calc_balance(user_id=None, phone=None, openid=None, mp_openid=None, unionid=
 
 
 def send_smsbao(phone, fee=0, amount=0, app_name=''):
-    """短信宝发送短信 (S106): 结束订单退押金通知
+    """短信宝发送短信 (S106): 结束订单退预付款通知
     返回 (success, msg)
     """
     try:

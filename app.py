@@ -1518,7 +1518,7 @@ def _auto_clear_cabinet_scheduler():
                                 #   5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A 和旧模板的字段名
                                 #   (amount6/time4/thing7/thing2)。换小程序后该模板在新小程序里不存在,
                                 #   微信一直返回 40037 invalid template_id(24小时31次), 消息永远发不出去。
-                                #   已按其它调用点的正确写法改为"押金退还"模板 PtRJgP(字段 amount1/time2/thing4/thing3,
+                                #   已按其它调用点的正确写法改为"预付款退还"模板 PtRJgP(字段 amount1/time2/thing4/thing3,
                                 #   文案与原来完全一致)。
                                 sub_data = {
                                     "amount1": {"value": "¥{:.2f}".format(deposit_amount)},

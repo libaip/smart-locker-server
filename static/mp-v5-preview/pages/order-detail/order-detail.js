@@ -123,7 +123,7 @@ Page({
         let message = ''
         
         if (status === 'approved' || status === 'auto_refund') {
-          message = '退款成功，押金已返回'
+          message = '退款成功，预付款已返回'
           this.setData({
             withdrawStatus: status,
             'orderInfo.status': 'withdrawal_approved',

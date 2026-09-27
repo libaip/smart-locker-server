@@ -1275,6 +1275,38 @@
         });
     }
 
+    // ===== [S698-20260927] 「个人中心」跳小程序：预取 scheme + 手指这次点击里同步跳 + 两层兜底 =====
+    //   老实现：点击 → fetch 拿 scheme → 在 fetch 回调里 location.href
+    //     ① 不在用户手势里 → iOS 微信拦截（存包主流程 launchMp 注释记录实测 iPhone≈54%）
+    //     ② 拿不到 scheme 时没有任何分支 → 点了完全没反应
+    //   现在与 launchMp 用同一套姿势：进页面先把跳转串备好，点击时直接跳。
+    var _mineScheme = '';
+    var _mineSchemeFetching = false;
+    var _mineSchemeCbs = [];
+
+    function mpPrefetchMineScheme(cb) {
+        if (_mineScheme) { if (cb) { try { cb(); } catch (e) {} } return; }
+        if (cb) { _mineSchemeCbs.push(cb); }
+        if (_mineSchemeFetching) { return; }
+        _mineSchemeFetching = true;
+        var _oidP = wxOpenid || (location.search.match(/[?&]openid=([^&]*)/) || [])[1] || '';
+        fetch('/api/wx/generate-scheme', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({path: 'pages/mine/mine', query: 'openid=' + encodeURIComponent(_oidP)})
+        }).then(function(r) { return r.json(); }).then(function(d) {
+            var inner = d.data && d.data.data ? d.data : d;
+            if (inner.code === 200 && inner.data && inner.data.scheme) { _mineScheme = inner.data.scheme; }
+        }).catch(function(e) { console.log('mine scheme prefetch error:', e); }).then(function() {
+            _mineSchemeFetching = false;
+            var cbs = _mineSchemeCbs; _mineSchemeCbs = [];
+            for (var i = 0; i < cbs.length; i++) { try { cbs[i](); } catch (e) {} }
+        });
+    }
+
+    // 进页面 1.2 秒后（不影响首屏）就把"个人中心"的跳转串备好；拿不到也无所谓，点击时还有兜底
+    try { setTimeout(function () { mpPrefetchMineScheme(); }, 1200); } catch (e) {}
+
     function launchToMpProfile() {
         // [S396] 纯公众号模式：不跳小程序，直接开 H5 个人中心
         try {
@@ -1284,23 +1316,28 @@
                 return;
             }
         } catch (e) {}
-        // 跳转到小程序 我的页面，带当前用户的openid
         var _oid = wxOpenid || '';
         if (!_oid) {
             _oid = (location.search.match(/[?&]openid=([^&]*)/) || [])[1] || '';
         }
-        var basePath = 'pages/mine/mine';
-        var queryStr = 'openid=' + encodeURIComponent(_oid);
-        fetch('/api/wx/generate-scheme', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({path: basePath, query: queryStr})
-        }).then(function(r) { return r.json(); }).then(function(d) {
-            var inner = d.data && d.data.data ? d.data : d;
-            if (inner.code === 200 && inner.data && inner.data.scheme) {
-                window.location.href = inner.data.scheme;
+        // 1) 已预取到 → 在用户手指这次点击里【同步】跳（iOS 才放行）
+        if (_mineScheme) { window.location.href = _mineScheme; return; }
+        // 2) 还没拿到 → 现取一次（这次仍可能被 iOS 拦，但下面有兜底，绝不会"点了没反应"）
+        showToast('正在打开小程序…');
+        mpPrefetchMineScheme(function() {
+            if (_mineScheme) { window.location.href = _mineScheme; return; }
+            // 3) 兜底①：明文 scheme（appid + path），不需要预取
+            if (mpAppId) {
+                window.location.href = 'weixin://dl/business/?appid=' + mpAppId +
+                    '&path=' + encodeURIComponent('pages/mine/mine?openid=' + encodeURIComponent(_oid));
+                return;
             }
-        }).catch(function(e) { console.log('scheme error:', e); });
+            // 4) 兜底②：实在拿不到入口 → 打开网页版个人中心（至少能用），并明确提示
+            showToast('没拿到小程序入口，正在打开网页版');
+            setTimeout(function() {
+                window.location.href = '/static/user-h5.html' + (_oid ? ('?openid=' + encodeURIComponent(_oid)) : '');
+            }, 800);
+        });
     }
 
     function goToStep2Direct() {

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>开放标签跳小程序 · 测试</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:16px;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",Arial,sans-serif;background:#f5f6f8;color:#222;font-size:15px;line-height:1.6}
+.card{background:#fff;border-radius:12px;padding:16px;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+h1{font-size:18px;margin:2px 0 10px}
+h2{font-size:16px;margin:0 0 4px}
+.sub{font-size:13px;color:#888;margin:2px 0 10px}
+.tip{background:#eef6ff;border-left:4px solid #1f6feb;padding:11px 12px;border-radius:8px;font-size:13px;color:#1a3d66;margin-bottom:12px}
+#log{background:#1e1e1e;color:#7ee787;font-family:Menlo,Consolas,monospace;font-size:12px;padding:11px;border-radius:8px;white-space:pre-wrap;word-break:break-all;min-height:80px}
+.ok{color:#07c160}.bad{color:#ff7b72}
+.launchbox{margin:12px 0}
+.fakebtn{display:block;padding:15px;background:#07c160;color:#fff;border-radius:10px;text-align:center;font-size:17px;font-weight:600}
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h1>开放标签跳小程序 · 测试</h1>
+  <p class="sub">目标：<b>杜郎科技</b>（wx011ca20460ffea64）</p>
+  <p class="sub">用公众号 <b>瑞郎科技</b>（wx099383321000532b）的凭证做 wx.config</p>
+</div>
+
+<div class="tip">
+  在<b>微信里</b>打开本页 → 点下面的绿色按钮。<br>
+  这个按钮是微信「开放标签」，和之前那个 URL Link 走的<b>不是同一条路</b>。
+</div>
+
+<div class="card">
+  <h2>开放标签按钮</h2>
+  <p class="sub">点它 → 应该直接进「杜郎科技」</p>
+  <div class="launchbox">
+    <wx-open-launch-weapp id="launchBtn" appid="wx011ca20460ffea64" path="pages/index/index">
+      <script type="text/wxtag-template">
+        <style>.fakebtn{display:block;padding:15px;background:#07c160;color:#fff;border-radius:10px;text-align:center;font-size:17px;font-weight:600;}</style>
+        <div class="fakebtn">点我进「杜郎科技」小程序</div>
+      </script>
+    </wx-open-launch-weapp>
+  </div>
+  <div class="launchbox">
+    <wx-open-launch-weapp id="launchBtn2" appid="wxbb50aeccc21af2ff" path="pages/index/index">
+      <script type="text/wxtag-template">
+        <style>.fakebtn{display:block;padding:15px;background:#1aad19;color:#fff;border-radius:10px;text-align:center;font-size:17px;font-weight:600;}</style>
+        <div class="fakebtn">对照：点我进「卓奔储物」小程序</div>
+      </script>
+    </wx-open-launch-weapp>
+  </div>
+</div>
+
+<div class="card">
+  <h2>诊断日志</h2>
+  <p class="sub">这一块会显示签名和 wx.config 的结果，出错时把它发我</p>
+  <div id="log">等待…</div>
+  <button style="margin-top:8px;padding:10px;width:100%;border:0;border-radius:8px;background:#eef0f3" onclick="document.getElementById('log').textContent='等待…'">清空</button>
+</div>
+
+<script src="https://res2.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
+<script>
+var el = document.getElementById('log');
+function log(s) {
+  if (el.textContent === '等待…') el.textContent = '';
+  el.textContent += '[' + new Date().toTimeString().slice(0,8) + '] ' + s + '\n';
+}
+log('页面已加载');
+log('是否在微信内: ' + (/MicroMessenger/i.test(navigator.userAgent) ? '是' : '否（请务必在微信里打开）'));
+log('wx 对象: ' + (typeof wx === 'undefined' ? '未加载' : 'OK'));
+
+if (typeof wx === 'undefined' || !wx.config) {
+  log('❌ jweixin 未加载，无法继续');
+} else {
+  var u = location.href.split('#')[0];
+  log('签名 URL: ' + u);
+  fetch('/api/wx/jsapi-signature?url=' + encodeURIComponent(u))
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      log('签名接口返回: ' + JSON.stringify(d).slice(0, 300));
+      if (!d || d.code !== 200 || !d.data) { log('❌ 拿签名失败'); return; }
+      log('appId=' + d.data.appId + '  nonceStr=' + (d.data.nonceStr||'').slice(0,8) + '…');
+      wx.config({
+        debug: false,
+        appId: d.data.appId,
+        timestamp: d.data.timestamp,
+        nonceStr: d.data.nonceStr,
+        signature: d.data.signature,
+        jsApiList: [],
+        openTagList: ['wx-open-launch-weapp']
+      });
+      wx.ready(function () {
+        log('✅ wx.config 成功，开放标签应该可以点了');
+      });
+      wx.error(function (res) {
+        log('❌ wx.config 失败: ' + ((res && res.errMsg) || JSON.stringify(res)));
+      });
+    })
+    .catch(function (e) { log('❌ 请求签名接口异常: ' + e); });
+}
+
+document.addEventListener('launch', function (e) { log('✅ 开放标签触发 launch 事件'); });
+var b = document.getElementById('launchBtn');
+if (b) {
+  b.addEventListener('launch', function () { log('✅ 杜郎科技按钮：launch（成功）'); });
+  b.addEventListener('error', function (e) { log('❌ 杜郎科技按钮 error: ' + ((e.detail && e.detail.errMsg) || JSON.stringify(e.detail))); });
+}
+var b2 = document.getElementById('launchBtn2');
+if (b2) {
+  b2.addEventListener('launch', function () { log('✅ 卓奔储物按钮：launch（成功）'); });
+  b2.addEventListener('error', function (e) { log('❌ 卓奔储物按钮 error: ' + ((e.detail && e.detail.errMsg) || JSON.stringify(e.detail))); });
+}
+</script>
+
+</body>
+</html>

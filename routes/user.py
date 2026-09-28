@@ -330,19 +330,13 @@ def _resolve_order_identity(cursor, phone, openid='', unionid='', mp_openid='', 
         logger.warning('[_resolve_order_identity] strict 下没有新小程序身份，跳过按手机号补身份 phone=%s', phone)
         return '', '', ''
     try:
-        rows = phone_openid_rows(cursor, phone=phone, unionid=unionid)
-        if not rows and (openid or mp_openid):
-            rows = phone_openid_rows(cursor, phone=phone, openid=openid, mp_openid=mp_openid)
-        if not rows:
-            rows = phone_openid_rows(cursor, phone=phone)
-        if len(rows) == 1:
-            row = rows[0]
-            if not openid and row.get('openid'):
-                openid = row['openid']
-            if not mp_openid and row.get('mp_openid'):
-                mp_openid = row['mp_openid']
-            if not unionid and row.get('unionid'):
-                unionid = row['unionid']
+        # [S746-20260928] 删除"按手机号补订单身份"（老板 09-27 定稿：认人只看 ID、手机号不做识别）
+        #   原逻辑：按 phone 去 phone_openids 查到历史身份后，把订单的 openid/mp_openid/unionid
+        #   顶成历史值。2026-09-28 生产事故：用户在小程序A里下单，身份被顶成小程序B的历史身份，
+        #   支付参数里的 appId 随之算错（微信硬规定：appId 必须 == 用户当前所在的小程序），
+        #   全站支付成功率跌到 0.1%（2214 单只成功 3 单）。
+        #   S680 已删掉 resolve_user_identity 里的同类"按手机号认人"，本次补齐这处遗漏。
+        #   现在订单身份只认【客户端本次传上来的】openid/mp_openid/unionid，传不上来就留空，绝不猜。
         if phone and (openid or mp_openid or unionid):
             try:
                 # 连接池连接是 autocommit=True（无事务块），SAVEPOINT 会报
@@ -3671,6 +3665,12 @@ def wx_login():
             openid_val = result["openid"]  # 小程序的mp_openid
             unionid_val = result.get("unionid", "")  # 微信返回的unionid
             openid_from_h5 = data.get('openid', '')  # H5传来的公众号openid
+            # [S758-20260928] 新小程序首次登录【自动回填 openid 前缀】：
+            #   换新小程序(appid)后 wx_accounts.openid_prefix 还是空的 -> "按 openid 选 appid /
+            #   按 openid 找账号"都认不出这个号(订阅消息就会发不到人)。这里在成功拿到 openid
+            #   的这一刻，把前 6 位写回该 appid 对应的账号：只填空白值、绝不复写已有前缀；
+            #   任何异常只记日志，绝不影响登录。
+            _backfill_openid_prefix(appid, openid_val)
             # [S320] 是否新小程序(另一主体)。只认 openid，不做"按手机号找回老账号"。
             #   appid 优先；客户端没带 appid 时按 openid 前缀白名单判定。
             #   老小程序(ooTcRx)/H5 一律 False -> 下面的逻辑一个字都不变。
@@ -7164,3 +7164,26 @@ def mp_push_receive():
     except Exception as e:
         logger.error('[mp_push] 处理异常: %s', e)
         return 'success'
+
+def _backfill_openid_prefix(appid, openid_val):
+    """[S758-20260928] 见调用点注释：只给 openid_prefix 为空的账号回填前 6 位，绝不覆盖。"""
+    try:
+        if not appid or not openid_val or len(str(openid_val)) < 6:
+            return
+        _pfx = str(openid_val)[:6]
+        _c = get_db()
+        _u = _c.cursor()
+        _u.execute("UPDATE wx_accounts SET openid_prefix=%s, updated_at=%s "
+                   "WHERE appid=%s AND COALESCE(openid_prefix,'')=''",
+                   (_pfx, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), appid))
+        _n = _u.rowcount
+        _c.commit()
+        try:
+            _c.close()
+        except Exception:
+            pass
+        if _n:
+            logger.warning('[S758] 自动回填 openid 前缀: appid=%s -> %s（该小程序的身份识别已就绪）', appid, _pfx)
+    except Exception as _e:
+        logger.warning('[S758] 回填 openid 前缀失败(不影响登录): %s', _e)
+

@@ -34,6 +34,28 @@ def wx_oauth():
                 access_token = result.get('access_token', '')
                 if openid:
                     logger.info(f"[微信OAuth] 获取openid成功: {openid[:8]}***")
+                    # [S759-20260928] 新公众号首次授权【自动回填 openid 前缀】：
+                    #   换新公众号(appid)后 wx_accounts.openid_prefix 是空的 -> 身份隔离
+                    #   (丢掉手机号/unionid、只按 openid 认人)就不会触发，会串到老账号。
+                    #   这里在拿到 openid 的那一刻把前 6 位写回该公众号账号；只填空白、绝不覆盖；
+                    #   任何异常只记日志，绝不影响授权。
+                    try:
+                        _oa_appid759 = _wx_oa_id() or ''
+                        if _oa_appid759 and openid and len(str(openid)) >= 6:
+                            _pfx759 = str(openid)[:6]
+                            _c759 = get_db()
+                            _u759 = _c759.cursor()
+                            _u759.execute("UPDATE wx_accounts SET openid_prefix=%s, "
+                                          "updated_at=to_char(now(),'YYYY-MM-DD HH24:MI:SS') "
+                                          "WHERE appid=%s AND COALESCE(openid_prefix,'')=''",
+                                          (_pfx759, _oa_appid759))
+                            if _u759.rowcount:
+                                _c759.commit()
+                                logger.warning('[S759] 自动回填公众号 openid 前缀: appid=%s -> %s',
+                                               _oa_appid759, _pfx759)
+                            _c759.close()
+                    except Exception as _e759:
+                        logger.warning('[S759] 回填公众号 openid 前缀失败(不影响授权): %s', _e759)
                     # 获取微信昵称
                     wechat_name = ''
                     if access_token:

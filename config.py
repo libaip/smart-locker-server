@@ -29,8 +29,9 @@ WX_CERT_SERIAL_NO = '73AB063E7593B2FC5DDF37C0F6A269826675D119'
 #   改成当前在用的公众号【重庆卓蓝时】的凭据，与 wx_accounts.id=10 保持一致。
 WX_APP_ID = 'wx9d559811f476d9d5'
 WX_APP_SECRET = 'e15202f4cf3e6ea86ebbeee8e62b3bd6'
-WX_MP_APP_ID = 'wxcabd4cbdb3096c4b'
-WX_MP_APP_SECRET = 'f8d9d68772401f4fdda4a2d2d6143988'
+# [S759-20260928] 换成当前用户端小程序（wx011ca20460ffea64）；老的是 wxcabd4cbdb3096c4b。
+WX_MP_APP_ID = 'wx011ca20460ffea64'
+WX_MP_APP_SECRET = 'a0c26ddece552c1a30be5541baf5f0bc'
 WX_MP_TOKEN = 'smartlocker2024'
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

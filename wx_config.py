@@ -338,6 +338,13 @@ def get_account(account_id):
 def create_account(acct_type, name, appid, secret='', **kw):
     if acct_type not in ACCT_TYPES:
         raise ValueError('acct_type 只能是 %s' % (ACCT_TYPES,))
+    # [S760-20260928] 新增账号时如果传进来的是打码值，存空串并告警（宁可写空，也不要写假密钥）
+    if _is_masked_value(secret):
+        try:
+            logger.warning('[S760] create_account 收到打码的 secret，按空值处理 appid=%s', appid)
+        except Exception:
+            pass
+        secret = ''
     data = {
         'acct_type': acct_type, 'name': name, 'appid': appid, 'secret': secret,
         'token': kw.get('token', ''), 'aes_key': kw.get('aes_key', ''),
@@ -364,6 +371,16 @@ def create_account(acct_type, name, appid, secret='', **kw):
     return new_id
 
 
+def _is_masked_value(v):
+    """[S760-20260928] 判断是不是【打码显示值】（后台界面回传的那种）。
+
+    后台快照 mask() 产出形如 '805e8c…****'；这种值绝不能写回库，
+    否则真密钥被覆盖 -> 公众号 OAuth / 小程序登录直接 500（2026-09-28 连踩两次）。
+    """
+    s = '' if v is None else str(v)
+    return ('\u2026' in s) or ('****' in s)
+
+
 def update_account(account_id, **kw):
     allowed = {'name', 'appid', 'secret', 'token', 'aes_key', 'subject',
                'mch_relation', 'priority', 'note', 'openid_prefix'}
@@ -371,9 +388,18 @@ def update_account(account_id, **kw):
         set_active(account_id, bool(kw.pop('is_active')))
     sets, params = [], []
     for k, v in kw.items():
-        if k in allowed:
-            sets.append('%s=?' % k)
-            params.append(v)
+        if k not in allowed:
+            continue
+        # [S760-20260928] 密钥类字段遇到"打码值"一律跳过：后台把 mask() 的结果回传时，
+        #   不能拿它覆盖库里的真密钥（否则公众号/小程序立刻 500）。
+        if k in ('secret', 'token', 'aes_key') and _is_masked_value(v):
+            try:
+                logger.warning('[S760] 忽略被打码的 %s（不覆盖库里的真值）', k)
+            except Exception:
+                pass
+            continue
+        sets.append('%s=?' % k)
+        params.append(v)
     if not sets:
         return False
     sets.append('updated_at=?')

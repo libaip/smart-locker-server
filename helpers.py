@@ -2548,6 +2548,31 @@ def find_user_balance_row(cursor, phone='', openid='', mp_openid='', unionid='',
                 return _m(_best, 'openid(multi)')
         except Exception:
             pass
+    # [S784-20260929] 新增最后一档：unionid 为空时，按「该手机号的空 unionid 行」认行。
+    #   起因（生产事故）：表上有部分唯一索引
+    #     idx_user_balances_phone_empty_union UNIQUE (phone) WHERE unionid IS NULL OR unionid=''
+    #   S680 删掉 phone 兜底档后，新小程序用户（unionid 恒为空、mp_openid 又是新一代）
+    #   一路走到 INSERT -> 撞这条约束 -> 抛异常 -> 调用方事务整体回滚。
+    #   实测：POST /api/deposit/end-storage 因此 500（09-28 全天 1889 次），
+    #   而开门指令 send_open_lock 写在记账之后 -> 用户柜门都打不开。
+    #   为什么安全：正是那条约束保证「某手机号的空 unionid 行最多只有一行」，
+    #   所以按 (phone + unionid 为空) 认行不可能认错人（与老板"unionid 唯一才采纳"口径一致）。
+    #   为什么读也不会串金额：/user/balance 里 balance 恒等于 calc_balance()（按新号 openid 实时算），
+    #   row 只用来回捞 user_id；而 calc_balance 有 user_id==0 就返回 0 的闸，
+    #   所以这一档反而让"钱进了余额却显示 0"不再发生。
+    #   为什么放最后：前面 unionid / mp_openid / openid 三档能认到行的，行为一个字节不变。
+    if not unionid and phone:
+        try:
+            cursor.execute("SELECT * FROM user_balances WHERE phone = %s "
+                           "AND (unionid IS NULL OR unionid = '') ORDER BY id", (phone,))
+            rows = [dict(r) for r in cursor.fetchall()]
+            if len(rows) == 1:
+                return _m(rows[0], 'phone_empty_union')
+            if len(rows) > 1:
+                logger.warning('[S784] phone=%s 出现 %s 行空 unionid（唯一约束下不应发生），保守不认行',
+                               phone, len(rows))
+        except Exception as _s784_e:
+            logger.warning('[S784] 空 unionid 兜底认行失败(按未命中处理): %s', _s784_e)
     # [S680-20260927] 第2批：删掉原来的最后一档「按【手机号】兜底认行」
     #   （会把新小程序用户按手机号认到老账号的行上 -> 余额/身份被串）。
     #   到这里还找不到，就返回 None；上层用 INSERT ... ON CONFLICT 仍能把钱加到

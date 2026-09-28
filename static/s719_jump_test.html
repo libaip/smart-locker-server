@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>跳小程序 · 新旧链接对照</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;padding:14px;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif;background:#f5f6f8;color:#222;font-size:15px;line-height:1.6}
+.card{background:#fff;border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+h1{font-size:18px;margin:2px 0 8px}
+h2{font-size:16px;margin:0 0 2px;color:#111}
+.tag{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;vertical-align:2px;margin-left:6px}
+.tag-old{background:#ffe0e0;color:#b3261e}
+.tag-new{background:#d9f5e3;color:#0a7a3d}
+.sub{font-size:13px;color:#888;margin:2px 0 10px}
+.row{border-top:1px solid #eef0f3;padding-top:10px;margin-top:10px}
+.row:first-of-type{border-top:0;padding-top:0;margin-top:0}
+.who{font-size:14px;font-weight:600;margin-bottom:6px}
+.who span{font-weight:400;color:#999;font-size:12px}
+.btn{display:block;width:100%;padding:13px;margin:7px 0 0;border:0;border-radius:10px;font-size:16px;font-weight:600;text-align:center;text-decoration:none;cursor:pointer;font-family:inherit}
+.btn-main{background:#07c160;color:#fff}
+.btn-sec{background:#eef0f3;color:#1f6feb}
+.btn:active{opacity:.7}
+.code{font-family:Menlo,Consolas,monospace;font-size:11px;color:#777;word-break:break-all;background:#f7f8fa;padding:6px 8px;border-radius:6px;margin:5px 0 0}
+.tip{background:#eef6ff;border-left:4px solid #1f6feb;padding:11px 12px;border-radius:8px;font-size:13px;color:#1a3d66;margin-bottom:12px}
+#log{background:#1e1e1e;color:#7ee787;font-family:Menlo,Consolas,monospace;font-size:12px;padding:11px;border-radius:8px;white-space:pre-wrap;word-break:break-all;min-height:54px}
+.ok{color:#07c160}
+.bad{color:#ff7b72}
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h1>跳小程序 · 新旧链接对照</h1>
+  <p class="sub">同一个页面里放「旧的链接」和「刚生成的链接」，你各点一下就能看出差别。</p>
+</div>
+
+<div class="tip">
+  <b>要验证的事：</b>旧的链接是不是"过期状态"了 —— 加密链接的票是<b>生成那一刻</b>就把版本状态定死了，
+  当时小程序还没发布正式版，那张票就永远是"测试状态"；<b>重新生成一张就好了</b>。<br>
+  <b>怎么点：</b>优先点绿色的「URL Link」，它就是个普通 https 链接，微信里直接点就行。
+</div>
+
+<div class="card">
+  <h2>① 旧链接<span class="tag tag-old">09:33 生成</span></h2>
+  <p class="sub">就是你说"提示测试中"的那批，目标：小云伧存（重庆卓蓝时）</p>
+  <div class="row">
+    <div class="who">小云伧存 <span>wx281a9540a6a5b64d</span></div>
+    <a class="btn btn-main" href="https://wxmpurl.cn/x2bZbKc8dap">旧 · URL Link 进首页</a>
+    <div class="code">https://wxmpurl.cn/x2bZbKc8dap</div>
+    <button class="btn btn-sec" onclick="go('weixin://dl/business/?t=V25uQDjThtt','旧·加密')">旧 · 加密跳转 进首页</button>
+    <div class="code">weixin://dl/business/?t=V25uQDjThtt</div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>② 新链接<span class="tag tag-new">刚生成</span></h2>
+  <p class="sub">全部重新生成，同样 30 天有效</p>
+
+  <div class="row">
+    <div class="who">卓奔储物 <span>wxbb50aeccc21af2ff（你说能跳的那个，做对照）</span></div>
+    <a class="btn btn-main" href="https://wxmpurl.cn/4bR73XksDDj">新 · URL Link 进首页</a>
+    <button class="btn btn-sec" onclick="go('weixin://dl/business/?t=8Kv7VqphE6v','新·卓奔储物')">新 · 加密跳转 进首页</button>
+  </div>
+
+  <div class="row">
+    <div class="who">伧置 <span>wxcabd4cbdb3096c4b（当前在用的号）</span></div>
+    <a class="btn btn-main" href="https://wxmpurl.cn/CjOqA9Pe0ze">新 · URL Link 进首页</a>
+    <button class="btn btn-sec" onclick="go('weixin://dl/business/?t=b0DP8DKPP2p','新·伧置')">新 · 加密跳转 进首页</button>
+  </div>
+
+  <div class="row">
+    <div class="who">小小云伧 <span>wx0be09d4de1417e01（重庆清域智）</span></div>
+    <a class="btn btn-main" href="https://wxmpurl.cn/c8IhGmk0w6n">新 · URL Link 进首页</a>
+    <button class="btn btn-sec" onclick="go('weixin://dl/business/?t=hXRN28Fug7h','新·小小云伧')">新 · 加密跳转 进首页</button>
+  </div>
+
+  <div class="row">
+    <div class="who">小云伧存 <span>wx281a9540a6a5b64d（重庆卓蓝时）</span></div>
+    <a class="btn btn-main" href="https://wxmpurl.cn/WSVAnuNzg3c">新 · URL Link 进首页</a>
+    <button class="btn btn-sec" onclick="go('weixin://dl/business/?t=xdVHAn3ty9h','新·小云伧存')">新 · 加密跳转 进首页</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>点击日志</h2>
+  <p class="sub">点完这里会记录，方便你看"到底跳没跳"</p>
+  <div id="log">等待操作…</div>
+  <button class="btn btn-sec" style="margin-top:8px" onclick="document.getElementById('log').textContent='等待操作…'">清空</button>
+</div>
+
+<script>
+function log(s, cls) {
+  var el = document.getElementById('log');
+  if (el.textContent === '等待操作…') el.textContent = '';
+  var time = new Date().toTimeString().slice(0, 8);
+  el.textContent += '[' + time + '] ' + s + '\n';
+  if (cls) el.innerHTML = el.innerHTML.replace(s, '<span class="' + cls + '">' + s + '</span>');
+}
+function go(url, name) {
+  log('点击：' + (name || '') + ' → ' + url);
+  try {
+    window.location.href = url;
+    log('已发起跳转…', 'ok');
+  } catch (e) {
+    log('报错：' + e, 'bad');
+  }
+  setTimeout(function () {
+    if (document.visibilityState === 'visible') {
+      log('⚠ 页面还在这儿 —— 这次没跳成功', 'bad');
+    } else {
+      log('✅ 已经跳走了', 'ok');
+    }
+  }, 2500);
+}
+</script>
+
+</body>
+</html>

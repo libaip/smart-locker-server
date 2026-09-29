@@ -5770,6 +5770,9 @@ def _auto_process_self_complaint(complaint_id, phone, openid_val, order_no=''):
     """用户提交投诉后即时处理：只按投诉携带的订单号退款，避免误退其他订单。失败不标红，交给调度器重试。"""
     received_msg = '您好，您的投诉已收到，我们会尽快处理。如有紧急情况请联系客服，感谢您的理解与支持！'
     already_msg = '订单已退款，无需重复退款'
+    # [S795-20260929] 未带订单号时的回复：不再承诺"我们会尽快处理"（那是空头承诺，
+    #   实际这一段不会做任何退款/核实动作），改成如实告知已转人工。
+    no_order_msg = '您好，您的投诉已收到。因未指定订单，已转人工核实，请留意工作人员联系。如有紧急情况请联系客服，感谢您的理解与支持！'
     conn = None
     try:
         conn = get_db()
@@ -5781,7 +5784,18 @@ def _auto_process_self_complaint(complaint_id, phone, openid_val, order_no=''):
             conn.close()
 
         if not order_no:
-            _finish(received_msg)
+            # [S795-20260929] 没带订单号 -> 不再假装"已处理"。
+            #   原来走 _finish() 标 status='2'（有回复），而后台"待处理"筛的是 status IN ('0','1')，
+            #   等于掉进黑洞：用户以为在处理、后台也看不到，最后只能靠人工撞见再手动退。
+            #   实测（09-29）：今天 9 条自有投诉里 5 条没订单号，全部被这样"假处理"掉。
+            #   改成 status='0' -> 进后台待处理列表，人工能挨个跟进。
+            #   注意：只改这一处（没带订单号）；带单号但查不到等其他分支一律不动。
+            cur.execute("UPDATE complaints SET status='0', reply=%s, reply_time=CURRENT_TIMESTAMP WHERE id=%s",
+                        (no_order_msg, complaint_id))
+            conn.commit()
+            conn.close()
+            logger.info('[self_complaint] 投诉未带订单号，转人工待处理 complaint_id=%s phone=%s',
+                        complaint_id, phone)
             return
 
         # [S383-20260921] 归属校验：只有"这张订单确实属于投诉人"才自动退款。

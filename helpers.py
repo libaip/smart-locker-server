@@ -1104,6 +1104,288 @@ def alipay_balance_available_orders(alipay_uid):
         return []
 
 
+# ============================================================
+# [S821-20260930] 方案B 第5批：支付宝提现
+#   老板定稿口径（2026-09-30）：
+#     ① 出款 = 调支付宝接口【原路退回】alipay.trade.refund（不是 alipay.fund.trans.uni.transfer 转账）
+#     ② 审批 = 像微信那样走【按网点的审批队列】（locations.withdraw_mode / 通过率 / 时段）
+#     ③ 校验 = 只按 alipay_uid 校验「谁支付的谁才能提现」，【绝不使用手机号】
+#   资金与微信完全隔离：只碰 alipay_balances / alipay_balance_details。
+#   入队标记：withdrawal_records.openid = 'alipay:<uid>'
+#     —— 微信侧所有处理器一律按这个前缀【排除】支付宝提现单，
+#        因为微信侧失败/拒绝时回滚写的是 user_balances / user_balance_details，
+#        对支付宝单会把钱退进【错的账本】。
+#   幂等：渠道侧用确定性单号 out_request_no='WD<wid>_<oid>'（见 do_withdraw_order_refund use_original=True）。
+# ============================================================
+ALIPAY_WD_MARK = 'alipay:'
+ALIPAY_WITHDRAW_SWITCH_KEY = 'alipay_withdraw_enabled'
+
+
+def alipay_withdraw_enabled():
+    """[S821] 支付宝提现总开关（system_settings.alipay_withdraw_enabled，默认 0=关）。
+
+    关时：/user/withdraw 的支付宝分支只回一句人话提示；所有支付宝提现处理器一律不动作。
+    开时：正常走「冻结 -> 按网点审批队列 -> 原路退回」。
+    好处：上线/回滚都是改一条 setting，不用发版。
+    """
+    try:
+        _v = str(get_setting(ALIPAY_WITHDRAW_SWITCH_KEY, '0') or '').strip().lower()
+    except Exception:
+        return False
+    return _v in ('1', 'true', 'yes', 'on')
+
+
+def alipay_wd_is_record(openid):
+    """[S821] 这张提现单是不是【支付宝】提现单（靠 withdrawal_records.openid 的标记）。"""
+    return str(openid or '').startswith(ALIPAY_WD_MARK)
+
+
+def alipay_wd_uid_of(openid):
+    """[S821] 从提现单标记里取回 alipay_uid（不是支付宝单则返回 ''）。"""
+    _s = str(openid or '')
+    return _s[len(ALIPAY_WD_MARK):] if _s.startswith(ALIPAY_WD_MARK) else ''
+
+
+def alipay_wd_openid_of(alipay_uid):
+    """[S821] 由 alipay_uid 生成提现单标记（写进 withdrawal_records.openid）。"""
+    return ALIPAY_WD_MARK + str(alipay_uid or '').strip()
+
+
+def alipay_withdraw_split(rows, want):
+    """[S821] 把「可提现明细」按贪心切成【本次要退的份额】。
+
+    rows: [{'order_id','order_no','amount','user_phone'}]，amount 已按「可退额度」封顶
+    want: 本次要退的总额（<= 各行 amount 之和）
+    返回被选中的行（保持传入顺序），每行 amount = 本次该单要退的额。
+
+    ★ 入队（/user/withdraw）与出款（后台处理器）【共用这一个函数】：
+      明细金额在冻结期间不会被改，所以两边算出来的"每单退多少"一定逐单一致，
+      包括最后一单的部分提现 —— 处理器不需要额外存计划，重算即可对齐。
+    """
+    out = []
+    rem = round(float(want or 0), 2)
+    for p in (rows or []):
+        if rem <= 0.001:
+            break
+        try:
+            _amt = float(p.get('amount') or 0)
+        except Exception:
+            _amt = 0.0
+        take = round(min(rem, _amt), 2)
+        if take <= 0.001:
+            continue
+        q = dict(p)
+        q['amount'] = take
+        out.append(q)
+        rem = round(rem - take, 2)
+    return out
+
+
+def alipay_withdraw_quote(alipay_uid, amount=0):
+    """[S821] 支付宝提现【试算】：按 alipay_uid 认人 + 逐单核归属 + 套网点审批口径。
+
+    「谁支付的谁才能提现」：只认
+        orders.alipay_pay_uid == alipay_uid  或  orders.alipay_mp_uid == alipay_uid
+    的订单；对不上的明细一律跳过并打 WARNING。全程不读、不写、不返回任何手机号字段给判定用
+    （user_phone 只随计划带出去写 withdrawal_records.user_phone，那一列 NOT NULL）。
+
+    金额口径（迁就支付宝硬限制「单笔退款 <= 该订单原支付金额」）：
+        单笔可退额度 = min(明细金额, orders.deposit_amount - orders.refund_amount)
+    取整单/部分单都支持：按明细 id 升序贪心取够用户要的金额（不传金额 = 全额）。
+
+    返回 dict（永不抛异常）：
+      ok / msg / uid / plan=[{order_id, order_no, amount, user_phone}] / total / actual /
+      location_id / location_name / withdraw_enabled / withdraw_mode / rate /
+      approve_start_min / approve_end_min / balance / pending
+    """
+    out = {'ok': False, 'msg': '', 'uid': str(alipay_uid or '').strip(), 'plan': [],
+           'total': 0.0, 'actual': 0.0, 'location_id': None, 'location_name': '',
+           'withdraw_enabled': 1, 'withdraw_mode': 'manual_approve', 'rate': 0.0,
+           'approve_start_min': 1, 'approve_end_min': 60, 'balance': 0.0, 'pending': 0}
+    _uid = out['uid']
+    if not _uid:
+        out['msg'] = '请先登录'
+        return out
+    conn = None
+    try:
+        from database import get_db as _g
+        conn = _g()
+        cur = conn.cursor()
+        ensure_alipay_balance_tables(conn)
+        cur.execute("SELECT balance FROM alipay_balances WHERE alipay_uid=%s", (_uid,))
+        _r = cur.fetchone()
+        if _r:
+            out['balance'] = float((_r.get('balance') if isinstance(_r, dict) else _r[0]) or 0)
+        # 已有冻结中的明细 -> 说明上一笔还没走完，先不让再提（防并发重复冻结）
+        cur.execute("SELECT COUNT(*) AS n FROM alipay_balance_details "
+                    "WHERE alipay_uid=%s AND status='pending'", (_uid,))
+        _pr = cur.fetchone()
+        out['pending'] = int(((_pr.get('n') if isinstance(_pr, dict) else _pr[0]) or 0) if _pr else 0)
+        if out['pending'] > 0:
+            out['msg'] = '您有一笔提现正在处理中，请稍后再试'
+            return out
+        cur.execute("""SELECT d.id AS did, d.order_id, d.order_no, d.amount,
+                              o.deposit_amount, COALESCE(o.refund_amount,0) AS refund_amount,
+                              o.refund_status, o.alipay_pay_uid, o.alipay_mp_uid, o.user_phone
+                       FROM alipay_balance_details d
+                       JOIN orders o ON o.id = d.order_id
+                       WHERE d.alipay_uid=%s AND d.status='available' AND d.amount > 0
+                         AND d.order_id IS NOT NULL
+                       ORDER BY d.id ASC""", (_uid,))
+        rows = [dict(r) for r in cur.fetchall()]
+        if not rows:
+            out['msg'] = '没有可提现的余额'
+            return out
+        _plan_all = []
+        _mismatch = 0
+        for r in rows:
+            _pay = str(r.get('alipay_pay_uid') or '').strip()
+            _mp = str(r.get('alipay_mp_uid') or '').strip()
+            # 红线：谁支付的谁才能提现。对不上的一律跳过，不做任何手机号兜底。
+            if _uid != _pay and _uid != _mp:
+                _mismatch += 1
+                logger.warning('[S821] 支付宝提现归属不符，跳过 order_id=%s 明细uid=%s... 订单pay=%s... mp=%s...',
+                               r.get('order_id'), _uid[:10], _pay[:10], _mp[:10])
+                continue
+            _amt = float(r.get('amount') or 0)
+            _cap = float(r.get('deposit_amount') or 0) - float(r.get('refund_amount') or 0)
+            if _cap <= 0.001:
+                logger.warning('[S821] 订单已无可退额度，本次跳过 order_id=%s（明细 %s 元 额度 %s 元）',
+                               r.get('order_id'), _amt, _cap)
+                continue
+            if _amt > _cap:
+                logger.warning('[S821] 明细金额超过该订单可退额度，按额度封顶 order_id=%s %s -> %s',
+                               r.get('order_id'), _amt, _cap)
+                _amt = _cap
+            if _amt <= 0.001:
+                continue
+            _plan_all.append({'order_id': int(r['order_id']), 'order_no': r.get('order_no') or '',
+                              'amount': round(_amt, 2), 'user_phone': r.get('user_phone') or ''})
+        if not _plan_all:
+            out['msg'] = ('账户余额与支付人不一致，请联系客服' if _mismatch else '没有可提现的余额')
+            return out
+        out['total'] = round(sum(p['amount'] for p in _plan_all), 2)
+        try:
+            _req = float(amount or 0)
+        except Exception:
+            _req = 0.0
+        _want = out['total'] if _req <= 0 else round(min(_req, out['total']), 2)
+        # 贪心取到够 _want（不传金额 = 全额，即整单全取）；出款端用同一个函数重算，逐单对得上
+        _sel = alipay_withdraw_split(_plan_all, _want)
+        if not _sel:
+            out['msg'] = '没有可提现的金额'
+            return out
+        out['plan'] = _sel
+        out['actual'] = round(sum(p['amount'] for p in _sel), 2)
+        # 网点审批口径（与微信同一套：按最近一单所在网点）
+        cur.execute("""SELECT l.id AS location_id, l.name AS location_name, l.withdraw_enabled,
+                              l.withdraw_mode, l.refund_approve_rate, l.auto_approve_rate,
+                              l.refund_approve_start_min, l.refund_approve_end_min
+                       FROM orders o
+                       JOIN cabinets c ON c.id = o.cabinet_id
+                       JOIN locations l ON l.id = c.location_id
+                       WHERE o.id = ANY(%s)
+                       ORDER BY o.created_at DESC LIMIT 1""",
+                    ([p['order_id'] for p in _sel],))
+        _lr = cur.fetchone()
+        if _lr:
+            _l = dict(_lr)
+            out['location_id'] = _l.get('location_id')
+            out['location_name'] = _l.get('location_name') or ''
+            out['withdraw_enabled'] = _l.get('withdraw_enabled')
+            out['withdraw_mode'] = str(_l.get('withdraw_mode') or 'manual_approve')
+            out['rate'] = float(_l.get('refund_approve_rate') or 0)
+            out['approve_start_min'] = _l.get('refund_approve_start_min')
+            out['approve_end_min'] = _l.get('refund_approve_end_min')
+        out['ok'] = True
+        logger.info('[S821] 支付宝提现试算 uid=%s... 可提=%s 本次=%s 单数=%s 网点=%s(%s)',
+                    _uid[:10], out['total'], out['actual'], len(out['plan']),
+                    out['location_id'], out['withdraw_mode'])
+        return out
+    except Exception as e:
+        logger.error('[S821] 支付宝提现试算失败 uid=%s: %s', _uid[:10], e)
+        out['ok'] = False
+        out['msg'] = '提现试算失败，请稍后重试'
+        return out
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def alipay_withdraw_settle_order(cursor, order_id, refunded, alipay_uid, order_no='',
+                                 wid=None, remark='', biz='withdraw'):
+    """[S821] 单笔支付宝原路退回【成功】后的记账（用调用方的 cursor，不 commit）。
+
+      · refunded >= 明细金额 -> 明细置 withdrawn（这笔余额已退回用户支付宝）
+      · refunded <  明细金额 -> 明细金额减去 refunded、状态回 available（剩下的继续留在钱包）
+      · 两种情况都补一条 order_id=NULL 的负向审计明细
+        （order_id 留 NULL 是为了绕开 uq_alipay_bd_order_biz(order_id,biz)：
+          同一单的多次部分提现都要能记账）
+    返回 True=记上了；False=没找到对应的 pending 明细（调用方应按异常处理）。
+    """
+    try:
+        cursor.execute("""SELECT id, amount FROM alipay_balance_details
+                          WHERE order_id=%s AND alipay_uid=%s AND status='pending'
+                          ORDER BY id DESC LIMIT 1""", (order_id, alipay_uid))
+        r = cursor.fetchone()
+        if not r:
+            logger.error('[S821] 结算找不到 pending 明细 order_id=%s uid=%s...', order_id, str(alipay_uid)[:10])
+            return False
+        _did = r.get('id') if isinstance(r, dict) else r[0]
+        _amt = float((r.get('amount') if isinstance(r, dict) else r[1]) or 0)
+        _ref = round(float(refunded or 0), 2)
+        if _ref >= _amt - 0.001:
+            cursor.execute("UPDATE alipay_balance_details SET status='withdrawn' WHERE id=%s", (_did,))
+        else:
+            cursor.execute("UPDATE alipay_balance_details SET amount=%s, status='available' WHERE id=%s",
+                           (round(_amt - _ref, 2), _did))
+        cursor.execute("""INSERT INTO alipay_balance_details
+                          (alipay_uid, order_id, order_no, amount, biz, status, remark)
+                          VALUES (%s, NULL, %s, %s, %s, 'withdrawn', %s)""",
+                       (alipay_uid, str(order_no or '')[:40], -_ref, str(biz)[:24],
+                        str(remark or ('支付宝提现原路退回 wid=%s' % wid))[:200]))
+        return True
+    except Exception as e:
+        logger.error('[S821] 结算支付宝明细失败 order_id=%s: %s', order_id, e)
+        return False
+
+
+def alipay_withdraw_restore(cursor, order_ids, amount, alipay_uid):
+    """[S821] 支付宝提现失败/被拒：【只动支付宝两张表】把冻结退回钱包。
+
+      · alipay_balance_details: 这些单的 pending 明细回 available
+      · alipay_balances        : balance 加回、total_withdrawn 减回
+    绝不碰 user_balances / user_balance_details（那是微信的账本）。
+    返回 True=已回滚。
+    """
+    try:
+        _oids = []
+        for x in (order_ids or []):
+            try:
+                _oids.append(int(x))
+            except Exception:
+                pass
+        if _oids:
+            cursor.execute("""UPDATE alipay_balance_details SET status='available'
+                              WHERE order_id = ANY(%s) AND alipay_uid=%s AND status='pending'""",
+                           (_oids, alipay_uid))
+        _amt = round(float(amount or 0), 2)
+        if _amt > 0:
+            cursor.execute("""UPDATE alipay_balances
+                              SET balance = balance + %s,
+                                  total_withdrawn = GREATEST(total_withdrawn - %s, 0),
+                                  updated_at = now()
+                              WHERE alipay_uid = %s""", (_amt, _amt, alipay_uid))
+        logger.info('[S821] 支付宝提现已回滚 uid=%s... 金额=%s 单数=%s', str(alipay_uid)[:10], _amt, len(_oids))
+        return True
+    except Exception as e:
+        logger.error('[S821] 回滚支付宝提现余额失败 uid=%s: %s', str(alipay_uid)[:10], e)
+        return False
+
+
 # [S531-20260921] 商户号被封(收款受限)告警
 # ============================================
 # 背景(为什么原来的"商户号被封通知"是坏的):

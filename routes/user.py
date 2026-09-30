@@ -4214,13 +4214,11 @@ def _s809_is_alipay_req():
         return False
 
 
-# [S818-20260930] 方案B 支付宝提现总开关。
-#   False = 【第5批上线前】临时挡住：只回一句人话，一分钱不动、一条库不写。
-#   True  = 走真实支付宝提现（原路退回 alipay.trade.refund + 按网点审批队列 +
-#           只按 alipay_uid 校验「谁支付的谁才能提现」）。第5批上线时置 True。
-_S818_ALIPAY_WITHDRAW_ON = False
-
-
+# [S818-20260930] 方案B 支付宝提现入口。
+#   开关放在库里（system_settings.alipay_withdraw_enabled，见 helpers.alipay_withdraw_enabled）：
+#     关(默认) = 只回一句人话，一分钱不动、一条库不写（第5批上线前的临时挡住）；
+#     开       = 走真实支付宝提现（冻结 -> 按网点审批队列 -> 原路退回 alipay.trade.refund）。
+#   用 setting 而不是代码常量：上线 / 回滚都只改一条记录，不用发版。
 def _s818_alipay_withdraw(data=None, amount=0, alipay_uid=''):
     """[S818] 支付宝端提现统一入口（/user/withdraw 顶部按平台分流到这里）。
 
@@ -4231,14 +4229,18 @@ def _s818_alipay_withdraw(data=None, amount=0, alipay_uid=''):
       ② 更危险：S810 之后支付宝端会带手机号兜底，同一个人的微信若用过同一手机号，
          微信那套会按 phone 认到【微信账本】-> 有可能拿微信余额去退款（退错系统的钱）。
     所以微信口径的 /user/withdraw 一律不接支付宝请求。
-
-    本函数当前（第5批未上线）只回人话提示；第5批落地后在这里接真实流程。
     """
     _uid = str(alipay_uid or '').strip()
-    if not _S818_ALIPAY_WITHDRAW_ON:
+    try:
+        from helpers import alipay_withdraw_enabled as _s821_on
+        _on = bool(_s821_on())
+    except Exception as _s821_e:
+        _on = False
+        logger.warning('[S821] 读支付宝提现开关失败(按关处理): %s', _s821_e)
+    if not _on:
         try:
             _plat = str((data or {}).get('platform') or '') if isinstance(data, dict) else ''
-            logger.info('[S818] 支付宝端提现已被挡住(第5批未上线) uid=%s... platform=%s 金额=%s',
+            logger.info('[S821] 支付宝提现未开启(开关 alipay_withdraw_enabled=0) uid=%s... platform=%s 金额=%s',
                         _uid[:10], _plat, amount)
         except Exception:
             pass
@@ -4249,8 +4251,113 @@ def _s818_alipay_withdraw(data=None, amount=0, alipay_uid=''):
 
 
 def _s818_alipay_withdraw_do(data=None, amount=0, alipay_uid=''):
-    """[S818] 支付宝提现真实流程（第5批实现；未上线前不会被调用）。"""
-    return json_response(message='支付宝提现功能正在升级，暂时无法提现。', code=400)
+    """[S821] 支付宝提现真实流程（第5批）。
+
+    口径（老板 2026-09-30 定稿）：
+      ① 出款 = 调支付宝接口【原路退回】alipay.trade.refund（处理器里逐单发起，不是转账接口）；
+      ② 审批 = 走与微信同一套的【按网点审批队列】（locations.withdraw_mode / 通过率 / 时段）；
+      ③ 校验 = 只按 alipay_uid 认「谁支付的谁才能提现」，【绝不使用手机号】。
+    本函数只做「试算 + 冻结 + 入队」，不碰支付宝接口（出款由后台处理器做，避免阻塞 worker）。
+    """
+    import json as _json
+    from helpers import alipay_withdraw_quote as _s821_quote, alipay_wd_openid_of as _s821_mark
+    _uid = str(alipay_uid or '').strip()
+    if not _uid:
+        return json_response(message='请先登录', code=400)
+    _q = _s821_quote(_uid, amount)
+    if not _q.get('ok'):
+        return json_response(message=_q.get('msg') or '暂时无法提现', code=400)
+    # 网点开关（与微信同一口径：只有明确配了 withdraw_enabled=0 才拦）
+    if _q.get('location_id') is not None and not _q.get('withdraw_enabled'):
+        return json_response(message='该网点暂不支持提现', code=400)
+    _plan = _q.get('plan') or []
+    _actual = round(float(_q.get('actual') or 0), 2)
+    if _actual <= 0.001 or not _plan:
+        return json_response(message='没有可提现的金额，无法提现', code=400)
+    _oids = [int(p['order_id']) for p in _plan]
+    _mode = str(_q.get('withdraw_mode') or 'manual_approve')
+    _phone = str(_plan[0].get('user_phone') or '')
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        # 行锁：同一账号并发提现串行化
+        cursor.execute('SELECT balance FROM alipay_balances WHERE alipay_uid=%s FOR UPDATE', (_uid,))
+        _row = cursor.fetchone()
+        _bal = float((_row.get('balance') if isinstance(_row, dict) else (_row[0] if _row else 0)) or 0)
+        if _bal + 0.001 < _actual:
+            conn.rollback()
+            return json_response(message='余额不足，无法提现', code=400)
+        # 已有待处理提现单的单子不许再提（与微信同一口径）
+        for _oid in _oids:
+            if _has_pending_withdrawal(cursor, _oid):
+                conn.rollback()
+                return json_response(message='订单已有待处理提现，请勿重复提交', code=400)
+        # 冻结明细（明细金额不动；回 available 还是核销由处理器按实际退款额决定）
+        for _oid in _oids:
+            cursor.execute("""UPDATE alipay_balance_details SET status='pending'
+                              WHERE order_id=%s AND alipay_uid=%s AND status='available'""",
+                           (_oid, _uid))
+            if cursor.rowcount != 1:
+                conn.rollback()
+                logger.warning('[S821] 支付宝提现冻结失败(明细被占用) order=%s uid=%s...', _oid, _uid[:10])
+                return json_response(message='提现处理中，请稍后重试', code=400)
+        cursor.execute("""UPDATE alipay_balances
+                          SET balance = balance - %s, total_withdrawn = total_withdrawn + %s,
+                              updated_at = now()
+                          WHERE alipay_uid = %s""", (_actual, _actual, _uid))
+        # 按网点的审批时机（与微信同一套：auto 立即 / queue 随机延时 / manual 等人工）
+        _auto_time = None
+        if _mode == 'auto_approve':
+            _auto_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        elif _mode == 'queue_approve':
+            try:
+                _sm = int(_q.get('approve_start_min') or 1)
+                _em = int(_q.get('approve_end_min') or 60)
+            except Exception:
+                _sm, _em = 1, 60
+            if _sm > _em:
+                _sm, _em = _em, _sm
+            _auto_time = (datetime.now() + timedelta(minutes=random.randint(_sm, _em))).strftime('%Y-%m-%d %H:%M:%S')
+        _dedup = 'A:%s:%s' % (_uid, '_'.join(str(x) for x in _oids))
+        cursor.execute("""INSERT INTO withdrawal_records
+                          (order_id, user_phone, amount, status, click_count, openid,
+                           auto_approve_time, dedup_key, order_ids)
+                          VALUES (%s, %s, %s, 0, 1, %s, %s, %s, %s) RETURNING id""",
+                       (_oids[0], _phone, _actual, _s821_mark(_uid), _auto_time, _dedup,
+                        _json.dumps([str(x) for x in _oids])))
+        _wr = cursor.fetchone()
+        _wid = _wr.get('id') if isinstance(_wr, dict) else _wr[0]
+        conn.commit()
+        logger.info('[S821] 支付宝提现已入队 wid=%s uid=%s... 金额=%s 单数=%s 网点=%s(%s) auto_time=%s',
+                    _wid, _uid[:10], _actual, len(_oids), _q.get('location_id'), _mode, _auto_time)
+        return json_response(data={
+            'withdrawal_id': _wid,
+            'status': 'pending',
+            'amount': _actual,
+            'message': ('提现申请已提交，正在原路退回支付宝' if _mode == 'auto_approve'
+                        else '提现申请已提交，等待审核'),
+        })
+    except psycopg2.errors.UniqueViolation:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.warning('[S821] 支付宝提现重复提交 uid=%s... 单=%s', _uid[:10], _oids)
+        return json_response(message='该笔提现正在处理中，请勿重复提交', code=400)
+    except Exception as _s821_do_e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.error('[S821] 支付宝提现提交失败 uid=%s...: %s', _uid[:10], _s821_do_e)
+        return json_response(message='提现提交失败，请稍后重试', code=400)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 @bp.route('/user/orders', methods=['GET'])

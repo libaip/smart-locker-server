@@ -4214,6 +4214,45 @@ def _s809_is_alipay_req():
         return False
 
 
+# [S818-20260930] 方案B 支付宝提现总开关。
+#   False = 【第5批上线前】临时挡住：只回一句人话，一分钱不动、一条库不写。
+#   True  = 走真实支付宝提现（原路退回 alipay.trade.refund + 按网点审批队列 +
+#           只按 alipay_uid 校验「谁支付的谁才能提现」）。第5批上线时置 True。
+_S818_ALIPAY_WITHDRAW_ON = False
+
+
+def _s818_alipay_withdraw(data=None, amount=0, alipay_uid=''):
+    """[S818] 支付宝端提现统一入口（/user/withdraw 顶部按平台分流到这里）。
+
+    为什么必须分流（而不是让支付宝请求走微信那套）：
+      ① 支付宝用户在 users 里是独立一行（只有 alipay_uid，手机号可能为空），
+         微信那套按 openid/mp_openid/phone 认人 -> 恒报「请先登录 / 用户未登录」，
+         用户看到的就是一个报错，容易投诉；
+      ② 更危险：S810 之后支付宝端会带手机号兜底，同一个人的微信若用过同一手机号，
+         微信那套会按 phone 认到【微信账本】-> 有可能拿微信余额去退款（退错系统的钱）。
+    所以微信口径的 /user/withdraw 一律不接支付宝请求。
+
+    本函数当前（第5批未上线）只回人话提示；第5批落地后在这里接真实流程。
+    """
+    _uid = str(alipay_uid or '').strip()
+    if not _S818_ALIPAY_WITHDRAW_ON:
+        try:
+            _plat = str((data or {}).get('platform') or '') if isinstance(data, dict) else ''
+            logger.info('[S818] 支付宝端提现已被挡住(第5批未上线) uid=%s... platform=%s 金额=%s',
+                        _uid[:10], _plat, amount)
+        except Exception:
+            pass
+        return json_response(
+            message='支付宝提现功能正在升级，暂时无法提现。您的余额已安全保留在「我的钱包」，功能上线后可随时提现，无需担心。',
+            code=400)
+    return _s818_alipay_withdraw_do(data, amount, _uid)
+
+
+def _s818_alipay_withdraw_do(data=None, amount=0, alipay_uid=''):
+    """[S818] 支付宝提现真实流程（第5批实现；未上线前不会被调用）。"""
+    return json_response(message='支付宝提现功能正在升级，暂时无法提现。', code=400)
+
+
 @bp.route('/user/orders', methods=['GET'])
 def get_user_orders():
     """获取用户订单列表"""
@@ -4764,13 +4803,20 @@ def get_user_balance():
         #   alipay_uid 为空（微信端）时本段一条 SQL 都不执行 -> 微信路径逐字节等价。
         #   只覆盖 calc_bal 这一个值，其余返回结构（available_balance/has_pending…）不动。
         _s818_ali_uid = str(request.args.get('alipay_uid') or '').strip()
+        # [S818b-20260930] 小尾巴：支付宝端的 total_deposited / total_withdrawn 一并取自
+        #   alipay_balances。原来恒 0 不是算错，是这两个字段跟着走微信账本
+        #   （row 为空时直接给默认 0），而库里其实是 22.37。
+        #   微信端 _s818_ali_totals 恒为 None -> 两个字段仍用原来的行值 / 默认 0，逐字节不变。
+        _s818_ali_totals = None
         if _s818_ali_uid:
             try:
                 from helpers import alipay_balance_get as _s818_get
                 _s818_a = _s818_get(_s818_ali_uid)
                 calc_bal = float(_s818_a.get('balance') or 0)
-                logger.info('[S818] 支付宝余额取自 alipay_balances uid=%s... -> %s',
-                            _s818_ali_uid[:10], calc_bal)
+                _s818_ali_totals = (float(_s818_a.get('total_deposited') or 0),
+                                    float(_s818_a.get('total_withdrawn') or 0))
+                logger.info('[S818] 支付宝余额取自 alipay_balances uid=%s... -> 余额=%s 累计存入=%s 累计提现=%s',
+                            _s818_ali_uid[:10], calc_bal, _s818_ali_totals[0], _s818_ali_totals[1])
             except Exception as _s818_e:
                 logger.warning('[S818] 读支付宝余额失败(回退原算法): %s', _s818_e)
 
@@ -4874,6 +4920,10 @@ def get_user_balance():
             result['has_pending_withdrawal'] = has_pending_withdrawal
             result['has_active_orders'] = has_active_orders
             result['balance_hidden'] = balance_hidden
+            # [S818b-20260930] 支付宝端累计存入/累计提现取自 alipay_balances（微信端此块不执行）
+            if _s818_ali_totals is not None:
+                result['total_deposited'] = _s818_ali_totals[0]
+                result['total_withdrawn'] = _s818_ali_totals[1]
             # [S569-20260922] 新增字段（不改 code / balance 语义）：钱包看不到钱但账本上有
             result['identity_issue'] = bool(_s569_identity_issue)
             result['identity_issue_hint'] = ('账号身份待确认，请联系客服' if _s569_identity_issue else '')
@@ -4901,8 +4951,9 @@ def get_user_balance():
                 'phone': phone,
                 'balance': calc_bal,
                 'available_balance': calc_bal,
-                'total_deposited': 0,
-                'total_withdrawn': 0,
+                # [S818b-20260930] 支付宝端取 alipay_balances 的累计值；微信端恒 0（与改前逐字节一致）
+                'total_deposited': (_s818_ali_totals[0] if _s818_ali_totals is not None else 0),
+                'total_withdrawn': (_s818_ali_totals[1] if _s818_ali_totals is not None else 0),
                 'has_pending_withdrawal': has_pending_withdrawal,
                 'has_active_orders': has_active_orders,
                 'balance_hidden': balance_hidden,
@@ -4974,6 +5025,16 @@ def user_withdraw():
             mp_openid = openid
         wechat_name = data.get('wechat_name', '')
         amount = data.get('amount', 0)
+
+        # [S818-20260930] 方案B 第5批前置：支付宝端提现【临时挡住 / 平台分流】。
+        #   判定与 S807/S809 完全同口径：带 alipay_uid / platform=alipay /
+        #   UA 含 AlipayClient / Referer 含 alipay-eco.com，满足任一即视为支付宝端。
+        #   微信端（三个条件都不成立）在下面一行之前原样往下走，行为逐字节不变。
+        #   支付宝端一律【不碰】下面任何微信口径的 SQL，直接交给 _s818_alipay_withdraw。
+        _s818_ali_uid = str(data.get('alipay_uid') or '').strip()
+        _s818_ali_plat = str(data.get('platform') or '').strip().lower()
+        if _s818_ali_uid or _s818_ali_plat == 'alipay' or _s809_is_alipay_req():
+            return _s818_alipay_withdraw(data, amount, _s818_ali_uid)
 
         if not mp_openid and not openid and not phone:
             return json_response(message='请先登录', code=400)

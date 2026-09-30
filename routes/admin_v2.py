@@ -9593,13 +9593,12 @@ def _complaint_scheduler():
             try:
                 conn3 = get_db()
                 c3 = conn3.cursor()
-                # [S797-20260930] 新增 COALESCE(order_no,'') <> '' —— 只处理【带了订单号】的投诉。
-                #   原来没订单号的也会被扫到，然后在下面 "no order_no, no auto refund" 分支里
-                #   被 _finish_nonwechat(cid2, received_reply) 标成 status='2'（看着像已处理），
-                #   于是 S795 在 create_complaint 里设的 status='0'（转人工待处理）2 分钟后又被打回去。
-                #   实测：2026-09-30 02:39:39 [self_complaint] 转人工 -> 02:41:40 本调度器又改成 status=2。
-                #   改后：没订单号的投诉既不自动退款、也不假装处理完 -> 留在后台"待处理"由人工跟进。
-                c3.execute("SELECT * FROM complaints WHERE status IN ('0','1') AND (type!='wechat' OR type IS NULL) AND COALESCE(order_no,'') <> '' AND created_at < NOW() - INTERVAL '2 minutes' AND NOT (POSITION('稍后自动重试' IN COALESCE(reply,'')) > 0 AND reply_time > NOW() - INTERVAL '30 minutes') ORDER BY id LIMIT 100")
+                # [S798-20260930] 撤掉 S797 加的 COALESCE(order_no,'') <> ''：
+                #   老板定调「小程序投诉直接放弃？这个怎么能放弃，也应该处理」。
+                #   没订单号的投诉现在也进这个循环，但下面【不再自己猜订单号】，
+                #   而是把手机号交给 _auto_refund_complaint_order 的 S644 安全兜底：
+                #   11位真手机号 + user_phone 精确等值 + 恰好 1 笔可退才退；0 笔/多笔一律拒绝转人工。
+                c3.execute("SELECT * FROM complaints WHERE status IN ('0','1') AND (type!='wechat' OR type IS NULL) AND created_at < NOW() - INTERVAL '2 minutes' AND NOT (POSITION('稍后自动重试' IN COALESCE(reply,'')) > 0 AND reply_time > NOW() - INTERVAL '30 minutes') ORDER BY id LIMIT 100")
                 rows2 = c3.fetchall()
                 conn3.close()
                 for row2 in rows2:
@@ -9613,6 +9612,12 @@ def _complaint_scheduler():
 
                     received_reply = '\u60a8\u597d\uff0c\u60a8\u7684\u6295\u8bc9\u5df2\u6536\u5230\uff0c\u6211\u4eec\u4f1a\u5c3d\u5feb\u5904\u7406\u3002\u5982\u6709\u7d27\u6025\u60c5\u51b5\u8bf7\u8054\u7cfb\u5ba2\u670d\uff0c\u611f\u8c22\u60a8\u7684\u7406\u89e3\u4e0e\u652f\u6301\uff01'
                     already_reply = '\u8ba2\u5355\u5df2\u9000\u6b3e\uff0c\u65e0\u9700\u91cd\u590d\u9000\u6b3e'
+                    # [S798-20260930] 未能自动退款时的回复。文案里带「自动退款失败」是【故意的】：
+                    #   后台"待处理"的筛选条件是
+                    #     status IN ('0','1') OR (status='2' AND reply LIKE '%自动退款失败%' OR reply LIKE '%退款失败%')
+                    #   所以 status='2' + 这条文案 在后台依然看得到；同时 status='2' 不会被本调度器
+                    #   （只扫 status IN ('0','1')）重复扫到，不会死循环。
+                    no_order_manual_msg = '自动退款失败(未能匹配到可退款的订单)，已转人工处理，请联系人工客服4006981080。'
 
                     def _finish_nonwechat(cid, reply_text):
                         _fd = get_db()
@@ -9642,9 +9647,13 @@ def _complaint_scheduler():
                                 except Exception:
                                     pass
                         if not ono2:
-                            logger.info("[complaint_scheduler] no order_no, no auto refund id=%s", cid2)
-                            _finish_nonwechat(cid2, received_reply)
-                            continue
+                            # [S798-20260930] 不放弃（老板：小程序投诉也该处理）。
+                            #   也不自己猜订单号 —— 上面那段匹配是 ORDER BY id DESC LIMIT 1，
+                            #   用户名下有多笔时会抓到错的那一笔（所以原来只敢对公众号来源开放）。
+                            #   改为直接往下走，把手机号交给 _auto_refund_complaint_order 内部的
+                            #   S644 安全兜底：手机号必须 11 位纯数字 + user_phone 精确等值 +
+                            #   恰好 1 笔可退才退；0 笔 / 多笔一律拒绝并转人工。绝不猜、绝不退错。
+                            logger.info("[complaint_scheduler] no order_no -> 交给手机号安全兜底 id=%s phone=%s", cid2, phone2)
 
                     try:
                         _precheck_conn = get_db()
@@ -9756,10 +9765,18 @@ def _complaint_scheduler():
                             logger.warning("[complaint_scheduler] 记录拒绝原因失败: %s", _s644_mre)
                         _finish_nonwechat(cid2, '自动退款失败(订单无法唯一确定)，已转人工处理，请联系人工客服4006981080。')
                         continue
-                    if ('\u5df2\u5168\u989d\u9000\u6b3e' in fail_text2 or '\u8bb0\u5f55\u4e0d\u5b58\u5728' in fail_text2
-                            or 'ORDERNOTEXIST' in fail_text2 or '\u8ba2\u5355\u4e0d\u5b58\u5728' in fail_text2
+                    if '\u5df2\u5168\u989d\u9000\u6b3e' in fail_text2:
+                        # 真·已全额退款：诉求已达成，标完成
+                        _finish_nonwechat(cid2, already_reply)
+                        continue
+                    if ('\u8bb0\u5f55\u4e0d\u5b58\u5728' in fail_text2 or 'ORDERNOTEXIST' in fail_text2
+                            or '\u8ba2\u5355\u4e0d\u5b58\u5728' in fail_text2
                             or '\u672a\u627e\u5230\u5bf9\u5e94\u8ba2\u5355' in fail_text2):
-                        _finish_nonwechat(cid2, already_reply if '\u5df2\u5168\u989d\u9000\u6b3e' in fail_text2 else received_reply)
+                        # [S798-20260930] 找不到订单 / 商户退不了 -> 不再假装"已收到"（那等于掉黑洞，
+                        #   用户以为在处理、后台也看不到），改成「自动退款失败…转人工」。
+                        #   status='2' + 文案含"自动退款失败" 正好命中后台"待处理"的筛选，后台仍可见。
+                        logger.warning("[complaint_scheduler] non-wechat 找不到订单/退不了, 转人工 id=%s order=%s phone=%s msg=%s", cid2, ono2, phone2, refund_msg2)
+                        _finish_nonwechat(cid2, no_order_manual_msg)
                         continue
 
                     logger.warning("[complaint_scheduler] non-wechat refund fail id=%s order=%s phone=%s msg=%s", cid2, ono2, phone2, refund_msg2)

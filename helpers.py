@@ -899,6 +899,211 @@ def get_wxpay(use_mp_appid=False):
 
 
 # ============================================
+# ============================================================
+# [S817-20260930] 支付宝独立余额（方案 B）
+#   老板口径（2026-09-30）：微信和支付宝是两个系统，不能挂到一起；
+#     支付宝余额【独立成表】，与微信的 user_balances 完全隔离、互不引用。
+#   提现口径：调支付宝接口【原路退回】（alipay.trade.refund，不是转账接口）
+#             + 走审批队列（按网点，与微信同一套）
+#             + 只按 alipay_uid 校验「谁支付的谁才能提现」（不碰手机号）
+#   本批次（第1批）只建表 + 加记账函数，【不接线】：
+#     结束订单 / /user/balance / 前端 一律未动 -> 对现有微信和支付宝流程零影响。
+# ============================================================
+_ALIPAY_BALANCE_DDL = """
+CREATE TABLE IF NOT EXISTS alipay_balances (
+    id                SERIAL PRIMARY KEY,
+    alipay_uid        VARCHAR(64)   NOT NULL UNIQUE,
+    phone             VARCHAR(20)   NOT NULL DEFAULT '',
+    balance           NUMERIC(12,2) NOT NULL DEFAULT 0,
+    total_deposited   NUMERIC(12,2) NOT NULL DEFAULT 0,
+    total_withdrawn   NUMERIC(12,2) NOT NULL DEFAULT 0,
+    balance_hidden    SMALLINT      NOT NULL DEFAULT 0,
+    created_at        TIMESTAMP     NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMP     NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_alipay_balances_uid ON alipay_balances(alipay_uid);
+CREATE TABLE IF NOT EXISTS alipay_balance_details (
+    id           SERIAL PRIMARY KEY,
+    alipay_uid   VARCHAR(64)   NOT NULL,
+    order_id     INTEGER,
+    order_no     VARCHAR(40)   NOT NULL DEFAULT '',
+    amount       NUMERIC(10,2) NOT NULL,
+    biz          VARCHAR(24)   NOT NULL,
+    status       VARCHAR(20)   NOT NULL DEFAULT 'available',
+    remark       VARCHAR(200)  NOT NULL DEFAULT '',
+    created_at   TIMESTAMP     NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_alipay_bd_uid ON alipay_balance_details(alipay_uid);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_alipay_bd_order_biz
+    ON alipay_balance_details(order_id, biz) WHERE order_id IS NOT NULL;
+"""
+
+
+def ensure_alipay_balance_tables(conn=None):
+    """[S817] 建支付宝余额两张表（幂等）。任何异常只记日志、绝不抛出。"""
+    _own = False
+    try:
+        if conn is None:
+            from database import get_db as _g
+            conn = _g()
+            _own = True
+        cur = conn.cursor()
+        for _stmt in [s.strip() for s in _ALIPAY_BALANCE_DDL.split(';') if s.strip()]:
+            cur.execute(_stmt)
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error('[S817] 建支付宝余额表失败: %s', e)
+        return False
+    finally:
+        if _own and conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def alipay_balance_add(alipay_uid, amount, order_id=None, order_no='',
+                       biz='deposit_end', remark='', phone=''):
+    """[S817] 给支付宝账号加/扣余额 + 写明细（同一事务）。
+
+    amount > 0 = 存入（订单结束转余额）；amount < 0 = 扣减（提现/调账）
+    幂等：同一 (order_id, biz) 只记一次（靠 uq_alipay_bd_order_biz 唯一索引）。
+    返回 (ok, balance_after, msg)。任何异常只记日志并返回 (False, 0, ...)。
+    """
+    import decimal
+    _uid = str(alipay_uid or '').strip()
+    if not _uid:
+        return False, 0, '缺少 alipay_uid'
+    try:
+        _amt = decimal.Decimal(str(amount)).quantize(decimal.Decimal('0.01'))
+    except Exception:
+        return False, 0, '金额非法'
+    if _amt == 0:
+        return False, 0, '金额为 0'
+    conn = None
+    try:
+        from database import get_db as _g
+        conn = _g()
+        _own = True
+        ensure_alipay_balance_tables(conn)
+        cur = conn.cursor()
+        # 幂等：同单同 biz 已记过就直接返回当前余额
+        if order_id:
+            cur.execute("SELECT 1 FROM alipay_balance_details WHERE order_id=%s AND biz=%s LIMIT 1",
+                        (order_id, biz))
+            if cur.fetchone():
+                cur.execute("SELECT balance FROM alipay_balances WHERE alipay_uid=%s", (_uid,))
+                _r = cur.fetchone()
+                _bal = float((_r.get('balance') if isinstance(_r, dict) else _r[0]) or 0) if _r else 0
+                conn.close()
+                return True, _bal, '已记过(幂等跳过)'
+        # [S817 修正] 新行一律从 0 起：若这里先写金额，下面 UPDATE 再加一次 -> 双倍。
+        cur.execute("""INSERT INTO alipay_balances (alipay_uid, phone, balance, total_deposited, total_withdrawn)
+                       VALUES (%s, %s, 0, 0, 0)
+                       ON CONFLICT (alipay_uid) DO NOTHING""",
+                    (_uid, str(phone or '')))
+        if _amt > 0:
+            cur.execute("""UPDATE alipay_balances
+                           SET balance = balance + %s, total_deposited = total_deposited + %s,
+                               updated_at = now()
+                           WHERE alipay_uid = %s""", (_amt, _amt, _uid))
+        else:
+            cur.execute("""UPDATE alipay_balances
+                           SET balance = balance + %s, total_withdrawn = total_withdrawn + %s,
+                               updated_at = now()
+                           WHERE alipay_uid = %s""", (_amt, -_amt, _uid))
+        cur.execute("""INSERT INTO alipay_balance_details
+                       (alipay_uid, order_id, order_no, amount, biz, status, remark)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)
+                       ON CONFLICT DO NOTHING""",
+                    (_uid, order_id, str(order_no or '')[:40], _amt, str(biz)[:24],
+                     'available' if _amt > 0 else 'withdrawn', str(remark or '')[:200]))
+        cur.execute("SELECT balance FROM alipay_balances WHERE alipay_uid=%s", (_uid,))
+        _r2 = cur.fetchone()
+        _bal2 = float((_r2.get('balance') if isinstance(_r2, dict) else _r2[0]) or 0) if _r2 else 0
+        conn.commit()
+        conn.close()
+        logger.info('[S817] 支付宝余额变更 uid=%s... amount=%s biz=%s order=%s -> 余额=%s',
+                    _uid[:10], _amt, biz, order_id, _bal2)
+        return True, _bal2, 'ok'
+    except Exception as e:
+        logger.error('[S817] 支付宝余额变更失败 uid=%s amount=%s: %s', _uid[:10], amount, e)
+        if conn is not None:
+            try:
+                conn.rollback()
+                conn.close()
+            except Exception:
+                pass
+        return False, 0, str(e)
+
+
+def alipay_balance_get(alipay_uid):
+    """[S817] 取支付宝账号余额。返回 dict；查不到返回零值（不报错）。"""
+    _zero = {'alipay_uid': str(alipay_uid or ''), 'balance': 0.0, 'total_deposited': 0.0,
+             'total_withdrawn': 0.0, 'balance_hidden': 0}
+    _uid = str(alipay_uid or '').strip()
+    if not _uid:
+        return _zero
+    conn = None
+    try:
+        from database import get_db as _g
+        conn = _g()
+        ensure_alipay_balance_tables(conn)
+        cur = conn.cursor()
+        cur.execute("""SELECT alipay_uid, phone, balance, total_deposited, total_withdrawn, balance_hidden
+                       FROM alipay_balances WHERE alipay_uid=%s LIMIT 1""", (_uid,))
+        r = cur.fetchone()
+        conn.close()
+        if not r:
+            return _zero
+        d = dict(r)
+        return {'alipay_uid': d.get('alipay_uid') or _uid,
+                'balance': float(d.get('balance') or 0),
+                'total_deposited': float(d.get('total_deposited') or 0),
+                'total_withdrawn': float(d.get('total_withdrawn') or 0),
+                'balance_hidden': int(d.get('balance_hidden') or 0)}
+    except Exception as e:
+        logger.error('[S817] 取支付宝余额失败 uid=%s: %s', _uid[:10], e)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return _zero
+
+
+def alipay_balance_available_orders(alipay_uid):
+    """[S817] 取该支付宝账号【可原路退回】的明细（提现要用）。
+
+    提现口径（老板定稿）：调支付宝接口【原路退回】，所以要按订单逐笔退；
+    单笔退款金额 <= 该订单原支付金额（支付宝硬限制）。
+    """
+    _uid = str(alipay_uid or '').strip()
+    if not _uid:
+        return []
+    conn = None
+    try:
+        from database import get_db as _g
+        conn = _g()
+        cur = conn.cursor()
+        cur.execute("""SELECT id, order_id, order_no, amount
+                       FROM alipay_balance_details
+                       WHERE alipay_uid=%s AND status='available' AND amount > 0
+                       ORDER BY id ASC""", (_uid,))
+        rows = [dict(r) for r in cur.fetchall()]
+        conn.close()
+        return rows
+    except Exception as e:
+        logger.error('[S817] 取可退明细失败 uid=%s: %s', _uid[:10], e)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return []
+
+
 # [S531-20260921] 商户号被封(收款受限)告警
 # ============================================
 # 背景(为什么原来的"商户号被封通知"是坏的):

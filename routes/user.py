@@ -3073,7 +3073,14 @@ def order_alipay_pay_params(order_id):
         phone = str(data.get('phone') or data.get('user_phone') or '').strip()
         cabinet_id = data.get('cabinet_id')
         if not alipay_uid:
-            return json_response(message='缺少 alipay_uid，请先在小程序内登录', code=400)
+            # [S821q] 诊断：支付宝端"付自己的钱却被判没登录"时，把请求体原样记下来
+            try:
+                logger.warning('[S821q] alipay-pay-params 缺 alipay_uid order=%s keys=%s body=%s',
+                               order_id, sorted(list(data.keys())),
+                               json.dumps(data, ensure_ascii=False)[:240])
+            except Exception:
+                pass
+            return _s818_ali_resp('缺少 alipay_uid，请先在小程序内登录')
 
         conn = get_db()
         cursor = conn.cursor()
@@ -3092,15 +3099,23 @@ def order_alipay_pay_params(order_id):
         conn.close()
 
         if not order:
-            return json_response(message='订单不存在', code=404)
+            return _s818_ali_resp('订单不存在', code=404)
 
-        # 归属校验：订单 user_id / 手机号 任一与调用方一致即放行
+        # 归属校验：订单 user_id / 手机号 / 【支付宝 uid】 任一与调用方一致即放行
         #   （支付宝用户的 order.user_id 由 store/init 按手机号解析，可能不等于
         #     users.alipay_uid 那一行，所以手机号一致也放行，口径与 /pay-params 一致）
+        # [S821q-20260930] ★补上"按支付宝 uid 认人"这一条★
+        #   老板红线：支付宝侧按 ID 认人。线上实测：H5(from=h5) 进来的单 user_id=0、
+        #   而支付宝 users 行 phone 为空 -> 原来的 user_id/手机号两条都比不上，
+        #   用户给自己的订单付自己的钱却拿到 403「订单不属于当前用户」。
+        #   现在：订单上记录的 alipay_pay_uid / alipay_mp_uid == 调用方 uid 即放行（谁支付的谁是本人）。
         _o_user_id = int(order.get('user_id') or 0)
         _o_phone = (order.get('user_phone') or '').strip()
+        _o_ali = str(order.get('alipay_pay_uid') or order.get('alipay_mp_uid') or '').strip()
         _ok_owner = False
-        if _o_user_id and _uid_user_id and _o_user_id == int(_uid_user_id):
+        if _o_ali and alipay_uid and _o_ali == alipay_uid:
+            _ok_owner = True
+        if not _ok_owner and _o_user_id and _uid_user_id and _o_user_id == int(_uid_user_id):
             _ok_owner = True
         if not _ok_owner and _o_phone and ((phone and phone == _o_phone) or (_uid_phone and _uid_phone == _o_phone)):
             _ok_owner = True
@@ -3108,9 +3123,9 @@ def order_alipay_pay_params(order_id):
             _ok_owner = True
         if not _ok_owner:
             logger.warning('[alipay-pay-params] 身份与订单不匹配 order=%s alipay_uid=%s...', order_id, alipay_uid[:8])
-            return json_response(message='订单不属于当前用户', code=403)
+            return _s818_ali_resp('订单不属于当前用户', code=403)
         if cabinet_id and str(cabinet_id) != str(order.get('cabinet_id')):
-            return json_response(message='柜体与订单不匹配', code=400)
+            return _s818_ali_resp('柜体与订单不匹配')
 
         # 免押单：无需支付（与 /store/pay、/pay-params 的免押分支口径一致）
         if order.get('free_use'):
@@ -3122,7 +3137,7 @@ def order_alipay_pay_params(order_id):
                                   'mode': 'paid', 'already_paid': True, 'status': 2,
                                   'message': '订单已支付'})
         if order['status'] != 1:
-            return json_response(message='订单已超时或状态异常，请重新下单', code=400)
+            return _s818_ali_resp('订单已超时或状态异常，请重新下单')
 
         amount = float(order.get('deposit_amount') or 0) + float(order.get('per_use_price') or 0)
         from helpers import get_alipay_mp_trade_params
@@ -3137,7 +3152,7 @@ def order_alipay_pay_params(order_id):
                 return json_response({'order_id': order['id'], 'order_no': order['order_no'],
                                       'mode': 'paid', 'already_paid': True, 'status': 2,
                                       'message': res.get('error_msg') or '订单已支付'})
-            return json_response(message=res.get('error_msg') or '获取支付参数失败', code=502)
+            return _s818_ali_resp(res.get('error_msg') or '获取支付参数失败', code=502)
 
         out = {'order_id': order['id'], 'order_no': order['order_no'],
                'deposit_amount': order.get('deposit_amount'), 'total_fee': res.get('total_fee')}
@@ -3147,7 +3162,7 @@ def order_alipay_pay_params(order_id):
         return json_response(out)
     except Exception as e:
         logger.error(f'[order_alipay_pay_params] 错误: {e}')
-        return json_response(message=str(e), code=500)
+        return _s818_ali_resp(str(e), code=500)
 
 
 @bp.route('/cabinet/screen-info', methods=['GET'])

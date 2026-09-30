@@ -4378,6 +4378,26 @@ def _s818_alipay_withdraw_do(data=None, amount=0, alipay_uid=''):
         conn.commit()
         logger.info('[S821] 支付宝提现已入队 wid=%s uid=%s... 金额=%s 单数=%s 网点=%s(%s) auto_time=%s',
                     _wid, _uid[:10], _actual, len(_oids), _q.get('location_id'), _mode, _auto_time)
+        # [S821k] 提现申请提交后给用户发一条支付宝订阅消息。
+        #   与微信侧同口径（S557c 定稿）：同一张提现单【在用户提交申请时发一条】，完成时不再发。
+        #   因为用户看到的"到账"预期就建立在这一条上（没有通知正是投诉来源）。
+        #   完全走现成的 notify_alipay_order（模板 subscribe_refund = 寄存预付款退还通知，
+        #   关键词顺序 keyword1 寄存单号 / keyword2 退还时间 / keyword3 退还状态 / keyword4 退还金额），
+        #   收件人由它按订单的 alipay_pay_uid/alipay_mp_uid 取，绝不使用手机号；任何异常只记日志。
+        try:
+            from helpers import notify_alipay_order as _s821k_notify
+            _s821k_no = str((_plan[0].get('order_no') if _plan else '') or _oids[0])
+            _s821k_notify(
+                order_id=_oids[0], biz='subscribe_refund',
+                data={
+                    'keyword1': {'value': _s821k_no[:32]},
+                    'keyword2': {'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
+                    'keyword3': {'value': ('正在原路退回' if _mode == 'auto_approve' else '提现申请已提交')},
+                    'keyword4': {'value': '¥{:.2f}'.format(_actual)},
+                },
+                page='pages/withdraw-record/withdraw-record')
+        except Exception as _s821k_e:
+            logger.warning('[S821k] 支付宝提现订阅消息失败(不影响主流程): %s', _s821k_e)
         return json_response(data={
             'withdrawal_id': _wid,
             'status': 'pending',

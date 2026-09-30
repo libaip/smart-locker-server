@@ -9593,7 +9593,13 @@ def _complaint_scheduler():
             try:
                 conn3 = get_db()
                 c3 = conn3.cursor()
-                c3.execute("SELECT * FROM complaints WHERE status IN ('0','1') AND (type!='wechat' OR type IS NULL) AND created_at < NOW() - INTERVAL '2 minutes' AND NOT (POSITION('稍后自动重试' IN COALESCE(reply,'')) > 0 AND reply_time > NOW() - INTERVAL '30 minutes') ORDER BY id LIMIT 100")
+                # [S797-20260930] 新增 COALESCE(order_no,'') <> '' —— 只处理【带了订单号】的投诉。
+                #   原来没订单号的也会被扫到，然后在下面 "no order_no, no auto refund" 分支里
+                #   被 _finish_nonwechat(cid2, received_reply) 标成 status='2'（看着像已处理），
+                #   于是 S795 在 create_complaint 里设的 status='0'（转人工待处理）2 分钟后又被打回去。
+                #   实测：2026-09-30 02:39:39 [self_complaint] 转人工 -> 02:41:40 本调度器又改成 status=2。
+                #   改后：没订单号的投诉既不自动退款、也不假装处理完 -> 留在后台"待处理"由人工跟进。
+                c3.execute("SELECT * FROM complaints WHERE status IN ('0','1') AND (type!='wechat' OR type IS NULL) AND COALESCE(order_no,'') <> '' AND created_at < NOW() - INTERVAL '2 minutes' AND NOT (POSITION('稍后自动重试' IN COALESCE(reply,'')) > 0 AND reply_time > NOW() - INTERVAL '30 minutes') ORDER BY id LIMIT 100")
                 rows2 = c3.fetchall()
                 conn3.close()
                 for row2 in rows2:

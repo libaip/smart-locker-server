@@ -1813,6 +1813,30 @@ def approve_withdrawal(withdrawal_id):
         if not record or record['status'] != 0:
             conn.close()
             return json_response(message='提现记录不存在或已处理', code=404 if not record else 400)
+        # [S821-20260930] 方案B 第5批：支付宝提现单【必须】走支付宝处理器（原路退回 + 支付宝账本记账）。
+        #   为什么这条老路不能直接放行：
+        #     ① 它对有 order_id 的单会调 do_real_refund（方法虽也是原路退回），但**不会**结算
+        #        alipay_balance_details -> 明细永远停在 pending，钱在钱包账本里被冻住；
+        #        而且它把状态置 1 而不是 2，后台看起来永远"没处理完"。
+        #     ② 它对"没有 order_id 的纯余额提现"会走 do_balance_transfer（微信企业付款=【打款】）。
+        #        老板口径：余额提现是【原路退回】，不是打款 -> 支付宝单一律不许走到这里。
+        try:
+            from helpers import alipay_wd_is_record as _s821_is_ali
+        except Exception:
+            _s821_is_ali = lambda *a, **k: False
+        if _s821_is_ali(record.get('openid')):
+            conn.close()
+            from routes.admin_v2 import _process_alipay_withdrawal as _s821_proc
+            _st821, _m821 = _s821_proc(withdrawal_id, 'admin_approve_legacy')
+            if _st821 == 'done':
+                return json_response(message='审批通过，已原路退回支付宝账户')
+            if _st821 == 'partial':
+                return json_response(message='审批通过，部分订单退款失败（其余已退回钱包），请到订单管理处理')
+            if _st821 == 'retry':
+                return json_response(message='支付宝商户账户余额不足（资金未动）：请充值后对本单再点一次【通过】重试')
+            if _st821 == 'failed':
+                return json_response(message='退款失败，金额已退回钱包，可让用户重新申请')
+            return json_response(message='该提现单当前不可处理：%s' % _m821, code=400)
         order_id = record['order_id']
         amount = record['amount']
         phone = record['user_phone']

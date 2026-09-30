@@ -666,6 +666,22 @@ _ALIPAY_GUIDE_FALLBACK = (
     '</div></body></html>')
 
 
+# [S768-20260930] 入口模式⑤(纯微信)：非微信浏览器扫码 → 纯静态提示页。
+#   与④(纯支付宝)完全对称：不查库、不用 JS-SDK、不做授权；静态文件读不到就用内置串兜底。
+_WECHAT_GUIDE_FALLBACK = (
+    '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">'
+    '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    '<title>请用微信扫码使用</title></head>'
+    '<body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,\'PingFang SC\',Arial,sans-serif;'
+    'background:#f5f6f8;color:#1f2329"><div style="max-width:560px;margin:0 auto;padding:56px 22px;text-align:center">'
+    '<h1 style="font-size:22px;line-height:1.5;margin:0 0 12px">请用微信扫码使用</h1>'
+    '<p style="font-size:15px;color:#646a73;line-height:1.8;margin:0">'
+    '当前入口暂不支持支付宝扫码，请打开微信 App 扫描柜机上的二维码。</p>'
+    '<p style="font-size:13px;color:#9aa0a6;line-height:1.8;margin:24px 0 0">'
+    '已存包需要取件？请访问 /retrieve 用手机号 + 取包码取包</p>'
+    '</div></body></html>')
+
+
 def _alipay_guide_response():
     """[S347] 模式④的静态提示页（纯静态串，不查库、不用 JS-SDK、不做授权）"""
     try:
@@ -674,6 +690,20 @@ def _alipay_guide_response():
             _html = _f.read()
     except Exception:
         _html = _ALIPAY_GUIDE_FALLBACK
+    from flask import make_response as _mr
+    _resp = _mr(_html)
+    _resp.headers['Cache-Control'] = 'no-store'
+    return _resp
+
+
+def _wechat_guide_response():
+    """[S768] 模式⑤的静态提示页（与④对称：纯静态串，不查库、不用 JS-SDK、不做授权）"""
+    try:
+        _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'wechat-guide.html')
+        with open(_p, 'r', encoding='utf-8') as _f:
+            _html = _f.read()
+    except Exception:
+        _html = _WECHAT_GUIDE_FALLBACK
     from flask import make_response as _mr
     _resp = _mr(_html)
     _resp.headers['Cache-Control'] = 'no-store'
@@ -711,6 +741,11 @@ def store_page():
     if _entry_mode == 'alipay' and 'MicroMessenger' in request.headers.get('User-Agent', ''):
         logger.info('[S347] entry_mode=alipay 微信UA→静态提示页 device=%s', device)
         return _alipay_guide_response()
+    # [S768-20260930] 模式⑤(纯微信)：非微信浏览器（支付宝/普通浏览器）→ 提示页「请用微信扫码使用」。
+    #   与④严格互为反面：④拦微信放行其它，⑤拦其它放行微信。
+    if _entry_mode == 'wechat' and 'MicroMessenger' not in request.headers.get('User-Agent', ''):
+        logger.info('[S768] entry_mode=wechat 非微信UA→静态提示页 device=%s', device)
+        return _wechat_guide_response()
     if not openid and 'MicroMessenger' in request.headers.get('User-Agent', ''):
         import urllib.parse
         current_url = request.url.replace('http://', 'https://')

@@ -1902,7 +1902,7 @@ Vue.component('page-system-settings',{template:`
 <div style="border-bottom:1px solid #ebeef5;padding-bottom:20px;margin-bottom:20px">
 <h4 style="margin:0 0 12px;font-size:15px;color:#303133">用户入口模式</h4>
 <div style="max-width:500px">
-<div class="form-group"><label>入口模式</label><select v-model="$parent.entryMode" @change="$parent.saveEntryMode($event.target.value)"><option value="mp">纯小程序（微信里进 H5 后跳小程序）</option><option value="h5">H5 跳小程序（与"纯小程序"完全相同）</option><option value="oa">纯公众号（引导关注 → 留在 H5 网页存包）</option><option value="alipay">纯支付宝（微信里扫码 → 提示用支付宝）</option></select></div>
+<div class="form-group"><label>入口模式</label><select v-model="$parent.entryMode" @change="$parent.saveEntryMode($event.target.value)"><option value="mp">纯小程序（微信里进 H5 后跳小程序）</option><option value="h5">H5 跳小程序（与"纯小程序"完全相同）</option><option value="oa">纯公众号（引导关注 → 留在 H5 网页存包）</option><option value="alipay">纯支付宝（微信里扫码 → 提示用支付宝）</option><option value="wechat">纯微信（支付宝/浏览器扫码 → 提示用微信）</option></select></div>
 <div style="font-size:12px;color:#909399;line-height:1.6;margin:-6px 0 6px">用户扫柜机上的二维码进来以后怎么走。<b>改完 30 秒内生效，不用重启</b>。<br>注意：「纯小程序」和「H5 跳小程序」在代码里是同一套行为（都会进小程序）；真正不同的只有「纯公众号」。<br>切「纯公众号」前请确认：关注引导二维码、以及该公众号 appid 已关联微信支付商户号，否则用户在 H5 里付不了款。</div>
 </div>
 </div>

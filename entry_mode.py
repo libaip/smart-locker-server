@@ -12,6 +12,7 @@
     oa      纯公众号   —— 微信里引导关注 → 留在 H5 网页存包，不进小程序
     h5      H5 跳小程序 —— 和 mp 在"入口"这一层行为一致（= 现状）
     alipay  纯支付宝   —— 微信里扫 → 纯静态提示页「请用支付宝扫码使用」
+    wechat  纯微信     —— [S768] 非微信浏览器扫 → 纯静态提示页「请用微信扫码使用」
 
 ⚠️ 安全口径（红线，别改）：
     1. 读不到配置 / 任何异常 / 值非法 → 一律回落 DEFAULT_MODE = 'mp'（= 现状），
@@ -25,8 +26,10 @@ MODE_MP = 'mp'
 MODE_OA = 'oa'
 MODE_H5 = 'h5'
 MODE_ALIPAY = 'alipay'
+# [S768-20260930] 第 5 档：纯微信（非微信浏览器进来 → 提示用微信扫码）
+MODE_WECHAT = 'wechat'
 
-VALID_MODES = (MODE_MP, MODE_OA, MODE_H5, MODE_ALIPAY)
+VALID_MODES = (MODE_MP, MODE_OA, MODE_H5, MODE_ALIPAY, MODE_WECHAT)
 
 # 读不到配置时的回落值。必须是 'mp'：= 今天线上跑的行为，最安全
 DEFAULT_MODE = MODE_MP
@@ -38,6 +41,7 @@ MODE_LABELS = {
     MODE_OA: '纯公众号',
     MODE_H5: 'H5 跳小程序（现状）',
     MODE_ALIPAY: '纯支付宝',
+    MODE_WECHAT: '纯微信',
 }
 
 # "现状口径"：这两个取值在入口层行为完全相同（都走老逻辑），

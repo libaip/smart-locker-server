@@ -1372,14 +1372,31 @@ def retrieve_confirm():
         if orig_status == 2 and not _direct_refund and not deposit_already_refunded(order):
             if not _mp_openid:
                 _mp_openid = _resolve_mp_openid(cursor, mp_openid='', openid=_openid, phone=order['user_phone'])
-            # 统一用 mp_openid 查找用户余额
-            upsert_user_balance_row(cursor, phone=order['user_phone'], openid=_openid,
-                                    unionid=order.get('unionid', '') or '', mp_openid=_mp_openid,
-                                    balance=deposit_amount, total_deposited=deposit_amount,
-                                    user_id=order.get('user_id') or 0)
-            # 插入余额明细，供提现使用
-            cursor.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status, source_time) VALUES (%s, %s, %s, 'available', NOW()) ON CONFLICT (order_id) DO NOTHING",
-                           (order['user_phone'], order_id, deposit_amount))
+            # [S819-20260930] 方案B 第4批：按平台分流（源头分开，微信那支一字不动）
+            #   老板口径：微信和支付宝是两个系统。支付宝单 -> 记到【独立的】alipay_balances；
+            #   微信单 -> 走原逻辑（upsert_user_balance_row + user_balance_details）。
+            _s819_ali = str(order.get('alipay_mp_uid') or order.get('alipay_pay_uid') or '').strip()
+            if _s819_ali:
+                try:
+                    from helpers import alipay_balance_add as _s819_add
+                    _ok819, _bal819, _m819 = _s819_add(
+                        _s819_ali, deposit_amount, order_id=order_id,
+                        order_no=order.get('order_no') or '', biz='deposit_end',
+                        phone=order.get('user_phone') or '',
+                        remark='结束寄存转支付宝余额(S819)')
+                    logger.info('[S819] 支付宝单结束转余额 order=%s uid=%s... ok=%s 余额=%s',
+                                order_id, _s819_ali[:10], _ok819, _bal819)
+                except Exception as _e819:
+                    logger.error('[S819] 支付宝单转余额失败 order=%s: %s', order_id, _e819)
+            else:
+                # 统一用 mp_openid 查找用户余额
+                upsert_user_balance_row(cursor, phone=order['user_phone'], openid=_openid,
+                                        unionid=order.get('unionid', '') or '', mp_openid=_mp_openid,
+                                        balance=deposit_amount, total_deposited=deposit_amount,
+                                        user_id=order.get('user_id') or 0)
+                # 插入余额明细，供提现使用
+                cursor.execute("INSERT INTO user_balance_details (user_phone, order_id, amount, status, source_time) VALUES (%s, %s, %s, 'available', NOW()) ON CONFLICT (order_id) DO NOTHING",
+                               (order['user_phone'], order_id, deposit_amount))
         refund_id = 'BALANCE_' + datetime.now().strftime('%Y%m%d%H%M%S')
         refund_success = True
         conn.commit()
@@ -2259,7 +2276,23 @@ def deposit_end_storage():
                 logger.info(f'[end_storage] 白名单退款入队(后台处理): order={order_id}, amount={refund_amount}')
         except Exception as e:
             logger.error(f'[end_storage] 白名单直接退款异常 order={order_id}: {e}')
-        if not _direct_refund and not deposit_already_refunded(order):
+        # [S820-20260930] 第4批第二处：结束寄存也按平台分流（与 retrieve_confirm 同口径）。
+        #   支付宝单 -> 记到【独立的】alipay_balances；微信单 -> 走下面原逻辑，一字不动。
+        _s820_ali = str(order.get('alipay_mp_uid') or order.get('alipay_pay_uid') or '').strip()
+        if _s820_ali and not _direct_refund and not deposit_already_refunded(order):
+            try:
+                from helpers import alipay_balance_add as _s820_add
+                _ok820, _bal820, _m820 = _s820_add(
+                    _s820_ali, refund_amount, order_id=order_id,
+                    order_no=order.get('order_no') or '', biz='deposit_end',
+                    phone=order.get('user_phone') or '',
+                    remark='结束寄存转支付宝余额(S820)')
+                logger.info('[S820] 支付宝单结束转余额 order=%s uid=%s... ok=%s 余额=%s',
+                            order_id, _s820_ali[:10], _ok820, _bal820)
+            except Exception as _e820:
+                logger.error('[S820] 支付宝单转余额失败 order=%s: %s', order_id, _e820)
+            cursor.execute("UPDATE orders SET logical_mark='end' WHERE id=%s", (order_id,))
+        elif not _direct_refund and not deposit_already_refunded(order):
             # 统一用 mp_openid 查找用户余额
             if not _mp_openid:
                 _mp_openid = _resolve_mp_openid(cursor, mp_openid='', openid=_openid, phone=order['user_phone'])
@@ -4724,6 +4757,22 @@ def get_user_balance():
         from helpers import calc_balance
         calc_bal = calc_balance(user_id=ident['user_id'], phone=_check_phone, openid=openid,
                                 mp_openid=ident['mp_openid'], unionid=ident['unionid'])
+        # [S818-20260930] 方案B 第2批：支付宝余额改读【独立的】alipay_balances。
+        #   为什么：支付宝用户在 users 里是独立一行（只有 alipay_uid、手机号空），
+        #   calc_balance 按 user_id=114900 去微信账本里找 -> 永远 0（不是没算对，
+        #   是"这个账号在微信账本里根本不存在"）。老板口径：微信和支付宝是两个系统。
+        #   alipay_uid 为空（微信端）时本段一条 SQL 都不执行 -> 微信路径逐字节等价。
+        #   只覆盖 calc_bal 这一个值，其余返回结构（available_balance/has_pending…）不动。
+        _s818_ali_uid = str(request.args.get('alipay_uid') or '').strip()
+        if _s818_ali_uid:
+            try:
+                from helpers import alipay_balance_get as _s818_get
+                _s818_a = _s818_get(_s818_ali_uid)
+                calc_bal = float(_s818_a.get('balance') or 0)
+                logger.info('[S818] 支付宝余额取自 alipay_balances uid=%s... -> %s',
+                            _s818_ali_uid[:10], calc_bal)
+            except Exception as _s818_e:
+                logger.warning('[S818] 读支付宝余额失败(回退原算法): %s', _s818_e)
 
         # [S569-20260922] 防呆：钱包"静默 0"。
         #   calc_balance 是按【身份】现算的（SQL 里 AND o.user_id = <身份>），历史孤儿单

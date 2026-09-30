@@ -740,6 +740,18 @@ def get_cabinet_by_mainboard(mainboard_id):
         except Exception as e:
             logger.error(f"[心跳刷新] 失败: {e}")
         result['biz_status'] = biz_status
+        # [S765-20260930] 支付模式下发给设备屏幕：屏幕据此只显示"能付款的那个"支付标识。
+        #   wechat=只显示微信 / alipay=只显示支付宝 / both=两个都显示。
+        #   读不到/脏值一律回落 wechat（= 升级前只显示微信的观感），老 APK 忽略这个字段、不受影响。
+        #   注意：本接口有 60 秒缓存，所以改完支付模式最多 1 分钟才反映到屏幕上。
+        try:
+            from helpers import get_setting as _gs765
+            _pm765 = str(_gs765('pay_mode', 'wechat') or 'wechat').strip().lower()
+            if _pm765 not in ('wechat', 'alipay', 'both'):
+                _pm765 = 'wechat'
+        except Exception:
+            _pm765 = 'wechat'
+        result['pay_mode'] = _pm765
         # 寄存规则优先用设备自己的；设备明确清空(空白)时不回落网点规则；
         # 设备从未配置(NULL)时才用网点规则兜底
         _cab_rules_raw = result.get('cabinet_usage_rules')

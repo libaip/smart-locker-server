@@ -345,9 +345,18 @@ def _push_usage_rules_to_device(device_id):
         if rt is None or rt == '' or int(rt) <= 0:
             rt = row['loc_reopen_times']
         ssc = row['show_slot_count']
+        # [S765-20260930] 顺带把当前支付模式下发（屏幕据此只显示能付款的那个标识）
+        try:
+            from helpers import get_setting as _gs765b
+            _pm765b = str(_gs765b('pay_mode', 'wechat') or 'wechat').strip().lower()
+            if _pm765b not in ('wechat', 'alipay', 'both'):
+                _pm765b = 'wechat'
+        except Exception:
+            _pm765b = 'wechat'
         cmd = {'type': 'usage_rules_update', 'usage_rules': rules, 'rules_title': title,
                'reopen_times': '' if rt is None or rt == '' else str(rt),
-               'show_slot_count': 1 if ssc is None or ssc == '' else int(ssc)}
+               'show_slot_count': 1 if ssc is None or ssc == '' else int(ssc),
+               'pay_mode': _pm765b}
         # 通过 ws_proxy(5004) 的 /send 转发: 设备WS长连接在5004进程内, 这里直接查本进程connected_devices是空的
         import urllib.request as _req
         _body = _json.dumps({"device_id": str(device_id), "command": cmd}).encode()
@@ -5165,6 +5174,34 @@ def admin_pay_mode_setting():
             _conn.commit()
             _conn.close()
             logger.info('[pay_mode_setting] 支付模式改为 %s', mode)
+            # [S765-20260930] 主动推给在线设备（尽力而为、后台线程、绝不阻塞本接口）。
+            #   设备轮询也能拿到（最多 60 秒），这里只是为了"改完马上就变"。
+            try:
+                import threading as _th765
+
+                def _fanout765():
+                    try:
+                        import psycopg2 as _pg765
+                        _c = _pg765.connect(_PM_DB_URL, connect_timeout=5)
+                        _cu = _c.cursor()
+                        _cu.execute("SELECT mainboard_device_id FROM cabinets "
+                                    "WHERE mainboard_device_id IS NOT NULL AND mainboard_device_id <> '' "
+                                    "AND last_heartbeat > NOW() - INTERVAL '3 minutes'")
+                        _dids = [r[0] for r in _cu.fetchall()]
+                        _c.close()
+                    except Exception as _e765:
+                        logger.warning('[pay_mode_setting] 取在线设备失败(忽略): %s', _e765)
+                        return
+                    for _d in _dids:
+                        try:
+                            _push_usage_rules_to_device(_d)
+                        except Exception:
+                            pass
+                    logger.info('[pay_mode_setting] 已向 %d 台在线设备推送新支付模式', len(_dids))
+
+                _th765.Thread(target=_fanout765, daemon=True).start()
+            except Exception as _e765b:
+                logger.warning('[pay_mode_setting] 后台推送启动失败(忽略): %s', _e765b)
             _label = dict(_PAY_MODE_OPTIONS).get(mode, mode)
             return json_response({'code': 0, 'mode': mode,
                                   'message': '支付模式已切换为「%s」，立即生效' % _label})

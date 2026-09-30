@@ -4219,6 +4219,22 @@ def _s809_is_alipay_req():
 #     关(默认) = 只回一句人话，一分钱不动、一条库不写（第5批上线前的临时挡住）；
 #     开       = 走真实支付宝提现（冻结 -> 按网点审批队列 -> 原路退回 alipay.trade.refund）。
 #   用 setting 而不是代码常量：上线 / 回滚都只改一条记录，不用发版。
+def _s818_ali_resp(message, code=400, data=None):
+    """[S821d] 支付宝侧统一响应：**HTTP 必须 200**，业务码放 body.code。
+
+    为什么（2026-09-30 真机实测踩到）：支付宝小程序 `my.request` 对**非 2xx** 的响应
+    直接走 fail 回调，前端只会弹「网络请求失败: request:fail http status error」，
+    **完全看不到我们返回的人话**（老板真机截图就是这个）。
+    微信 `wx.request` 对 4xx 仍走 success、照样读 body.code，所以只有支付宝分支需要这层包装。
+    """
+    _r = json_response(data=data, message=message, code=code)
+    try:
+        _r.status_code = 200
+    except Exception:
+        pass
+    return _r
+
+
 def _s818_alipay_withdraw(data=None, amount=0, alipay_uid=''):
     """[S818] 支付宝端提现统一入口（/user/withdraw 顶部按平台分流到这里）。
 
@@ -4244,9 +4260,8 @@ def _s818_alipay_withdraw(data=None, amount=0, alipay_uid=''):
                         _uid[:10], _plat, amount)
         except Exception:
             pass
-        return json_response(
-            message='支付宝提现功能正在升级，暂时无法提现。您的余额已安全保留在「我的钱包」，功能上线后可随时提现，无需担心。',
-            code=400)
+        return _s818_ali_resp(
+            '支付宝提现功能正在升级，暂时无法提现。您的余额已安全保留在「我的钱包」，功能上线后可随时提现，无需担心。')
     return _s818_alipay_withdraw_do(data, amount, _uid)
 
 
@@ -4263,23 +4278,49 @@ def _s818_alipay_withdraw_do(data=None, amount=0, alipay_uid=''):
     from helpers import alipay_withdraw_quote as _s821_quote, alipay_wd_openid_of as _s821_mark
     _uid = str(alipay_uid or '').strip()
     if not _uid:
-        return json_response(message='请先登录', code=400)
+        # [S821d] 支付宝端【带了 platform/UA/Referer、却没带 alipay_uid】时走到这里。
+        #   2026-09-30 真机实测就是这个：GET 余额带着 uid，POST 提现没带 ->
+        #   用户看到「请先登录」这种莫名其妙的话。给一句能自助解决的话 + 打 WARNING 留证据。
+        try:
+            logger.warning('[S821d] 支付宝端提现请求缺少 alipay_uid keys=%s body=%s',
+                           sorted(list(data.keys())) if isinstance(data, dict) else type(data).__name__,
+                           (_json.dumps(data, ensure_ascii=False)[:300] if isinstance(data, dict) else ''))
+        except Exception:
+            pass
+        return _s818_ali_resp('登录信息已失效，请退出小程序后重新进入再试')
     _q = _s821_quote(_uid, amount)
     if not _q.get('ok'):
-        return json_response(message=_q.get('msg') or '暂时无法提现', code=400)
+        return _s818_ali_resp(_q.get('msg') or '暂时无法提现')
     # 网点开关（与微信同一口径：只有明确配了 withdraw_enabled=0 才拦）
     if _q.get('location_id') is not None and not _q.get('withdraw_enabled'):
-        return json_response(message='该网点暂不支持提现', code=400)
+        return _s818_ali_resp('该网点暂不支持提现')
     _plan = _q.get('plan') or []
     _actual = round(float(_q.get('actual') or 0), 2)
     if _actual <= 0.001 or not _plan:
-        return json_response(message='没有可提现的金额，无法提现', code=400)
+        return _s818_ali_resp('没有可提现的金额，无法提现')
     _oids = [int(p['order_id']) for p in _plan]
     _mode = str(_q.get('withdraw_mode') or 'manual_approve')
     _phone = str(_plan[0].get('user_phone') or '')
     conn = None
+    _s818_txn = False
     try:
         conn = get_db()
+        # [S821e] ★必须显式开真事务★
+        #   database.py 的连接池连接是 autocommit=True（database.py:178），
+        #   所以 conn.rollback() 是【空操作】。2026-09-30 线上实测踩到：
+        #   冻结明细 + 扣余额各自已经提交，随后 INSERT 撞 dedup_key 唯一键，
+        #   回滚没生效 -> 22.36 被冻住却没有提现单（用户提不了、后台也没单可审）。
+        #   这里显式把底层连接切成非 autocommit，finally 里【务必】恢复 True 再还池，
+        #   否则这条连接回到池里会让后续请求掉进隐式事务。
+        try:
+            _s818_raw = getattr(conn, '_conn', None)
+            if _s818_raw is not None and getattr(_s818_raw, 'autocommit', None) is True:
+                _s818_raw.autocommit = False
+                _s818_txn = True
+                logger.info('[S821e] 支付宝提现已开启显式事务(autocommit=off) uid=%s...', _uid[:10])
+        except Exception as _s818_te:
+            _s818_txn = False
+            logger.warning('[S821e] 开显式事务失败(按原样继续): %s', _s818_te)
         cursor = conn.cursor()
         # 行锁：同一账号并发提现串行化
         cursor.execute('SELECT balance FROM alipay_balances WHERE alipay_uid=%s FOR UPDATE', (_uid,))
@@ -4287,12 +4328,12 @@ def _s818_alipay_withdraw_do(data=None, amount=0, alipay_uid=''):
         _bal = float((_row.get('balance') if isinstance(_row, dict) else (_row[0] if _row else 0)) or 0)
         if _bal + 0.001 < _actual:
             conn.rollback()
-            return json_response(message='余额不足，无法提现', code=400)
+            return _s818_ali_resp('余额不足，无法提现')
         # 已有待处理提现单的单子不许再提（与微信同一口径）
         for _oid in _oids:
             if _has_pending_withdrawal(cursor, _oid):
                 conn.rollback()
-                return json_response(message='订单已有待处理提现，请勿重复提交', code=400)
+                return _s818_ali_resp('订单已有待处理提现，请勿重复提交')
         # 冻结明细（明细金额不动；回 available 还是核销由处理器按实际退款额决定）
         for _oid in _oids:
             cursor.execute("""UPDATE alipay_balance_details SET status='pending'
@@ -4301,7 +4342,7 @@ def _s818_alipay_withdraw_do(data=None, amount=0, alipay_uid=''):
             if cursor.rowcount != 1:
                 conn.rollback()
                 logger.warning('[S821] 支付宝提现冻结失败(明细被占用) order=%s uid=%s...', _oid, _uid[:10])
-                return json_response(message='提现处理中，请稍后重试', code=400)
+                return _s818_ali_resp('提现处理中，请稍后重试')
         cursor.execute("""UPDATE alipay_balances
                           SET balance = balance - %s, total_withdrawn = total_withdrawn + %s,
                               updated_at = now()
@@ -4319,7 +4360,13 @@ def _s818_alipay_withdraw_do(data=None, amount=0, alipay_uid=''):
             if _sm > _em:
                 _sm, _em = _em, _sm
             _auto_time = (datetime.now() + timedelta(minutes=random.randint(_sm, _em))).strftime('%Y-%m-%d %H:%M:%S')
-        _dedup = 'A:%s:%s' % (_uid, '_'.join(str(x) for x in _oids))
+        # [S821e] dedup_key 必须【每次申请都不同】：
+        #   原来用 'A:<uid>:<oids>' 是固定的，一次提现单完成(status=2)后 dedup_key 仍占着，
+        #   同一个订单再做第二次部分提现就会撞唯一索引 -> 用户永远提不出剩下的钱。
+        #   防重复提交不靠这个键，靠：①明细被置 pending（第二次进来 quote 直接拒绝并发）
+        #   ②同一订单 status IN (0,1) 已有单则拒绝 ③FOR UPDATE 行锁把并发串行化。
+        _nonce = datetime.now().strftime('%y%m%d%H%M%S%f')[:15]
+        _dedup = 'A:%s:%s:%s' % (_uid, '_'.join(str(x) for x in _oids), _nonce)
         cursor.execute("""INSERT INTO withdrawal_records
                           (order_id, user_phone, amount, status, click_count, openid,
                            auto_approve_time, dedup_key, order_ids)
@@ -4344,14 +4391,123 @@ def _s818_alipay_withdraw_do(data=None, amount=0, alipay_uid=''):
         except Exception:
             pass
         logger.warning('[S821] 支付宝提现重复提交 uid=%s... 单=%s', _uid[:10], _oids)
-        return json_response(message='该笔提现正在处理中，请勿重复提交', code=400)
+        return _s818_ali_resp('该笔提现正在处理中，请勿重复提交')
     except Exception as _s821_do_e:
         try:
             conn.rollback()
         except Exception:
             pass
         logger.error('[S821] 支付宝提现提交失败 uid=%s...: %s', _uid[:10], _s821_do_e)
-        return json_response(message='提现提交失败，请稍后重试', code=400)
+        return _s818_ali_resp('提现提交失败，请稍后重试')
+    finally:
+        if conn is not None:
+            # [S821e] 还池前必须把 autocommit 恢复成 True（见上面开事务处的原因）
+            if _s818_txn:
+                try:
+                    conn._conn.autocommit = True
+                except Exception as _s818_re:
+                    logger.error('[S821e] 恢复 autocommit=True 失败(连接将归还并关闭): %s', _s818_re)
+                    try:
+                        conn._conn.close()
+                    except Exception:
+                        pass
+                    conn = None
+            try:
+                if conn is not None:
+                    conn.close()
+            except Exception:
+                pass
+
+
+def _s821_ali_uid_from_req():
+    """[S821h] 从当前请求里取支付宝身份（三判据与 S807/S809 同口径）。返回 '' 表示不是支付宝端。"""
+    try:
+        _uid = str(request.args.get('alipay_uid') or '').strip()
+        if _uid:
+            return _uid
+        if str(request.args.get('platform') or '').strip().lower() == 'alipay':
+            return ''            # 是支付宝端但没带 uid -> 下面按"缺身份"处理
+        if _s809_is_alipay_req():
+            return ''
+        return None              # None = 不是支付宝端
+    except Exception:
+        return None
+
+
+def _s821_alipay_withdrawals(alipay_uid):
+    """[S821h] 支付宝用户的【提现记录】：只按 alipay_uid 认人。
+
+    微信口径那个接口 `if not openid: return 400`，而支付宝端 openid 恒空 ->
+    真机上「提现记录」永远空白。这里直接读 withdrawal_records 里标记为
+    openid='alipay:<uid>' 的单子（与后台看到的完全是同一批数据）。
+    字段与微信口径逐一对齐：id / amount / status / apply_time / approve_time / error_msg。
+    """
+    _uid = str(alipay_uid or '').strip()
+    if not _uid:
+        logger.warning('[S821h] 支付宝端拉提现记录但没带 alipay_uid -> 提示重新进入')
+        return _s818_ali_resp('登录信息已失效，请退出小程序后重新进入再试')
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""SELECT id, amount, status, apply_time, approve_time, error_msg
+                       FROM withdrawal_records
+                       WHERE openid = %s AND status <> 3
+                       ORDER BY created_at DESC
+                       LIMIT 50""", ('alipay:' + _uid,))
+        rows = [dict(r) for r in cur.fetchall()]
+        logger.info('[S821h] 支付宝提现记录 uid=%s... -> %s 条', _uid[:10], len(rows))
+        return json_response(data=rows)
+    except Exception as e:
+        logger.error('[S821h] 支付宝提现记录查询失败 uid=%s: %s', _uid[:10], e)
+        return json_response(message='查询失败，请稍后重试', code=500)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _s821_alipay_transactions(alipay_uid, tp='', page=1, limit=50):
+    """[S821h] 支付宝用户的【交易明细】：读独立的 alipay_balance_details。
+
+    为什么不能走微信那个：它 join user_balance_details（微信账本）+ 要求 openid 非空，
+    支付宝用户两样都不满足。这里按 alipay_uid 读支付宝明细，字段与微信口径对齐：
+      id / amount / source_time（=created_at）/ status / remark / order_id / order_no
+    正数=退回钱包，负数=余额提现（前端按正负判类型）。
+    """
+    _uid = str(alipay_uid or '').strip()
+    if not _uid:
+        logger.warning('[S821h] 支付宝端拉交易明细但没带 alipay_uid -> 提示重新进入')
+        return _s818_ali_resp('登录信息已失效，请退出小程序后重新进入再试')
+    where_extra = ''
+    if tp == 'income':
+        where_extra = ' AND d.amount > 0'
+    elif tp == 'expense':
+        where_extra = ' AND d.amount < 0'
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""SELECT d.id, d.amount, d.created_at AS source_time, d.status, d.remark,
+                              d.order_id, COALESCE(NULLIF(d.order_no,''), o.order_no) AS order_no
+                       FROM alipay_balance_details d
+                       LEFT JOIN orders o ON o.id = d.order_id
+                       WHERE d.alipay_uid = %s""" + where_extra + """
+                       ORDER BY d.created_at DESC, d.id DESC
+                       LIMIT %s OFFSET %s""",
+                    (_uid, int(limit), int((page - 1) * limit)))
+        rows = [dict(r) for r in cur.fetchall()]
+        cur.execute("""SELECT COUNT(*) AS n FROM alipay_balance_details d
+                       WHERE d.alipay_uid = %s""" + where_extra, (_uid,))
+        _t = cur.fetchone()
+        total = int((_t.get('n') if isinstance(_t, dict) else (_t[0] if _t else 0)) or 0)
+        logger.info('[S821h] 支付宝交易明细 uid=%s... -> %s 条(总 %s)', _uid[:10], len(rows), total)
+        return json_response(data={'list': rows, 'total': total})
+    except Exception as e:
+        logger.error('[S821h] 支付宝交易明细查询失败 uid=%s: %s', _uid[:10], e)
+        return json_response(message='查询失败，请稍后重试', code=500)
     finally:
         if conn is not None:
             try:
@@ -5928,6 +6084,11 @@ def get_user_transactions():
         page = int(request.args.get('page', 1))
         limit = int(request.args.get('limit', 50))
         offset = (page - 1) * limit
+        # [S821h] 支付宝端分流：openid 在支付宝端恒空，微信口径这里会 400 -> 交易明细永远空白。
+        #   支付宝端只按 alipay_uid 读独立的 alipay_balance_details。微信端行为逐字节不变。
+        _s821h_ali = _s821_ali_uid_from_req()
+        if _s821h_ali is not None:
+            return _s821_alipay_transactions(_s821h_ali, tp=tp, page=page, limit=limit)
         if not openid:
             return json_response(message='????', code=400)
         conn = get_db()
@@ -5988,6 +6149,12 @@ def get_user_withdrawals():
     try:
         phone = request.args.get('phone', '')
         openid = request.args.get('openid', '')
+        # [S821h] 支付宝端分流：openid 在支付宝端恒空 -> 微信口径直接 400、页面永远空白。
+        #   支付宝端按 openid='alipay:<uid>' 读 withdrawal_records（与后台同一批数据）。
+        #   微信端（不是支付宝请求）行为逐字节不变。
+        _s821h_ali2 = _s821_ali_uid_from_req()
+        if _s821h_ali2 is not None:
+            return _s821_alipay_withdrawals(_s821h_ali2)
         if not openid:
             return json_response(message='????', code=400)
         conn = get_db()

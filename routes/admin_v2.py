@@ -6726,6 +6726,121 @@ def _process_auto_alipay_withdrawal_batch(max_rows=None):
                 pass
 
 
+def _alipay_withdraw_janitor():
+    """[S821e] 清理「孤立的支付宝冻结」+ 余额一致性告警（兜底，正常不该有事）。
+
+    背景（2026-09-30 线上实测）：连接池连接是 autocommit=True，冻结明细 + 扣余额
+    各自提交后 INSERT 撞 dedup_key 唯一键，conn.rollback() 是空操作
+    -> 22.36 被冻住、却没有提现单（用户提不了现，后台也没单可审）。
+    根因已在 S821e 用显式事务堵住（routes/user.py）；这里做两道兜底：
+
+      ① 孤儿冻结：明细 status='pending'，但**没有任何** status IN (0,1,6) 的支付宝提现单
+         覆盖该订单 -> 按订单把钱退回钱包（复用 alipay_withdraw_restore，与"拒绝提现"同一套 SQL）。
+         正常在途的单一定有 0/1/6 的记录，所以"没有记录覆盖"就是孤儿。
+      ② 一致性：alipay_balances.balance != 该账号可用明细合计 -> 只记 ERROR + 写一条 alarms，
+         **绝不自动改钱**（留给人看）。
+
+    返回 (孤儿单数, 退回金额, 一致性是否 OK)。
+    """
+    import json as _json821j
+    from helpers import alipay_withdraw_restore as _restore821j
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        # 1) 在途提现单覆盖了哪些订单
+        c.execute("""SELECT order_ids FROM withdrawal_records
+                     WHERE openid LIKE 'alipay:%%' AND status IN (0, 1, 6)""")
+        _covered = set()
+        for r in c.fetchall():
+            try:
+                for x in _json821j.loads(r.get('order_ids') or '[]'):
+                    _covered.add(int(x))
+            except Exception:
+                pass
+        # 2) 找孤儿冻结
+        c.execute("""SELECT alipay_uid, order_id, SUM(amount) AS amt, COUNT(*) AS n
+                     FROM alipay_balance_details
+                     WHERE status='pending' AND order_id IS NOT NULL
+                     GROUP BY alipay_uid, order_id""")
+        _orphans = [dict(r) for r in c.fetchall()]
+        _ok_cnt = 0
+        _ok_amt = 0.0
+        for r in _orphans:
+            if int(r['order_id']) in _covered:
+                continue
+            _uid = r['alipay_uid']
+            _amt = round(float(r['amt'] or 0), 2)
+            logger.warning('[S821e] 发现孤儿支付宝冻结：uid=%s... order=%s 明细=%s 元，'
+                           '没有任何在途提现单覆盖 -> 退回钱包',
+                           str(_uid)[:10], r['order_id'], _amt)
+            if _restore821j(c, [int(r['order_id'])], _amt, _uid):
+                _ok_cnt += 1
+                _ok_amt = round(_ok_amt + _amt, 2)
+        if _ok_cnt:
+            try:
+                c.execute("""INSERT INTO alarms (type, device_id, content, status, created_at)
+                             SELECT 'alipay_withdraw_orphan_freeze', NULL, %s, '0', NOW()
+                             WHERE NOT EXISTS (SELECT 1 FROM alarms
+                                               WHERE type='alipay_withdraw_orphan_freeze' AND status='0')""",
+                          (('[S821e] 支付宝孤儿冻结已自动退回：%d 单 / %s 元（根因见 S821e 显式事务修复）'
+                            % (_ok_cnt, _ok_amt))[:500],))
+            except Exception as _ae:
+                logger.error('[S821e] 孤儿冻结告警写入失败: %s', _ae)
+        # 3) 一致性检查（只读 + 告警）
+        #    正确的不变量（推导）：入账时 balance += a 且明细记 available；
+        #      冻结时 balance -= t 且明细【仍记全额】只把状态改 pending；
+        #      结算后明细才 withdrawn / 减额回 available。
+        #    => balance == Σ(amount>0 且 available) + Σ(amount>0 且 pending) - Σ(在途提现单金额)
+        #    （第一版只加 available，把"有在途提现"当成账本不一致，误报过一次，已修正。）
+        _consistent = True
+        c.execute("""SELECT alipay_uid,
+                            COALESCE(SUM(CASE WHEN status='available' THEN amount ELSE 0 END),0) AS avail,
+                            COALESCE(SUM(CASE WHEN status='pending'   THEN amount ELSE 0 END),0) AS pend
+                     FROM alipay_balance_details WHERE amount > 0 GROUP BY alipay_uid""")
+        _agg = {}
+        for r in c.fetchall():
+            _agg[r['alipay_uid']] = (float(r['avail'] or 0), float(r['pend'] or 0))
+        c.execute("""SELECT openid, COALESCE(SUM(amount),0) AS w FROM withdrawal_records
+                     WHERE openid LIKE 'alipay:%%' AND status IN (0, 1, 6) GROUP BY openid""")
+        _inflight = {}
+        for r in c.fetchall():
+            _inflight[str(r['openid'] or '')[len('alipay:'):]] = float(r['w'] or 0)
+        c.execute("SELECT alipay_uid, balance FROM alipay_balances")
+        for b in c.fetchall():
+            _u = b['alipay_uid']
+            _av, _pd = _agg.get(_u, (0.0, 0.0))
+            _exp = round(_av + _pd - _inflight.get(_u, 0.0), 2)
+            _bal = round(float(b['balance'] or 0), 2)
+            if abs(_exp - _bal) > 0.001:
+                _consistent = False
+                logger.error('[S821e] 支付宝账本不一致 uid=%s... balance=%s 应为=%s'
+                             '（可用%s + 冻结%s - 在途提现%s）',
+                             str(_u)[:10], _bal, _exp, _av, _pd, _inflight.get(_u, 0.0))
+                try:
+                    c.execute("""INSERT INTO alarms (type, device_id, content, status, created_at)
+                                 SELECT 'alipay_balance_mismatch', NULL, %s, '0', NOW()
+                                 WHERE NOT EXISTS (SELECT 1 FROM alarms
+                                                   WHERE type='alipay_balance_mismatch' AND status='0')""",
+                              (('[S821e] 支付宝账本不一致 uid=%s… balance=%s 应为=%s'
+                                '（可用%s+冻结%s-在途%s）（只告警，未自动改钱）'
+                                % (str(_u)[:10], _bal, _exp, _av, _pd, _inflight.get(_u, 0.0)))[:500],))
+                except Exception:
+                    pass
+        if _ok_cnt or not _consistent:
+            conn.commit()
+        return _ok_cnt, _ok_amt, _consistent
+    except Exception as e:
+        logger.error('[S821e] 支付宝提现兜底检查异常: %s', e)
+        return 0, 0.0, True
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def _run_alipay_queue_batch():
     """[S821] queue_approve / manual_approve 网点的支付宝提现单（cron 每 3 分钟驱动）。
 
@@ -6735,6 +6850,14 @@ def _run_alipay_queue_batch():
     import random as _rnd821
     conn = None
     try:
+        # [S821e] 先跑兜底检查（孤儿冻结自动退回钱包 / 账本不一致只告警），再走正常审批
+        try:
+            _j_n, _j_amt, _j_ok = _alipay_withdraw_janitor()
+            if _j_n or not _j_ok:
+                logger.warning('[S821e] 支付宝提现兜底：孤儿冻结 %s 单/%s 元 已退回，账本一致=%s',
+                               _j_n, _j_amt, _j_ok)
+        except Exception as _je:
+            logger.error('[S821e] 兜底检查异常(不影响审批): %s', _je)
         conn = get_db()
         c = conn.cursor()
         c.execute("""

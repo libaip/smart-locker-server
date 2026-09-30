@@ -982,13 +982,25 @@ def alipay_balance_add(alipay_uid, amount, order_id=None, order_no='',
     if _amt == 0:
         return False, 0, '金额为 0'
     conn = None
+    _txn = False
     try:
         from database import get_db as _g
         conn = _g()
         _own = True
         ensure_alipay_balance_tables(conn)
+        # [S821j] ★显式事务★：连接池连接是 autocommit=True（database.py:178），
+        #   原来的 conn.rollback() 是空操作 -> "先加余额、后写明细"在中途失败时会
+        #   留下"余额加了、明细没写"的账。改成真事务，finally 里恢复 autocommit=True 再还池。
+        try:
+            _raw = getattr(conn, '_conn', None)
+            if _raw is not None and getattr(_raw, 'autocommit', None) is True:
+                _raw.autocommit = False
+                _txn = True
+        except Exception as _te:
+            _txn = False
+            logger.warning('[S821j] 支付宝入账开显式事务失败(按原样继续): %s', _te)
         cur = conn.cursor()
-        # 幂等：同单同 biz 已记过就直接返回当前余额
+        # 幂等快路径：同单同 biz 已记过就直接返回当前余额（只读，什么都不改）
         if order_id:
             cur.execute("SELECT 1 FROM alipay_balance_details WHERE order_id=%s AND biz=%s LIMIT 1",
                         (order_id, biz))
@@ -996,13 +1008,32 @@ def alipay_balance_add(alipay_uid, amount, order_id=None, order_no='',
                 cur.execute("SELECT balance FROM alipay_balances WHERE alipay_uid=%s", (_uid,))
                 _r = cur.fetchone()
                 _bal = float((_r.get('balance') if isinstance(_r, dict) else _r[0]) or 0) if _r else 0
-                conn.close()
+                conn.rollback()
                 return True, _bal, '已记过(幂等跳过)'
-        # [S817 修正] 新行一律从 0 起：若这里先写金额，下面 UPDATE 再加一次 -> 双倍。
+        # [S821j] ★先写明细、再动余额★（顺序反过来才安全）
+        #   明细上的唯一索引 uq_alipay_bd_order_biz(order_id, biz) 是"这笔只记一次"的唯一权威。
+        #   旧写法是"先 UPDATE 余额、再 INSERT 明细 ON CONFLICT DO NOTHING"：
+        #   并发两次入账时明细只落 1 条、余额却加了 2 次 -> 凭空多出可提现的钱；
+        #   中途失败也会留下"加了钱没明细"。现在：明细没写进去(rowcount=0)就【绝不动余额】。
         cur.execute("""INSERT INTO alipay_balances (alipay_uid, phone, balance, total_deposited, total_withdrawn)
                        VALUES (%s, %s, 0, 0, 0)
                        ON CONFLICT (alipay_uid) DO NOTHING""",
                     (_uid, str(phone or '')))
+        cur.execute("""INSERT INTO alipay_balance_details
+                       (alipay_uid, order_id, order_no, amount, biz, status, remark)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)
+                       ON CONFLICT DO NOTHING""",
+                    (_uid, order_id, str(order_no or '')[:40], _amt, str(biz)[:24],
+                     'available' if _amt > 0 else 'withdrawn', str(remark or '')[:200]))
+        if order_id and cur.rowcount == 0:
+            # 明细冲突 = 这笔已经记过 -> 整笔回滚（真回滚，现在有效），一个字段都不改
+            conn.rollback()
+            cur.execute("SELECT balance FROM alipay_balances WHERE alipay_uid=%s", (_uid,))
+            _rc = cur.fetchone()
+            _balc = float((_rc.get('balance') if isinstance(_rc, dict) else _rc[0]) or 0) if _rc else 0
+            logger.info('[S821j] 支付宝入账并发/重复，明细未落 -> 不动余额 uid=%s... order=%s biz=%s',
+                        _uid[:10], order_id, biz)
+            return True, _balc, '已记过(幂等跳过)'
         if _amt > 0:
             cur.execute("""UPDATE alipay_balances
                            SET balance = balance + %s, total_deposited = total_deposited + %s,
@@ -1013,17 +1044,10 @@ def alipay_balance_add(alipay_uid, amount, order_id=None, order_no='',
                            SET balance = balance + %s, total_withdrawn = total_withdrawn + %s,
                                updated_at = now()
                            WHERE alipay_uid = %s""", (_amt, -_amt, _uid))
-        cur.execute("""INSERT INTO alipay_balance_details
-                       (alipay_uid, order_id, order_no, amount, biz, status, remark)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s)
-                       ON CONFLICT DO NOTHING""",
-                    (_uid, order_id, str(order_no or '')[:40], _amt, str(biz)[:24],
-                     'available' if _amt > 0 else 'withdrawn', str(remark or '')[:200]))
         cur.execute("SELECT balance FROM alipay_balances WHERE alipay_uid=%s", (_uid,))
         _r2 = cur.fetchone()
         _bal2 = float((_r2.get('balance') if isinstance(_r2, dict) else _r2[0]) or 0) if _r2 else 0
         conn.commit()
-        conn.close()
         logger.info('[S817] 支付宝余额变更 uid=%s... amount=%s biz=%s order=%s -> 余额=%s',
                     _uid[:10], _amt, biz, order_id, _bal2)
         return True, _bal2, 'ok'
@@ -1032,10 +1056,26 @@ def alipay_balance_add(alipay_uid, amount, order_id=None, order_no='',
         if conn is not None:
             try:
                 conn.rollback()
-                conn.close()
             except Exception:
                 pass
         return False, 0, str(e)
+    finally:
+        if conn is not None:
+            if _txn:
+                try:
+                    conn._conn.autocommit = True
+                except Exception as _re:
+                    logger.error('[S821j] 支付宝入账恢复 autocommit 失败(关闭该连接): %s', _re)
+                    try:
+                        conn._conn.close()
+                    except Exception:
+                        pass
+                    conn = None
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 
 def alipay_balance_get(alipay_uid):

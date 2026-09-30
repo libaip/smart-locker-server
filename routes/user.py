@@ -723,7 +723,10 @@ def store_init():
         # [S337] 原来是全局轮转的 select_payment_channel()（会连支付宝一起轮），
         #   导致创建订单时 orders.payment_channel_id 被写成支付宝 113。
         #   小程序微信支付必须用微信通道，这里只挑 channel_type=wechat。
-        payment_channel = _mp_pick_wechat_channel()
+        # [S807-20260930] 原来无条件 _mp_pick_wechat_channel()（S337 本意是「别记成支付宝」），
+        #   结果反了：支付宝端的订单被记成微信通道（实证 2026-09-30 单 150930 挂到 132 瑞-1000958796，
+        #   后台显示「微信」）。改为按请求来源挑：支付宝端走支付宝通道，其余一律维持微信（原行为不变）。
+        payment_channel = _s807_pick_channel_for_request(data)
         payment_channel_id = payment_channel['id'] if payment_channel else None
 
         # 免押模式: 商户号全部封停时, 用户免押使用, 订单不计入商家业绩
@@ -1567,7 +1570,9 @@ def create_deposit_order():
             deposit_amount = round(random.uniform(float(_dep_min), float(_dep_max)), 2)
         group_id = cab_row.get('group_id') if cab_row else None
         # [S337] 同 /store/init：只挑微信通道，避免订单被记成支付宝
-        payment_channel = _mp_pick_wechat_channel()
+        # [S807-20260930] 同 /store/init：按请求来源挑通道（原为无条件微信通道，
+        #   会把支付宝端的单记成微信）。
+        payment_channel = _s807_pick_channel_for_request(data)
         payment_channel_id = payment_channel['id'] if payment_channel else None
         compartment_display = slot['slot_label'] if 'slot_label' in slot.keys() and slot['slot_label'] else (slot['display_number'] if slot['display_number'] else slot['slot_number'])
         _wn2 = chr(39)+chr(39)
@@ -1595,6 +1600,19 @@ def create_deposit_order():
                        (order_no, user_phone, slot['id'], cabinet_id, compartment_display, access_code, deposit_amount, per_use_price, datetime.now(), group_id, payment_channel_id, openid, unionid, mp_openid, _wn2, _cdo_uid))
         row = cursor.fetchone()
         order_id = row["id"]
+        # [S807-20260930] 支付宝身份落库：与 /store/init 的 S551-A 同口径（只在原值为空时写）。
+        #   原来这条 INSERT 不写 alipay_mp_uid，导致支付宝单在 /alipay-pay-params 归属校验处
+        #   被判「订单不属于当前用户」（实证 2026-09-30：单 150930 连报 5 次 400）。
+        _s807_ali_uid2 = str(data.get('alipay_uid') or '').strip()
+        if _s807_ali_uid2:
+            try:
+                cursor.execute("""UPDATE orders SET alipay_mp_uid = %s
+                                  WHERE id = %s AND COALESCE(alipay_mp_uid, '') = ''""",
+                               (_s807_ali_uid2, order_id))
+                logger.info('[S807] 支付宝身份落库: order=%s alipay_mp_uid=%s...',
+                            order_id, _s807_ali_uid2[:10])
+            except Exception as _e807:
+                logger.warning('[S807] 支付宝身份落库失败(不影响下单): %s', _e807)
         # [S551] 防新孤儿单兜底（保守版）：同 /store/init。
         _s551_backfill_orphan_identity(cursor, order_id, order_no, user_phone, _strict_new, cabinet_id)
         apply_order_auto_hide(cursor, order_id, cabinet_id, user_phone)
@@ -4166,7 +4184,14 @@ def get_user_orders():
         _wx_id = openid or ''
         _ali_id = str(request.args.get('alipay_uid') or request.args.get('alipay_mp_uid') or '').strip()
         # 支付宝 uid 是纯数字（一般 16 位以上）；微信 openid 以 o 开头。
-        _wx_is_ali = bool(_wx_id) and _wx_id.isdigit() and len(_wx_id) >= 16
+        # [S807-20260930] 老规则假设「支付宝 uid 是纯数字且 >=16 位」；2026-09 起支付宝 uid
+        #   已变成 022f-… 形式（47 位、含 -/_），老规则恒假 -> 支付宝请求被判成微信 ->
+        #   拿支付宝 uid 去比微信 openid/mp_openid 列 -> 一条都匹配不到（实证：单 150929/150930
+        #   查 /user/orders 返回 data:[]）。补一条：微信 openid 必定以 o 开头，非 o 开头按支付宝。
+        _wx_is_ali = bool(_wx_id) and (
+            (_wx_id.isdigit() and len(_wx_id) >= 16)   # 老格式支付宝 uid（保留兼容）
+            or not str(_wx_id).startswith('o')         # [S807] 新格式支付宝 uid
+        )
         if not _platform:
             if _ali_id or _wx_is_ali:
                 _platform = 'alipay'
@@ -5949,6 +5974,48 @@ def _hr_float(key, default=0.0):
         return default
 
 
+def _s807_pick_channel_for_request(data=None):
+    """[S807-20260930] 下单时按【请求来源】挑支付通道。
+
+    背景：S337 起 /store/init 与 /deposit/create-order 都写死 _mp_pick_wechat_channel()，
+      本意是"别把单记成支付宝"，结果反了 —— 支付宝端的订单被记成微信通道：
+        · 商户后台订单显示的支付方式是"微信"
+          （2026-09-30 实证：支付宝小程序建的单 150930 挂到 132 瑞-1000958796）
+        · /alipay-pay-params 每次还得再"纠正"一次通道，多一次往返
+
+    判定（满足任一即视为支付宝端）：
+      1) 入参带 alipay_uid
+      2) Referer 含 alipay-eco.com（支付宝小程序内嵌页）
+      3) User-Agent 含 AlipayClient（支付宝内置浏览器 / 支付宝小程序）
+    挑不到支付宝通道时【回退微信通道】，绝不让下单失败。
+    微信端（小程序 / 公众号）三个条件都不成立 -> 行为与改动前完全一致。
+    """
+    _ali = False
+    try:
+        _d = data if isinstance(data, dict) else {}
+        if str(_d.get('alipay_uid') or '').strip():
+            _ali = True
+        if not _ali:
+            _ua = request.headers.get('User-Agent', '') or ''
+            _ref = request.headers.get('Referer', '') or ''
+            if 'AlipayClient' in _ua or 'alipay-eco.com' in _ref:
+                _ali = True
+    except Exception as _e:
+        logger.warning('[S807] 判断支付端失败(按微信处理): %s', _e)
+        _ali = False
+    if _ali:
+        try:
+            from helpers import _mp_pick_alipay_channel as _pick_ali
+            _ch = _pick_ali()
+            if _ch:
+                logger.info('[S807] 支付宝端下单，选用支付宝通道 id=%s', _ch.get('id'))
+                return _ch
+            logger.warning('[S807] 支付宝端下单但挑不到支付宝通道，回退微信通道')
+        except Exception as _e2:
+            logger.warning('[S807] 挑支付宝通道异常，回退微信通道: %s', _e2)
+    return _mp_pick_wechat_channel()
+
+
 def _hr_platform(wx_id='', ali_id='', platform=''):
     """[S552] 与 S551 /user/orders 完全一致的口径判定：返回 'wechat' / 'alipay' / ''"""
     p = str(platform or '').strip().lower()
@@ -5960,6 +6027,10 @@ def _hr_platform(wx_id='', ali_id='', platform=''):
     if _w:
         # 支付宝 uid 是纯数字(一般 16 位以上)；微信 openid 以 o 开头
         if _w.isdigit() and len(_w) >= 16:
+            return 'alipay'
+        # [S807-20260930] 同 /user/orders：支付宝 uid 新格式（022f-…）不是纯数字，
+        #   非 o 开头的一律按支付宝（微信 openid 必定以 o 开头），否则支付宝请求会被判成微信。
+        if not _w.startswith('o'):
             return 'alipay'
         return 'wechat'
     return ''

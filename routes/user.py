@@ -4162,6 +4162,25 @@ def _s677_order_identity_pairs(ident, request_openid):
     return _pairs
 
 
+def _s809_is_alipay_req():
+    """[S809-20260930] 本次请求是否来自【支付宝端】（临时兜底判定，故意收得很紧）。
+
+    判据（满足任一即可）：
+      · User-Agent 含 AlipayClient（支付宝 App / 支付宝小程序）
+      · Referer 含 alipay-eco.com（支付宝小程序内嵌页）
+
+    用途：支付宝小程序前端一直取 getStorageSync("openid")（支付宝里恒空），从没把
+    alipay_uid 传上来，后端因此认不出人。发版前用手机号兜底先让用户能用。
+    非支付宝端（微信小程序 / 公众号 / 浏览器）一律 False —— 微信路径完全不受影响。
+    """
+    try:
+        _ua = request.headers.get('User-Agent', '') or ''
+        _ref = request.headers.get('Referer', '') or ''
+        return ('AlipayClient' in _ua) or ('alipay-eco.com' in _ref)
+    except Exception:
+        return False
+
+
 @bp.route('/user/orders', methods=['GET'])
 def get_user_orders():
     """获取用户订单列表"""
@@ -4237,6 +4256,24 @@ def get_user_orders():
             # 平台判不出来时不硬猜：能匹配的都匹配，并记日志便于排查。
             logger.info('[S551][user/orders][platform-auto] openid=%s... alipay_id=%s... -> matched=%s',
                         str(_wx_id)[:10], str(_ali_id)[:10], ','.join(_matched) or '(none)')
+        # [S809-20260930] 临时兜底（老板批准，先用手机号）：支付宝端 + 一个身份 ID 都没有
+        #   + 带 11 位手机号 -> 允许按手机号查订单。
+        #   背景：支付宝小程序前端 22 处调用点取的都是 getStorageSync("openid")（支付宝里恒空），
+        #     从没把 alipay_uid 传上来 -> 后端认不出人 -> 订单列表永远空白。
+        #   前端已在 utils/api.js 的 request() 里统一注入 alipay_uid（待发版）。
+        #   安全边界（故意收紧）：
+        #     · 必须判定为支付宝端（UA 含 AlipayClient 或 Referer 含 alipay-eco.com）
+        #     · 必须一个身份 ID 都没有（有 openid / alipay_uid 一律走上面的原逻辑）
+        #     · 手机号必须 11 位纯数字
+        #     · 只追加【查询条件】，不做任何写操作
+        #     · 打 WARNING 日志便于审计；前端发版后此分支自然不再触发
+        if not where_parts:
+            _s809_ph = str(request_phone or '').strip()
+            if _s809_ph.isdigit() and len(_s809_ph) == 11 and _s809_is_alipay_req():
+                where_parts.append('o.user_phone = %s')
+                params.append(_s809_ph)
+                logger.warning('[S809] 支付宝端无ID，按手机号兜底查订单 phone=%s****%s',
+                               _s809_ph[:3], _s809_ph[-4:])
         if not where_parts:
             conn.close()
             return json_response(message='请先登录', code=400)

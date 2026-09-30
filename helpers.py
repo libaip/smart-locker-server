@@ -142,6 +142,38 @@ def is_mock_mode():
 
 
 # ============================================
+# [S764-20260930] 支付模式开关（后台可切：微信 / 支付宝 / 双通道）
+#   背景：后台早就有这个下拉，但服务端从来没有一处读它（只认 mock），
+#         所以"选支付宝"其实一直还在走微信 -> 等于没做。
+#   口径（老板 2026-09-30 定）：本次只做 wechat / alipay / both 三种；
+#         下拉里的 free（免费模式）不在这里接 —— 免押有独立开关 free_use_enabled。
+#   安全：读不到 / 值非法 / mock 一律按 wechat（= 改动前的既有行为），
+#         保证默认档位下 create_payment 的选择结果与改前逐字节一致。
+# ============================================
+_PAY_MODE_TYPES = {
+    'wechat': ('wechat',),
+    'alipay': ('alipay',),
+    'both':   ('wechat', 'alipay'),
+}
+
+
+def pay_mode():
+    """当前支付模式（小写）。异常/脏值一律回落 'wechat'。"""
+    try:
+        _v = str(get_setting('pay_mode', 'wechat') or 'wechat').strip().lower()
+    except Exception:
+        return 'wechat'
+    return _v if _v in _PAY_MODE_TYPES else 'wechat'
+
+
+def pay_mode_allows(channel_type):
+    """当前支付模式是否允许该类渠道（'wechat' / 'alipay'）。
+    mock 走不到这里；free 与脏值按 wechat 处理（= 只允许微信，即改动前的行为）。"""
+    _allowed = _PAY_MODE_TYPES.get(pay_mode(), ('wechat',))
+    return (channel_type or 'wechat') in _allowed
+
+
+# ============================================
 # ?????
 # ============================================
 def is_wechat_browser():
@@ -1162,7 +1194,11 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
         # [S512b-20260921] 例外：在【支付宝内置浏览器】里必须挑支付宝通道。
         #   否则支付宝用户永远拿到的是微信通道 -> 下面 ch_type=='alipay' 那段成了死代码，
         #   用户在支付宝里根本付不了钱。支付宝通道不存在时回退微信通道（保持原行为）。
-        if is_alipay_browser():
+        # [S764-20260930] 支付模式收口（全系统唯一的"这次到底走微信还是支付宝"决策点）：
+        #   pay_mode=wechat（默认）-> 行为与改动前逐字节一致（不允 alipay，落 elif 走微信）；
+        #   pay_mode=both          -> 支付宝浏览器给支付宝，其它给微信（= S512b 原行为）；
+        #   pay_mode=alipay        -> 只给支付宝；微信环境明确报错，绝不静默改走微信。
+        if is_alipay_browser() and pay_mode_allows('alipay'):
             current_channel = _get_payment_channel(channel_type='alipay')
             if current_channel:
                 logger.info('[支付宝] 支付宝浏览器：选用支付宝通道 id=%s appid=%s',
@@ -1170,8 +1206,17 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
             else:
                 logger.warning('[支付宝] 支付宝浏览器但没有可用的支付宝通道，回退微信通道')
                 current_channel = _get_payment_channel(channel_type='wechat')
-        else:
+        elif pay_mode_allows('wechat'):
+            if is_alipay_browser():
+                # [S764-20260930] 仅微信模式 + 支付宝内置浏览器：明确记一笔，便于事后排查。
+                #   注意（重要）：这种组合下用户在支付宝里是付不了微信的，所以
+                #   「启用支付宝渠道」时必须同时把支付模式设为「双通道」，否则支付宝用户付不了款。
+                logger.warning('[S764] 支付模式=%s 不允许支付宝，但当前是支付宝环境 -> 回退微信渠道（该用户很可能付不了款）',
+                               pay_mode())
             current_channel = _get_payment_channel(channel_type='wechat')  # 自动选活跃的微信渠道
+        else:
+            logger.warning('[S764] 当前支付模式=%s，本环境不允许微信支付', pay_mode())
+            return {'mode': 'error', 'error_msg': '当前只支持支付宝支付，请用支付宝扫码'}
 
     if current_channel:
         wxpay, ch_type = get_channel_wxpay(current_channel, use_mp_appid=False, openid=openid)

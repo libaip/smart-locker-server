@@ -1852,7 +1852,7 @@ Vue.component('page-system-settings',{template:`
 <h4 style="margin:0 0 12px;font-size:15px;color:#303133">基本设置</h4>
 <div style="max-width:500px">
 <div class="form-group"><label>系统名称</label><input v-model="$parent.settingsData.system_name.value"></div>
-<div class="form-group"><label>支付模式</label><select v-model="$parent.settingsData.pay_mode.value"><option value="wechat">微信支付</option><option value="alipay">支付宝</option><option value="both">双通道</option><option value="free">免费模式</option></select></div>
+<div class="form-group"><label>支付模式</label><select v-model="$parent.settingsData.pay_mode.value" @change="$parent.savePayMode()"><option value="wechat">微信支付</option><option value="alipay">支付宝</option><option value="both">双通道（微信+支付宝）</option><option value="free" disabled>免费模式（请用下方「免押模式」开关）</option></select></div>
 <div class="form-group"><label>预付款金额(元)</label><input type="number" v-model="$parent.settingsData.deposit_amount.value" min="0"></div>
 <div class="form-group"><label>超时时间(小时)</label><input type="number" v-model="$parent.settingsData.deposit_timeout.value" min="1" max="720"></div>
 <div class="form-group"><label>商户轮转模式</label><select v-model="$parent.settingsData.channel_rotation_mode.value"><option value="round_robin">严格轮转</option><option value="weighted">加权随机</option></select></div>
@@ -1918,7 +1918,7 @@ Vue.component('page-system-settings',{template:`
 <button class="btn btn-blue" @click="$parent.saveSettings()">保存设置</button>
 </div>
 </div>
-</div>`,created(){this.$parent.loadSettings();this.$parent.loadFreeUse();this.$parent.loadOaSubscribe();this.$parent.loadEntryMode();this.$parent.loadSubscribeNotify();}});
+</div>`,created(){this.$parent.loadSettings();this.$parent.loadPayMode();this.$parent.loadFreeUse();this.$parent.loadOaSubscribe();this.$parent.loadEntryMode();this.$parent.loadSubscribeNotify();}});
 
 Vue.component('page-cabinet-groups',{template:`
 <div class="page-box">
@@ -2289,6 +2289,9 @@ loadResetStats:function(){var self=this;this.api('/data-reset/stats').then(funct
 // P1 Methods
 loadOaSubscribe:function(){var self=this;this.api('/admin/oa-subscribe-setting').then(function(d){self.oaSubscribeEnabled=(d&&d.data&&d.data.enabled)?'true':'false';}).catch(function(){});},
 toggleOaSubscribe:function(checked){var self=this;this.api('/admin/oa-subscribe-setting',{enabled:checked?'true':'false'},'POST').then(function(d){self.oaSubscribeEnabled=checked?'true':'false';self.toast((d&&d.message)||'已保存');}).catch(function(){self.oaSubscribeEnabled=checked?'false':'true';self.toast('保存失败');});},
+// [S764-20260930] 支付模式：走 PG 直连的 /admin/pay-mode-setting（通用 /settings/save 那条路写的是 SQLite，不生效）
+loadPayMode:function(){var self=this;this.api('/admin/pay-mode-setting').then(function(d){var x=(d&&d.data&&(d.data.mode!==undefined))?d.data:(d||{});if(x.mode&&self.settingsData&&self.settingsData.pay_mode){self.settingsData.pay_mode.value=x.mode;}}).catch(function(){});},
+savePayMode:function(){var self=this;var v=(this.settingsData&&this.settingsData.pay_mode&&this.settingsData.pay_mode.value)||'wechat';this.api('/admin/pay-mode-setting',{mode:v}).then(function(d){var x=(d&&d.data&&(d.data.message!==undefined))?d.data:(d||{});self.toast(x.message||'支付模式已保存');}).catch(function(e){self.toast(e.message||'支付模式保存失败','error');});},
 loadFreeUse:function(){var self=this;this.api('/admin/free-use-setting').then(function(d){self.freeUseEnabled=(d&&d.data&&d.data.enabled)?'true':'false';}).catch(function(){});},
 toggleFreeUse:function(checked){var self=this;this.api('/admin/free-use-setting',{enabled:checked?'true':'false'},'POST').then(function(d){self.freeUseEnabled=checked?'true':'false';self.toast(d.message||'已保存');}).catch(function(e){self.toast(e.message||'操作失败','error');});},
 loadEntryMode:function(){var self=this;this.api('/admin/entry-mode-setting').then(function(d){var x=(d&&d.data)||{};if(x.mode)self.entryMode=x.mode;}).catch(function(){});},

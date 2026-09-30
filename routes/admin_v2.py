@@ -5127,6 +5127,63 @@ def admin_entry_mode_setting():
         return json_response(message=str(e), code=500)
 
 
+# [S764-20260930] 「支付模式」后台可视化（微信 / 支付宝 / 双通道）。
+#   为什么单开接口、而不是走 /settings/save：那条路读写的是 SQLite(locker.db)，
+#   而运行时 helpers.get_setting() 读的是 PostgreSQL —— 两条路早已分叉（同
+#   /admin/oa-subscribe-setting 与 S601 注释里踩的同一个坑）。所以这里直接读写 PG。
+#   只白名单 pay_mode 这一个键，其余设置项一律不碰。
+_PAY_MODE_OPTIONS = (
+    ('wechat', '微信支付'),
+    ('alipay', '支付宝'),
+    ('both', '双通道（微信+支付宝）'),
+)
+_PAY_MODE_VALID = tuple(_v for _v, _ in _PAY_MODE_OPTIONS)
+
+
+@bp.route('/admin/pay-mode-setting', methods=['GET', 'POST'])
+@require_auth
+def admin_pay_mode_setting():
+    """GET 查当前支付模式；POST {mode: wechat|alipay|both} 切换。
+    存 PG 的 system_settings.pay_mode；helpers.get_setting 无缓存 -> 立即生效、不用重启。
+    注：free（免费模式）不在这里接 —— 免押有独立开关 free_use_enabled。"""
+    from config import DATABASE_URL as _PM_DB_URL
+    import psycopg2
+    try:
+        if request.method == 'POST':
+            data = request.get_json(silent=True) or {}
+            mode = str(data.get('mode') or '').strip().lower()
+            if mode not in _PAY_MODE_VALID:
+                return json_response(message='不支持的支付模式：%s（只接受 %s）'
+                                             % (mode or '(空)', '/'.join(_PAY_MODE_VALID)), code=400)
+            _conn = psycopg2.connect(_PM_DB_URL, connect_timeout=5)
+            _cur = _conn.cursor()
+            _cur.execute(
+                "INSERT INTO system_settings (setting_key, setting_value, description) "
+                "VALUES ('pay_mode', %s, '支付模式：mock=模拟支付，wechat=微信支付') "
+                "ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value",
+                (mode,))
+            _conn.commit()
+            _conn.close()
+            logger.info('[pay_mode_setting] 支付模式改为 %s', mode)
+            _label = dict(_PAY_MODE_OPTIONS).get(mode, mode)
+            return json_response({'code': 0, 'mode': mode,
+                                  'message': '支付模式已切换为「%s」，立即生效' % _label})
+        _conn = psycopg2.connect(_PM_DB_URL, connect_timeout=5)
+        _cur = _conn.cursor()
+        _cur.execute("SELECT setting_value FROM system_settings WHERE setting_key='pay_mode'")
+        _row = _cur.fetchone()
+        _conn.close()
+        _raw = str(_row[0]).strip().lower() if _row and _row[0] is not None else ''
+        cur = _raw if _raw in _PAY_MODE_VALID else 'wechat'
+        return json_response({'code': 0, 'mode': cur, 'raw': _raw,
+                              'label': dict(_PAY_MODE_OPTIONS).get(cur, cur),
+                              'options': [{'value': _v, 'label': _l} for _v, _l in _PAY_MODE_OPTIONS],
+                              'note': '「免费模式」请用「免押模式」开关，不在这里设'})
+    except Exception as e:
+        logger.error(f'[pay_mode_setting] {e}')
+        return json_response(message=str(e), code=500)
+
+
 @bp.route('/admin/free-use-setting', methods=['GET', 'POST'])
 @require_auth
 def admin_free_use_setting():

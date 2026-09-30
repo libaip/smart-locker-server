@@ -2019,7 +2019,16 @@ def get_settings():
         # [S262-20260919] 过滤敏感项后再返回（本接口无鉴权）
         settings_dict = {s['setting_key']: s['setting_value'] for s in settings
                          if s['setting_key'] not in _SENSITIVE_SETTING_KEYS}
-        settings_dict['_pay_mode'] = 'mock' if is_mock_mode() else 'wechat'
+        # [S764-20260930] 原来 else 分支写死 'wechat'：老板在后台选支付宝/双通道后，
+        #   这里回显仍然是「微信支付」（跟数据库无关）。改为读真实值；缺省 wechat，与改前输出一致。
+        try:
+            from helpers import get_setting as _gs764
+            _pm764 = str(_gs764('pay_mode', 'wechat') or 'wechat').strip().lower()
+            if _pm764 not in ('wechat', 'alipay', 'both', 'mock'):
+                _pm764 = 'wechat'
+        except Exception:
+            _pm764 = 'wechat'
+        settings_dict['_pay_mode'] = 'mock' if is_mock_mode() else _pm764
         from helpers import is_wechat_browser, is_mobile_browser
         settings_dict['_is_wechat'] = is_wechat_browser()
         settings_dict['_is_mobile'] = is_mobile_browser()

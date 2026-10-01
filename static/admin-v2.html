@@ -1914,11 +1914,19 @@ Vue.component('page-system-settings',{template:`
 </label>
 <span style="color:#909399;font-size:12px">商户号全部封停时开启: 用户免押使用柜门, 订单不计入商家业绩</span>
 </div>
+<div class="form-group" style="display:flex;align-items:center;gap:12px;margin-top:12px;padding-top:12px;border-top:1px dashed #ebeef5">
+<label style="flex:0 0 auto;font-weight:600">允许支付宝扫码使用</label>
+<label class="switch">
+<input type="checkbox" :checked="$parent.alipayEntryEnabled!=='false'" @change="$parent.toggleAlipayEntry($event.target.checked)">
+<span class="slider"></span>
+</label>
+<span style="color:#909399;font-size:12px">关闭后：支付宝/浏览器扫码进来会提示改用微信（<b>挡不住直接打开支付宝小程序的用户</b>）</span>
+</div>
 <div style="text-align:right;padding-top:12px;border-top:1px solid #ebeef5">
 <button class="btn btn-blue" @click="$parent.saveSettings()">保存设置</button>
 </div>
 </div>
-</div>`,created(){this.$parent.loadSettings();this.$parent.loadPayMode();this.$parent.loadFreeUse();this.$parent.loadOaSubscribe();this.$parent.loadEntryMode();this.$parent.loadSubscribeNotify();}});
+</div>`,created(){this.$parent.loadSettings();this.$parent.loadPayMode();this.$parent.loadFreeUse();this.$parent.loadAlipayEntry();this.$parent.loadOaSubscribe();this.$parent.loadEntryMode();this.$parent.loadSubscribeNotify();}});
 
 Vue.component('page-cabinet-groups',{template:`
 <div class="page-box">
@@ -2024,7 +2032,7 @@ el:'#app',
 data:{
 showLogin:true,loginForm:{username:'',password:'',captcha:''},loginLoading:false,loginError:'',captchaCode:'',
 isShrink:false,isMobile:window.innerWidth<=768,sidebarOpen:false,activeMenu:'dashboard',menuRefKey:0,pageLoading:false,_apiLoadingCount:0,tabs:[{key:'dashboard',label:'控制台'}],activeTab:'dashboard',adminUser:'管理员',openGroups:{},menuGroupsData:[],alarmPending:0,
-stats:{},dailyTrend:[],freeUseEnabled:'false',oaSubscribeEnabled:'false',entryMode:'mp',
+stats:{},dailyTrend:[],freeUseEnabled:'false',alipayEntryEnabled:'true',oaSubscribeEnabled:'false',entryMode:'mp',
 // Machines
 machines:[],machineTotal:0,machinePage:1,machineSearch:{keyword:'',status:'',location_id:'',agent_id:'',device_id:''},machineMoreOpen:null,
 cabinetModal:false,cabinetForm:{},cabinetFormTitle:'',cabinetEditTab:'basic',deviceDetailModal:false,deviceDetail:null,doorStatusLoading:false,doorStatusResult:null,addSlotModal:false,addSlotForm:{slot_size:'medium',board_no:1,slot_count:1},deviceQrcodeModal:false,deviceQrcode:null,deviceQrcodeModal:false,deviceQrcode:null,
@@ -2292,6 +2300,9 @@ toggleOaSubscribe:function(checked){var self=this;this.api('/admin/oa-subscribe-
 // [S764-20260930] 支付模式：走 PG 直连的 /admin/pay-mode-setting（通用 /settings/save 那条路写的是 SQLite，不生效）
 loadPayMode:function(){var self=this;this.api('/admin/pay-mode-setting').then(function(d){var x=(d&&d.data&&(d.data.mode!==undefined))?d.data:(d||{});if(x.mode&&self.settingsData&&self.settingsData.pay_mode){self.settingsData.pay_mode.value=x.mode;}}).catch(function(){});},
 savePayMode:function(){var self=this;var v=(this.settingsData&&this.settingsData.pay_mode&&this.settingsData.pay_mode.value)||'wechat';this.api('/admin/pay-mode-setting',{mode:v}).then(function(d){var x=(d&&d.data&&(d.data.message!==undefined))?d.data:(d||{});self.toast(x.message||'支付模式已保存');}).catch(function(e){self.toast(e.message||'支付模式保存失败','error');});},
+// [S774-20261001] 允许支付宝扫码使用（独立开关，走 PG 直连接口）
+loadAlipayEntry:function(){var self=this;this.api('/admin/alipay-entry-setting').then(function(d){self.alipayEntryEnabled=(d&&d.data&&d.data.enabled===false)?'false':'true';}).catch(function(){});},
+toggleAlipayEntry:function(checked){var self=this;this.api('/admin/alipay-entry-setting',{enabled:checked?'true':'false'},'POST').then(function(d){self.alipayEntryEnabled=checked?'true':'false';self.toast(d.message||'已保存');}).catch(function(e){self.toast(e.message||'操作失败','error');});},
 loadFreeUse:function(){var self=this;this.api('/admin/free-use-setting').then(function(d){self.freeUseEnabled=(d&&d.data&&d.data.enabled)?'true':'false';}).catch(function(){});},
 toggleFreeUse:function(checked){var self=this;this.api('/admin/free-use-setting',{enabled:checked?'true':'false'},'POST').then(function(d){self.freeUseEnabled=checked?'true':'false';self.toast(d.message||'已保存');}).catch(function(e){self.toast(e.message||'操作失败','error');});},
 loadEntryMode:function(){var self=this;this.api('/admin/entry-mode-setting').then(function(d){var x=(d&&d.data)||{};if(x.mode)self.entryMode=x.mode;}).catch(function(){});},

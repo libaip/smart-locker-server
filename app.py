@@ -729,6 +729,18 @@ def store_page():
         _entry_mode = _get_entry_mode()
     except Exception:
         _entry_mode = 'mp'
+    # [S774-20261001] 方向二：独立开关「允许支付宝扫码使用」(wx_config_items.alipay_entry_enabled)。
+    #   与 entry_mode 正交：任意入口模式下都能单独关掉支付宝。
+    #   红线：读不到配置 / 任何异常 / 值非法 → 一律当"允许"（= 现状），绝不因配置问题把用户挡外面。
+    try:
+        from wx_config import get_config as _gc774
+        _raw774 = str(_gc774('alipay_entry_enabled', '1')).strip().lower()
+        _alipay_entry_ok = _raw774 not in ('0', 'false', 'no', 'off')
+    except Exception:
+        _alipay_entry_ok = True
+    if (not _alipay_entry_ok) and 'MicroMessenger' not in request.headers.get('User-Agent', ''):
+        logger.info('[S774] 支付宝入口已禁用 → 提示页 device=%s', device)
+        return _wechat_guide_response()
     # [S392-20260921] 没有柜机号、也没有 cabinet_id（例如从公众号菜单「存包」直接进来）：
     #   下面查柜体那段有个写死的兜底 `WHERE c.id=8`，而 8 号柜并不存在 ->
     #   用户填完手机号点"下一步"才报"暂无可用柜格"（2026-09-21 01:29 生产实例）。

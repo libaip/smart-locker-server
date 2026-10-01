@@ -573,6 +573,19 @@ def deposit_pay_order():
 @bp.route('/store/init', methods=['POST'])
 def store_init():
     """存包初始化 - 分配柜格并创建订单（状态=待支付）"""
+    # [S774-20261001] 方向一：entry_mode='alipay'（纯支付宝）时，微信小程序端"存包"直接拒。
+    #   为什么放在这里：小程序是纯服务端驱动的，占柜门这一步一拦，后面支付/开门全走不下去
+    #   —— 不用改小程序、不用过微信审核、改完 30 秒生效。
+    #   只拦这一条；取包 / 订单 / 钱包 / 提现一律不拦（红线）。
+    #   安全口径：读配置异常/识别不出 → 一律放行。
+    try:
+        from entry_mode import get_entry_mode as _gem774
+        if _gem774() == 'alipay' and _is_miniprogram_request():
+            logger.warning('[S774] entry_mode=alipay → 拒绝微信小程序存包 ref=%s',
+                           (request.headers.get('Referer', '') or '')[:90])
+            return json_response(message='本入口暂停使用，请用支付宝扫码使用', code=403)
+    except Exception as _e774:
+        logger.warning('[S774] 入口判断异常(放行): %s', _e774)
     try:
         data = request.get_json()
         cabinet_id = data.get('cabinet_id')
@@ -3383,48 +3396,158 @@ def get_user_info():
 def create_complaint():
     """用户提交投诉"""
     try:
-        data = request.get_json()
-        user_phone = data.get('phone') or data.get('user_phone')
+        data = request.get_json() or {}
+        # [S824-20261001] 支付宝端投诉身份打通。
+        #   改前：/complaints 只认手机号（user_phone 必填），支付宝小程序里没有 openid、
+        #   手机号也常常是空的 -> 支付宝用户要么提交不了、要么提交上来的投诉认不出"是谁"，
+        #   后台既看不到身份、也没法按订单自动退款，只能人工猜。
+        #   判定与 S807/S809/S818/S821 完全同口径：带 alipay_uid / platform=alipay / UA·Referer 命中。
+        #   微信端三个判据都不成立 -> _s824_is_ali 恒 False，下面每一处都走原分支，行为逐字节不变。
+        _s824_uid = str(data.get('alipay_uid') or '').strip()
+        _s824_plat = str(data.get('platform') or '').strip().lower()
+        _s824_is_ali = bool(_s824_uid) or (_s824_plat == 'alipay') or bool(_s809_is_alipay_req())
+        user_phone = str(data.get('phone') or data.get('user_phone') or '').strip()
         complaint_type = data.get('type', 'self')
         content = data.get('content')
         order_no = data.get('order_no')
         wx_complaint_id = data.get('wx_complaint_id')
-        if not all([user_phone, content]):
-            return json_response(message='参数不完整', code=400)
+        # [S824] 身份口径（红线：认人只认 alipay_uid，不用手机号）：
+        #   支付宝端【有】uid -> 完全按 uid 认人，手机号降级为"能联系到人"的展示信息，可以为空；
+        #   支付宝端【无】uid（旧版小程序还没带上）-> 投诉照样收下（不把用户挡在门外），
+        #     但身份不可信 => 一律不允许自动退款，落 status='0' 转人工（下面写入后处理）；
+        #   微信端 -> 原样：手机号 + 内容必填。
+        if _s824_is_ali:
+            if not content:
+                return _s818_ali_resp('请填写投诉描述')
+        else:
+            if not all([user_phone, content]):
+                return json_response(message='参数不完整', code=400)
         conn = get_db()
         cursor = conn.cursor()
         openid = data.get('openid', '')
         complaint_id = None
-        # 一个订单只保留一条投诉：同手机号+同订单号直接复用
+        # [S824] 支付宝端把手机号补齐成"能显示、能联系"的值（纯展示用途，不参与归属判定）：
+        #   用户自己填的 -> 支付宝余额账本里登记的 -> 该 uid 最近一张订单上的。
+        if _s824_is_ali and _s824_uid and not user_phone:
+            try:
+                cursor.execute("SELECT phone FROM alipay_balances WHERE alipay_uid=%s LIMIT 1", (_s824_uid,))
+                _s824_r = cursor.fetchone()
+                if _s824_r:
+                    user_phone = str((_s824_r['phone'] if 'phone' in _s824_r else _s824_r[0]) or '').strip()
+            except Exception as _s824_e1:
+                logger.warning('[S824] 支付宝投诉取手机号(账本)失败 uid=%s: %s', _s824_uid[:10], _s824_e1)
+            if not user_phone:
+                try:
+                    cursor.execute("""SELECT user_phone FROM orders
+                                      WHERE (alipay_mp_uid=%s OR alipay_pay_uid=%s)
+                                        AND COALESCE(NULLIF(user_phone,''),'') <> ''
+                                      ORDER BY id DESC LIMIT 1""", (_s824_uid, _s824_uid))
+                    _s824_r = cursor.fetchone()
+                    if _s824_r:
+                        user_phone = str((_s824_r['user_phone'] if 'user_phone' in _s824_r else _s824_r[0]) or '').strip()
+                except Exception as _s824_e2:
+                    logger.warning('[S824] 支付宝投诉取手机号(订单)失败 uid=%s: %s', _s824_uid[:10], _s824_e2)
+        # 一个订单只保留一条投诉：支付宝端按 uid+订单号，微信端维持同手机号+同订单号
         if order_no:
-            cursor.execute("SELECT id FROM complaints WHERE user_phone=%s AND order_no=%s ORDER BY id LIMIT 1", (user_phone, order_no))
+            if _s824_is_ali and _s824_uid:
+                cursor.execute("SELECT id FROM complaints WHERE platform='alipay' AND alipay_uid=%s AND order_no=%s ORDER BY id LIMIT 1", (_s824_uid, order_no))
+            else:
+                cursor.execute("SELECT id FROM complaints WHERE user_phone=%s AND order_no=%s ORDER BY id LIMIT 1", (user_phone, order_no))
             _dup = cursor.fetchone()
             if _dup:
                 complaint_id = _dup["id"] if "id" in _dup else _dup[0]
         # 无订单号时，10 分钟内相同内容视为重复提交
         if not complaint_id and not order_no:
-            cursor.execute("SELECT id FROM complaints WHERE user_phone=%s AND content=%s AND created_at > NOW() - INTERVAL '10 minutes' ORDER BY id LIMIT 1", (user_phone, content))
+            if _s824_is_ali and _s824_uid:
+                cursor.execute("SELECT id FROM complaints WHERE platform='alipay' AND alipay_uid=%s AND content=%s AND created_at > NOW() - INTERVAL '10 minutes' ORDER BY id LIMIT 1", (_s824_uid, content))
+            else:
+                cursor.execute("SELECT id FROM complaints WHERE user_phone=%s AND content=%s AND created_at > NOW() - INTERVAL '10 minutes' ORDER BY id LIMIT 1", (user_phone, content))
             _dup = cursor.fetchone()
             if _dup:
                 complaint_id = _dup["id"] if "id" in _dup else _dup[0]
         if complaint_id:
-            cursor.execute("UPDATE complaints SET content=%s, status='0', reply='', reply_time=CURRENT_TIMESTAMP WHERE id=%s", (content, complaint_id))
+            cursor.execute("UPDATE complaints SET content=%s, status='0', reply='', reply_time=CURRENT_TIMESTAMP, platform=COALESCE(NULLIF(platform,''), %s), alipay_uid=COALESCE(NULLIF(alipay_uid,''), %s) WHERE id=%s",
+                           (content, 'alipay' if _s824_is_ali else '', _s824_uid if _s824_is_ali else '', complaint_id))
             conn.commit()
         else:
-            cursor.execute('INSERT INTO complaints (user_phone, type, content, order_no, wx_complaint_id, complaint_type, openid) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id',
-                           (user_phone, complaint_type, content, order_no, wx_complaint_id, complaint_type, openid))
+            cursor.execute('INSERT INTO complaints (user_phone, type, content, order_no, wx_complaint_id, complaint_type, openid, platform, alipay_uid) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
+                           (user_phone, complaint_type, content, order_no, wx_complaint_id, complaint_type, openid,
+                            'alipay' if _s824_is_ali else '', _s824_uid if _s824_is_ali else ''))
             row = cursor.fetchone()
             complaint_id = row["id"]
             conn.commit()
         # 投诉不再即时拉白：改为"退款成功后才拉白"(见 admin_v2 投诉调度器)
         # auto process self complaint
         if complaint_type == 'self':
-            _auto_process_self_complaint(complaint_id, user_phone, openid, order_no)
+            if _s824_is_ali and not _s824_uid:
+                # [S824] 支付宝端但没带 uid（旧版小程序）：身份不可信 -> 一分钱不动，转人工待处理。
+                #   绝不按手机号自动退款（红线：认人只认 alipay_uid）。新版小程序带上 uid 后自动恢复。
+                cursor.execute("UPDATE complaints SET status='0', reply=%s, reply_time=CURRENT_TIMESTAMP WHERE id=%s",
+                               ('支付宝端投诉（未携带账号标识）已转人工核实，请留意工作人员联系', complaint_id))
+                conn.commit()
+                logger.warning('[S824] 支付宝端投诉缺 alipay_uid，转人工 complaint_id=%s phone=%s', complaint_id, user_phone)
+            else:
+                _auto_process_self_complaint(complaint_id, user_phone, openid, order_no,
+                                             alipay_uid=(_s824_uid if _s824_is_ali else ''))
         conn.close()
+        if _s824_is_ali:
+            logger.info('[S824] 支付宝端投诉已受理 complaint_id=%s uid=%s order_no=%s',
+                        complaint_id, (_s824_uid or '(空)')[:10], order_no or '(空)')
+            return _s818_ali_resp('投诉已提交，我们会尽快处理', code=200, data={'complaint_id': complaint_id})
         return json_response({'complaint_id': complaint_id, 'message': '投诉已提交，我们会尽快处理'})
     except Exception as e:
         logger.error(f'[create_complaint] 错误: {e}')
+        try:
+            if bool(locals().get('_s824_is_ali')):
+                # 支付宝 my.request 对非 2xx 一律走 fail，用户只会看到"网络请求失败"，
+                # 所以支付宝分支的异常也必须 HTTP 200（人话放 body.message）。
+                return _s818_ali_resp(str(e), code=500)
+        except Exception:
+            pass
         return json_response(message=str(e), code=500)
+
+def _s824_alipay_complaints(alipay_uid):
+    """[S824-20261001] 支付宝用户的【投诉记录】：只按 alipay_uid 认人（谁提交的谁看）。
+
+    微信口径那个接口要求 phone + openid，并在库里校验两者绑定关系；而支付宝端 openid 恒空 ->
+    真机上「投诉记录」永远空白（400）。这里直接读 complaints 里 platform='alipay' 的行。
+    返回字段与微信口径逐一对齐，前端不用改。
+    """
+    _uid = str(alipay_uid or '').strip()
+    if not _uid:
+        logger.warning('[S824] 支付宝端拉投诉记录但没带 alipay_uid -> 提示重新进入')
+        return _s818_ali_resp('登录信息已失效，请退出小程序后重新进入再试')
+    conn = None
+    try:
+        page = max(1, request.args.get('page', 1, type=int))
+        limit = min(50, max(1, request.args.get('limit', 20, type=int)))
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, user_phone, type, complaint_type, content, order_no,
+                   status, reply, created_at, reply_time, openid
+            FROM complaints
+            WHERE platform = 'alipay' AND alipay_uid = %s
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s
+        """, (_uid, limit, (page - 1) * limit))
+        rows = [dict(r) for r in cursor.fetchall()]
+        for row in rows:
+            for key in ('created_at', 'reply_time'):
+                if row.get(key) and hasattr(row[key], 'strftime'):
+                    row[key] = row[key].strftime('%Y-%m-%d %H:%M:%S')
+        logger.info('[S824] 支付宝投诉记录 uid=%s... -> %s 条', _uid[:10], len(rows))
+        return json_response(data=rows)
+    except Exception as e:
+        logger.error('[S824] 支付宝投诉记录查询失败 uid=%s: %s', _uid[:10], e)
+        return _s818_ali_resp('查询失败，请稍后重试', code=500)
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+
 
 @bp.route('/user/complaints', methods=['GET'])
 def user_complaints():
@@ -3432,6 +3555,13 @@ def user_complaints():
     try:
         phone = str(request.args.get('phone') or request.args.get('user_phone') or '').strip()
         openid = str(request.args.get('openid') or '').strip()
+        # [S824-20261001] 支付宝端分流：支付宝小程序里 openid 恒空，微信那套"手机号 + openid 必须绑定"
+        #   会直接 400 -> 真机上「投诉记录」永远空白。支付宝端只按 alipay_uid 认人。
+        #   微信端判据都不成立 -> 原样往下走（逐字节不变）。
+        _s824_uid = str(request.args.get('alipay_uid') or '').strip()
+        _s824_plat = str(request.args.get('platform') or '').strip().lower()
+        if _s824_uid or (_s824_plat == 'alipay') or _s809_is_alipay_req():
+            return _s824_alipay_complaints(_s824_uid)
         if not phone or not openid:
             return json_response(message='参数不完整', code=400)
         conn = get_db()
@@ -3478,6 +3608,11 @@ def user_complaints():
         return json_response(data=rows)
     except Exception as e:
         logger.error(f'[user_complaints] 错误: {e}')
+        try:
+            if bool(locals().get('_s824_uid')) or str(locals().get('_s824_plat') or '') == 'alipay':
+                return _s818_ali_resp(str(e), code=500)
+        except Exception:
+            pass
         return json_response(message=str(e), code=500)
 
 @bp.route('/user/mp-exit-log', methods=['POST'])
@@ -6247,8 +6382,12 @@ def get_user_withdrawals():
         logger.error(f'[user/withdrawals] 错误: {e}')
         return json_response(message=str(e), code=500)
 
-def _auto_process_self_complaint(complaint_id, phone, openid_val, order_no=''):
-    """用户提交投诉后即时处理：只按投诉携带的订单号退款，避免误退其他订单。失败不标红，交给调度器重试。"""
+def _auto_process_self_complaint(complaint_id, phone, openid_val, order_no='', alipay_uid=''):
+    """用户提交投诉后即时处理：只按投诉携带的订单号退款，避免误退其他订单。失败不标红，交给调度器重试。
+
+    [S824-20261001] 支付宝端认人【只认 alipay_uid】：订单的 alipay_pay_uid / alipay_mp_uid 与投诉人
+      uid 相等才自动退款，**不做手机号/unionid/openid 兜底**（老板红线：谁支付的谁是本人）。
+    """
     received_msg = '您好，您的投诉已收到，我们会尽快处理。如有紧急情况请联系客服，感谢您的理解与支持！'
     already_msg = '订单已退款，无需重复退款'
     # [S795-20260929] 未带订单号时的回复：不再承诺"我们会尽快处理"（那是空头承诺，
@@ -6283,8 +6422,10 @@ def _auto_process_self_complaint(complaint_id, phone, openid_val, order_no=''):
         #   改前不校验归属 —— 任何人拿到一个订单号 + 随便一个手机号，就能把别人的订单全额原路退掉
         #   （S383 安全探头实测：假手机号 13000000000 + 别人的订单号，后端照样受理并查了那单）。
         #   规则与 /order/refund-by-tool 的"校验本人"完全一致，复用同一个 _resolve_canonical_identity。
+        # [S824] 末两列是支付宝身份：故意【追加在末尾】，上面 0~11 的下标一个都没动。
         cur.execute("""SELECT id, order_no, deposit_amount, payment_channel_id, refund_status, status,
-                              transaction_id, user_phone, openid, mp_openid, unionid, user_id
+                              transaction_id, user_phone, openid, mp_openid, unionid, user_id,
+                              alipay_mp_uid, alipay_pay_uid
                        FROM orders WHERE order_no=%s LIMIT 1""", (order_no,))
         order = cur.fetchone()
         if not order:
@@ -6292,23 +6433,37 @@ def _auto_process_self_complaint(complaint_id, phone, openid_val, order_no=''):
             return
 
         _c_oid = (openid_val or '').strip()
-        _caller_uid, _caller_unionid, _caller_phone = 0, '', ''
-        if _c_oid or phone:
-            try:
-                _caller_uid, _caller_unionid, _caller_phone = _resolve_canonical_identity(
-                    cur, mp_openid=_c_oid, phone=phone or '')
-            except Exception as _ce:
-                logger.warning('[self_complaint] 归属校验解析身份失败 order_no=%s err=%s', order_no, _ce)
-                _caller_uid, _caller_unionid, _caller_phone = 0, '', ''
+        _c_ali = (alipay_uid or '').strip()
         _owner_ok = False
-        if _caller_uid and order[11] and _caller_uid == order[11]:
-            _owner_ok = True
-        if not _owner_ok and order[7] and _caller_phone and str(order[7]) == str(_caller_phone):
-            _owner_ok = True
-        if not _owner_ok and order[10] and _caller_unionid and str(order[10]) == str(_caller_unionid):
-            _owner_ok = True
-        if not _owner_ok and _c_oid and _c_oid in ((order[8] or ''), (order[9] or '')):
-            _owner_ok = True
+        if _c_ali:
+            # [S824] 支付宝端：只认 uid —— 订单的 alipay_pay_uid / alipay_mp_uid 与投诉人 uid 相等才放行。
+            #   这里【故意不做】手机号/unionid/openid 兜底：支付宝订单的 user_phone 往往就是本人手机号，
+            #   一旦按手机号放行，任何人只要知道一个订单号 + 手机号就能退掉别人的订单（S383 那类越权）。
+            _o_ali_pay = str(order[13] or '')
+            _o_ali_mp = str(order[12] or '')
+            if _c_ali in (_o_ali_pay, _o_ali_mp):
+                _owner_ok = True
+                logger.info('[self_complaint] 支付宝归属校验通过 order_no=%s uid=%s...', order_no, _c_ali[:10])
+            else:
+                logger.warning('[self_complaint] 支付宝归属校验不通过 order_no=%s uid=%s... 订单支付宝uid=(%s/%s)',
+                               order_no, _c_ali[:10], _o_ali_pay[:10], _o_ali_mp[:10])
+        else:
+            _caller_uid, _caller_unionid, _caller_phone = 0, '', ''
+            if _c_oid or phone:
+                try:
+                    _caller_uid, _caller_unionid, _caller_phone = _resolve_canonical_identity(
+                        cur, mp_openid=_c_oid, phone=phone or '')
+                except Exception as _ce:
+                    logger.warning('[self_complaint] 归属校验解析身份失败 order_no=%s err=%s', order_no, _ce)
+                    _caller_uid, _caller_unionid, _caller_phone = 0, '', ''
+            if _caller_uid and order[11] and _caller_uid == order[11]:
+                _owner_ok = True
+            if not _owner_ok and order[7] and _caller_phone and str(order[7]) == str(_caller_phone):
+                _owner_ok = True
+            if not _owner_ok and order[10] and _caller_unionid and str(order[10]) == str(_caller_unionid):
+                _owner_ok = True
+            if not _owner_ok and _c_oid and _c_oid in ((order[8] or ''), (order[9] or '')):
+                _owner_ok = True
         if not _owner_ok:
             cur.execute("UPDATE complaints SET status='0', reply=%s, reply_time=CURRENT_TIMESTAMP WHERE id=%s",
                         ('订单与提交账号不一致，未自动退款，转人工核实', complaint_id))

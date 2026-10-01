@@ -5270,6 +5270,49 @@ def admin_pay_mode_setting():
         return json_response(message=str(e), code=500)
 
 
+# [S774-20261001] 「允许支付宝扫码使用」开关（与入口模式正交）。
+#   为什么单开接口：通用 /settings/save 读写的是 SQLite(locker.db)，运行时读 PG，早已分叉。
+#   只白名单 alipay_entry_enabled 这一个键，其余设置项一律不碰。
+@bp.route('/admin/alipay-entry-setting', methods=['GET', 'POST'])
+@require_auth
+def admin_alipay_entry_setting():
+    """GET 查；POST {enabled: 'true'|'false'} 设。存 PG，立即生效（get_config 改配置会清缓存）。"""
+    from config import DATABASE_URL as _AE_DB_URL
+    import psycopg2
+    try:
+        if request.method == 'POST':
+            data = request.get_json(silent=True) or {}
+            enabled = str(data.get('enabled', 'false')).lower() in ('true', '1', 'yes')
+            _conn = psycopg2.connect(_AE_DB_URL, connect_timeout=5)
+            _cur = _conn.cursor()
+            _cur.execute(
+                "INSERT INTO wx_config_items (cfg_key, cfg_value, group_name, note, updated_at) "
+                "VALUES ('alipay_entry_enabled', %s, 'entry', "
+                "'S774 是否允许支付宝扫码使用：1=允许(默认) 0=关闭(非微信扫码提示用微信)', NOW()) "
+                "ON CONFLICT (cfg_key) DO UPDATE SET cfg_value = EXCLUDED.cfg_value, updated_at = NOW()",
+                ('1' if enabled else '0',))
+            _conn.commit()
+            _conn.close()
+            try:
+                from wx_config import clear_cache as _cc774
+                _cc774()
+            except Exception as _ce774:
+                logger.warning('[alipay_entry_setting] 清缓存失败(30秒内自动过期): %s', _ce774)
+            logger.info('[alipay_entry_setting] 支付宝入口 %s', '允许' if enabled else '禁用')
+            return json_response({'code': 0, 'enabled': enabled,
+                                  'message': '已%s支付宝扫码使用' % ('允许' if enabled else '禁用')})
+        _conn = psycopg2.connect(_AE_DB_URL, connect_timeout=5)
+        _cur = _conn.cursor()
+        _cur.execute("SELECT cfg_value FROM wx_config_items WHERE cfg_key='alipay_entry_enabled'")
+        _row = _cur.fetchone()
+        _conn.close()
+        enabled = (str(_row[0]).strip().lower() not in ('0', 'false', 'no', 'off')) if _row else True
+        return json_response({'code': 0, 'enabled': enabled})
+    except Exception as e:
+        logger.error(f'[alipay_entry_setting] {e}')
+        return json_response(message=str(e), code=500)
+
+
 @bp.route('/admin/free-use-setting', methods=['GET', 'POST'])
 @require_auth
 def admin_free_use_setting():

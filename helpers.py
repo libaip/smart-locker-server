@@ -1681,6 +1681,125 @@ _mch_fail_poll_count = {}
 PAY_GOODS_NAME = '储物柜预付款'  # [S806-20260930] 老板定稿：与支付宝口径对齐，去掉"提现"等资金引导词
 
 
+
+# ============================================================================
+# [S826-20261006] 微信支付【如实申报】—— 老板定稿：只报最小集
+#   问题（已逐字段核对官方《统一下单》参数表）：
+#     · spbill_create_ip 是【必填】字段，官方定义 = "用户的客户端IP"；
+#       我们历史上在 wxpay.py 里写死成 '106.55.7.10'（一台服务器）-> 几万笔交易
+#       向微信申报的"终端 IP"全是同一台机器，与"线下柜机"完全不符。
+#     · scene_info（场景信息）小程序那条路从来没报过（传 None）-> 微信看不到
+#       这笔钱发生在哪个门店。
+#   本块只做两件事（老板要求"不需要报这么详细"）：
+#     ① 终端 IP 改成【用户真实 IP】（nginx 已经把 X-Real-IP 透传进来，只是没人读）；
+#     ② 门店只报一个【网点 ID】，不报名称/地址。
+#   开关：system_settings.wx_report_real_ip（默认 '1'；置 '0' 立刻回到旧行为，不用发版）。
+#   安全：取不到合法公网 IP 就返回 ''，由 wxpay 回落到历史默认值 —— 绝不让下单失败。
+# ============================================================================
+
+def _wx_report_real_ip_on():
+    """开关：默认开。读不到一律按默认，绝不报错。"""
+    try:
+        _v = get_setting('wx_report_real_ip', None)
+        if _v is None or str(_v).strip() == '':
+            return True
+        return str(_v).strip() not in ('0', 'false', 'False', 'no', 'off')
+    except Exception as _e:
+        logger.warning('[S826] 读 wx_report_real_ip 失败，按默认【开】: %s', _e)
+        return True
+
+
+def is_public_ip(ip):
+    """只接受合法的【公网】IPv4/IPv6；私有/回环/链路本地/保留/组播/未指定一律拒。"""
+    import ipaddress as _ipa
+    try:
+        _a = _ipa.ip_address(str(ip or '').strip())
+    except Exception:
+        return False
+    try:
+        return not (_a.is_private or _a.is_loopback or _a.is_link_local
+                    or _a.is_multicast or _a.is_reserved or _a.is_unspecified)
+    except Exception:
+        return False
+
+
+def client_ip_of_request():
+    """[S826] 取【用户真实 IP】；取不到返回 ''（调用方回落，绝不影响下单）。
+
+    取值顺序与理由：
+      1) X-Real-IP             —— nginx 各 location 都写了 proxy_set_header X-Real-IP $remote_addr，
+                                  即用【真实连接地址覆盖写】，客户端伪造不了，最可信；
+      2) X-Forwarded-For 第一段 —— 兜底（可能有代理链）；
+      3) request.remote_addr    —— 没走 nginx 时的兜底。
+    每一级都做公网校验，私有/非法一律跳过。
+    """
+    try:
+        from flask import request as _rq
+    except Exception:
+        return ''
+    try:
+        _ip = str(_rq.headers.get('X-Real-IP') or '').strip()
+        if is_public_ip(_ip):
+            return _ip
+        _xff = str(_rq.headers.get('X-Forwarded-For') or '').split(',')[0].strip()
+        if is_public_ip(_xff):
+            return _xff
+        _ra = str(_rq.remote_addr or '').strip()
+        if is_public_ip(_ra):
+            return _ra
+    except Exception as _e:
+        logger.warning('[S826] 取用户真实 IP 异常: %s', _e)
+    return ''
+
+
+def build_wx_store_scene(order_id):
+    """[S826] 门店场景申报（最小集）：只报网点 ID，不报名称/地址。
+
+    订单 -> 柜机 -> 网点，取 locations.id 作为微信 store_info.id。
+    取不到返回 None（该字段就不报），绝不影响下单。微信要求 scene_info 是 String，故返回 JSON 串。
+    """
+    try:
+        _oid = int(order_id or 0)
+    except Exception:
+        return None
+    if not _oid:
+        return None
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""SELECT l.id AS loc_id
+                       FROM orders o
+                       JOIN cabinets cb ON cb.id = o.cabinet_id
+                       JOIN locations l ON l.id = cb.location_id
+                       WHERE o.id = %s LIMIT 1""", (_oid,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        _loc = row['loc_id'] if 'loc_id' in row else row[0]
+        if not _loc:
+            return None
+        return json.dumps({'store_info': {'id': str(_loc)}}, ensure_ascii=False)
+    except Exception as _e:
+        logger.warning('[S826] 组装门店场景失败 order_id=%s: %s', order_id, _e)
+        return None
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+
+
+def _s826_log_declare(order_no, ip, scene, path):
+    """[S826] 每次下单打一条申报日志，便于验证与事后审计。异常绝不影响下单。"""
+    try:
+        logger.info('[S826] 下单申报 path=%s order=%s spbill_create_ip=%s scene_info=%s',
+                    path, order_no, ip or '(回落服务器IP)', scene or '(不报)')
+    except Exception:
+        pass
+
+
 def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, openid=None,
                        payment_channel=None, payment_channel_id=None, _retry_count=0):
     """获取微信支付参数"""
@@ -1787,10 +1906,16 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
     total_fee = int(round(deposit_amount * 100))
     time_expire = (datetime.now() + timedelta(minutes=15)).strftime('%Y%m%d%H%M%S')
 
+    # [S826-20261006] 如实申报：终端 IP 用【用户真实 IP】。
+    #   注意：H5(MWEB) 的 scene_info 是 H5 支付【必填】的 {"type":"Wap",...}，
+    #   拿掉会让 H5 支付失败，所以这条路【不动 scene_info】，只改终端 IP。
+    _s826_ip = client_ip_of_request() if _wx_report_real_ip_on() else ''
+    _s826_log_declare(order_no, _s826_ip, scene_info, 'h5')
     result = wxpay.unifiedorder(trade_type=trade_type, body=PAY_GOODS_NAME,
                                  total_fee=total_fee, out_trade_no=order_no,
                                  notify_url=_wx_payurl(), openid=openid,
-                                 scene_info=scene_info, time_expire=time_expire)
+                                 scene_info=scene_info, time_expire=time_expire,
+                                 spbill_create_ip=_s826_ip or None)
 
     # [S657-20260924] 被动记录本次【真实下单】结果(成功也记一笔 -> 可看"最后成功时间")。
     #   账号级受限会立即告警; 产品级只落库不告警。异常在函数内吞掉, 绝不影响支付链路。
@@ -2257,10 +2382,16 @@ def get_mp_jsapi_params(order_id, order_no, amount, mp_openid,
                     'error_msg': '支付账号不匹配：请用当前小程序登录后再试（openid 应以 %s 开头）' % _prefix}
 
         time_expire = (datetime.now() + timedelta(minutes=15)).strftime('%Y%m%d%H%M%S')
+        # [S826-20261006] 如实申报（最小集）：终端IP=用户真实IP；门店只报网点 ID。
+        #   这条路原来 scene_info=None（什么都不报），现在补上最小门店信息。
+        _s826_ip = client_ip_of_request() if _wx_report_real_ip_on() else ''
+        _s826_scene = build_wx_store_scene(order_id)
+        _s826_log_declare(order_no, _s826_ip, _s826_scene, 'mp-jsapi')
         result = wxpay.unifiedorder(trade_type='JSAPI', body=body,
                                     total_fee=total_fee, out_trade_no=order_no,
                                     notify_url=_wx_payurl(), openid=mp_openid,
-                                    scene_info=None, time_expire=time_expire)
+                                    scene_info=_s826_scene, time_expire=time_expire,
+                                    spbill_create_ip=_s826_ip or None)
         # [S657-20260924] 同上: 被动记录本次真实下单结果(小程序支付 JSAPI)
         _record_mch_last_error(channel, result, 'JSAPI', 'mp-jsapi', order_no=order_no)
         if not (result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS'):

@@ -17,6 +17,33 @@ from datetime import datetime
 from typing import Dict, Optional, Any
 
 
+# [S826-20261006] spbill_create_ip 的历史默认值（一台开发机）。
+#   官方《统一下单》字段表里这个字段是【必填】且定义是"用户的客户端IP"；
+#   不传新参数时回落到这里，保证所有未改调用方的行为逐字节不变。
+_WX_DEFAULT_SPBILL_IP = '106.55.7.10'
+
+
+def _wx_valid_public_ip(ip):
+    """[S826] 只放行合法的【公网】IPv4/IPv6；其余（私有/回环/链路本地/保留/组播/非法）返回 ''。
+
+    为什么在底层也校验：spbill_create_ip 报给微信的是"终端 IP"，填成内网地址
+    既无意义又像异常申报。调用方（helpers.client_ip_of_request）已经校验过一遍，
+    这里再加一道保险 —— 将来任何人直接从底层调用都不会漏。
+    """
+    import ipaddress as _ipa
+    try:
+        _a = _ipa.ip_address(str(ip or '').strip())
+    except Exception:
+        return ''
+    try:
+        if (_a.is_private or _a.is_loopback or _a.is_link_local
+                or _a.is_multicast or _a.is_reserved or _a.is_unspecified):
+            return ''
+    except Exception:
+        return ''
+    return str(_a)
+
+
 class WxPay:
     """微信支付工具类"""
     
@@ -209,7 +236,8 @@ class WxPay:
     
     def unifiedorder(self, trade_type: str, body: str, total_fee: int, out_trade_no: str, 
                      notify_url: str, openid: str = None, scene_info: str = None, 
-                     time_start: str = None, time_expire: str = None) -> Dict[str, Any]:
+                     time_start: str = None, time_expire: str = None,
+                     spbill_create_ip: str = None) -> Dict[str, Any]:
         """
         统一下单
         
@@ -223,6 +251,8 @@ class WxPay:
             scene_info: 场景信息（H5支付）
             time_start: 订单开始时间
             time_expire: 订单过期时间
+            spbill_create_ip: 终端IP。官方定义="用户的客户端IP"。不传则回落历史默认值
+                              _WX_DEFAULT_SPBILL_IP（保持未改调用方行为不变）
         
         Returns:
             统一下单结果
@@ -236,7 +266,7 @@ class WxPay:
             'body': body,
             'out_trade_no': out_trade_no,
             'total_fee': total_fee,
-            'spbill_create_ip': '106.55.7.10',  # 服务器IP
+            'spbill_create_ip': _wx_valid_public_ip(spbill_create_ip) or _WX_DEFAULT_SPBILL_IP,  # [S826]
             'notify_url': notify_url,
             'trade_type': trade_type,
         }

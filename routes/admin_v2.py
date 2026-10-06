@@ -3634,14 +3634,36 @@ def admin_apk_push_update():
             conn.close()
             return json_response(message="没有找到APK版本信息", code=400)
         cmd = {"type":"force_update","download_url":apk["download_url"],"version_name":apk["version_name"],"version_code":apk["version_code"],"update_desc":apk["update_desc"],"force":True,"file_md5":apk["file_md5"]}
+        # [S827-20261007] 【最低版本门槛】只推给 >= 门槛的设备。
+        #   老板 2026-10-07 要求"仅限 1.4.12 以上"(version_code 269)；
+        #   门槛读 system_settings.apk_push_min_version_code，读不到/为 0 = 不限
+        #   (= 改动前行为：连版本未知的老设备也推)。
+        _min_code = 0
+        try:
+            c.execute("SELECT setting_value FROM system_settings WHERE setting_key='apk_push_min_version_code'")
+            _r_min = c.fetchone()
+            if _r_min and str(_r_min['setting_value']).strip().isdigit():
+                _min_code = int(str(_r_min['setting_value']).strip())
+        except Exception as _e_min:
+            logger.warning('[S827] 读最低版本门槛失败, 按不限处理: %s', _e_min)
+            _min_code = 0
+        if _min_code > 0:
+            _ver_where = ("AND c.app_version_code IS NOT NULL "
+                          "AND c.app_version_code >= %s AND c.app_version_code < %s")
+            _ver_params = (_min_code, apk["version_code"])
+            logger.info('[S827] 批量推送启用最低版本门槛 min=%s target=%s',
+                        _min_code, apk["version_code"])
+        else:
+            _ver_where = "AND (c.app_version_code IS NULL OR c.app_version_code < %s)"
+            _ver_params = (apk["version_code"],)
         c.execute("""
             SELECT c.id as cabinet_id, c.mainboard_device_id as device_id
             FROM cabinets c
             WHERE c.mainboard_device_id IS NOT NULL
               AND c.mainboard_device_id != ''
               AND c.last_heartbeat >= NOW() - INTERVAL '120 seconds'
-              AND (c.app_version_code IS NULL OR c.app_version_code < %s)
-        """, (apk["version_code"],))
+              """ + _ver_where + """
+        """, _ver_params)
         targets = c.fetchall()
         pushed = 0
         for row in targets:

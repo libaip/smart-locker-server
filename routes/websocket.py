@@ -8,6 +8,37 @@ from flask import request
 from helpers import connected_devices, pending_lock_commands, logger
 
 
+# ============================================
+# [S234-20260918] 设备"任何消息"都刷新心跳（修"假离线"）
+# 在线判定 = last_heartbeat 在 2 分钟内；但走长连接的设备只在注册时刷过一次、
+# 之后不再发 heartbeat 消息 -> 能收指令、能回传开锁结果，却被显示成离线。
+# 这里在"任何设备消息"的入口刷新一次（30 秒节流防写爆），失败只告警。
+# ============================================
+_hb_touch_cache = {}
+
+
+def _touch_heartbeat(device_id):
+    if not device_id:
+        return
+    try:
+        import time as _t
+        _did = str(device_id)
+        _now = _t.time()
+        if _now - _hb_touch_cache.get(_did, 0) < 30:
+            return
+        _hb_touch_cache[_did] = _now
+        from database import get_db
+        _db = get_db()
+        _db.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE mainboard_device_id=%s", (_did,))
+        _db.commit()
+        _db.close()
+    except Exception as _e:
+        try:
+            logger.warning(f'[WS] 刷新心跳失败: device={device_id}, {_e}')
+        except Exception:
+            pass
+
+
 def register_websocket_handlers(socketio):
     """注册WebSocket事件处理器"""
 
@@ -95,6 +126,7 @@ def register_websocket_handlers(socketio):
             try:
                 from database import get_db as _get_db
                 _db = None
+                _row_min = None
                 try:
                     _db = _get_db()
                     _cur = _db.cursor()
@@ -102,6 +134,9 @@ def register_websocket_handlers(socketio):
                     _row = _cur.fetchone()
                     _cur.execute("SELECT version_code, version_name, download_url FROM apk_version ORDER BY version_code DESC LIMIT 1")
                     _apk = _cur.fetchone()
+                    # [S827-20261007] 顺带取"自动升级最低版本门槛"
+                    _cur.execute("SELECT setting_value FROM system_settings WHERE setting_key='apk_push_min_version_code'")
+                    _row_min = _cur.fetchone()
                 finally:
                     if _db is not None:
                         try:
@@ -111,6 +146,22 @@ def register_websocket_handlers(socketio):
                 if not _apk:
                     return
                 app_ver_code = int(_row['app_version_code'] or 0) if _row else 0
+                # [S827-20261007] 【最低版本门槛】只给 >= 门槛的设备自动推升级。
+                #   老板 2026-10-07 要求"仅限 1.4.12 以上"(version_code 269)；
+                #   低于门槛的老设备(1.4.7 / 1.2.46 / 版本未知)不动, 避免把老机器推挂。
+                #   门槛读 system_settings.apk_push_min_version_code; 读不到/非数字/为 0
+                #   -> 0 = 不限, 与改动前行为完全一致(零回归)。
+                _min_code = 0
+                try:
+                    _mv = _row_min['setting_value'] if _row_min else None
+                    if _mv is not None and str(_mv).strip().isdigit():
+                        _min_code = int(str(_mv).strip())
+                except Exception:
+                    _min_code = 0
+                if app_ver_code < _min_code:
+                    logger.debug('[S827] 跳过自动升级(低于门槛): device=%s current=%s min=%s',
+                                 device_id, app_ver_code, _min_code)
+                    return
                 if app_ver_code < int(_apk['version_code']):
                     import json as _json
                     version_info = {
@@ -129,6 +180,7 @@ def register_websocket_handlers(socketio):
     def ws_force_update_ack(data):
         """设备确认收到升级通知"""
         device_id = data.get('device_id', '')
+        _touch_heartbeat(device_id)      # [S234] 升级确认也算"活着"
         accepted = data.get('accepted', False)
         logger.info(f'[WebSocket] 设备升级确认: device_id={device_id}, accepted={accepted}')
 
@@ -136,6 +188,7 @@ def register_websocket_handlers(socketio):
     def ws_lock_result(data):
         """开锁结果上报"""
         device_id = data.get('device_id') or data.get('deviceId')
+        _touch_heartbeat(device_id)      # [S234] 收到开锁结果也算"活着"
         order_id = data.get('order_id')
         success = data.get('success', False)
         logger.info(f'[WebSocket] 开锁结果: device_id={device_id}, order_id={order_id}, success={success}')
@@ -181,6 +234,7 @@ def register_raw_websocket(app):
                 try:
                     data = json.loads(msg)
                     t = data.get('type', '')
+                    _touch_heartbeat(data.get('device_id') or device_id)   # [S234] 任何消息都刷新心跳
                     if t == 'register':
                         did = data.get('device_id', '')
                         if did:

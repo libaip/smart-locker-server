@@ -1753,9 +1753,9 @@ def client_ip_of_request():
 
 
 def build_wx_store_scene(order_id):
-    """[S826] 门店场景申报（最小集）：只报网点 ID，不报名称/地址。
+    """[S826/S828] 门店场景申报：报【网点 ID + 网点名称】，不报地址。
 
-    订单 -> 柜机 -> 网点，取 locations.id 作为微信 store_info.id。
+    订单 -> 柜机 -> 网点，取 locations.id / locations.name 作为微信 store_info。
     取不到返回 None（该字段就不报），绝不影响下单。微信要求 scene_info 是 String，故返回 JSON 串。
     """
     try:
@@ -1768,7 +1768,7 @@ def build_wx_store_scene(order_id):
     try:
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("""SELECT l.id AS loc_id
+        cur.execute("""SELECT l.id AS loc_id, COALESCE(l.name, '') AS loc_name
                        FROM orders o
                        JOIN cabinets cb ON cb.id = o.cabinet_id
                        JOIN locations l ON l.id = cb.location_id
@@ -1779,7 +1779,18 @@ def build_wx_store_scene(order_id):
         _loc = row['loc_id'] if 'loc_id' in row else row[0]
         if not _loc:
             return None
-        return json.dumps({'store_info': {'id': str(_loc)}}, ensure_ascii=False)
+        _store = {'id': str(_loc)}
+        # [S828-20261007] 补【网点名称】：老板 2026-10-07 定稿「报名称、不报地址」。
+        #   理由：名称 51 个网点全有(零成本)、且本来就印在柜机与二维码上是公开信息；
+        #   地址只有 2 个有(要人工补 49 条)，且会暴露全部点位精确位置。
+        #   官方 name 规范 String(64) -> 超长截断；空名不报该键(等价于改动前)。
+        try:
+            _nm = str((row['loc_name'] if 'loc_name' in row else '') or '').strip()
+        except Exception:
+            _nm = ''
+        if _nm:
+            _store['name'] = _nm[:64]
+        return json.dumps({'store_info': _store}, ensure_ascii=False)
     except Exception as _e:
         logger.warning('[S826] 组装门店场景失败 order_id=%s: %s', order_id, _e)
         return None

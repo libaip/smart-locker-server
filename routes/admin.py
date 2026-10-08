@@ -698,6 +698,18 @@ def get_cabinet_public_info(cabinet_id):
         slots = cursor.fetchall()
         result['available_slots_list'] = [{'id': s['id'], 'slot_number': s['slot_number'], 'slot_size': s.get('slot_size', 'M'), 'slot_label': s.get('slot_label', '') or ''} for s in slots]
         conn.close()
+        # [S777-20261001] 小程序"设置密码"页就是从这个接口拿 deposit_amount、并自己拼
+        #   "预付费XX元，封顶XX元"文案的（小程序 pages/deposit/deposit.js），所以这里必须
+        #   给它"本次报价" —— 否则页面显示固定值(20)、实际按报价收(20~21) -> 展示与实付不符。
+        #   拿不到报价(无身份/异常/非随机柜机) -> 原样返回固定值，行为与改动前一字不差。
+        try:
+            from helpers import get_or_make_deposit_quote as _gmq777c
+            _q777c = _gmq777c(result.get('id') or cabinet_id)
+            if _q777c is not None:
+                result['deposit_amount'] = _q777c
+                logger.info('[S777] info 接口返回报价 cabinet=%s amount=%s', cabinet_id, _q777c)
+        except Exception as _e777c:
+            logger.warning('[S777] info 报价失败(用固定值): %s', _e777c)
         _resp = json_response(data=result)
         _resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
         _resp.headers['Pragma'] = 'no-cache'
@@ -773,9 +785,43 @@ def get_cabinet_by_mainboard(mainboard_id):
             _fmt_amt = lambda n: str(int(n)) if float(n).is_integer() else ('%.2f' % float(n)).rstrip('0').rstrip('.')
             _fd = float(result.get('daily_fee') or 0)
             _fdays = int(result.get('free_days') or 1)
+            # [S794-20261009] APK 屏幕专用预付款：按网点覆盖"屏幕上显示"的金额。
+            #   手机端(/cabinets/info)与实际收款(store_init)都读 cabinets.deposit_amount，不受影响。
+            #   配置 wx_config_items.apk_screen_deposit = {"11": 20}（网点id -> 屏幕显示金额）。
+            #   读不到/解析失败/该网点不在表里 -> 完全不改，行为与改动前一字不差。
+            try:
+                from wx_config import get_config as _gc794
+                import json as _json794
+                _ov794 = _json794.loads(_gc794('apk_screen_deposit', '') or '{}')
+                if _ov794:
+                    _lid794 = result.get('location_id')
+                    if _lid794 is None and result.get('id'):
+                        _cn794 = get_db()
+                        _cc794 = _cn794.cursor()
+                        _cc794.execute('SELECT location_id FROM cabinets WHERE id = %s', (result.get('id'),))
+                        _rr794 = _cc794.fetchone()
+                        _lid794 = (_rr794.get('location_id') if _rr794 else None)
+                        _cn794.close()
+                    if _lid794 is not None and str(_lid794) in _ov794:
+                        result['deposit_amount'] = float(_ov794[str(_lid794)])
+                        logger.info('[S794] 屏幕预付款覆盖: 网点%s -> %s（手机端仍按库里的收）',
+                                    _lid794, result['deposit_amount'])
+            except Exception as _e794:
+                logger.warning('[S794] 屏幕预付款覆盖失败(不覆盖，用原值): %s', _e794)
             _dep = float(result.get('deposit_amount') or 0)
             _mn = result.get('deposit_min')
             _mx = result.get('deposit_max')
+            # [S777-20261001] 随机柜机：用"进页面时报的那个价"，保证页面显示 = 实际支付。
+            #   拿不到报价(无身份/异常/非随机) -> 原样用固定值，行为与改动前一字不差。
+            try:
+                from helpers import get_or_make_deposit_quote as _gmq777
+                _q777 = _gmq777(result.get('id'))
+                if _q777 is not None:
+                    _dep = float(_q777)
+                    result['deposit_amount'] = _dep      # 下游 {deposit_amount} 占位符也跟着变
+                    logger.info('[S777] 规则用报价金额 cabinet=%s amount=%s', result.get('id'), _dep)
+            except Exception as _e777:
+                logger.warning('[S777] 取报价失败(用固定值): %s', _e777)
             _dep_txt = _fmt_amt(_dep)
             _dep_line = '预付费{}元，封顶{}元'.format(_dep_txt, _dep_txt)
             _fee_lines = [

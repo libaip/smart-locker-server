@@ -1890,12 +1890,36 @@ def client_ip_of_request():
     return ''
 
 
+def _wx_report_store_scene_on():
+    """[S836-20261009] 是否向微信申报【门店场景】(网点ID+名称)。
+
+    老板 2026-10-09 要求【取消】申报网点名称/ID，故**默认 False(不报)**。
+    开关落点 system_settings.wx_report_store_scene；置 '1' 可恢复申报，不用发版。
+    注意：只关"门店场景"这一项，spbill_create_ip(用户真实IP) 保持申报不动。
+    """
+    try:
+        _v = get_setting('wx_report_store_scene', None)
+        if _v is None or str(_v).strip() == '':
+            return False
+        return str(_v).strip() not in ('0', 'false', 'False', 'no', 'off')
+    except Exception as _e:
+        logger.warning('[S836] 读 wx_report_store_scene 失败，按默认【不报】: %s', _e)
+        return False
+
+
 def build_wx_store_scene(order_id):
     """[S826/S828] 门店场景申报：报【网点 ID + 网点名称】，不报地址。
 
     订单 -> 柜机 -> 网点，取 locations.id / locations.name 作为微信 store_info。
     取不到返回 None（该字段就不报），绝不影响下单。微信要求 scene_info 是 String，故返回 JSON 串。
+
+    [S836-20261009] 老板要求【取消】向微信申报"网点名称+网点ID"：
+      入口先看开关 system_settings.wx_report_store_scene（默认 '0' = 不报），
+      不报时直接返回 None = 与"从未申报过"完全一致（改动前的行为）。
+      保留本函数与下面的组装逻辑，将来置 '1' 即可原样恢复。
     """
+    if not _wx_report_store_scene_on():
+        return None
     try:
         _oid = int(order_id or 0)
     except Exception:

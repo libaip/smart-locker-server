@@ -96,3 +96,27 @@ def describe():
         'default_mode': DEFAULT_MODE,
         'is_fallback': (normalize_mode(raw, None) is None),
     }
+
+
+def alipay_only_rules_title(default=''):
+    """[S845-20261008] 柜机屏幕「寄存规则标题」的仅支付宝处理。
+
+    背景：老板要求 —— 切到「仅支付宝」模式后，柜机屏幕上显示的寄存规则标题
+          统一为「支付宝扫码存包」，明确提示现场用户用支付宝扫码。
+
+    口径（红线）：
+      · 只有 entry_mode == 'alipay' 才返回「支付宝扫码存包」；
+      · 其他任何模式（mp/oa/h5/wechat/非法值/读配置异常）一律原样返回 default
+        —— 即保持各网点/柜机自己配的标题（没配就是空），一个字都不动。
+
+    调用方（两处，必须用同一份逻辑，否则会出现"推过去的是旧标题、拉回来的是新标题"）：
+      · routes/admin.py      get_cabinet_by_mainboard()   （设备轮询拉取）
+      · routes/admin_v2.py   _push_usage_rules_to_device() （后台保存后主动推送）
+    """
+    try:
+        if get_entry_mode() == MODE_ALIPAY:
+            # [S836-20261009] 老板定稿文案：原「支付宝扫码存包」改为「请使用支付宝寄存」
+            return '请使用支付宝寄存'
+    except Exception:
+        pass
+    return default

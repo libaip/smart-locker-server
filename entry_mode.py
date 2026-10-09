@@ -115,8 +115,7 @@ def alipay_only_rules_title(default=''):
     """
     try:
         if get_entry_mode() == MODE_ALIPAY:
-            # [S836-20261009] 老板定稿文案：原「支付宝扫码存包」改为「请使用支付宝寄存」
-            return '请使用支付宝寄存'
+            return '支付宝扫码存包'
     except Exception:
         pass
     return default

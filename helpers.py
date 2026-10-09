@@ -174,6 +174,144 @@ def pay_mode_allows(channel_type):
 
 
 # ============================================
+# [S777-20261001] 随机预付款"报价"机制（页面显示 = 实际支付）
+#   问题：随机金额原先在"下单那一刻"现扔，而页面收费规则显示的是柜机上那个固定值
+#         → 出现"页面显示 20、实际扣 20.05"；用户一投诉，微信调订单+截图时我们理亏。
+#   做法：用户一进页面就扔一次并记下来（绑"柜台+身份"，10 分钟有效），
+#         页面显示它、付款也用它 → 展示 = 实付。
+#   安全（红线）：拿不到身份 / 建表失败 / 柜机不是随机(min==max) → 一律返回 None，
+#         调用方走老逻辑，行为与改动前一字不差；绝不因此把用户卡住。
+# ============================================
+_DEPOSIT_QUOTE_TTL_SEC = 600      # 10 分钟（老板口径：同一人刷新不变）
+_DEPOSIT_QUOTE_TABLE_READY = False
+
+
+def ensure_deposit_quote_table():
+    """幂等建报价表（新表，纯新增，不碰任何现有表）"""
+    global _DEPOSIT_QUOTE_TABLE_READY
+    if _DEPOSIT_QUOTE_TABLE_READY:
+        return True
+    try:
+        _c = get_db()
+        _cu = _c.cursor()
+        _cu.execute("""CREATE TABLE IF NOT EXISTS deposit_quotes (
+            id BIGSERIAL PRIMARY KEY,
+            cabinet_id INTEGER NOT NULL,
+            identity TEXT NOT NULL,
+            amount NUMERIC(10,2) NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            expire_at TIMESTAMP NOT NULL,
+            used_order_id INTEGER)""")
+        _cu.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_deposit_quotes_key "
+                    "ON deposit_quotes (cabinet_id, identity)")
+        _c.commit()
+        _c.close()
+        _DEPOSIT_QUOTE_TABLE_READY = True
+        logger.info('[S777] deposit_quotes 表就绪')
+        return True
+    except Exception as _e:
+        logger.warning('[S777] 建报价表失败(将走老逻辑): %s', _e)
+        return False
+
+
+def deposit_quote_identity():
+    """取"这次是谁"：mp_openid → openid → phone(加 ph: 前缀)。取不到返回 None。"""
+    try:
+        from flask import request as _rq
+        def _pick(_src):
+            for _k in ('mp_openid', 'openid'):
+                _v = str(_src.get(_k) or '').strip()
+                if _v:
+                    return _v[:64]
+            _v = str(_src.get('phone') or '').strip()
+            if _v:
+                return 'ph:' + _v[:20]
+            return None
+
+        _r = _pick(_rq.args or {})
+        if _r:
+            return _r
+        try:
+            _j = _rq.get_json(silent=True) or {}
+        except Exception:
+            _j = {}
+        if isinstance(_j, dict):
+            _r = _pick(_j)
+            if _r:
+                return _r
+    except Exception:
+        pass
+    return None
+
+
+def deposit_random_enabled():
+    """[S778-20261001] 随机预付款总开关。
+
+    默认 True（= 现状）。关掉后：
+      · 下单一律用柜机固定 deposit_amount（不再随机）；
+      · 报价机制自动失效（get_or_make_deposit_quote 直接返回 None）；
+      · **不动** cabinets.deposit_min/max 的配置 —— 随时可以再打开。
+    落点 system_settings.deposit_random_enabled；get_setting 每次直读 PG，改完立即生效、无缓存。
+    安全：读不到 / 异常 / 值非法 → 一律按"开"（= 现状），绝不因为读配置失败改变行为。
+    """
+    try:
+        _v = str(get_setting('deposit_random_enabled', '1') or '1').strip().lower()
+        return _v not in ('0', 'false', 'no', 'off')
+    except Exception:
+        return True
+
+
+def get_or_make_deposit_quote(cabinet_id):
+    """返回本次报价金额(float)；不适用/异常一律返回 None（调用方走老逻辑）"""
+    try:
+        if not cabinet_id:
+            return None
+        if not deposit_random_enabled():
+            return None          # [S778] 随机总开关关着 -> 不报价（展示与实付都用固定金额）
+        _ident = deposit_quote_identity()
+        if not _ident:
+            return None
+        _c = get_db()
+        _cu = _c.cursor()
+        _cu.execute("SELECT deposit_min, deposit_max FROM cabinets WHERE id = %s", (cabinet_id,))
+        _row = _cu.fetchone()
+        if not _row:
+            _c.close()
+            return None
+        _mn = _row.get('deposit_min') if hasattr(_row, 'get') else _row['deposit_min']
+        _mx = _row.get('deposit_max') if hasattr(_row, 'get') else _row['deposit_max']
+        if _mn is None or _mx is None or not (float(_mx) > float(_mn) >= 0):
+            _c.close()
+            return None                      # 不是随机柜机 -> 不启用（= 现状）
+        if not ensure_deposit_quote_table():
+            _c.close()
+            return None
+        _cu.execute("SELECT amount FROM deposit_quotes "
+                    "WHERE cabinet_id = %s AND identity = %s AND expire_at > NOW()",
+                    (cabinet_id, _ident))
+        _q = _cu.fetchone()
+        if _q:
+            _amt = float(_q.get('amount') if hasattr(_q, 'get') else _q['amount'])
+            _c.close()
+            return _amt
+        _amt = round(random.uniform(float(_mn), float(_mx)), 2)
+        _cu.execute("""INSERT INTO deposit_quotes (cabinet_id, identity, amount, expire_at)
+                       VALUES (%s, %s, %s, NOW() + INTERVAL '%s seconds')
+                       ON CONFLICT (cabinet_id, identity) DO UPDATE
+                       SET amount = EXCLUDED.amount, created_at = NOW(),
+                           expire_at = EXCLUDED.expire_at, used_order_id = NULL""",
+                    (cabinet_id, _ident, _amt, _DEPOSIT_QUOTE_TTL_SEC))
+        _c.commit()
+        _c.close()
+        logger.info('[S777] 新报价 cabinet=%s ident=%s... amount=%s (范围 %s~%s)',
+                    cabinet_id, str(_ident)[:8], _amt, _mn, _mx)
+        return _amt
+    except Exception as _e:
+        logger.warning('[S777] 报价失败(走老逻辑): %s', _e)
+        return None
+
+
+# ============================================
 # ?????
 # ============================================
 def is_wechat_browser():
@@ -6389,6 +6527,32 @@ _SUBSCRIBE_FIELD_MAP = {
         'amount2': 'amount8', 'time5': 'time6',
         'thing4': 'thing10',     # 老:退款方式 -> 新:退款方式
         'thing3': 'thing2',      # 老:备注 -> 新:备注
+    },
+    # [S797-20261009] 新小程序（wx28bfa4f045978872：账号 19停用/20启用）的字段映射。
+    #   微信真实模板字段是拉 gettemplate 得到的（不是我们原先记的那份，原先记错了）：
+    #     账户余额变动 U5qI... = amount1(剩余金额) time2(时间) thing5(变动原因) thing4(备注)
+    #     退款成功     Ergq... = amount1(应退金额) time6(退款时间) thing10(退款方式) thing2(备注)
+    #   不映射 -> 发出去缺 time6/thing5 等必填字段 -> 47003（2026-10-09 当天 80 次失败）。
+    #   旧记录（错的，留档备查）：general=thing3/thing4、refund=character_string1/amount2/time5/thing4/thing3
+    (19, 'subscribe_general'): {
+        'amount1': 'amount1', 'time2': 'time2',
+        'thing4': 'thing5',      # 代码:变动原因 -> 模板:变动原因
+        'thing3': 'thing4',      # 代码:温馨提示 -> 模板:备注
+    },
+    (19, 'subscribe_refund'): {
+        'amount2': 'amount1', 'time5': 'time6',
+        'thing4': 'thing10',     # 代码:退款方式 -> 模板:退款方式
+        'thing3': 'thing2',      # 代码:备注 -> 模板:备注
+    },
+    (20, 'subscribe_general'): {
+        'amount1': 'amount1', 'time2': 'time2',
+        'thing4': 'thing5',
+        'thing3': 'thing4',
+    },
+    (20, 'subscribe_refund'): {
+        'amount2': 'amount1', 'time5': 'time6',
+        'thing4': 'thing10',
+        'thing3': 'thing2',
     },
 }
 _THING_MAX = 20                  # 微信 thing 类关键字上限 20 字，超长截断防 47003

@@ -295,12 +295,15 @@ def get_or_make_deposit_quote(cabinet_id):
             _c.close()
             return _amt
         _amt = round(random.uniform(float(_mn), float(_mx)), 2)
+        # [S838c-20261009] 修正：原来是 NOW() + INTERVAL '%s seconds'，psycopg2 会把参数再套一层引号
+        #   变成 INTERVAL ''600' seconds' -> syntax error at or near "600"（S777 上线后报价一直失败，
+        #   页面显示固定值、下单却随机 = 又变成"显示与实付不符"）。改用 make_interval(secs => %s)。
         _cu.execute("""INSERT INTO deposit_quotes (cabinet_id, identity, amount, expire_at)
-                       VALUES (%s, %s, %s, NOW() + INTERVAL '%s seconds')
+                       VALUES (%s, %s, %s, NOW() + make_interval(secs => %s))
                        ON CONFLICT (cabinet_id, identity) DO UPDATE
                        SET amount = EXCLUDED.amount, created_at = NOW(),
                            expire_at = EXCLUDED.expire_at, used_order_id = NULL""",
-                    (cabinet_id, _ident, _amt, _DEPOSIT_QUOTE_TTL_SEC))
+                    (cabinet_id, _ident, _amt, int(_DEPOSIT_QUOTE_TTL_SEC)))
         _c.commit()
         _c.close()
         logger.info('[S777] 新报价 cabinet=%s ident=%s... amount=%s (范围 %s~%s)',

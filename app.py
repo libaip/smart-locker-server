@@ -782,7 +782,18 @@ def store_page():
         if row:
             _ssr["site_name"] = row["loc_name"] or row["name"] or ""
             _ssr["site_addr"] = row["loc_addr"] or ""
+            # [S838c-20261009] H5(/store) 也走"进页面报一次价"：
+            #   让用户在 H5 页面上看到的随机金额 = 实际支付金额（原来注入的是柜机固定值，
+            #   开了随机之后会出现"页面显示20、实付20.93"）。
+            #   取不到报价(无身份/异常/非随机柜机) -> 原样用柜机固定值，行为与改动前一致。
             _ssr["deposit_amount"] = row["deposit_amount"] or 0
+            try:
+                from helpers import get_or_make_deposit_quote as _gmq838
+                _q838 = _gmq838(row["id"])
+                if _q838 is not None:
+                    _ssr["deposit_amount"] = _q838
+            except Exception as _e838:
+                pass
             _ssr["charge_mode"] = row["charge_mode"] or "deposit"
             _ssr["per_use_price"] = row["per_use_price"] or 0
             _ssr["allow_h5_to_mp"] = row["allow_h5_to_mp"] or 0

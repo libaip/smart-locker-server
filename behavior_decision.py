@@ -51,6 +51,9 @@ def get_orders_to_judge(db, window_min=360):
       · status=3（已取包未退款）
       · 取包时间在 window_min 内
       · 未退款
+      · ★ [S1139] 排除"设备补报"订单：store→retrieve > 12小时
+        （设备离线后补报，retrieve_time 实际是补报时刻，不是真实取包时刻，
+          用它判定会用错时间窗 -> 可能误退款。正常订单 95% 都在 6 小时内）
     """
     cur = db.cursor()
     try:
@@ -65,6 +68,8 @@ def get_orders_to_judge(db, window_min=360):
               AND o.retrieve_time >= NOW() - INTERVAL '%s minutes'
               AND o.refund_time IS NULL
               AND COALESCE(o.mp_openid,'') <> ''
+              AND o.store_time IS NOT NULL
+              AND EXTRACT(EPOCH FROM (o.retrieve_time - o.store_time)) <= 43200
             ORDER BY o.retrieve_time DESC
         """ % int(window_min))
         out = []

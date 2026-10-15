@@ -341,6 +341,12 @@ def _push_usage_rules_to_device(device_id):
             return
         rules = row['usage_rules'] or row['loc_usage_rules'] or ''
         title = row['rules_title'] or row['loc_rules_title'] or ''
+        # [S845-20261008] 与 /cabinets/by-mainboard 共用同一份仅支付宝逻辑（两条路必须一致）
+        try:
+            from entry_mode import alipay_only_rules_title as _aort845b
+            title = _aort845b(title)
+        except Exception as _e845b:
+            logger.warning('[S845] 读入口模式失败(推送标题保持原样): %s', _e845b)
         rt = row['reopen_times']
         if rt is None or rt == '' or int(rt) <= 0:
             rt = row['loc_reopen_times']
@@ -2928,7 +2934,7 @@ def _agent_settle_calc_month(c, agent_id, month, commission_rate, fee_rate):
         JOIN cabinets cab ON o.cabinet_id = cab.id
         JOIN locations l ON cab.location_id = l.id
         JOIN merchants m ON l.merchant_id = m.id
-        WHERE m.agent_id = %s AND o.status IN (2, 3, 4)
+        WHERE m.agent_id = %s AND o.status IN (2, 3, 4) AND COALESCE(o.free_use,0)=0
           AND o.created_at >= %s AND o.created_at < %s
     ''', (agent_id, start_dt, end_dt))
     row = c.fetchone()
@@ -2991,7 +2997,7 @@ def _agent_settle_calc_locations(c, agent_id, month, agent_calc, commission_rate
         JOIN cabinets cab ON o.cabinet_id = cab.id
         JOIN locations l ON cab.location_id = l.id
         JOIN merchants m ON l.merchant_id = m.id
-        WHERE m.agent_id = %s AND o.status IN (2, 3, 4)
+        WHERE m.agent_id = %s AND o.status IN (2, 3, 4) AND COALESCE(o.free_use,0)=0
           AND o.created_at >= %s AND o.created_at < %s
         GROUP BY l.id, l.name
         ORDER BY l.id
@@ -3338,7 +3344,8 @@ def admin_merchants():
                 LEFT JOIN cabinets cab ON o.cabinet_id=cab.id
                 LEFT JOIN locations l ON cab.location_id=l.id
                 WHERE l.merchant_id IN ({placeholders}) AND o.status NOT IN (5)
-                  AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)''', merchant_ids)
+                  AND (o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)
+                  AND COALESCE(o.deposit_amount, 0) > 0''', merchant_ids)
             counts = {}
             revenues = {}
             for r in c.fetchall():
@@ -4350,7 +4357,7 @@ def admin_channel_save():
                     if r.returncode == 0:
                         cert_serial = r.stdout.strip().replace('serial=', '')
             c.execute('''INSERT INTO payment_channels (name,channel_type,app_id,mch_id,api_key,app_secret,cert_name,cert_serial_no,is_active,rotation_index) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
-                      (data.get('name'), data.get('channel_type'), data.get('app_id') or _wx_oa_id(),
+                      (data.get('name'), data.get('channel_type'), data.get('app_id') or _wx_mp_id(),
                        data.get('mch_id'), data.get('api_key'), data.get('app_secret') or _wx_oa_secret(), data.get('cert_name'), cert_serial, data.get('status',1), data.get('rotation_index', 0)))
         conn.commit()
         conn.close()
@@ -5220,6 +5227,52 @@ _PAY_MODE_OPTIONS = (
 _PAY_MODE_VALID = tuple(_v for _v, _ in _PAY_MODE_OPTIONS)
 
 
+@bp.route('/admin/service-phone-setting', methods=['GET', 'POST'])
+@require_auth
+def admin_service_phone_setting():
+    """[S1002-20261015] 客服电话（H5/小程序显示）。
+
+    GET  查当前值
+    POST {phone: '400-698-1080'} 保存
+
+    ★ 存 PG 的 system_settings.service_phone（helpers.get_setting 无缓存 -> 立即生效）
+    ★ 为什么不走通用 /settings/save：那条路写的是 SQLite，不生效（同 S764/S601 的坑）
+    ★ 生效范围：H5（每次请求都注入占位符）立即生效；小程序下次冷启动生效
+    """
+    from config import DATABASE_URL as _SP_DB_URL
+    import psycopg2
+    try:
+        if request.method == 'POST':
+            data = request.get_json(silent=True) or {}
+            phone = str(data.get('phone') or '').strip()
+            if not phone:
+                return json_response(message='客服电话不能为空', code=400)
+            if len(phone) > 40:
+                return json_response(message='客服电话太长（最多 40 个字符）', code=400)
+            _conn = psycopg2.connect(_SP_DB_URL, connect_timeout=5)
+            _cur = _conn.cursor()
+            _cur.execute(
+                "INSERT INTO system_settings (setting_key, setting_value, description) "
+                "VALUES ('service_phone', %s, '客服电话（H5/小程序显示，可随时改）') "
+                "ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value",
+                (phone,))
+            _conn.commit()
+            _conn.close()
+            logger.info('[service_phone_setting] 客服电话改为 %s', phone)
+            return json_response({'code': 0, 'phone': phone,
+                                  'message': '客服电话已保存（H5 立即生效，小程序下次启动生效）'})
+        _conn = psycopg2.connect(_SP_DB_URL, connect_timeout=5)
+        _cur = _conn.cursor()
+        _cur.execute("SELECT setting_value FROM system_settings WHERE setting_key='service_phone'")
+        _row = _cur.fetchone()
+        _conn.close()
+        _val = (_row[0] if _row else '') or ''
+        return json_response({'code': 0, 'phone': _val})
+    except Exception as e:
+        logger.error('[service_phone_setting] %s', e)
+        return json_response(message='操作失败：%s' % e, code=500)
+
+
 @bp.route('/admin/pay-mode-setting', methods=['GET', 'POST'])
 @require_auth
 def admin_pay_mode_setting():
@@ -6039,6 +6092,56 @@ def admin_employee_reset_password():
 # ==================== 自动提现异步退款 ====================
 _AUTO_WITHDRAW_SCHEDULER_LOCK_FILE = "/tmp/auto_withdraw_scheduler.lock"
 _AUTO_WITHDRAW_BATCH_SIZE = 50
+
+# [S850-20261009] 提现"商户号白名单"（逗号分隔 mch_id，来自 system_settings.withdraw_refund_original_mchids）
+#   命中的商户号收的款：① 提现不被审批随机抽签拦截 ② 无条件走原路退回
+#   默认空 = 行为与改动前完全一致。
+#   用【惰性读取 + 30 秒缓存】避免每次批处理都查库；读不到就返回空集合（放行现状）。
+_S850_MCH_WL_CACHE = {'ts': 0.0, 'val': frozenset()}
+
+# [S850c-20261010] 白名单商户号提现【每轮放行上限】—— 按顺序放，不一次性放完。
+#   每 3 分钟一轮(cron)，默认 20 笔/轮 => 约每小时 400 笔。
+#   改 system_settings.withdraw_mchid_whitelist_quota 调整（0 或空 = 不限）。
+_S850_QUOTA_CACHE = {'ts': 0.0, 'val': 20}
+
+
+def _S850_mchid_quota():
+    import time as _t850q
+    now = _t850q.time()
+    c = _S850_QUOTA_CACHE
+    if now - float(c.get('ts') or 0) < 30:
+        return int(c['val'])
+    val = 20
+    try:
+        from helpers import get_setting as _gs850q
+        raw = str(_gs850q('withdraw_mchid_whitelist_quota', '20') or '20').strip()
+        val = int(float(raw)) if raw else 20
+        if val < 0:
+            val = 0
+    except Exception:
+        val = 20
+    c['ts'] = now
+    c['val'] = val
+    return val
+
+
+def _S850_mch_whitelist():
+    import time as _t850
+    now = _t850.time()
+    c = _S850_MCH_WL_CACHE
+    if now - float(c.get('ts') or 0) < 30:
+        return c['val']
+    val = frozenset()
+    try:
+        from helpers import withdraw_refund_original_mchids as _f850
+        val = frozenset(_f850())
+    except Exception:
+        val = frozenset()
+    c['ts'] = now
+    c['val'] = val
+    return val
+
+
 _AUTO_WITHDRAW_SCAN_SECONDS = 5
 # [CFG-STEP2] 原来是模块级常量（import 时就固定了），改成运行时从配置中心取
 def _auto_withdraw_tpl():
@@ -7126,6 +7229,13 @@ _BATCH_AUTO_LOCK_FILE = "/tmp/withdrawal_batch_auto.lock"
 def _run_withdrawal_batch_auto():
     """批量自动退款核心逻辑（队列审批+人工审批+自动审批），供独立脚本调用"""
     import random as _rnd
+    # [S850d-20261010] 修已存在的 NameError：本函数内多处(异常路径)引用 _s541_is_bal，
+    #   但它只在别处函数里定义过 -> 退款一失败就走异常分支再抛 NameError，把真实原因盖掉。
+    #   这里在函数入口统一兜底定义（与 2109/6353 行同一写法）。
+    try:
+        from helpers import is_channel_balance_error as _s541_is_bal
+    except Exception:
+        _s541_is_bal = lambda *a, **k: False
     conn = None
     try:
         from database import get_db
@@ -7226,11 +7336,13 @@ def _run_withdrawal_batch_auto():
             SELECT w.id, w.user_phone, w.amount, w.order_id, w.order_ids, w.auto_approve_time, w.openid,
                    o.user_phone AS order_phone,
                    l.refund_approve_rate,
+                   COALESCE(pc.mch_id, '') AS wd_mch_id,
                    ww.openid as wl_openid
             FROM withdrawal_records w
             JOIN orders o ON w.order_id = o.id
             JOIN cabinets cb ON o.cabinet_id = cb.id
             JOIN locations l ON cb.location_id = l.id
+            LEFT JOIN payment_channels pc ON pc.id = o.payment_channel_id
             LEFT JOIN withdrawal_whitelist ww
                    ON ((ww.unionid IS NOT NULL AND ww.unionid <> '' AND ww.unionid = o.unionid)
                        OR (COALESCE(ww.unionid, '') = '' AND ww.openid = w.openid)
@@ -7240,16 +7352,29 @@ def _run_withdrawal_batch_auto():
                    AND (ww.expires_at IS NULL OR ww.expires_at > NOW())
                    AND (ww.remain_count = -1 OR ww.remain_count > 0)
             WHERE w.status = 0 AND l.withdraw_mode = 'queue_approve'
-            AND (w.openid IS NULL OR w.openid NOT LIKE 'alipay:%')   -- [S821] 支付宝单走支付宝处理器
-            AND w.auto_approve_time IS NOT NULL
-            AND w.auto_approve_time::timestamp <= NOW()
+            AND (w.openid IS NULL OR w.openid NOT LIKE 'alipay:%%')   -- [S821] 支付宝单走支付宝处理器
+            -- [S850-20261009] 商户号白名单：命中的单【不看时间门槛】，立即进入处理
+            AND (pc.mch_id = ANY(%s)
+                 OR (w.auto_approve_time IS NOT NULL
+                     AND w.auto_approve_time::timestamp <= NOW()))
             AND (w.error_msg IS NULL OR w.error_msg <> 'PROCESSING')
             AND (w.next_attempt_at IS NULL OR w.next_attempt_at <= NOW())
-        """).fetchall()
+            ORDER BY w.id
+        """, (list(_S850_mch_whitelist()),)).fetchall()
+        _s850_quota = _S850_mchid_quota()
+        _s850_used = 0
         for r in rows:
             rate = (r['refund_approve_rate'] or 80) / 100.0
             _wl_hit = bool(r.get('wl_openid'))
-            if _wl_hit or _rnd.random() < rate:
+            # [S850] 商户号白名单命中 -> 跳过随机抽签，直接通过
+            _mch_hit = bool(str(r.get('wd_mch_id') or '').strip()) and \
+                       (str(r.get('wd_mch_id') or '').strip() in _S850_mch_whitelist())
+            # [S850c] 白名单单每轮限量：超了本轮跳过（保持 status=0，等下一轮 cron）
+            if _mch_hit and not _wl_hit and _s850_quota > 0 and _s850_used >= _s850_quota:
+                continue
+            if _wl_hit or _mch_hit or _rnd.random() < rate:
+                if _mch_hit:
+                    _s850_used += 1
                 # 按打包订单逐单退款，避免用总额退单笔
                 from helpers import do_real_refund
                 import json as _json_q
@@ -7351,11 +7476,13 @@ def _run_withdrawal_batch_auto():
         rows2 = c.execute("""
             SELECT w.id, w.amount, w.user_phone, w.order_id, w.order_ids, w.openid, l.auto_approve_rate,
                    o.user_phone AS order_phone,
+                   COALESCE(pc.mch_id, '') AS wd_mch_id,
                    ww.openid as wl_openid
             FROM withdrawal_records w
             JOIN orders o ON w.order_id = o.id
             JOIN cabinets cb ON o.cabinet_id = cb.id
             JOIN locations l ON cb.location_id = l.id
+            LEFT JOIN payment_channels pc ON pc.id = o.payment_channel_id
             LEFT JOIN withdrawal_whitelist ww
                    ON ((ww.unionid IS NOT NULL AND ww.unionid <> '' AND ww.unionid = o.unionid)
                        OR (COALESCE(ww.unionid, '') = '' AND ww.openid = w.openid)
@@ -7365,19 +7492,23 @@ def _run_withdrawal_batch_auto():
                    AND (ww.expires_at IS NULL OR ww.expires_at > NOW())
                    AND (ww.remain_count = -1 OR ww.remain_count > 0)
             WHERE w.status = 0 AND l.withdraw_mode = 'manual_approve'
-              AND (w.openid IS NULL OR w.openid NOT LIKE 'alipay:%')   -- [S821] 支付宝单走支付宝处理器
+              AND (w.openid IS NULL OR w.openid NOT LIKE 'alipay:%%')   -- [S821] 支付宝单走支付宝处理器
               AND (w.error_msg IS NULL OR w.error_msg <> 'PROCESSING')
               AND (w.next_attempt_at IS NULL OR w.next_attempt_at <= NOW())
               AND (ww.openid IS NOT NULL
+                   -- [S850-20261009] 商户号白名单：命中的单【不看天数/时间门槛】，立即进入处理
+                   OR (pc.mch_id = ANY(%s))
                    OR ((l.auto_approve_day IS NULL OR l.auto_approve_day <= 0
                         OR w.created_at::date <= CURRENT_DATE - l.auto_approve_day::integer)
                        AND (l.auto_approve_time IS NULL OR l.auto_approve_time = ''
                             OR CURRENT_TIME >= l.auto_approve_time::time)))
+            ORDER BY w.id
             LIMIT 1000
-        """).fetchall()
+        """, (list(_S850_mch_whitelist()),)).fetchall()
         conn.commit()
         conn.close()
         conn = None
+        _s850_used2 = 0
         for r in rows2:
             local_conn = None
             try:
@@ -7385,7 +7516,15 @@ def _run_withdrawal_batch_auto():
                 lc = local_conn.cursor()
                 rate = (r['auto_approve_rate'] or 0) / 100.0
                 _wl_hit = bool(r.get('wl_openid'))
-                if _wl_hit or _rnd.random() < rate:
+                # [S850-20261010] 商户号白名单命中 -> 跳过随机抽签（这些网点自动率常为 0）
+                _mch_hit = bool(str(r.get('wd_mch_id') or '').strip()) and \
+                           (str(r.get('wd_mch_id') or '').strip() in _S850_mch_whitelist())
+                # [S850c] 白名单单每轮限量（与 queue 分支共用同一个配额）
+                if _mch_hit and not _wl_hit and _s850_quota > 0 and (_s850_used + _s850_used2) >= _s850_quota:
+                    continue
+                if _wl_hit or _mch_hit or _rnd.random() < rate:
+                    if _mch_hit:
+                        _s850_used2 += 1
                     # 按打包订单逐单退款，全部成功才置为通过
                     from helpers import do_real_refund
                     import json as _json_b2
@@ -7570,7 +7709,13 @@ def admin_merchant_share_stats():
         conn = get_db()
         c = conn.cursor()
         
-        where_parts = ["(o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)", "o.status NOT IN (5)"]
+        # [S855-20261011] 老板口径：商家分成的【订单数】只统计【真的收了预付款】的订单，
+        #   免押单(free_use=1 / deposit_amount=0)不计入 —— 它们没有押金流水，
+        #   也不该产生"分成"（分成 = 订单数 × 每单佣金）。
+        #   实证(近30天)：22,998 单 -> 18,519 单，分成 55,391.80 -> 46,299.20。
+        where_parts = ["(o.logic_mark IS NULL OR o.logic_mark != 'Y') AND (o.logic_mark = 'N' OR COALESCE(o.auto_hidden, 0) = 0)",
+                       "o.status NOT IN (5)",
+                       "COALESCE(o.deposit_amount, 0) > 0"]
         params = []
         
         if agent_id:

@@ -177,7 +177,7 @@ function loadOrders() {
   })
   .catch(function(){ container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:#999;font-size:14px">加载失败</div>'; });
 }
-function callService() { window.location.href = 'tel:4006981080'; }
+function callService() { window.location.href = 'tel:{service_phone_tel}'; }
 function clearCache() {
   try { localStorage.clear(); sessionStorage.clear(); } catch(e) {}
   alert('缓存已清除');

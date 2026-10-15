@@ -64,7 +64,8 @@ class WxPay:
     SANDBOX_REFUND_URL = 'https://api.mch.weixin.qq.com/sandboxnew/pay/refund'
     SANDBOX_SIGN_KEY_URL = 'https://api.mch.weixin.qq.com/sandboxnew/pay/getsignkey'
     
-    def __init__(self, mch_id: str, api_key: str, app_id: str, cert_path: str = None, key_path: str = None):
+    def __init__(self, mch_id: str, api_key: str, app_id: str, cert_path: str = None, key_path: str = None,
+                 proxy: str = None):
         """
         初始化微信支付
         
@@ -80,6 +81,10 @@ class WxPay:
         self.app_id = app_id
         self.cert_path = cert_path
         self.key_path = key_path
+        # [S963-20261013] 出口代理：填了就从这台机器的 IP 出去（微信看到的源 IP = 代理机器）。
+        #   用途：新主体与老主体共用一台服务器时，用独立出口 IP 切断"同一来源"的关联。
+        #   不填 = None = 与改动前逐字节一致。
+        self.proxy = (proxy or '').strip() or None
         self.sandbox_sign_key = None
         
         if self.SANDBOX_MODE:
@@ -209,12 +214,17 @@ class WxPay:
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
             
+            # [S963-20261013] 出口代理（按主体配置）：两条分支都要挂上
+            _s963_proxies = None
+            if getattr(self, 'proxy', None):
+                _s963_proxies = {'http': self.proxy, 'https': self.proxy}
             if use_cert and self.cert_path and self.key_path:
                 # 使用requests库发送带证书的请求（退款）
                 import requests as req_lib
                 resp = req_lib.request(method, url, data=data.encode('utf-8') if data else None,
                                        headers=headers, timeout=timeout,
-                                       cert=(self.cert_path, self.key_path), verify=False)
+                                       cert=(self.cert_path, self.key_path), verify=False,
+                                       proxies=_s963_proxies)
                 result = resp.content.decode('utf-8')
             else:
                 req = urllib.request.Request(url, data=data.encode('utf-8') if data else None, 
@@ -222,8 +232,15 @@ class WxPay:
                 context = ssl.create_default_context()
                 context.check_hostname = False
                 context.verify_mode = ssl.CERT_NONE
-                with urllib.request.urlopen(req, context=context, timeout=timeout) as response:
-                    result = response.read().decode('utf-8')
+                if _s963_proxies:
+                    _s963_opener = urllib.request.build_opener(
+                        urllib.request.ProxyHandler(_s963_proxies),
+                        urllib.request.HTTPSHandler(context=context))
+                    with _s963_opener.open(req, timeout=timeout) as response:
+                        result = response.read().decode('utf-8')
+                else:
+                    with urllib.request.urlopen(req, context=context, timeout=timeout) as response:
+                        result = response.read().decode('utf-8')
             
             return self.xml_to_dict(result)
             

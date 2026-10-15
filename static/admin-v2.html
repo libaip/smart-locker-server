@@ -1852,6 +1852,15 @@ Vue.component('page-system-settings',{template:`
 <h4 style="margin:0 0 12px;font-size:15px;color:#303133">基本设置</h4>
 <div style="max-width:500px">
 <div class="form-group"><label>系统名称</label><input v-model="$parent.settingsData.system_name.value"></div>
+<div class="form-group"><label>客服电话</label>
+<div style="display:flex;gap:8px;align-items:center">
+<input v-model="$parent.servicePhone" placeholder="如 400-698-1080" style="flex:1">
+<button class="btn btn-blue btn-sm" @click="$parent.saveServicePhone()">保存</button>
+</div>
+<div style="font-size:12px;color:#909399;line-height:1.6;margin-top:4px">
+H5 / 小程序上显示的客服电话（存 PG，<b>H5 立即生效</b>，小程序下次启动生效）。拨号自动转纯数字，带不带横线都行。
+</div>
+</div>
 <div class="form-group"><label>支付模式</label><select v-model="$parent.settingsData.pay_mode.value" @change="$parent.savePayMode()"><option value="wechat">微信支付</option><option value="alipay">支付宝</option><option value="both">双通道（微信+支付宝）</option><option value="free" disabled>免费模式（请用下方「免押模式」开关）</option></select></div>
 <div class="form-group"><label>预付款金额(元)</label><input type="number" v-model="$parent.settingsData.deposit_amount.value" min="0"></div>
 <div class="form-group"><label>超时时间(小时)</label><input type="number" v-model="$parent.settingsData.deposit_timeout.value" min="1" max="720"></div>
@@ -1866,6 +1875,22 @@ Vue.component('page-system-settings',{template:`
 <div class="form-group"><label>防刷次数限制</label><input type="number" v-model="$parent.settingsData.duplicate_limit.value" min="1"></div>
 <div class="form-group"><label>当天投诉用户今日可用次数</label><input type="number" v-model="$parent.settingsData.whitelist_daily_use_limit.value" min="1"></div>
 <div class="form-group"><label>累计投诉禁止使用次数</label><input type="number" v-model="$parent.settingsData.complaint_blacklist_limit.value" min="1"></div>
+</div>
+</div>
+<div style="border-bottom:1px solid #ebeef5;padding-bottom:20px;margin-bottom:20px">
+<h4 style="margin:0 0 12px;font-size:15px;color:#303133">提现审批设置</h4>
+<div style="max-width:680px">
+<div class="form-group"><label>提现免审批商户号（白名单）</label><input v-model="$parent.settingsData.withdraw_refund_original_mchids.value" placeholder="多个商户号用英文逗号分隔，如 1001220990"></div>
+<div class="form-group"><label>每轮放行上限（笔）</label><input type="number" min="0" v-model="$parent.settingsData.withdraw_mchid_whitelist_quota.value" placeholder="40"><span style="font-size:12px;color:#909399;margin-left:8px">每 3 分钟一轮；填 0 = 不限（不推荐）</span></div>
+<div style="font-size:12px;color:#909399;line-height:1.8;margin:-6px 0 6px">
+填在这里的<b>微信商户号</b>，它收的款走提现时：<br>
+　① <b>免审批</b>：不参与随机通过率抽签、不等排队/天数/时间点，用户一申请就处理<br>
+　② <b>防重复退款</b>：走带确定性退款单号的新口径（<code>WD&lt;提现单&gt;_&lt;订单&gt;</code>），同单重试不会重复退<br>
+　③ <b>补写对账流水</b>：退款成功后补一条 <code>payments</code>(type=2) 记录，便于核对<br>
+　④ 其他商户号、其他提现单<b>完全不受影响</b><br>
+<span style="color:#67c23a">说明：提现本来就是"原路退回"（调微信退款接口）；纯余额提现（无关联订单）才走企业付款打款。</span><br>
+<span style="color:#e6a23c">留空 = 关闭该白名单，行为与之前完全一致。多个商户号用英文逗号分隔。保存后约 30 秒内生效（有缓存）。</span>
+</div>
 </div>
 </div>
 <div style="border-bottom:1px solid #ebeef5;padding-bottom:20px;margin-bottom:20px">
@@ -1926,7 +1951,7 @@ Vue.component('page-system-settings',{template:`
 <button class="btn btn-blue" @click="$parent.saveSettings()">保存设置</button>
 </div>
 </div>
-</div>`,created(){this.$parent.loadSettings();this.$parent.loadPayMode();this.$parent.loadFreeUse();this.$parent.loadAlipayEntry();this.$parent.loadOaSubscribe();this.$parent.loadEntryMode();this.$parent.loadSubscribeNotify();}});
+</div>`,created(){this.$parent.loadSettings();this.$parent.loadPayMode();this.$parent.loadServicePhone();this.$parent.loadFreeUse();this.$parent.loadAlipayEntry();this.$parent.loadOaSubscribe();this.$parent.loadEntryMode();this.$parent.loadSubscribeNotify();}});
 
 Vue.component('page-cabinet-groups',{template:`
 <div class="page-box">
@@ -2105,7 +2130,7 @@ settingsActiveTab:'basic',settings:{system_name:'智能寄存柜'},smsEnabled:fa
 // Toast/Confirm
 toastMsg:'',toastType:'success',toastTimer:null,confirmVisible:false,confirmMsg:'',confirmCb:null,
 // P1 Data
-settingsData:{},settingsLoading:false,subNotify:{mp_subscribe_scene_enabled:{value:'1'},mp_subscribe_scene_pay:{value:'general'},mp_subscribe_scene_withdraw:{value:'refund'},mp_subscribe_prompt:{value:'step1'},mp_subscribe_ab:{value:'ab'}},orderVisibility:{order_hide_rate:0,order_hide_whitelist:''},dupFilter:{duplicate_filter_enabled:0,duplicate_days:7,duplicate_limit:5},cabinetGroups:[],cabinetGroupsTotal:0,cabinetGroupsPage:1,cabinetGroupForm:{},cabinetGroupModal:false,offlineOrders:[],offlineOrdersTotal:0,offlineOrdersPage:1,
+settingsData:{},settingsLoading:false,servicePhone:'',subNotify:{mp_subscribe_scene_enabled:{value:'1'},mp_subscribe_scene_pay:{value:'general'},mp_subscribe_scene_withdraw:{value:'refund'},mp_subscribe_prompt:{value:'step1'},mp_subscribe_ab:{value:'ab'}},orderVisibility:{order_hide_rate:0,order_hide_whitelist:''},dupFilter:{duplicate_filter_enabled:0,duplicate_days:7,duplicate_limit:5},cabinetGroups:[],cabinetGroupsTotal:0,cabinetGroupsPage:1,cabinetGroupForm:{},cabinetGroupModal:false,offlineOrders:[],offlineOrdersTotal:0,offlineOrdersPage:1,
 // P2 Data
 remoteOpenLogs:[],remoteOpenLogsTotal:0,remoteOpenLogsPage:1,remoteOpenLogsFilter:{location_id:'',device_id:'',date_start:'',date_end:''},deviceLogList:[],deviceLogTotal:0,deviceLogPage:1,doorRecords:[],doorRecordsTotal:0,doorRecordsPage:1,orderDoorRecords:[],pendingCmds:[],alerts:[],alertTotal:0,alertPage:1,alertFilterDevice:'',alertFilterType:'',alertDays:3,alertDeviceSummaries:[],pendingCmdsTotal:0,pendingCmdsPage:1
 },
@@ -2300,6 +2325,9 @@ toggleOaSubscribe:function(checked){var self=this;this.api('/admin/oa-subscribe-
 // [S764-20260930] 支付模式：走 PG 直连的 /admin/pay-mode-setting（通用 /settings/save 那条路写的是 SQLite，不生效）
 loadPayMode:function(){var self=this;this.api('/admin/pay-mode-setting').then(function(d){var x=(d&&d.data&&(d.data.mode!==undefined))?d.data:(d||{});if(x.mode&&self.settingsData&&self.settingsData.pay_mode){self.settingsData.pay_mode.value=x.mode;}}).catch(function(){});},
 savePayMode:function(){var self=this;var v=(this.settingsData&&this.settingsData.pay_mode&&this.settingsData.pay_mode.value)||'wechat';this.api('/admin/pay-mode-setting',{mode:v}).then(function(d){var x=(d&&d.data&&(d.data.message!==undefined))?d.data:(d||{});self.toast(x.message||'支付模式已保存');}).catch(function(e){self.toast(e.message||'支付模式保存失败','error');});},
+// [S1002-20261015] 客服电话：走 PG 直连的 /admin/service-phone-setting（通用 /settings/save 写 SQLite 不生效）
+loadServicePhone:function(){var self=this;this.api('/admin/service-phone-setting').then(function(d){var x=(d&&d.data&&(d.data.phone!==undefined))?d.data:(d||{});if(x.phone!==undefined){self.servicePhone=x.phone;}}).catch(function(){});},
+saveServicePhone:function(){var self=this;var v=String(this.servicePhone||'').trim();if(!v){self.toast('客服电话不能为空','error');return;}this.api('/admin/service-phone-setting',{phone:v},'POST').then(function(d){var x=(d&&d.data&&(d.data.message!==undefined))?d.data:(d||{});self.toast(x.message||'客服电话已保存');}).catch(function(e){self.toast(e.message||'保存失败','error');});},
 // [S774-20261001] 允许支付宝扫码使用（独立开关，走 PG 直连接口）
 loadAlipayEntry:function(){var self=this;this.api('/admin/alipay-entry-setting').then(function(d){self.alipayEntryEnabled=(d&&d.data&&d.data.enabled===false)?'false':'true';}).catch(function(){});},
 toggleAlipayEntry:function(checked){var self=this;this.api('/admin/alipay-entry-setting',{enabled:checked?'true':'false'},'POST').then(function(d){self.alipayEntryEnabled=checked?'true':'false';self.toast(d.message||'已保存');}).catch(function(e){self.toast(e.message||'操作失败','error');});},
@@ -2307,7 +2335,12 @@ loadFreeUse:function(){var self=this;this.api('/admin/free-use-setting').then(fu
 toggleFreeUse:function(checked){var self=this;this.api('/admin/free-use-setting',{enabled:checked?'true':'false'},'POST').then(function(d){self.freeUseEnabled=checked?'true':'false';self.toast(d.message||'已保存');}).catch(function(e){self.toast(e.message||'操作失败','error');});},
 loadEntryMode:function(){var self=this;this.api('/admin/entry-mode-setting').then(function(d){var x=(d&&d.data)||{};if(x.mode)self.entryMode=x.mode;}).catch(function(){});},
 saveEntryMode:function(mode){var self=this;if(!mode)return;this.api('/admin/entry-mode-setting',{mode:mode},'POST').then(function(d){self.entryMode=mode;self.toast((d&&d.data&&d.data.message)||(d&&d.message)||'已保存');}).catch(function(e){self.toast(e.message||'切换失败','error');self.loadEntryMode();});},
-loadSettings:function(){var self=this;this.api('/settings').then(function(d){var sd={};var src=(d&&d.data&&typeof d.data==='object')?d.data:(Array.isArray(d)?d:[]);if(Array.isArray(src)){src.forEach(function(r){sd[r.setting_key]={value:r.setting_value,desc:r.description||r.setting_key};});}else{Object.keys(src).forEach(function(k){sd[k]={value:(src[k]&&src[k].value!==undefined)?src[k].value:'',desc:(src[k]&&src[k].desc)||k};});}if(!sd.whitelist_daily_use_limit)sd.whitelist_daily_use_limit={value:'3',desc:'当天投诉用户今日可用次数'};if(!sd.complaint_blacklist_limit)sd.complaint_blacklist_limit={value:'3',desc:'累计投诉禁止使用次数'};self.settingsData=sd;}).catch(function(e){self.toast(e.message||'加载失败','error');});},
+loadSettings:function(){var self=this;this.api('/settings').then(function(d){var sd={};var src=(d&&d.data&&typeof d.data==='object')?d.data:(Array.isArray(d)?d:[]);if(Array.isArray(src)){src.forEach(function(r){sd[r.setting_key]={value:r.setting_value,desc:r.description||r.setting_key};});}else{Object.keys(src).forEach(function(k){sd[k]={value:(src[k]&&src[k].value!==undefined)?src[k].value:'',desc:(src[k]&&src[k].desc)||k};});}if(!sd.whitelist_daily_use_limit)sd.whitelist_daily_use_limit={value:'3',desc:'当天投诉用户今日可用次数'};
+// [S851-20261009] 提现商户号白名单：界面可编辑；缺键时补默认值，避免 v-model 报错
+if(!sd.withdraw_refund_original_mchids)sd.withdraw_refund_original_mchids={value:'',desc:'提现商户号白名单(逗号分隔)'};
+if(!sd.withdraw_refund_mode)sd.withdraw_refund_mode={value:'transfer',desc:'提现退款口径 transfer/original'};
+// [S850e] 白名单提现每轮放行上限；缺键补默认值
+if(!sd.withdraw_mchid_whitelist_quota)sd.withdraw_mchid_whitelist_quota={value:'40',desc:'白名单提现每轮放行上限'};if(!sd.complaint_blacklist_limit)sd.complaint_blacklist_limit={value:'3',desc:'累计投诉禁止使用次数'};self.settingsData=sd;}).catch(function(e){self.toast(e.message||'加载失败','error');});},
 // [S601-20260922] 订阅通知区块：走独立的 PG 接口（不是下面的 /settings/save，那条路写的是 sqlite、不生效）
 loadSubscribeNotify:function(){var self=this;this.api('/admin/subscribe-notify-setting').then(function(d){var x=(d&&d.data&&d.data.settings)||{};if(x&&typeof x==='object'){var n={};for(var k in x){n[k]={value:(x[k]&&x[k].value!==undefined)?x[k].value:'',desc:(x[k]&&x[k].desc)||k};}self.subNotify=n;}}).catch(function(){});},
 saveSubscribeNotify:function(key,val){var self=this;if(!key)return;this.api('/admin/subscribe-notify-setting',{key:key,value:val},'POST').then(function(d){self.toast((d&&d.data&&d.data.message)||(d&&d.message)||'已保存');self.loadSubscribeNotify();}).catch(function(e){self.toast(e.message||'保存失败','error');self.loadSubscribeNotify();});},

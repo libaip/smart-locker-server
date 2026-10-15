@@ -798,7 +798,7 @@
                 <h3>五、其他</h3>
                 <p>1. 本协议自用户勾选同意后生效。</p>
                 <p>2. 运营方保留对本协议的最终解释权，如有变更将在页面公示。</p>
-                <p>3. 如有疑问，请联系客服电话：4006981080。</p>
+                <p>3. 如有疑问，请联系客服电话：{service_phone}。</p>
             </div>
         </div>
     </div>
@@ -826,7 +826,7 @@
                 <p>• 可在「我的余额」中查看和提现</p>
                 <h4>常见问题</h4>
                 <p><strong>Q: 取件密码忘记了怎么办？</strong></p>
-                <p>A: 联系客服400-698-1080，提供手机号核实后可查询。</p>
+                <p>A: 联系客服{service_phone}，提供手机号核实后可查询。</p>
                 <p><strong>Q: 预付款多久能退回？</strong></p>
                 <p>A: 取包成功后预付款即时退回小程序余额，可在「我的余额」提现。</p>
             </div>
@@ -2013,7 +2013,7 @@
         if (t) { t.textContent = failed ? '跳转失败，请点重试' : '正在打开支付宝小程序…'; }
         if (h) {
             h.innerHTML = failed
-                ? '仍不行请联系客服 <a href="tel:4006981080" style="color:#1677FF;text-decoration:none;font-weight:700">4006981080</a><br>本页面不支持支付，请在小程序里完成。'
+                ? '仍不行请联系客服 <a href="tel:{service_phone_tel}" style="color:#1677FF;text-decoration:none;font-weight:700">{service_phone}</a><br>本页面不支持支付，请在小程序里完成。'
                 : '存包、支付、取包都在小程序里完成，请稍候。';
         }
         if (b) { b.textContent = failed ? '重新打开小程序' : '打开小程序'; }
@@ -2031,7 +2031,7 @@
           + '<div id="alipayPureMpTitle" style="font-size:19px;font-weight:700;color:#1a1a1a;margin-bottom:10px">正在打开支付宝小程序…</div>'
           + '<div id="alipayPureMpHint" style="font-size:14px;color:#666;line-height:1.7;margin-bottom:22px">存包、支付、取包都在小程序里完成，请稍候。</div>'
           + '<div id="alipayPureMpRetry" style="background:#1677FF;color:#fff;padding:13px;border-radius:24px;font-size:16px;font-weight:700;cursor:pointer">打开小程序</div>'
-          + '<div style="font-size:12px;color:#999;line-height:1.7;margin-top:16px">若多次打不开，请拨打客服电话<br><a href="tel:4006981080" style="color:#1677FF;text-decoration:none">4006981080</a></div>'
+          + '<div style="font-size:12px;color:#999;line-height:1.7;margin-top:16px">若多次打不开，请拨打客服电话<br><a href="tel:{service_phone_tel}" style="color:#1677FF;text-decoration:none">{service_phone}</a></div>'
           + '</div>';
         try { (document.body || document.documentElement).appendChild(d); } catch (e) { try { document.documentElement.appendChild(d); } catch (e2) {} }
         var _b = document.getElementById('alipayPureMpRetry');
@@ -2669,7 +2669,7 @@
         window.location.href = window.location.pathname + '?t=' + Date.now();
     }
 
-    function callComplaint() { window.location.href = 'tel:4006981080'; }
+    function callComplaint() { window.location.href = 'tel:{service_phone_tel}'; }
     function showComplaintModal() { document.getElementById('complaintModal').classList.add('show'); var phone = localStorage.getItem('locker_saved_phone') || ''; document.getElementById('complaintPhone').value = phone; }
     function closeComplaintModal() { document.getElementById('complaintModal').classList.remove('show'); }
     function selectComplaintType(btn) { var btns = document.querySelectorAll('.complaint-type-btn'); btns.forEach(function(b){b.classList.remove('active');}); btn.classList.add('active'); selectedComplaintType = btn.getAttribute('data-type'); }

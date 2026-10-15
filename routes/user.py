@@ -887,12 +887,12 @@ def get_pay_params_api():
         #     · 我们自己的支付宝小程序 appid 2021006199688688 → 放行（留 INFO 日志便于排查）
         #     · 其它 appid 的 hybrid 内嵌页（S415 要关的老侧门）→ 行为一字未变，仍是 403
         #   微信小程序 / 支付宝内置浏览器打开的 H5（Referer=kelaiwei.top）完全不进本分支。
-        _ALIPAY_MP_APPID_532 = '2021006199688688'
+        # [S942] 双小程序白名单：新旧两个支付宝小程序都放行
+        _ALIPAY_MP_APPIDS_532 = ('2021006199688688', '2021007110604245')
         _ref511 = request.headers.get('Referer', '') or ''
         if 'alipay-eco.com' in _ref511:
-            if _ALIPAY_MP_APPID_532 in _ref511:
-                logger.info('[S532] 放行支付宝小程序下单(白名单 appid=%s): ref=%s',
-                            _ALIPAY_MP_APPID_532, _ref511[:90])
+            if any(_a532 in _ref511 for _a532 in _ALIPAY_MP_APPIDS_532):
+                logger.info('[S532] 放行支付宝小程序下单(白名单): ref=%s', _ref511[:90])
             else:
                 logger.warning('[S511] 拒绝支付宝小程序内嵌页下单: ref=%s', _ref511[:90])
                 return json_response(message='该入口已停用，请用微信扫码，或在支付宝里打开我们的存包网页', code=403)
@@ -1389,7 +1389,16 @@ def retrieve_confirm():
             #   老板口径：微信和支付宝是两个系统。支付宝单 -> 记到【独立的】alipay_balances；
             #   微信单 -> 走原逻辑（upsert_user_balance_row + user_balance_details）。
             _s819_ali = str(order.get('alipay_mp_uid') or order.get('alipay_pay_uid') or '').strip()
-            if _s819_ali:
+            # [S970-20261013] 必须再加"实收渠道"校验：
+            #   有支付宝身份 ≠ 钱是支付宝收的。微信收的钱必须进微信余额，
+            #   否则用户在微信端看到余额 0 -> 投诉"押金没退"（今天实测 4 笔）。
+            try:
+                from helpers import order_paid_by_alipay as _s970_pba
+                _s819_is_ali = bool(_s819_ali) and _s970_pba(order)
+            except Exception as _s970e:
+                logger.warning('[S970] 实收渠道校验异常(按微信处理): %s', _s970e)
+                _s819_is_ali = False
+            if _s819_is_ali:
                 try:
                     from helpers import alipay_balance_add as _s819_add
                     _ok819, _bal819, _m819 = _s819_add(
@@ -1474,12 +1483,12 @@ def create_deposit_order():
         #     · 我们自己的支付宝小程序 appid 2021006199688688 → 放行（留 INFO 日志便于排查）
         #     · 其它 appid 的 hybrid 内嵌页（S415 要关的老侧门）→ 行为一字未变，仍是 403
         #   微信小程序 / 支付宝内置浏览器打开的 H5（Referer=kelaiwei.top）完全不进本分支。
-        _ALIPAY_MP_APPID_532 = '2021006199688688'
+        # [S942] 双小程序白名单：新旧两个支付宝小程序都放行
+        _ALIPAY_MP_APPIDS_532 = ('2021006199688688', '2021007110604245')
         _ref511 = request.headers.get('Referer', '') or ''
         if 'alipay-eco.com' in _ref511:
-            if _ALIPAY_MP_APPID_532 in _ref511:
-                logger.info('[S532] 放行支付宝小程序下单(白名单 appid=%s): ref=%s',
-                            _ALIPAY_MP_APPID_532, _ref511[:90])
+            if any(_a532 in _ref511 for _a532 in _ALIPAY_MP_APPIDS_532):
+                logger.info('[S532] 放行支付宝小程序下单(白名单): ref=%s', _ref511[:90])
             else:
                 logger.warning('[S511] 拒绝支付宝小程序内嵌页下单: ref=%s', _ref511[:90])
                 return json_response(message='该入口已停用，请用微信扫码，或在支付宝里打开我们的存包网页', code=403)
@@ -2292,7 +2301,14 @@ def deposit_end_storage():
         # [S820-20260930] 第4批第二处：结束寄存也按平台分流（与 retrieve_confirm 同口径）。
         #   支付宝单 -> 记到【独立的】alipay_balances；微信单 -> 走下面原逻辑，一字不动。
         _s820_ali = str(order.get('alipay_mp_uid') or order.get('alipay_pay_uid') or '').strip()
-        if _s820_ali and not _direct_refund and not deposit_already_refunded(order):
+        # [S970-20261013] 同 S819：加"实收渠道"校验，微信收的钱必须进微信余额
+        try:
+            from helpers import order_paid_by_alipay as _s970_pba2
+            _s820_is_ali = bool(_s820_ali) and _s970_pba2(order)
+        except Exception as _s970e2:
+            logger.warning('[S970] 实收渠道校验异常(按微信处理): %s', _s970e2)
+            _s820_is_ali = False
+        if _s820_is_ali and not _direct_refund and not deposit_already_refunded(order):
             try:
                 from helpers import alipay_balance_add as _s820_add
                 _ok820, _bal820, _m820 = _s820_add(
@@ -3750,8 +3766,11 @@ def alipay_login():
         if not code:
             return json_response(message='code不能为空', code=400)
 
-        from helpers import get_alipay_mp_client
-        client = get_alipay_mp_client()
+        from helpers import get_alipay_mp_client, alipay_mp_app_of_request
+        # [S942] 双小程序并存：按请求来源选对应的 appid + 密钥
+        _appid942 = alipay_mp_app_of_request()
+        client = get_alipay_mp_client(_appid942)
+        logger.info('[S942] 支付宝登录：来源小程序=%s', _appid942)
         if client is None:
             return json_response(message='支付宝小程序密钥未配置', code=500)
 
@@ -5438,6 +5457,140 @@ def cleanup_expired_orders():
 # 用户余额提现
 # ============================================
 
+def _s851_sync_refund_whitelist(wid, order_ids, amount, phone='', mp_openid='', max_wait=8.0):
+    """[S851-20261010] 白名单商户号的提现：用户一提交就【当场原路退款】，不等 cron。
+
+    设计要点（与既有机制严格共存）：
+      · 开关 withdraw_whitelist_sync_refund 默认 0 -> 本函数立刻返回，行为与改动前一致；
+      · 只处理【订单全部命中】白名单商户号(withdraw_refund_original_mchids)的提现单；
+      · 事务边界：调用方必须先 commit+close，本函数【自己开新连接】，绝不长事务持锁；
+      · 防重复：退款带确定性单号 WD<wid>_<oid>（微信侧同号不重复退）；
+      · 超时保护：累计超过 max_wait 秒就停手，剩下的单留给 cron 下一轮（单保持 status=0）；
+      · 并发闸：同时在退的不超过 withdraw_whitelist_sync_concurrency（默认 5）。
+    返回 (done, message)。done=False 表示没做/没做完，调用方按"已提交"回话即可。
+    """
+    try:
+        import time as _t851
+        from helpers import get_setting as _gs851
+        if str(_gs851('withdraw_whitelist_sync_refund', '0') or '0').strip() not in ('1', 'true', 'True'):
+            return False, ''
+        # 并发闸
+        try:
+            _conc = int(float(str(_gs851('withdraw_whitelist_sync_concurrency', '5') or '5')))
+        except Exception:
+            _conc = 5
+        if _conc <= 0:
+            _conc = 5
+        _sem = _get_s851_sem(_conc)
+        if not _sem.acquire(blocking=False):
+            logger.info('[S851] 并发已满(%s)，转由 cron 处理 wid=%s', _conc, wid)
+            return False, ''
+        try:
+            from helpers import withdraw_refund_original_mchids as _wl851
+            _mch_wl = set(_wl851() or [])
+            if not _mch_wl:
+                return False, ''
+            try:
+                import json as _j851
+                _oids = [int(x) for x in _j851.loads(order_ids or '[]')]
+            except Exception:
+                _oids = []
+            if not _oids and order_ids:
+                try:
+                    _oids = [int(order_ids)]
+                except Exception:
+                    _oids = []
+            if not _oids:
+                return False, ''
+
+            # 用全新连接查询（不碰调用方的事务）
+            from database import get_db as _gdb851
+            _c1 = _gdb851(); _cu1 = _c1.cursor()
+            _cu1.execute("""SELECT o.id, o.order_no, o.deposit_amount, COALESCE(o.refund_amount,0) AS refund_amount,
+                                   o.payment_channel_id, o.refund_status,
+                                   COALESCE(pc.mch_id,'') AS mch_id
+                            FROM orders o LEFT JOIN payment_channels pc ON pc.id=o.payment_channel_id
+                            WHERE o.id = ANY(%s)""", (_oids,))
+            _rows851 = [dict(x) for x in _cu1.fetchall()]
+            _c1.close()
+            if not _rows851:
+                return False, ''
+            # 保守口径：只要有一笔订单不是白名单商户号 -> 不当场退，交给 cron
+            for _r in _rows851:
+                if str(_r.get('mch_id') or '').strip() not in _mch_wl:
+                    logger.info('[S851] wid=%s 含非白名单订单(渠道%s)，转 cron', wid, _r.get('mch_id'))
+                    return False, ''
+            if len(_rows851) < len(_oids):
+                return False, ''
+
+            _t0 = _t851.time()
+            _ok_cnt = 0; _fail_msgs = []
+            from helpers import do_real_refund as _drr851
+            for _r in _rows851:
+                if _t851.time() - _t0 > max_wait:
+                    logger.info('[S851] wid=%s 超时(%.1fs)，剩余交 cron', wid, _t851.time() - _t0)
+                    break
+                if str(_r.get('refund_status') or '') == 'refunded':
+                    _ok_cnt += 1; continue
+                _amt = float(_r.get('deposit_amount') or 0) - float(_r.get('refund_amount') or 0)
+                if _amt <= 0.001:
+                    _ok_cnt += 1; continue
+                try:
+                    _s_ok, _rid, _msg = _drr851(order_id=_r['id'], order_no=_r['order_no'], amount=_amt,
+                                                payment_channel_id=_r['payment_channel_id'],
+                                                out_refund_no='WD%s_%s' % (wid, _r['id']),
+                                                write_payment=True)
+                except Exception as _e851:
+                    _s_ok, _rid, _msg = False, None, str(_e851)
+                if _s_ok and '已退款' not in str(_msg) and '全额退款' not in str(_msg):
+                    try:
+                        _c2 = _gdb851(); _cu2 = _c2.cursor()
+                        _cu2.execute("""UPDATE orders SET status=4, refund_status='refunded',
+                                        refund_id=COALESCE(%s, refund_id),
+                                        refund_amount=GREATEST(COALESCE(refund_amount,0), %s),
+                                        refund_time=NOW(), refund_mark=1 WHERE id=%s""", (_rid, _amt, _r['id']))
+                        _cu2.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (_r['id'],))
+                        _c2.commit(); _c2.close()
+                    except Exception as _e852:
+                        logger.error('[S851] 回写订单失败 oid=%s: %s', _r['id'], _e852)
+                    _ok_cnt += 1
+                else:
+                    _fail_msgs.append(str(_msg)[:80])
+            if _ok_cnt >= len(_rows851):
+                try:
+                    _c3 = _gdb851(); _cu3 = _c3.cursor()
+                    _cu3.execute("UPDATE withdrawal_records SET status=2, approve_time=NOW(), approver='同步' WHERE id=%s AND status=0", (wid,))
+                    _c3.commit(); _c3.close()
+                except Exception as _e853:
+                    logger.error('[S851] 更新提现单失败 wid=%s: %s', wid, _e853)
+                logger.info('[S851] wid=%s 白名单当场退款成功 %s 笔，耗时%.1fs', wid, _ok_cnt, _t851.time() - _t0)
+                return True, '已原路退回微信零钱'
+            logger.warning('[S851] wid=%s 部分失败(%s/%s): %s', wid, _ok_cnt, len(_rows851), _fail_msgs[:2])
+            return False, ''
+        finally:
+            try:
+                _sem.release()
+            except Exception:
+                pass
+    except Exception as _e850:
+        logger.error('[S851] 当场退款异常 wid=%s: %s', wid, _e850)
+        return False, ''
+
+
+_S851_SEM = {}
+
+
+def _get_s851_sem(n):
+    """按并发数缓存一个信号量（同进程内有效；多 worker 各自计数，够用）。"""
+    import threading as _th851
+    s = _S851_SEM.get('s')
+    if s is None or getattr(s, '_s851_n', None) != n:
+        s = _th851.BoundedSemaphore(n)
+        s._s851_n = n
+        _S851_SEM['s'] = s
+    return s
+
+
 def _has_pending_withdrawal(cursor, order_id):
     cursor.execute("SELECT 1 FROM withdrawal_records WHERE order_id = %s AND status IN (0, 1) LIMIT 1", (order_id,))
     return cursor.fetchone() is not None
@@ -5688,6 +5841,13 @@ def user_withdraw():
             first_wid = row["id"]
             conn.commit()
             conn.close()
+            # [S851] 白名单商户号：当场退款（开关关闭/非白名单 -> 立即返回，不改任何行为）
+            _s851_done = False
+            try:
+                _s851_done, _s851_msg = _s851_sync_refund_whitelist(
+                    first_wid, _json_auto.dumps(plan_ids), actual_amount, phone=phone, mp_openid=mp_openid)
+            except Exception as _e851a:
+                logger.error('[S851] 当场退款调用异常 wid=%s: %s', first_wid, _e851a)
             # [S416-20260921] 公众号用户：提现申请一提交就发【提现成功通知】(不管到没到账)
             try:
                 from helpers import oa_notify_withdraw_ok as _oa_wd416
@@ -5855,6 +6015,13 @@ def user_withdraw():
             first_wid = row["id"]
             conn.commit()
             conn.close()
+            # [S851] 白名单商户号：当场退款（开关关闭/非白名单 -> 立即返回，不改任何行为）
+            _s851_done = False
+            try:
+                _s851_done, _s851_msg = _s851_sync_refund_whitelist(
+                    first_wid, _json_auto.dumps(plan_ids), actual_amount, phone=phone, mp_openid=mp_openid)
+            except Exception as _e851b:
+                logger.error('[S851] 当场退款调用异常 wid=%s: %s', first_wid, _e851b)
             # [S416-20260921] 公众号用户：提现申请一提交就发【提现成功通知】(不管到没到账)
             try:
                 from helpers import oa_notify_withdraw_ok as _oa_wd416
@@ -5878,6 +6045,13 @@ def user_withdraw():
                     send_wx_subscribe_message(mp_openid, _wx_tpl('subscribe_refund', 'mp', 'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c'), wd_data, phone=phone, page='pages/withdraw-record/withdraw-record', order_ids=plan_ids)  # [S525]
                 except Exception as e:
                     logger.error(f'[提现通知失败] {e}')
+            # [S851] 当场退成功 -> 直接告诉用户已到账；否则维持"已提交"
+            if _s851_done:
+                return json_response(data={
+                    'withdrawal_id': first_wid,
+                    'status': 'refunded',
+                    'message': f'¥{actual_amount:.2f} 已原路退回你的微信零钱，请查收'
+                })
             return json_response(data={
                 'withdrawal_id': first_wid,
                 'status': 'pending',
@@ -5924,11 +6098,40 @@ def link_openid():
             existing_rows = phone_openid_rows(cursor, unionid=unionid, mp_openid=mp_openid_val)
         if existing_rows:
             existing_phone = existing_rows[0].get('phone') or ''
+        # [S866-20261012] ★ 修根因：这里必须把 user_id 一起写上，否则 phone_openids.user_id 恒为 0
+        #   后果链：phone_openids.user_id=0 -> calc_balance() 的闸("user_id==0 就返回 0")
+        #           -> 用户钱包余额恒显示 0（钱其实在 user_balance_details 里）
+        #           -> 用户以为押金没退 -> 投诉（2026-10-12 实测每天新增 ~880 条 user_id=0）。
+        #   为什么在这里解析：本接口是 H5/小程序存包的必经之路；而 store_init 用的是
+        #     resolve_user_by_ident('mp_openid'/'oa_openid')，它会分配 user_id 但【不回写】phone_openids。
+        #   这里用同一套 resolve_user_by_ident 解析，保证两处认到的是同一个 user_id。
+        #   解析失败只记日志、user_id 传 0（退化为原行为），绝不让存包主流程失败。
+        _uid_link = 0
+        try:
+            from helpers import resolve_user_by_ident as _rbi_s866
+            from helpers import _s521_ident_kind as _kind_s866
+            # [S866b] kind 必须用 _s521_ident_kind 判定（与 store_init 完全一致），
+            #   否则同一个 openid 会因为一处写 users.openid、一处写 users.mp_openid
+            #   而在 users 表里建出两行（2026-10-12 实测：131816/131817、131818/131819）。
+            _ident_kind, _ident_val = _kind_s866(openid=openid_h5, mp_openid=mp_openid_val)
+            if _ident_val:
+                _uid_link = _rbi_s866(cursor, _ident_kind, _ident_val, auto_create=True) or 0
+            if _uid_link:
+                logger.info('[link_openid][S866] 解析身份: kind=%s ident=%s... -> user_id=%s',
+                            _ident_kind, str(_ident_val)[:10], _uid_link)
+            else:
+                logger.warning('[link_openid][S866] 身份解析返回 0: kind=%s ident=%s... phone=%s',
+                               _ident_kind, str(_ident_val)[:10], str(phone)[:3] + '****')
+        except Exception as _e866:
+            logger.warning('[link_openid][S866] 身份解析异常(按 0 继续): %s', _e866)
+
         upsert_phone_openid_row(cursor, phone=phone, openid=openid_h5, mp_openid=mp_openid_val,
                                 unionid=unionid, wechat_name=wechat_name,
+                                user_id=_uid_link,
                                 strict_identity=_strict_new)
         upsert_user_balance_row(cursor, phone=phone, openid=openid_h5, unionid=unionid,
                                 mp_openid=mp_openid_val, wechat_name=wechat_name,
+                                user_id=_uid_link,
                                 strict_identity=_strict_new)
 
         conn.commit()

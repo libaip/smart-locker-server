@@ -394,6 +394,49 @@ def favicon():
     return "", 204
 
 
+# ============================================================================
+# [S983-20261014] 公共配置（免登录）—— 小程序/H5 启动时拉取
+#   老板要求：客服电话不写死，后台随时改。以后要加别的公共配置也放这里。
+#   配置项：system_settings.service_phone（缺省 400-698-1080，与改动前一致）
+# ============================================================================
+def _s983_service_phone():
+    """取客服电话（读不到一律回落 400-698-1080，绝不因配置问题影响页面）"""
+    try:
+        from helpers import get_setting
+        v = str(get_setting('service_phone', '400-698-1080') or '').strip()
+        return v or '400-698-1080'
+    except Exception as _e:
+        logger.warning('[S983] 取 service_phone 失败(用默认): %s', _e)
+        return '400-698-1080'
+
+
+def _s983_inject(html):
+    """把 HTML 里的客服电话占位符换成后台配置值。
+
+    占位符（注意是单层大括号，不会跟 Vue 的 {{ }} 冲突）：
+      {service_phone}      → 显示用，如 400-698-1080
+      {service_phone_tel}  → 纯数字，tel: 链接用，如 4006981080
+    任何异常原样返回，绝不因替换失败弄坏页面。
+    """
+    try:
+        _p = _s983_service_phone()
+        _t = ''.join(_c for _c in _p if _c.isdigit())
+        return html.replace('{service_phone_tel}', _t).replace('{service_phone}', _p)
+    except Exception as _e:
+        logger.warning('[S983] 注入客服电话失败(原样返回): %s', _e)
+        return html
+
+
+@app.route('/api/config/public', methods=['GET'])
+def api_public_config():
+    """[S983] 公共配置（免登录）。小程序 / H5 启动时拉一次。"""
+    _p = _s983_service_phone()
+    return jsonify({'code': 200, 'data': {
+        'service_phone': _p,
+        'service_phone_tel': ''.join(_c for _c in _p if _c.isdigit()),
+    }})
+
+
 @app.route('/api/health', methods=['GET'])
 def api_health():
     conn = None
@@ -451,7 +494,14 @@ def admin_v2_debug():
 
 @app.route('/profile')
 def profile():
-    return send_from_directory('static', 'profile.html')
+    # [S983-20261014] 改成"读取+注入客服电话"再返回（原来直接 send_from_directory）
+    try:
+        _p983 = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'profile.html')
+        with open(_p983, 'r', encoding='utf-8') as _f983:
+            return _s983_inject(_f983.read())
+    except Exception as _e983:
+        logger.warning('[S983] profile.html 注入失败, 回落静态返回: %s', _e983)
+        return send_from_directory('static', 'profile.html')
 
 
 
@@ -463,7 +513,14 @@ def deposit_html_redirect():
     return send_from_directory('static', 'deposit.html')
 @app.route('/user-center')
 def user_center():
-    return send_from_directory('static', 'user-h5.html')
+    # [S983-20261014] 同上：注入客服电话
+    try:
+        _p983b = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'user-h5.html')
+        with open(_p983b, 'r', encoding='utf-8') as _f983b:
+            return _s983_inject(_f983b.read())
+    except Exception as _e983b:
+        logger.warning('[S983] user-h5.html 注入失败, 回落静态返回: %s', _e983b)
+        return send_from_directory('static', 'user-h5.html')
 
 
 @app.route('/merchant')
@@ -882,6 +939,8 @@ def store_page():
         with open(tpl_path, 'r', encoding='utf-8') as f:
             html = f.read().replace("{device}", device).replace("{openid}", openid).replace("{_ver}", _ver).replace("{ssr_cabinet}", _ssr_json).replace("{cabinet_id}", _cabinet_id).replace("{deposit_amount}", str(int(_ssr["deposit_amount"]) if _ssr["deposit_amount"] and _ssr["deposit_amount"] == int(_ssr["deposit_amount"]) else _ssr["deposit_amount"]))
         html = html.replace("{oa_sub_on}", ("true" if _oa_sub_on else "false"))
+        # [S983-20261014] 客服电话也从后台配置注入（占位符 {service_phone} / {service_phone_tel}）
+        html = _s983_inject(html)
         # [S350-模式②] 关注遮罩注入点。mp/h5/非法值下分别是 当前前缀 / '' / 0 / 0，
         #   替换结果与改动前逐字节相同（已用 md5 比对法自证）。
         try:
@@ -1626,6 +1685,16 @@ logger.info('[启动] 自动清柜任务已启动(每分钟检查)')
 
 # Start merchant health scheduler
 threading.Thread(target=merchant_health_scheduler, daemon=True).start()
+
+# ============================================
+# [S1053-20261015] 用户行为埋点（精确到每个用户，永久保留）
+#   只记关键动作（查余额/查订单/提现/取件...），内存队列批量刷库，不拖慢请求
+# ============================================
+try:
+    import behavior_log
+    behavior_log.install(app)
+except Exception as _e:
+    logger.warning('[behavior_log] 埋点安装失败（不影响主流程）: %s', _e)
 logger.info('[启动] 商户号健康巡检任务已启动(每30分钟)')
 
 

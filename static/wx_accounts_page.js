@@ -77,6 +77,7 @@ Vue.component('page-wx-accounts', {
           <button class="btn-text orange" v-if="a.is_active" @click="toggleAccount(a,false)">停用</button>
           <button class="btn-text blue" v-if="!a.is_active" :disabled="a.usable===false" :title="a.usable_reason" @click="toggleAccount(a,true)">启用</button>
           <button class="btn-text blue" :disabled="a.usable===false" :title="a.usable_reason" @click="probe(a)">探活</button>
+          <button class="btn-text green" v-if="a.acct_type==='mp'" :disabled="a.usable===false||syncing" :title="'拉取该小程序的订阅模板字段并自动生成映射（换小程序后点一下就行）'" @click="syncTemplates(a)">同步模板</button>
           <button class="btn-text" @click="openEdit(a)">编辑</button>
           <button class="btn-text red" @click="removeAccount(a)">删除</button>
         </td>
@@ -101,18 +102,60 @@ Vue.component('page-wx-accounts', {
 
   <div class="wx-section-title">消息模板（小程序订阅通知 / 公众号模板消息，两条路各自独立）</div>
   <table>
-    <thead><tr><th>业务</th><th>通道</th><th>模板ID</th><th>落地页</th><th>说明</th></tr></thead>
+    <thead><tr><th>业务</th><th>通道</th><th>模板ID</th><th>字段映射<span class="wx-tag on" style="margin-left:4px" title="后台可配：换小程序后点账号行的「同步模板」自动生成">可配</span></th><th>落地页</th><th>说明</th></tr></thead>
     <tbody>
       <tr v-for="t in templates" :key="t.id">
         <td>{{t.biz_label}}<div class="wx-mono" style="color:#909399">{{t.biz}}</div></td>
         <td><span class="wx-tag" :class="t.channel==='mp'?'on':'warn'">{{t.channel==='mp'?'小程序订阅':'公众号模板'}}</span></td>
         <td class="wx-mono" style="max-width:300px">{{t.template_id}}</td>
+        <td style="white-space:normal;max-width:300px;font-size:12.5px">
+          <template v-if="t.field_map && Object.keys(t.field_map).length">
+            <span v-for="(v,k) in t.field_map" :key="k" class="wx-tag on" style="margin:1px 3px 1px 0">{{k}}→{{v}}</span>
+          </template>
+          <span v-else class="wx-tag warn" title="没配 -> 代码里硬编码的兜底表生效；换小程序容易 47003">未配（用硬编码）</span>
+        </td>
         <td class="wx-mono" style="color:#909399">{{t.page||'-'}}</td>
         <td style="white-space:normal;max-width:340px;color:#909399;font-size:12.5px">{{t.note}}</td>
       </tr>
-      <tr v-if="!templates.length"><td colspan="5" class="empty-row">暂无模板</td></tr>
+      <tr v-if="!templates.length"><td colspan="6" class="empty-row">暂无模板</td></tr>
     </tbody>
   </table>
+
+  <div class="wx-section-title">微信校验文件（普通链接二维码规则 / 业务域名 / JS安全域名）
+    <button class="btn-text blue" style="margin-left:8px" @click="loadVerifyFiles()">刷新</button>
+  </div>
+  <div class="wx-tip">
+    微信要求把校验文件放到<b>域名根目录</b>（如 <code>https://你的域名/xxxx.txt</code>）。
+    下面上传后会自动落到服务器 <code>static/</code>，nginx 已有根路径规则，<b>立即可访问</b>，不用再 SSH。<br>
+    用法：微信后台点「校验」前，先把文件内容贴进来保存 → 再点校验。
+  </div>
+  <table>
+    <thead><tr><th>文件名</th><th>大小</th><th>可访问地址</th><th>内容预览</th><th></th></tr></thead>
+    <tbody>
+      <tr v-for="f in verifyFiles" :key="f.filename">
+        <td class="wx-mono">{{f.filename}}</td>
+        <td>{{f.size}} 字节</td>
+        <td class="wx-mono"><a :href="f.url" target="_blank" style="color:#1677FF">{{f.url}}</a></td>
+        <td class="wx-mono" style="max-width:320px;white-space:normal;color:#909399">{{f.preview}}</td>
+        <td><button class="btn-text blue" @click="useVerifyFile(f)">编辑</button></td>
+      </tr>
+      <tr v-if="!verifyFiles.length"><td colspan="5" class="empty-row">还没有校验文件</td></tr>
+    </tbody>
+  </table>
+  <div class="wx-cfg-add" style="margin-top:10px;padding:10px;border:1px dashed #dcdfe6;border-radius:6px">
+    <div class="form-row">
+      <div class="form-group"><label>文件名（含后缀）</label>
+        <input v-model="vfName" placeholder="例：yf7rvDz0Er.txt">
+        <div class="form-hint">只允许字母/数字/下划线/点/横线，后缀 .txt 或 .html</div>
+      </div>
+    </div>
+    <div class="form-group"><label>文件内容</label>
+      <textarea v-model="vfContent" rows="3" placeholder="校验文件里的那串字符，例：b2dc9557155789e88db307531c517cd2"></textarea>
+    </div>
+    <div style="text-align:right">
+      <button class="btn btn-sm btn-blue" :disabled="vfSaving" @click="saveVerifyFile">{{vfSaving?'保存中…':'保存并部署'}}</button>
+    </div>
+  </div>
 
   <div class="wx-section-title">切换日志（手动切换 + 自动降级都留痕）</div>
   <table>
@@ -129,6 +172,48 @@ Vue.component('page-wx-accounts', {
       <tr v-if="!log.length"><td colspan="6" class="empty-row">还没有切换记录</td></tr>
     </tbody>
   </table>
+
+  <div class="modal-mask" v-if="syncResult" @click.self="closeSyncResult">
+    <div class="modal-box md" style="max-width:900px">
+      <div class="modal-header">
+        <h3>模板字段同步结果 —— {{syncResult.account_name}}（{{syncResult.appid}}）</h3>
+        <span class="close" @click="closeSyncResult">×</span>
+      </div>
+      <div class="modal-body">
+        <div class="wx-tip" style="margin-bottom:12px">
+          <b>自动匹配原理</b>：代码发送字段有固定中文语义（如 amount2=退款金额、thing4=退款方式），
+          微信模板每行形如「退款金额:{{amount8.DATA}}」，按<b>中文标签</b>比对即可自动得出映射。<br>
+          <b>结果</b>：{{syncResult.applied ? '✅ 已写入数据库，立刻生效（不用重启）' : '⚠️ 只预览未写入'}}
+        </div>
+        <table>
+          <thead><tr><th>业务</th><th>微信字段（标签）</th><th>自动映射</th><th>状态</th></tr></thead>
+          <tbody>
+            <tr v-for="t in syncResult.templates" :key="t.biz">
+              <td>{{t.biz}}<div class="wx-mono" style="color:#909399">{{t.title||''}}</div></td>
+              <td style="white-space:normal;font-size:12.5px">
+                <span v-for="f in (t.tpl_fields||[])" :key="f.key" class="wx-tag" style="margin:1px 3px 1px 0">{{f.key}}={{f.label}}</span>
+                <span v-if="!(t.tpl_fields||[]).length" style="color:#909399">-</span>
+              </td>
+              <td style="white-space:normal;font-size:12.5px">
+                <span v-for="(v,k) in (t.field_map||{})" :key="k" class="wx-tag on" style="margin:1px 3px 1px 0">{{k}}→{{v}}</span>
+                <span v-if="!Object.keys(t.field_map||{}).length" style="color:#909399">-</span>
+              </td>
+              <td>
+                <span v-if="t.status==='ok'" class="wx-tag on">{{t.saved?'已保存':'匹配成功'}}</span>
+                <span v-else-if="t.status==='wx_not_found'" class="wx-tag off" :title="t.note">微信里没找到</span>
+                <span v-else-if="t.status==='no_match'" class="wx-tag warn">没匹配上</span>
+                <span v-else class="wx-tag">{{t.status}}</span>
+              </td>
+            </tr>
+            <tr v-if="!syncResult.templates.length"><td colspan="4" class="empty-row">该账号还没有配模板</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-sm" @click="closeSyncResult">关闭</button>
+      </div>
+    </div>
+  </div>
 
   <div class="modal-mask" v-if="modal" @click.self="closeModal">
     <div class="modal-box md">
@@ -169,6 +254,10 @@ Vue.component('page-wx-accounts', {
 </div>`,
   data: function () {
     return {
+    // [S1011-20261015] 微信校验文件
+    verifyFiles: [], vfName: '', vfContent: '', vfSaving: false,
+    // [S1009-20261015] 模板字段同步
+    syncResult: null, syncing: false,
       TYPES: [{ k: 'mp', label: '小程序' }, { k: 'oa', label: '公众号' }],
       tab: 'mp',
       reveal: false,
@@ -189,7 +278,7 @@ Vue.component('page-wx-accounts', {
     templates: function () { return (this.snap && this.snap.templates) || []; },
     log: function () { return (this.snap && this.snap.log) || []; }
   },
-  created: function () { this.load(true); },
+  created: function () { this.load(true); this.loadVerifyFiles(); },
   methods: {
     /* ---------- 基础设施：优先用宿主后台的 api()，保证鉴权头一致 ---------- */
     _api: function (path, data, method) {
@@ -221,6 +310,56 @@ Vue.component('page-wx-accounts', {
       else if (window.confirm(msg)) { cb(); }
     },
     _fail: function (e) { this._toast((e && e.message) || '操作失败', 'error'); },
+
+    /* ---------- [S1009-20261015] 模板字段同步（换小程序后点一下就行） ---------- */
+    syncTemplates: function (a) {
+      var self = this;
+      if (self.syncing) { return; }
+      self.syncing = true;
+      self._toast('正在拉取微信模板并自动匹配字段…');
+      return this._api('/admin/wx-template-sync', { account_id: a.id, apply: true }, 'POST').then(function (d) {
+        self.syncing = false;
+        self.syncResult = (d && d.data) ? d.data : d;
+        var n = ((self.syncResult || {}).templates || []).filter(function (t) { return t.status === 'ok'; }).length;
+        self._toast('同步完成：' + n + ' 个模板匹配成功' + (n ? '，已保存并立刻生效' : '（请检查微信后台是否已申请模板）'));
+        self.load();
+      }).catch(function (e) {
+        self.syncing = false;
+        self._fail(e);
+      });
+    },
+    closeSyncResult: function () { this.syncResult = null; },
+
+    /* ---------- [S1011-20261015] 微信校验文件 ---------- */
+    loadVerifyFiles: function () {
+      var self = this;
+      return this._api('/admin/wechat-verify-file', null, 'GET').then(function (d) {
+        var x = (d && d.data) ? d.data : (d || {});
+        self.verifyFiles = x.files || [];
+      }).catch(function () { /* 静默 */ });
+    },
+    useVerifyFile: function (f) {
+      this.vfName = f.filename;
+      this.vfContent = f.preview || '';
+      this._toast('已填入表单，改完点「保存并部署」');
+    },
+    saveVerifyFile: function () {
+      var self = this;
+      var n = String(this.vfName || '').trim();
+      if (!n) { self._toast('请填文件名', 'error'); return; }
+      self.vfSaving = true;
+      return this._api('/admin/wechat-verify-file',
+                       { filename: n, content: String(this.vfContent || '') }, 'POST')
+        .then(function (d) {
+          self.vfSaving = false;
+          var x = (d && d.data) ? d.data : (d || {});
+          self.verifyFiles = x.files || self.verifyFiles;
+          self._toast((d && d.message) || '已部署');
+        }).catch(function (e) {
+          self.vfSaving = false;
+          self._fail(e);
+        });
+    },
 
     /* ---------- 数据 ---------- */
     load: function (withSpinner) {

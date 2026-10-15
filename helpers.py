@@ -331,19 +331,81 @@ def is_alipay_browser():
     return 'AlipayClient' in user_agent
 
 
-def get_alipay_mp_client():
+
+# ============================================================================
+# [S942-20261013] 双支付宝小程序并存（老板要求）
+#   旧 = 2021006199688688（玉田储物；其商户号已不能收款，但老用户余额仍可提现）
+#   新 = 2021007110604245（C 主体；收款进 2088980401629568）
+#   · 密钥文件按 cert 名区分：alipay_mp_* / alipay_mp_d_*
+#   · 到底用哪个：看请求来源 Referer（https://<appid>.hybrid.alipay-eco.com/...）
+#     判定不出 → 回落【旧】的，保证与改动前行为一致
+# ============================================================================
+_ALIPAY_MP_APPS = {
+    '2021006199688688': {'cert': 'alipay_mp',   'label': '旧-玉田储物'},
+    '2021007110604245': {'cert': 'alipay_mp_d', 'label': '新-C主体'},
+}
+_ALIPAY_MP_DEFAULT = '2021006199688688'
+
+
+def alipay_mp_app_of_request():
+    """当前请求来自哪个支付宝小程序 appid；判定不出返回默认（旧）。"""
+    try:
+        import re as _re942
+        _ref942 = request.headers.get('Referer', '') or ''
+        _m942 = _re942.search(r'([0-9]{16})\.hybrid\.alipay-eco\.com', _ref942)
+        if _m942 and _m942.group(1) in _ALIPAY_MP_APPS:
+            return _m942.group(1)
+        _q942 = str(request.args.get('alipay_appid') or '').strip()
+        if _q942 in _ALIPAY_MP_APPS:
+            return _q942
+    except Exception:
+        pass
+    return _ALIPAY_MP_DEFAULT
+
+
+def alipay_mp_cert_of(appid):
+    """appid -> 密钥文件前缀（cert 名）。认不出返回旧前缀。"""
+    return ((_ALIPAY_MP_APPS.get(str(appid or '').strip()) or {}).get('cert')) or 'alipay_mp'
+
+
+def alipay_mp_appids():
+    return list(_ALIPAY_MP_APPS.keys())
+
+
+def alipay_mp_channel_by_appid(appid):
+    """按 appid 直接从库里取该小程序的支付宝通道行；取不到返回 None。只读。"""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM payment_channels "
+                       "WHERE channel_type='alipay' AND app_id=%s "
+                       "ORDER BY is_active DESC, auto_disabled ASC, id ASC", (str(appid or '').strip(),))
+        rows = cursor.fetchall()
+        conn.close()
+        for _r in rows:
+            return dict(_r)
+    except Exception as _e942:
+        logger.error('[S942] 按 appid 取支付宝通道失败 appid=%s: %s', appid, _e942)
+    return None
+
+
+def get_alipay_mp_client(appid=None):
     """[S272] 支付宝【小程序应用】的客户端（登录 / 订阅消息用）
 
     与支付通道无关：支付宝小程序是独立应用，用它自己的 appid + 密钥。
-    密钥文件：cert/alipay_mp_private_key.pem、cert/alipay_mp_alipay_public_key.pem
+    密钥文件：cert/<cert>_private_key.pem、cert/<cert>_alipay_public_key.pem
+    [S942] appid 参数：指定用哪个支付宝小程序（新旧并存）；不传则读环境变量
+           ALIPAY_MP_APPID，再退到旧小程序 appid。
     appid 可用环境变量 ALIPAY_MP_APPID 覆盖。
     """
     import os
     from alipay import AlipayClient, PROD_GATEWAY, SANDBOX_GATEWAY
-    appid = (os.environ.get('ALIPAY_MP_APPID') or '').strip() or '2021006199688688'
+    _appid_arg = str(appid or '').strip()
+    appid = _appid_arg or (os.environ.get('ALIPAY_MP_APPID') or '').strip() or '2021006199688688'
+    _cert942 = alipay_mp_cert_of(appid)
     cert_dir = os.environ.get('SMART_LOCKER_CERT_DIR') or '/home/ubuntu/smart-locker/cert'
-    priv_path = os.path.join(cert_dir, 'alipay_mp_private_key.pem')
-    pub_path = os.path.join(cert_dir, 'alipay_mp_alipay_public_key.pem')
+    priv_path = os.path.join(cert_dir, _cert942 + '_private_key.pem')
+    pub_path = os.path.join(cert_dir, _cert942 + '_alipay_public_key.pem')
     if not (os.path.exists(priv_path) and os.path.exists(pub_path)):
         logger.error('[get_alipay_mp_client] 密钥文件不存在: %s / %s' % (priv_path, pub_path))
         return None
@@ -976,6 +1038,82 @@ def update_channel_stats(channel_id, amount):
         logger.error(f"[渠道统计] 更新失败: {e}")
 
 
+def wx_egress_proxy(channel=None):
+    """[S963/S965-20261013] 这个渠道（主体）的微信 API 出口代理。
+
+    优先级：通道 extra_config.egress_proxy > 全局设置 wx_egress_proxy > 空（走本机出口）。
+
+    ★★ [S965] 商户号白名单【强制校验】（老板要求：被风控的商户号/主体不能走这台干净机器）：
+        · 配了代理，但渠道的 mch_id 不在设置 wx_egress_proxy_mchids 里 -> 不使用代理
+        · 白名单为空 -> 也不使用代理（宁可少隔离，绝不污染那台干净 IP）
+        · 原因：新机器一旦替老主体/被风控主体发过请求，它在微信眼里也就"脏"了，
+                隔离就白做了。所以这里必须"白名单制"，不是"配了就通"。
+    任何异常一律返回空（= 走本机出口，行为与改动前一致），绝不因配置问题影响支付。
+    """
+    if not channel:
+        return ''
+    _mch = str(channel.get('mch_id') or '').strip()
+    _p = ''
+    try:
+        _ex = channel.get('extra_config')
+        if _ex:
+            _d = json.loads(_ex) if isinstance(_ex, str) else (_ex or {})
+            _p = str(_d.get('egress_proxy') or _d.get('proxy') or '').strip()
+    except Exception as _e:
+        logger.warning('[S963] 读通道代理配置失败(按不使用代理处理): %s', _e)
+        _p = ''
+    if not _p:
+        try:
+            _p = str(get_setting('wx_egress_proxy', '') or '').strip()
+        except Exception:
+            _p = ''
+    if not _p:
+        return ''
+    # ★ 白名单强制校验（S965）
+    try:
+        _raw = str(get_setting('wx_egress_proxy_mchids', '') or '')
+        _wl = {x.strip() for x in _raw.replace('，', ',').split(',') if x.strip()}
+    except Exception as _e2:
+        logger.warning('[S965] 读独立出口白名单失败(按不使用代理处理): %s', _e2)
+        _wl = set()
+    if not _wl:
+        logger.warning('[S965] 配了出口代理但没有配白名单 wx_egress_proxy_mchids，'
+                       '为防污染该 IP，本次【不使用代理】channel=%s mch=%s',
+                       channel.get('id'), _mch)
+        return ''
+    if _mch not in _wl:
+        logger.warning('[S965] 商户号 %s 不在独立出口白名单内 -> 【不使用代理】'
+                       '（防止被风控/老主体污染干净 IP）channel=%s', _mch, channel.get('id'))
+        return ''
+    return _p
+
+
+def wx_notify_url(channel=None, kind='pay'):
+    """[S963-20261013] 这个渠道（主体）的微信回调地址。
+
+    优先级：通道 extra_config.pay_notify_url/refund_notify_url > 全局配置 > 默认。
+    用途：新主体的回调走独立域名，微信看到的 notify_url 与老主体不同。
+    """
+    _key = 'refund_notify_url' if str(kind) == 'refund' else 'pay_notify_url'
+    try:
+        if channel:
+            _ex = channel.get('extra_config')
+            if _ex:
+                _d = json.loads(_ex) if isinstance(_ex, str) else (_ex or {})
+                _u = str(_d.get(_key) or _d.get('notify_url') or '').strip()
+                if _u:
+                    return _u
+    except Exception as _e:
+        logger.warning('[S963] 读通道回调地址失败(按默认处理): %s', _e)
+    try:
+        if str(kind) == 'refund':
+            from wx_config import refund_notify_url as _s963_rnu
+            return _s963_rnu()
+        return _wx_payurl()
+    except Exception:
+        return _wx_payurl()
+
+
 def get_channel_wxpay(channel, use_mp_appid=False, openid=None, acct_type=None):
     """根据渠道配置创建支付实例"""
     from wxpay import WxPay, ThirdPartyPay as TPP
@@ -984,8 +1122,28 @@ def get_channel_wxpay(channel, use_mp_appid=False, openid=None, acct_type=None):
         # [S357] 谁付钱由【这笔支付的 openid】决定：前缀 = 公众号的用公众号 appid，
         #   前缀 = 小程序的用小程序 appid。一条通道行只存一个 app_id，降级为【最后兜底】；
         #   判断不出来（openid 为空 / 前缀没登记 / 读不到库）时行为与改动前完全一致。
-        app_id = (appid_by_openid(openid, acct_type=acct_type) or channel.get('app_id')
-                  or (_wx_mp_id() if use_mp_appid else _wx_oa_id()))
+        # [S957-20261013] 老板要求：后台配的是哪个就用哪个。
+        #   only_active=True -> 只认后台【生效】的账号；老 openid 查不到生效账号时，
+        #   直接回落【本通道后台配置的 app_id】，绝不再拿已停用的旧 appid 去下单。
+        # [S959-20261013] 最后兜底改成【当前生效的小程序 appid】（= 后台配置的那个）；
+        #   绝不再回落到 _wx_oa_id()（那边的兜底值曾是别的主体「重庆卓蓝时」的 appid）。
+        # [S999-20261015] 底层防御：openid 归属的 appid 与【本渠道配置的 app_id】不一致时，
+        #   一律以渠道配置为准。目的：杜绝"老渠道 + 新小程序 openid"组装出
+        #   「新主体的 appid + 老主体的商户号」这种会被微信记为关联的组合。
+        #   （上层 S958 已有前缀校验，这里再加一道，防止将来重新启用老渠道或
+        #     有调用点绕过上层校验时漏出去。）
+        _s999_oid_appid = appid_by_openid(openid, acct_type=acct_type, only_active=True)
+        _s999_ch_appid = str(channel.get('app_id') or '').strip()
+        if _s999_oid_appid and _s999_ch_appid and \
+                _s999_oid_appid.strip().lower() != _s999_ch_appid.lower():
+            logger.warning('[S999] 串味拦截: openid 命中 appid=%s 但渠道(id=%s mch=%s)配置=%s '
+                           '-> 以渠道配置为准，不下发不匹配组合',
+                           _s999_oid_appid, channel.get('id'), channel.get('mch_id'), _s999_ch_appid)
+            app_id = _s999_ch_appid
+        else:
+            app_id = (_s999_oid_appid
+                      or _s999_ch_appid
+                      or _wx_mp_id())
         cert_name = channel.get('cert_name', '')
         if cert_name:
             cert_path = f'/home/ubuntu/smart-locker/cert/{cert_name}_cert.pem'
@@ -993,8 +1151,14 @@ def get_channel_wxpay(channel, use_mp_appid=False, openid=None, acct_type=None):
         else:
             cert_path = WX_CERT_PATH
             key_path = WX_KEY_PATH
+        # [S963-20261013] 按主体（渠道）配置的出口代理
+        _s963_proxy = wx_egress_proxy(channel)
+        if _s963_proxy:
+            logger.info('[S963] 渠道 id=%s mch=%s 使用出口代理 %s',
+                        channel.get('id'), channel.get('mch_id'), _s963_proxy.split('@')[-1])
         return WxPay(mch_id=channel['mch_id'], api_key=channel['api_key'],
-                      app_id=app_id, cert_path=cert_path, key_path=key_path), 'wechat'
+                      app_id=app_id, cert_path=cert_path, key_path=key_path,
+                      proxy=_s963_proxy or None), 'wechat'
     elif channel_type == 'third_party':
         extra = json.loads(channel.get('extra_config', '{}')) if channel.get('extra_config') else {}
         return TPP(appid=channel['mch_id'], appsecret=channel['api_key'],
@@ -1102,6 +1266,39 @@ def ensure_alipay_balance_tables(conn=None):
                 conn.close()
             except Exception:
                 pass
+
+
+def order_paid_by_alipay(order=None):
+    """[S970-20261013] 这笔订单的【钱】到底是支付宝收的，还是微信收的？
+
+    ★ 为什么必须按"实收渠道"判断，而不是"订单上有没有支付宝身份"：
+      真实故障（2026-10-13，4 笔实测）：支付宝用户（alipay_uid=056f-…）在微信小程序里操作，
+      订单被支付宝登录流程桥接了支付宝身份，但【钱是微信 mp-jsapi 收的】。
+      结束订单时只看到"有支付宝身份"就把押金记进 alipay_balances
+      → 用户在微信端看到余额 0 → 投诉"押金没退"（今天 11 条投诉里就有这类）。
+
+    返回 True 仅当订单实际挂的支付渠道 channel_type='alipay'。
+    判不出 / 没有渠道 / 读库异常 -> 一律返回 False（按微信处理，走原余额逻辑），
+    绝不把微信单误判成支付宝单。
+    """
+    try:
+        _pcid = (order or {}).get('payment_channel_id')
+        if not _pcid:
+            return False
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT channel_type FROM payment_channels WHERE id=%s", (_pcid,))
+        _r = cur.fetchone()
+        if not _r:
+            return False
+        try:
+            _t = str(_r['channel_type'] or '').strip().lower()
+        except Exception:
+            _t = str(_r[0] or '').strip().lower()
+        return _t == 'alipay'
+    except Exception as _e:
+        logger.warning('[S970] 判断订单实收渠道失败(按微信处理): %s', _e)
+        return False
 
 
 def alipay_balance_add(alipay_uid, amount, order_id=None, order_no='',
@@ -2087,9 +2284,30 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
     #   拿掉会让 H5 支付失败，所以这条路【不动 scene_info】，只改终端 IP。
     _s826_ip = client_ip_of_request() if _wx_report_real_ip_on() else ''
     _s826_log_declare(order_no, _s826_ip, scene_info, 'h5')
+    # [S955-20261013] 前置拦截：appid 与商户号不匹配 -> 不向微信发请求
+    _s955_appid = str(getattr(wxpay, 'app_id', '') or '')
+    _s955_mch = str((current_channel or {}).get('mch_id') or '')
+    if not wx_pay_appid_allowed(_s955_appid, _s955_mch):
+        logger.warning('[S955] 拦截不匹配下单(H5): appid=%s mch=%s order=%s openid=%s... 未向微信发请求',
+                       _s955_appid, _s955_mch, order_no, str(openid or '')[:8])
+        return {'mode': 'error',
+                'error_msg': '当前入口暂不支持支付，请退出后重新扫柜机上的二维码，用新版小程序下单'}
+    # [S958-20261013] 前置检查②：这个 openid 必须属于我们要用的这个 appid。
+    #   不属于 -> 直接不下单、不发请求给微信（微信侧看不到这次不匹配的请求）。
+    #   前缀取不到（该 appid 未登记）或 openid 为空（纯 MWEB）-> 不拦，行为与改动前一致。
+    if openid:
+        try:
+            _s958_prefix = _mp_openid_prefix_of(_s955_appid)
+            if _s958_prefix and not str(openid).startswith(_s958_prefix):
+                logger.warning('[S958] 拦截 openid 不属于该 appid(H5): appid=%s 期望前缀=%s 实际=%s... order=%s 未向微信发请求',
+                               _s955_appid, _s958_prefix, str(openid)[:8], order_no)
+                return {'mode': 'error',
+                        'error_msg': '支付账号不匹配：请退出后用微信扫柜机上的二维码，进入新版小程序下单'}
+        except Exception as _e958:
+            logger.warning('[S958] openid 前缀校验异常(放行): %s', _e958)
     result = wxpay.unifiedorder(trade_type=trade_type, body=PAY_GOODS_NAME,
                                  total_fee=total_fee, out_trade_no=order_no,
-                                 notify_url=_wx_payurl(), openid=openid,
+                                 notify_url=wx_notify_url(current_channel, 'pay'), openid=openid,
                                  scene_info=scene_info, time_expire=time_expire,
                                  spbill_create_ip=_s826_ip or None)
 
@@ -2261,8 +2479,12 @@ _APPID_BY_PREFIX_CACHE = {'ts': 0.0, 'rows': None}
 _APPID_BY_PREFIX_TTL = 60
 
 
-def _appid_rows():
+def _appid_rows(only_active=False):
     """wx_accounts 里所有「有 openid_prefix 且有可用 appid」的账号：(prefix, appid, name, acct_type)。
+
+    [S957-20261013] only_active=True：只返回【后台生效 is_active=1】的账号。
+      老板要求「后台配的是哪个就用哪个」——老 openid 不该再查出已停用的旧 appid
+      （旧行为：已停用的小程序 appid 被拿去配我们的商户号 -> APPID_MCHID_NOT_MATCH）。
 
     读不到库 -> 返回 []，调用方回落到原行为。60 秒缓存，避免支付热路径每次都查库。
 
@@ -2280,8 +2502,11 @@ def _appid_rows():
        `connection pool exhausted` 333 条 / 自愈重启 21 次。
     """
     now = time.time()
-    cached = _APPID_BY_PREFIX_CACHE.get('rows')
-    if cached is not None and (now - _APPID_BY_PREFIX_CACHE.get('ts', 0.0)) < _APPID_BY_PREFIX_TTL:
+    # [S957] 两个变体分开缓存（全部 / 仅生效），互不污染
+    _ck = 'rows_active' if only_active else 'rows'
+    _tk = 'ts_active' if only_active else 'ts'
+    cached = _APPID_BY_PREFIX_CACHE.get(_ck)
+    if cached is not None and (now - _APPID_BY_PREFIX_CACHE.get(_tk, 0.0)) < _APPID_BY_PREFIX_TTL:
         return cached
     rows = []
     conn = None
@@ -2308,9 +2533,15 @@ def _appid_rows():
         # [S415-20260921] 已停用的公众号(oa)不再参与"按 openid 取 appid"：
         #   它的 appid 跟现在在用的商户没有绑定，拿来下单必然 APPID_MCHID_NOT_MATCH。
         #   （2026-09-21 生产实例：老公众号 oLhbm2 的 appid 被拿去给卓蓝时商户下单）
-        cursor.execute("SELECT appid, openid_prefix, name, acct_type FROM wx_accounts "
-                       "WHERE COALESCE(openid_prefix,'') <> '' AND COALESCE(appid,'') <> '' "
-                       "AND NOT (COALESCE(acct_type,'') = 'oa' AND COALESCE(is_active,0) = 0)")
+        # [S957-20261013] only_active=True 时只取后台生效的账号（小程序 / 公众号一视同仁）
+        if only_active:
+            cursor.execute("SELECT appid, openid_prefix, name, acct_type FROM wx_accounts "
+                           "WHERE COALESCE(openid_prefix,'') <> '' AND COALESCE(appid,'') <> '' "
+                           "AND COALESCE(is_active,0) = 1")
+        else:
+            cursor.execute("SELECT appid, openid_prefix, name, acct_type FROM wx_accounts "
+                           "WHERE COALESCE(openid_prefix,'') <> '' AND COALESCE(appid,'') <> '' "
+                           "AND NOT (COALESCE(acct_type,'') = 'oa' AND COALESCE(is_active,0) = 0)")
         for r in cursor.fetchall():
             _p = str(r.get('openid_prefix') or '').strip()
             _a = str(r.get('appid') or '').strip()
@@ -2329,12 +2560,120 @@ def _appid_rows():
                 conn.close()
             except Exception as _ce:
                 logger.error('[S659] 归还 _appid_rows 的连接失败(不影响本次返回值): %s', _ce)
-    _APPID_BY_PREFIX_CACHE['rows'] = rows
-    _APPID_BY_PREFIX_CACHE['ts'] = now
+    _APPID_BY_PREFIX_CACHE[_ck] = rows
+    _APPID_BY_PREFIX_CACHE[_tk] = now
     return rows
 
 
-def appid_by_openid(openid, acct_type=None):
+
+# ============================================================================
+# [S955-20261013] 微信支付前置拦截：appid 与商户号不匹配 -> 不向微信发下单请求
+#   背景：H5 / 旧小程序的用户带着【别的 appid】来下单，微信回 APPID_MCHID_NOT_MATCH。
+#         失败请求本身不成交，但"我们的商户号 + 别人的 appid"微信侧看得见，
+#         长期出现容易被风控关注。这里在下单前判定，不匹配就直接挡掉（请求不出网）。
+#   ★ 配置 wx_pay_allowed_appids 为空 -> 一律放行（与改动前逐字节一致）。
+#     格式：逗号分隔 appid；也支持 "appid:mch_id" 的精确绑定写法。
+# ============================================================================
+WX_PAY_ALLOWED_APPIDS_KEY = 'wx_pay_allowed_appids'
+
+
+def wx_pay_allowed_appids():
+    """返回 (通用appid集合, 精确对集合)；配置空时两者都空 = 不拦截。"""
+    try:
+        raw = str(get_setting(WX_PAY_ALLOWED_APPIDS_KEY, '') or '').strip()
+    except Exception:
+        return set(), set()
+    any_ids, pair_ids = set(), set()
+    for x in raw.replace('，', ',').split(','):
+        x = x.strip().lower()
+        if not x:
+            continue
+        if ':' in x:
+            pair_ids.add(x)
+        else:
+            any_ids.add(x)
+    return any_ids, pair_ids
+
+
+def active_account_appids():
+    """[S957] 后台 wx_accounts 里【生效 is_active=1】的 appid 集合（小程序/公众号都算）。
+       读不到库返回空集（调用方按"不拦截"处理，绝不因读库失败挡住支付）。
+    """
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT appid FROM wx_accounts WHERE COALESCE(is_active,0)=1 "
+                    "AND COALESCE(appid,'') <> ''")
+        out = set()
+        for _r in cur.fetchall():
+            try:
+                _a = str(_r['appid'] or '').strip().lower()
+            except Exception:
+                _a = str(_r[0] or '').strip().lower()
+            if _a and not _a.startswith('replace_me'):
+                out.add(_a)
+        return out
+    except Exception as _e:
+        logger.warning('[S957] 取后台生效账号失败(按不拦截处理): %s', _e)
+        return set()
+
+
+def inactive_account_appids():
+    """[S959] 后台 wx_accounts 里【已停用 is_active=0】的 appid 集合。读不到返回空集。"""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT appid FROM wx_accounts WHERE COALESCE(is_active,0)=0 "
+                    "AND COALESCE(appid,'') <> ''")
+        out = set()
+        for _r in cur.fetchall():
+            try:
+                _a = str(_r['appid'] or '').strip().lower()
+            except Exception:
+                _a = str(_r[0] or '').strip().lower()
+            if _a and not _a.startswith('replace_me'):
+                out.add(_a)
+        return out
+    except Exception as _e:
+        logger.warning('[S959] 取已停用账号失败(按空处理): %s', _e)
+        return set()
+
+
+def wx_pay_appid_allowed(appid=None, mch_id=None):
+    """[S955/S957] 这个 appid 能不能用这个商户号下单？
+
+    ★ 判定顺序（老板要求：后台配的是哪个就用哪个）：
+       1) 后台生效账号(is_active=1)的 appid -> 一律允许（含小程序与公众号）
+       2) 手工白名单 wx_pay_allowed_appids 命中 -> 允许
+       3) 生效账号也读不到、手工白名单也空 -> 不拦截（与改动前一致，绝不挡支付）
+       4) 其余（= 已停用的旧 appid）-> 拦截，不向微信发请求
+    """
+    try:
+        _a0 = str(appid or '').strip().lower()
+        if _a0 in active_account_appids():
+            return True
+        # [S959-20261013] 属于【已停用】账号的 appid -> 一律拦截。
+        #   目的：绝不让"新主体的商户号 + 旧主体的 appid"这种组合被微信看到（关联风险）。
+        if _a0 and _a0 in inactive_account_appids():
+            logger.warning('[S959] 拦截已停用账号的 appid: %s mch=%s', _a0, mch_id)
+            return False
+    except Exception:
+        pass
+    any_ids, pair_ids = wx_pay_allowed_appids()
+    if not any_ids and not pair_ids:
+        return True
+    a = str(appid or '').strip().lower()
+    if not a:
+        return True
+    if a in any_ids:
+        return True
+    m = str(mch_id or '').strip().lower()
+    if a + ':' + m in pair_ids:
+        return True
+    return False
+
+
+def appid_by_openid(openid, acct_type=None, only_active=False):
     """[S357] 按 openid 前缀反查这笔支付该用哪个 appid。
 
     最长前缀优先；判断不出来一律返回 ''（调用方必须回落，保证老路径一字不变）。
@@ -2350,7 +2689,7 @@ def appid_by_openid(openid, acct_type=None):
         return ''
     best_len = -1
     best = ''
-    for _p, _a, _name, _t in _appid_rows():
+    for _p, _a, _name, _t in _appid_rows(only_active=only_active):
         if acct_type and _t != acct_type:
             continue
         if _oid.startswith(_p) and len(_p) > best_len:
@@ -2563,9 +2902,17 @@ def get_mp_jsapi_params(order_id, order_no, amount, mp_openid,
         _s826_ip = client_ip_of_request() if _wx_report_real_ip_on() else ''
         _s826_scene = build_wx_store_scene(order_id)
         _s826_log_declare(order_no, _s826_ip, _s826_scene, 'mp-jsapi')
+        # [S955-20261013] 前置拦截：appid 与商户号不匹配 -> 不向微信发请求
+        _s955b_appid = str(getattr(wxpay, 'app_id', '') or '')
+        _s955b_mch = str(channel.get('mch_id') or '')
+        if not wx_pay_appid_allowed(_s955b_appid, _s955b_mch):
+            logger.warning('[S955] 拦截不匹配下单(mp-jsapi): appid=%s mch=%s order=%s openid=%s... 未向微信发请求',
+                           _s955b_appid, _s955b_mch, order_no, str(mp_openid or '')[:8])
+            return {'ok': False, 'mode': 'error',
+                    'error_msg': '当前入口暂不支持支付，请退出后重新扫柜机上的二维码，用新版小程序下单'}
         result = wxpay.unifiedorder(trade_type='JSAPI', body=body,
                                     total_fee=total_fee, out_trade_no=order_no,
-                                    notify_url=_wx_payurl(), openid=mp_openid,
+                                    notify_url=wx_notify_url(channel, 'pay'), openid=mp_openid,
                                     scene_info=_s826_scene, time_expire=time_expire,
                                     spbill_create_ip=_s826_ip or None)
         # [S657-20260924] 同上: 被动记录本次真实下单结果(小程序支付 JSAPI)
@@ -2576,8 +2923,16 @@ def get_mp_jsapi_params(order_id, order_no, amount, mp_openid,
                          result.get('err_code'), result.get('err_code_des'))
             # 故意【不】自动禁用商户：H5 那套遇到 MCH_NOT_EXIST 会顺手 is_active=0，
             # 而小程序支付当前只有 114 一个通道，误禁用会让全站无法收款。只记日志，人工处理。
-            return {'ok': False, 'mode': 'error',
-                    'error_msg': result.get('err_code_des') or result.get('return_msg') or '微信下单失败'}
+            # [S981-20261014] 应急引导：微信商户号被限制时，别只把微信那句原文甩给用户
+            #   （用户会卡在支付页不知道怎么办）。改成明确指引：用支付宝扫柜机屏幕的二维码。
+            _s981_des = str(result.get('err_code_des') or result.get('return_msg') or '微信下单失败')
+            _s981_code = str(result.get('err_code') or '').upper()
+            if _s981_code in ('NOAUTH', 'NOTENOUGH', 'SYSTEMERROR') or '已被限制' in _s981_des:
+                logger.warning('[S981] 微信商户受限 -> 提示用户改用支付宝 order=%s channel=%s err=%s',
+                               order_no, channel.get('id'), _s981_code or _s981_des[:20])
+                _s981_des = ('微信支付暂不可用。请打开【支付宝】，扫描柜机屏幕上的二维码付款；'
+                             '或在浏览器中打开本页后用支付宝支付')
+            return {'ok': False, 'mode': 'error', 'error_msg': _s981_des}
 
         prepay_id = result.get('prepay_id')
         # [S319] 这里【故意不做任何写库】。原本设想是把订单的收款渠道写成真正下单的这个
@@ -2652,7 +3007,8 @@ def _is_alipay_mp_channel(channel):
         return False
     if str(channel.get('app_id') or '').strip() == _ALIPAY_MP_APP_ID:
         return True
-    if str(channel.get('cert_name') or '').strip().lower() == 'alipay_mp':
+    # [S908] cert_name 以 alipay_mp 开头即算小程序通道（覆盖 alipay_mp / alipay_mp_b 等多套密钥）
+    if str(channel.get('cert_name') or '').strip().lower().startswith('alipay_mp'):
         return True
     return '小程序' in str(channel.get('name') or '')
 
@@ -2677,7 +3033,13 @@ def _pick_alipay_mp_channel_from_db():
     return None
 
 
-def _mp_pick_alipay_channel(channel_id=None):
+def _mp_pick_alipay_channel(channel_id=None, appid=None):
+    # [S942] appid 非空时：优先按 appid 精确取该小程序的通道（新旧并存）
+    if appid:
+        _by942 = alipay_mp_channel_by_appid(appid)
+        if _by942 and _is_alipay_mp_channel(_by942):
+            return _by942
+        logger.warning('[S942] appid=%s 没找到对应支付宝通道，回落通用选择', appid)
     """只挑 channel_type='alipay' 的通道；挑不到返回 None。
 
     为什么单独一条：微信/支付宝通道【绝不能相互轮询】（选错类型直接付款失败），
@@ -2774,7 +3136,12 @@ def get_alipay_mp_trade_params(order_id, order_no, amount, alipay_uid,
             return {'ok': True, 'mode': 'mock', 'order_id': order_id, 'order_no': order_no,
                     'total_fee': int(round(amount * 100))}
 
-        channel = _mp_pick_alipay_channel(payment_channel_id)
+        # [S942] 按请求来源的小程序 appid 选通道（新旧两个支付宝小程序并存）
+        _req_appid942 = alipay_mp_app_of_request()
+        channel = _mp_pick_alipay_channel(payment_channel_id, appid=_req_appid942)
+        if channel:
+            logger.info('[S942] 支付宝下单：来源小程序=%s 选用通道 id=%s app_id=%s',
+                        _req_appid942, channel.get('id'), channel.get('app_id'))
         if not channel and payment_channel_id:
             # 订单挂的渠道不是支付宝（真实场景：store/init 走 select_payment_channel 选了微信 114）：
             # 不报错，记一条告警改选支付宝通道，否则用户付不了钱。
@@ -2787,7 +3154,17 @@ def get_alipay_mp_trade_params(order_id, order_no, amount, alipay_uid,
 
         # [S618] 小程序支付官方必传：op_app_id = 唤起收银台支付所在的小程序 appid。
         #   取不到就明确报错并返回友好提示，绝不静默发一个缺必选参数的请求。
-        _op_app_id = str(channel.get('app_id') or '').strip()
+        # [S908-20261012] op_app_id 支持单独配置。
+        #   背景（支付宝官方"非同主体"方案）：调用方(收款方B)与前端小程序(A)不是同一主体时，
+        #   必须【用 B 自己的应用 app_id + 私钥签名】，op_app_id 传【前端小程序 appid】，且不传 seller_id。
+        #   因此"签名应用"与"op_app_id"是两个值，不能再共用一个字段。
+        #   取值：渠道 extra_config.op_app_id 优先；没配 -> 沿用渠道 app_id（与改动前逐字节一致）。
+        _op_extra = {}
+        try:
+            _op_extra = json.loads(channel.get('extra_config') or '{}') or {}
+        except Exception:
+            _op_extra = {}
+        _op_app_id = str(_op_extra.get('op_app_id') or channel.get('app_id') or '').strip()
         if not _op_app_id:
             logger.error('[alipay-mp] 通道 id=%s 未配置 app_id，无法传 op_app_id（小程序支付必传）order=%s',
                          channel.get('id'), order_no)
@@ -2799,10 +3176,20 @@ def get_alipay_mp_trade_params(order_id, order_no, amount, alipay_uid,
             logger.error('[alipay-mp] 支付宝通道实例化失败 channel=%s type=%s', channel.get('id'), ch_type)
             return {'ok': False, 'mode': 'error', 'error_msg': '支付宝渠道配置异常'}
 
-        resp = client.trade_create(out_trade_no=order_no, total_amount=amount,
-                                   subject=subject, buyer_open_id=alipay_uid,
-                                   product_code='JSAPI_PAY', op_app_id=_op_app_id,
-                                   timeout_express=timeout_express)
+        # [S853b-20261010] 指定收款账号：渠道表 mch_id 填了就传给 seller_id。
+        #   背景：新主体(B)的商户号绑定别的主体(A)的小程序收款时，官方要求
+        #   "seller_id 与 pid 不一致 -> 联系支付宝小二配置收款关系"；
+        #   未配置时报 ACQ.INVALID_RECEIVE_ACCOUNT「卖家不在设置的收款账户列表之中」。
+        #   默认 mch_id 为空 -> 不传该字段 -> 与改动前逐字节一致（零影响）。
+        _seller_id = str(channel.get('mch_id') or '').strip()
+        _tc_kw = dict(out_trade_no=order_no, total_amount=amount, subject=subject,
+                      buyer_open_id=alipay_uid, product_code='JSAPI_PAY',
+                      op_app_id=_op_app_id, timeout_express=timeout_express)
+        if _seller_id:
+            _tc_kw['seller_id'] = _seller_id
+            logger.info('[alipay-mp] 指定收款账号 seller_id=%s order=%s channel=%s',
+                        _seller_id, order_no, channel.get('id'))
+        resp = client.trade_create(**_tc_kw)
         if str(resp.get('code')) != '10000':
             sub_code = str(resp.get('sub_code') or '')
             sub_msg = str(resp.get('sub_msg') or resp.get('msg') or '')
@@ -4189,6 +4576,10 @@ WITHDRAW_REFUND_MODE_KEY = 'withdraw_refund_mode'
 WITHDRAW_REFUND_ALIPAY_KEY = 'withdraw_refund_alipay'
 WITHDRAW_REFUND_DRY_RUN_KEY = 'withdraw_refund_dry_run'
 WITHDRAW_REFUND_ORIG_LOCS_KEY = 'withdraw_refund_original_locations'
+# [S850-20261009] 商户号白名单（逗号分隔 mch_id）。命中的商户号收的款，提现时：
+#   ① 跳过审批随机抽签（不拦截）② 无条件走原路退回（不看 mode/网点白名单）。
+#   默认空 = 行为与改动前完全一致。
+WITHDRAW_REFUND_ORIG_MCH_KEY = 'withdraw_refund_original_mchids'
 
 
 def is_channel_balance_error(msg='', result=None):
@@ -4314,13 +4705,33 @@ def withdraw_refund_original_locations():
     return out
 
 
-def withdraw_use_original(ch_types, location_id=None, mode=None, alipay_enabled=None):
+def withdraw_refund_original_mchids():
+    """[S850] 商户号白名单（逗号分隔 mch_id；空=不启用）。命中则该单无条件走原路退回。"""
+    try:
+        raw = str(get_setting(WITHDRAW_REFUND_ORIG_MCH_KEY, '') or '')
+    except Exception:
+        return set()
+    out = set()
+    for x in raw.replace('，', ',').split(','):
+        x = x.strip()
+        if x:
+            out.add(x)
+    return out
+
+
+def withdraw_use_original(ch_types, location_id=None, mode=None, alipay_enabled=None, mch_id=None):
     """[S541] 判断"这一单"是否走新的原路退回口径。返回 bool。
     规则（与灰度顺序一致）：
+      * [S850-20261009] 商户号白名单（优先级最高）：命中则【无条件】走原路退回，
+        不看 mode、不看网点白名单，也不改其他任何单的行为。白名单为空时本分支不生效。
       * 支付宝单(channel_type=alipay)：只要 withdraw_refund_alipay=1 就生效 —— 微信路径完全不受影响
-        （对应"只放支付宝"灰度：在途支付宝资金极小，微信侧保持现状）
       * 其他/判不出渠道     ：必须 withdraw_refund_mode=original；若配了网点白名单，则要求该单网点在白名单内
     """
+    try:
+        if mch_id and str(mch_id).strip() in withdraw_refund_original_mchids():
+            return True
+    except Exception:
+        pass
     if mode is None:
         mode = withdraw_refund_mode()
     if alipay_enabled is None:
@@ -4363,6 +4774,7 @@ def withdraw_refund_plan(order_ids, mode=None, alipay_enabled=None):
         c = conn.cursor()
         c.execute("""SELECT o.id,
                             COALESCE(pc.channel_type, '') AS channel_type,
+                            COALESCE(pc.mch_id, '') AS mch_id,
                             l.id AS location_id
                      FROM orders o
                      LEFT JOIN payment_channels pc ON pc.id = o.payment_channel_id
@@ -4374,8 +4786,10 @@ def withdraw_refund_plan(order_ids, mode=None, alipay_enabled=None):
             out[int(r['id'])] = {
                 'channel_type': _ch,
                 'location_id': r.get('location_id'),
+                'mch_id': str(r.get('mch_id') or ''),
                 'original': bool(withdraw_use_original([_ch], r.get('location_id'),
-                                                       mode=mode, alipay_enabled=alipay_enabled)),
+                                                       mode=mode, alipay_enabled=alipay_enabled,
+                                                       mch_id=r.get('mch_id'))),
             }
     except Exception as e:
         logger.warning('[S541] 提现计划预扫失败(按现状处理): %s', e)
@@ -4582,6 +4996,24 @@ def _backfill_order_identity(order_id, mp_openid='', unionid='', openid='', sour
                     _hit_mp = _mp
             except Exception:
                 _uid = 0
+        if _uid <= 0 and _mp:
+            # [S882-20261012] ★ 兜底：users 表里还没有这个 mp_openid 的行时，
+            #   按 S521 口径【自动建/取身份】——与 store_init / link_openid 用的是同一个函数。
+            #   为什么必须补：本函数原先在这里直接 return False，于是订单的 mp_openid 一直空着，
+            #   而钱包页 calc_balance() 是按订单的 openid/mp_openid 匹配的 -> 钱看得见却算不出来。
+            #   实测（2026-10-12 生产）：渠道140 有 69 笔订单的 openid 字段被【公众号 openid】占着、
+            #   mp_openid 为空，就是因为下单时客户端只带了公众号 openid，而支付环节这里放弃了。
+            #   WeChat 统一下单已经用这个 openid 校验过付款人（appid/openid 不匹配会直接报错），
+            #   是比手机号强得多的身份证据；全程不传手机号、不猜。
+            try:
+                _uid882 = resolve_user_by_ident(_cur, 'mp_openid', _mp, auto_create=True) or 0
+                if _uid882 > 0:
+                    _uid = int(_uid882)
+                    _hit_mp = _mp
+                    logger.info('[S882] 身份回填：users 无此 mp_openid，已自动建/取身份 order=%s uid=%s',
+                                _oid, _uid)
+            except Exception as _e882:
+                logger.warning('[S882] 身份回填：自动建身份失败(不影响支付) order=%s err=%s', _oid, _e882)
         if _uid <= 0:
             logger.info('[S569] 身份回填：强键解不出 user_id，不写库 order=%s/%s src=%s (mp=%s...)',
                         _oid, _order_no, source or '?', (_mp or '-')[:8])
@@ -6561,6 +6993,61 @@ _SUBSCRIBE_FIELD_MAP = {
     #     退款成功     Ergq... = amount1(应退金额) time6(退款时间) thing10(退款方式) thing2(备注)
     #   不映射 -> 发出去缺 time6/thing5 等必填字段 -> 47003（2026-10-09 当天 80 次失败）。
     #   旧记录（错的，留档备查）：general=thing3/thing4、refund=character_string1/amount2/time5/thing4/thing3
+    # [S849-20261009] 遥聿桢信息（wxb2c7267c3c5cd03a，账号18）的字段映射。
+    #   模板字段是用 wxaapi/newtmpl/gettemplate 实测拉到的（不是照抄个体1）：
+    #     账户余额通知 Fjgd7GRh = amount1(账户余额) time2(变动时间) thing3(变动原因) thing4(温馨提示)
+    #     退款成功通知 vH99Ranv = amount2(退款金额) time5(退款时间) thing4(退款方式) thing3(备注)
+    #   ⚠ 关键差异：代码发送时 thing4=变动原因、thing3=温馨提示，
+    #     而这个模板 thing3=变动原因、thing4=温馨提示 —— 【正好相反】，必须互换映射，
+    #     否则通知内容会错位（变动原因和温馨提示写反），虽然不会报 47003。
+    #   退款那条恰好字段一致（amount2/time5/thing4/thing3），映射为恒等，显式写出便于查阅。
+    (18, 'subscribe_general'): {
+        'amount1': 'amount1', 'time2': 'time2',
+        'thing4': 'thing3',      # 代码:变动原因 -> 模板:变动原因(thing3)
+        'thing3': 'thing4',      # 代码:温馨提示 -> 模板:温馨提示(thing4)
+    },
+    (18, 'subscribe_refund'): {
+        'amount2': 'amount2', 'time5': 'time5',
+        'thing4': 'thing4',      # 退款方式 -> 退款方式
+        'thing3': 'thing3',      # 备注 -> 备注
+    },
+    # [S859-20261012] 图文他姐夫/存语书（wx191a9edc8397d0a5，账号22）的字段映射。
+    #   模板字段用 wxaapi/newtmpl/gettemplate 实测拉取，与账号18【完全一致】：
+    #     账户余额通知 vC2gDoJ = amount1(账户余额) time2(变动时间) thing3(变动原因) thing4(温馨提示)
+    #     退款成功通知 fwfTEWM = amount2(退款金额) time5(退款时间) thing4(退款方式) thing3(备注)
+    #   ⚠ 与 18 同样：代码发送时 thing4=变动原因、thing3=温馨提示，
+    #     而模板 thing3=变动原因、thing4=温馨提示 —— 【正好相反】，必须互换。
+    (22, 'subscribe_general'): {
+        'amount1': 'amount1', 'time2': 'time2',
+        'thing4': 'thing3',      # 代码:变动原因 -> 模板:变动原因(thing3)
+        'thing3': 'thing4',      # 代码:温馨提示 -> 模板:温馨提示(thing4)
+    },
+    (22, 'subscribe_refund'): {
+        'amount2': 'amount2', 'time5': 'time5',
+        'thing4': 'thing4',      # 退款方式 -> 退款方式
+        'thing3': 'thing3',      # 备注 -> 备注
+    },
+    # [S1003-20261015] 图文他丈母娘/新小程序（wxf9978d5d7e53ae3c，账号23）的字段映射。
+    #   ★ 不加这段 -> _remap_subscribe_data 原样返回 -> 发老字段名 ->
+    #     新模板缺 thing5/time6 等必填字段 -> 47003（2026-10-15 早上实测 11 次失败、
+    #     报错原文 "data.thing5.value is empty" / "data.time6.value is empty"）。
+    #   模板字段用 wxaapi/newtmpl/gettemplate 实测拉取：
+    #     账户余额变动通知 dcnWgEL87 = amount1(剩余金额) time2(时间) thing5(变动原因) thing4(备注)
+    #     退款成功通知     cRr2cvhS = amount8(退款金额) time6(退款时间) thing3(退款原因) thing10(退款方式)
+    #   代码发送时：general 是 thing4=变动原因、thing3=温馨提示；
+    #              refund  是 amount2/time5、thing4=退款方式、thing3=备注。
+    #   ⚠ refund 模板的 thing3 语义是"退款原因"，代码传的是"备注"，字段名相同、语义近似，
+    #     直接沿用（不会 47003）；新模板没有 character_string1，多传的字段微信会忽略。
+    (23, 'subscribe_general'): {
+        'amount1': 'amount1', 'time2': 'time2',
+        'thing4': 'thing5',      # 代码:变动原因 -> 模板:变动原因(thing5)
+        'thing3': 'thing4',      # 代码:温馨提示 -> 模板:备注(thing4)
+    },
+    (23, 'subscribe_refund'): {
+        'amount2': 'amount8', 'time5': 'time6',
+        'thing4': 'thing10',     # 代码:退款方式 -> 模板:退款方式(thing10)
+        'thing3': 'thing3',      # 代码:备注 -> 模板:退款原因(thing3，字段名相同)
+    },
     (19, 'subscribe_general'): {
         'amount1': 'amount1', 'time2': 'time2',
         'thing4': 'thing5',      # 代码:变动原因 -> 模板:变动原因
@@ -6594,6 +7081,120 @@ def _clip_thing(nk, v):
     return v
 
 
+# ============================================================================
+# [S1007-20261015] 模板字段解析 + 自动生成映射
+#   思路：代码发送时用的字段名有固定【语义】（见 _S1007_STD_LABELS），
+#         微信模板 content 里每个字段带中文标签（"退款金额:{{amount8.DATA}}"），
+#         按【中文标签】匹配即可自动得出 field_map，不用人工一条条写。
+# ============================================================================
+_S1007_STD_LABELS = {
+    # 代码侧字段 -> 语义标签（与 _SUBSCRIBE_FIELD_MAP 的注释一致，是全项目的事实标准）
+    'subscribe_general': {
+        'amount1': '账户余额', 'time2': '变动时间',
+        'thing4': '变动原因', 'thing3': '温馨提示',
+    },
+    'subscribe_refund': {
+        'amount2': '退款金额', 'time5': '退款时间',
+        'thing4': '退款方式', 'thing3': '备注',
+    },
+    'subscribe_deposit': {
+        'amount1': '账户余额', 'time2': '变动时间',
+        'thing4': '变动原因', 'thing3': '温馨提示',
+    },
+}
+
+
+def parse_template_fields(content):
+    """把微信模板 content 解析成 [(字段key, 中文标签), ...]
+
+    content 形如：
+        剩余金额:{{amount1.DATA}}
+        时间:{{time2.DATA}}
+        变动原因:{{thing5.DATA}}
+    解析不出来返回 []（调用方自行兜底）。
+    """
+    import re as _re
+    out = []
+    try:
+        for line in str(content or '').replace('\r', '').split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            mm = _re.search(r'\{\{\s*([A-Za-z0-9_]+)\s*\.DATA\s*\}\}', line)
+            if not mm:
+                continue
+            key = mm.group(1)
+            label = line[:mm.start()].strip().rstrip(':：').strip()
+            out.append((key, label))
+    except Exception:
+        return []
+    return out
+
+
+def auto_field_map(biz, tpl_fields):
+    """按中文标签把【代码字段】自动匹配到【模板字段】，返回 field_map。
+
+    tpl_fields: parse_template_fields() 的结果 [(模板key, 模板标签), ...]
+    匹配优先级：
+      1) 标签完全相同
+      2) 一方包含另一方（如"退款金额" vs "金额"）
+      3) 同类型（amount/time/thing/character_string/number）按出现顺序兜底
+    匹配不上或结果为空时返回 {}（调用方回落硬编码）。
+    """
+    std = _S1007_STD_LABELS.get(biz or '')
+    if not std or not tpl_fields:
+        return {}
+    tpl = list(tpl_fields)
+    used_tpl = set()
+    m = {}
+
+    def _take(idx):
+        k, _ = tpl[idx]
+        used_tpl.add(idx)
+        return k
+
+    # 第1轮：标签完全相同
+    for code_key, code_label in std.items():
+        for i, (tk, tl) in enumerate(tpl):
+            if i in used_tpl:
+                continue
+            if tl and tl == code_label:
+                m[code_key] = _take(i)
+                break
+
+    # 第2轮：包含关系（长度>=2 才比较，避免单字误配）
+    for code_key, code_label in std.items():
+        if code_key in m:
+            continue
+        for i, (tk, tl) in enumerate(tpl):
+            if i in used_tpl:
+                continue
+            if len(code_label) >= 2 and len(tl) >= 2 and (code_label in tl or tl in code_label):
+                m[code_key] = _take(i)
+                break
+
+    # 第3轮：同类型按顺序兜底
+    def _kind(k):
+        for p in ('character_string', 'amount', 'thing', 'time', 'number', 'date', 'phrase', 'letter', 'symbol'):
+            if str(k).startswith(p):
+                return p
+        return str(k)[:6]
+
+    for code_key in std:
+        if code_key in m:
+            continue
+        ck = _kind(code_key)
+        for i, (tk, tl) in enumerate(tpl):
+            if i in used_tpl:
+                continue
+            if _kind(tk) == ck:
+                m[code_key] = _take(i)
+                break
+
+    # 恒等映射也要显式保留（后台看得清楚）；一个都没匹配上就返回 {}
+    return m if m else {}
+
+
 def _remap_subscribe_data(account_id, biz, data):
     """[S343] 按【目标账号+业务】把老字段名重映射成目标模板的真实字段名。
 
@@ -6601,7 +7202,19 @@ def _remap_subscribe_data(account_id, biz, data):
     两遍处理：先让"已经是目标字段名"的键占位（兼容新式调用方），
     再把老字段名填进还空着的目标槽；目标槽已被占用时保留先到的值并告警。
     """
-    m = _SUBSCRIBE_FIELD_MAP.get((int(account_id or 0), biz or ''))
+    # [S1007-20261015] 优先读【后台可配】的映射（wx_templates.field_map）；
+    #   没配再回落硬编码表 —— 保证行为向后兼容、后台一配就生效。
+    m = None
+    try:
+        import wx_config as _wc1007
+        m = _wc1007.get_template_field_map(biz, account_id=int(account_id or 0))
+        if m:
+            logger.info('[S1007] 使用后台配置的字段映射 账号id=%s biz=%s %s', account_id, biz, m)
+    except Exception as _e1007:
+        m = None
+        logger.warning('[S1007] 读后台字段映射失败(回落硬编码): %s', _e1007)
+    if not m:
+        m = _SUBSCRIBE_FIELD_MAP.get((int(account_id or 0), biz or ''))
     if not m:
         return data
     data = data or {}
@@ -7037,8 +7650,30 @@ def notify_alipay_order(order=None, order_id=None, order_ids=None, biz='',
                     'keyword3': {'value': '请自行点击此通知消息跳转“我的钱包”提现'},
                     'keyword4': {'value': '已退还至小程序用户钱包'},
                 }
+        # [S943] 按订单所属渠道的小程序 appid 选模板与客户端（新旧并存）
+        _appid943 = ''
+        try:
+            _chid943 = (_o or {}).get('payment_channel_id')
+            if not _chid943 and _oid:
+                _cb943 = get_db()
+                _cu943 = _cb943.cursor()
+                _cu943.execute("SELECT payment_channel_id FROM orders WHERE id=%s", (_oid,))
+                _r943 = _cu943.fetchone()
+                _cb943.close()
+                if _r943:
+                    try:
+                        _chid943 = _r943['payment_channel_id']
+                    except Exception:
+                        _chid943 = _r943[0]
+            if _chid943:
+                _ch943 = _get_payment_channel(_chid943)
+                _appid943 = str((_ch943 or {}).get('app_id') or '').strip()
+            logger.info('[S943] 订阅消息目标小程序=%s（订单渠道=%s）', _appid943 or '(默认)', _chid943)
+        except Exception as _e943:
+            logger.warning('[S943] 取订单渠道小程序失败(按默认): %s', _e943)
         _ok631 = send_alipay_subscribe_message(_uid, '', data,
-                                               page=page or 'pages/mine/mine', biz=_biz)
+                                               page=page or 'pages/mine/mine', biz=_biz,
+                                               alipay_appid=_appid943 or None)
         if _ok631:
             logger.info('[S631] 支付宝订阅消息已发 order_id=%s biz=%s uid=%s...',
                         _oid, _biz, _uid[:8])
@@ -7070,7 +7705,18 @@ def notify_alipay_order(order=None, order_id=None, order_ids=None, biz='',
 #       ⚠️ amount1/time2/thing3/thing4（微信字段名）**支付宝侧一个都不要用**。
 #   安全口径：任何异常只记日志、绝不抛出；alipay_uid 为空直接返回 False。
 # ============================================================
-_ALIPAY_TPL_GENERAL = 'c142ac2357774daab8994a0f5a91faa4'   # 账户余额通知（兜底值）
+_ALIPAY_TPL_GENERAL = 'c142ac2357774daab8994a0f5a91faa4'   # 账户余额通知（旧小程序兜底值）
+# [S943-20261013] 新旧两个支付宝小程序各自的模板ID（按订单所属渠道的 app_id 选）
+_ALIPAY_TPL_BY_APP = {
+    '2021006199688688': {   # 旧·玉田储物
+        'subscribe_general': 'c142ac2357774daab8994a0f5a91faa4',
+        'subscribe_refund':  'de68d98e94c84477b1b9e116fcb8cbfa',
+    },
+    '2021007110604245': {   # 新·C主体
+        'subscribe_general': '006d7c642fd848b39b5f31d7ab669c11',
+        'subscribe_refund':  'a9cef34a055a4dec93ab0959a2f86464',
+    },
+}
 _ALIPAY_TPL_REFUND = 'de68d98e94c84477b1b9e116fcb8cbfa'    # 寄存预付款退还通知（兜底值）
 
 # 微信字段名 -> 支付宝关键词名（改名表）。两条模板一律留空 {} = 不做改名的直通路径；
@@ -7108,7 +7754,11 @@ _ALIPAY_TPL_BIZ_HINTS = (
 )
 
 
-def alipay_subscribe_template_id(biz, default=''):
+def alipay_subscribe_template_id(biz, default='', appid=None):
+    # [S943] 指定了 appid（新旧小程序并存）-> 直接返回该小程序的模板ID，不查库
+    _tpl943 = ((_ALIPAY_TPL_BY_APP.get(str(appid or '').strip()) or {}).get(str(biz or '').strip()))
+    if _tpl943:
+        return _tpl943
     """[S530-20260921] 直接查库取支付宝【订阅消息】模板ID（绕开配置中心）
 
     背景（本次修的 bug）：
@@ -7211,7 +7861,7 @@ def alipay_subscribe_data(template_id, data):
 
 
 def send_alipay_subscribe_message(alipay_uid, template_id, data, page='pages/mine/mine',
-                                  dry_run=False, biz=''):
+                                  dry_run=False, biz='', alipay_appid=None):
     """[S526] 发送支付宝小程序订阅消息（对应微信的 send_wx_subscribe_message）
 
     入参：
@@ -7272,9 +7922,10 @@ def send_alipay_subscribe_message(alipay_uid, template_id, data, page='pages/min
                 return False
         except Exception:
             pass
-        client = get_alipay_mp_client()
+        # [S943] 按目标小程序选客户端（新旧并存）；不传时与改动前一致
+        client = get_alipay_mp_client(alipay_appid)
         if client is None:
-            logger.error('[alipay_subscribe] 支付宝小程序客户端不可用（密钥文件缺失？）')
+            logger.error('[alipay_subscribe] 支付宝小程序客户端不可用（密钥文件缺失？）appid=%s', alipay_appid)
             return False
         _d = alipay_subscribe_data(template_id, data)
         _res = client.mini_template_message_send(alipay_uid, template_id,

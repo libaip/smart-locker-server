@@ -35,10 +35,13 @@ from datetime import datetime
 # ============================================================
 DEFAULTS = {
     'mp': {
-        'name': '伧置(兜底config.py)',
-        'appid': 'wxcabd4cbdb3096c4b',
+        # [S959-20261013] 兜底不再放【别的主体】的 appid。
+        #   读不到配置库时宁可返回空（失败即停），也绝不拿旧主体的 appid 去请求微信——
+        #   否则会暴露「新主体的商户号 与 旧主体 有关联」。
+        'name': '(兜底已停用)',
+        'appid': '',
         'openid_prefix': 'ooTcRx',
-        'secret': 'f8d9d68772401f4fdda4a2d2d6143988',
+        'secret': '',
         'token': 'smartlocker2024',
         'aes_key': '',
         'subject': '重庆科莱维科技有限公司',
@@ -48,10 +51,11 @@ DEFAULTS = {
         #   它是"配置库读不到时的兜底"，留着老 appid = 哪天读不到库就静默拿老号去授权/发消息，
         #   而老号的 appid 跟现在在用的商户没有绑定 -> 支付/通知必炸（2026-09-21 同类故障实测）。
         #   改成当前在用的公众号【重庆卓蓝时】，与 wx_accounts.id=10 / config.py 一致。
-        'name': '重庆卓蓝时(兜底config.py)',
-        'appid': 'wx9d559811f476d9d5',
+        # [S959-20261013] 同上：兜底 appid 置空（原来是重庆卓蓝时，别的主体）
+        'name': '(兜底已停用)',
+        'appid': '',
         'openid_prefix': 'octN92',
-        'secret': 'e15202f4cf3e6ea86ebbeee8e62b3bd6',
+        'secret': '',
         'token': 'smartlocker2024',
         'aes_key': '',
         'subject': '重庆卓蓝时科技有限公司',
@@ -345,6 +349,32 @@ def create_account(acct_type, name, appid, secret='', **kw):
         except Exception:
             pass
         secret = ''
+    # [S848-20261009] ★ 同一 appid 不允许重复登记（从源头杜绝"两条一模一样"）。
+    #   背景：2026-10-08 个体1 的 appid(wx28bfa4f045978872) 被登记了两次
+    #         （id=19 与 id=20，openid_prefix/secret/is_active 配置都一样）。
+    #   真实危害：resolve_by_appid() 和 account_id_by_openid() 在"同一 appid/前缀有多条"时
+    #         【返回哪条是不确定的】-> 把生效号切到 A 条后，模板查询却命中了没配模板的 B 条
+    #         -> get_template() 回落到 account_id=0 的通用模板（别的 appid 的模板）
+    #         -> 订阅消息几乎全挂（2026-10-09 15:05 实测复现，差一步上线）。
+    #   所以这里直接拦住：appid 已存在就抛错，让调用方改用 update_account / switch_to。
+    appid = (appid or '').strip()
+    if appid:
+        _dup_found = None
+        try:
+            with _conn() as (conn, kind):
+                _dup_rows = _rows(conn, kind,
+                                  'SELECT id, name, is_active FROM wx_accounts '
+                                  'WHERE appid=? AND acct_type=?', (appid, acct_type))
+            if _dup_rows:
+                _dup_found = _dup_rows[0]
+        except Exception as _de:
+            logger.warning('[S848] appid 重复校验执行失败(放行，不影响新增): %s', _de)
+        if _dup_found:
+            raise ValueError(
+                'appid %s 已登记过（账号 id=%s「%s」, is_active=%s）—— 不允许重复新增。'
+                ' 要改配置请用 update_account/switch_to，不要新建账号。'
+                % (appid, _dup_found.get('id'), _dup_found.get('name'), _dup_found.get('is_active')))
+
     data = {
         'acct_type': acct_type, 'name': name, 'appid': appid, 'secret': secret,
         'token': kw.get('token', ''), 'aes_key': kw.get('aes_key', ''),
@@ -1128,6 +1158,67 @@ def disable_template(biz, channel, account_id=0):
               (_now(), biz, channel, int(account_id or 0)))
     _TPL_CACHE.clear()
     return True
+
+
+# ============================================================================
+# [S1007-20261015] 订阅消息【字段映射】—— 后台可配 + 自动生成
+#   背景：每次换小程序，微信模板的字段名会变（thing3/thing4/amount2/time5 之类），
+#         以前要在 helpers._SUBSCRIBE_FIELD_MAP 里硬编码，(账号id, biz) 一条条加，
+#         忘了加就全量 47003（2026-10-15 早上踩过）。
+#   现在：映射存 wx_templates.field_map（JSON），后台点"自动同步"就能生成。
+# ============================================================================
+
+def set_template_field_map(biz, channel, field_map, account_id=0):
+    """[S1007] 单独写某条模板的字段映射（不动 template_id / fields 等其他列）。
+
+    field_map: {代码字段名: 微信模板真实字段名}，如 {"thing4": "thing5"}
+               传空 dict 或 None = 清空该映射（等于回到硬编码表兜底）
+    只 UPDATE 已存在的行；行不存在则报错由调用方处理（避免误插空 template_id）。
+    """
+    import json as _json
+    if channel not in CHANNELS:
+        raise ValueError('channel 只能是 %s' % (CHANNELS,))
+    fj = _json.dumps(field_map or {}, ensure_ascii=False)
+    with _conn() as (conn, kind):
+        _exec(conn, kind,
+              'UPDATE wx_templates SET field_map=?, updated_at=? WHERE biz=? AND channel=? AND account_id=?',
+              (fj, _now(), biz, channel, int(account_id or 0)))
+    _TPL_CACHE.clear()
+    return fj
+
+
+def get_template_field_map(biz, channel=None, account_id=None):
+    """[S1007] 取字段映射。优先账号专属，其次通用(account_id=0)；读不到返回 {}。
+
+    绝不抛异常 —— 读失败一律返回 {}，让调用方回落硬编码表。
+    """
+    import json as _json
+    row = get_template(biz, channel=channel, account_id=account_id)
+    if not row:
+        return {}
+    try:
+        raw = row.get('field_map') or ''
+        if not raw.strip():
+            return {}
+        m = _json.loads(raw)
+        return m if isinstance(m, dict) else {}
+    except Exception:
+        return {}
+
+
+def list_account_templates(account_id):
+    """[S1007] 列出一个账号的全部模板（含 field_map），后台同步界面用。"""
+    out = []
+    try:
+        with _conn() as (conn, kind):
+            rows = _rows(conn, kind,
+                         'SELECT * FROM wx_templates WHERE account_id=? ORDER BY biz',
+                         (int(account_id or 0),))
+        for r in rows or []:
+            out.append(dict(r))
+    except Exception:
+        return []
+    return out
 
 
 # ============================================================

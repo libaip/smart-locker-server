@@ -126,6 +126,52 @@ def api_accounts():
     return ok(rows)
 
 
+def _s871_apply_extra(account_id, d):
+    """[S871] 保存账号时顺带落：两个订阅模板ID + 校验文件(名+内容)。
+    模板写 wx_templates（biz=subscribe_refund / subscribe_general，channel=mp）；
+    校验文件写到 static/ 并记在 wx_accounts.verify_file_name/content。
+    任何一步失败都只记日志，不让账号保存失败。
+    """
+    import os as _os, logging as _lg
+    _log = _lg.getLogger('wx_config_api')
+    try:
+        _rf = str(d.get('tpl_refund') or '').strip()
+        _gf = str(d.get('tpl_general') or '').strip()
+        if _rf:
+            C.set_template('subscribe_refund', 'mp', _rf, account_id=account_id, note='[S871] 后台弹窗填写')
+            _log.info('[S871] 账号%s 退款模板 -> %s', account_id, _rf)
+        if _gf:
+            C.set_template('subscribe_general', 'mp', _gf, account_id=account_id, note='[S871] 后台弹窗填写')
+            _log.info('[S871] 账号%s 余额模板 -> %s', account_id, _gf)
+    except Exception as _e:
+        _log.warning('[S871] 写模板失败 账号%s: %s', account_id, _e)
+    try:
+        _fn = _os.path.basename(str(d.get('verify_file_name') or '').strip())
+        _fc = str(d.get('verify_file_content') or '')
+        if _fn:
+            import re as _re
+            if not _re.match(r'^[A-Za-z0-9_.-]{1,64}$', _fn) or not _fn.lower().endswith(('.txt', '.html', '.htm')):
+                _log.warning('[S871] 校验文件名不合法，跳过: %s', _fn)
+            else:
+                _static = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'static')
+                _fp = _os.path.join(_static, _fn)
+                with open(_fp, 'w', encoding='utf-8') as _f:
+                    _f.write(_fc)
+                try:
+                    _os.chmod(_fp, 0o644)
+                except Exception:
+                    pass
+                from database import get_db as _gdb871
+                _conn = _gdb871()
+                _c = _conn.cursor()
+                _c.execute('UPDATE wx_accounts SET verify_file_name=%s, verify_file_content=%s WHERE id=%s', (_fn, _fc, account_id))
+                _conn.commit()
+                _conn.close()
+                _log.info('[S871] 账号%s 校验文件已部署: static/%s', account_id, _fn)
+    except Exception as _e:
+        _log.warning('[S871] 校验文件失败 账号%s: %s', account_id, _e)
+
+
 @bp.route('/accounts', methods=['POST'])
 def api_account_create():
     _guard()
@@ -143,6 +189,7 @@ def api_account_create():
             note=d.get('note', ''))
     except Exception as e:
         return err(str(e))
+    _s871_apply_extra(new_id, d)
     return ok({'id': new_id}, '已新增账号')
 
 
@@ -153,9 +200,9 @@ def api_account_update(account_id):
     fields = {k: v for k, v in d.items() if k in (
         'name', 'appid', 'secret', 'token', 'aes_key', 'subject',
         'mch_relation', 'priority', 'note', 'openid_prefix')}
-    if not fields:
-        return err('没有可更新的字段')
-    C.update_account(account_id, **fields)
+    if fields:
+        C.update_account(account_id, **fields)
+    _s871_apply_extra(account_id, d)
     return ok({'id': account_id}, '已更新')
 
 

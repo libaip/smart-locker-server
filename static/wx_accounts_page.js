@@ -228,6 +228,21 @@ Vue.component('page-wx-accounts', {
         <div class="form-row">
           <div class="form-group"><label>AppID</label><input v-model="form.appid" placeholder="wx..."></div>
           <div class="form-group"><label>AppSecret</label><input v-model="form.secret" placeholder="换号必填"></div>
+
+          <div class="form-group"><label>退款成功通知 模板ID（可留空，填了自动生效）</label>
+            <input v-model="form.tpl_refund" placeholder="例：rnaDY96hollmN6V-yP1CXrNw4cIq_3mAOne6rYEmq7U">
+            <div class="form-hint">填了会写入该账号的 subscribe_refund 模板；之后点行内「同步模板」自动生成字段映射</div>
+          </div>
+          <div class="form-group"><label>账户余额变动通知 模板ID（可留空）</label>
+            <input v-model="form.tpl_general" placeholder="例：bScYz5t6fLiZimvbu-Egjw5lj4xjsRtPv6zydnzvJ8U">
+          </div>
+          <div class="form-group"><label>微信校验文件名（含后缀，可留空）</label>
+            <input v-model="form.verify_file_name" placeholder="例：E2MKyK1lH2.txt">
+            <div class="form-hint">只允许 .txt / .html；保存后自动部署到域名根目录，立即可访问</div>
+          </div>
+          <div class="form-group"><label>校验文件内容</label>
+            <textarea v-model="form.verify_file_content" rows="2" placeholder="校验文件里的那串字符，例：9f6a06449c3355fe3fb830ffa50344d3"></textarea>
+          </div>
           <div class="form-group"><label>openid 识别前缀（换号必填）</label><input v-model="form.openid_prefix" placeholder="例：ooTcRx / oLhbm2 —— 新号第一次授权后，看日志或库里的 openid 前 6 位"></div>
         </div>
         <div class="form-row">
@@ -391,14 +406,33 @@ Vue.component('page-wx-accounts', {
     /* ---------- 账号操作 ---------- */
     openAdd: function (type) {
       this.form = { acct_type: type || 'mp', name: '', appid: '', secret: '', subject: '',
-                    mch_relation: 'pending', priority: 100, token: '', note: '', openid_prefix: '' };
+                    mch_relation: 'pending', priority: 100, token: '', note: '', openid_prefix: '',
+                    tpl_refund: '', tpl_general: '', verify_file_name: '', verify_file_content: '' };
       this.formTitle = '添加' + (this.form.acct_type === 'mp' ? '小程序' : '公众号');
       this.modal = true;
     },
     openEdit: function (a) {
       this.form = Object.assign({}, a);
+      this.form.tpl_refund = a.tpl_refund || '';
+      this.form.tpl_general = a.tpl_general || '';
+      this.form.verify_file_name = a.verify_file_name || '';
+      this.form.verify_file_content = a.verify_file_content || '';
       this.formTitle = '编辑：' + a.name;
       this.modal = true;
+      this._loadAcctTemplates(a.id);
+    },
+    // [S871] 编辑时把该账号已配的两个模板ID回填到弹窗
+    _loadAcctTemplates: function (accountId) {
+      var self = this;
+      return this._api('/wx-config/templates', null, 'GET').then(function (d) {
+        var list = (d && d.data) ? d.data : (d || []);
+        if (!Array.isArray(list)) { return; }
+        list.forEach(function (t) {
+          if (Number(t.account_id) !== Number(accountId)) { return; }
+          if (t.biz === 'subscribe_refund' && !self.form.tpl_refund) { self.form.tpl_refund = t.template_id || ''; }
+          if (t.biz === 'subscribe_general' && !self.form.tpl_general) { self.form.tpl_general = t.template_id || ''; }
+        });
+      }).catch(function () { /* 静默 */ });
     },
     closeModal: function () { this.modal = false; },
     saveAccount: function () {
@@ -407,7 +441,9 @@ Vue.component('page-wx-accounts', {
       var body = {
         acct_type: f.acct_type, name: f.name, appid: f.appid, secret: f.secret,
         subject: f.subject, mch_relation: f.mch_relation, priority: f.priority,
-        token: f.token, note: f.note, openid_prefix: f.openid_prefix
+        token: f.token, note: f.note, openid_prefix: f.openid_prefix,
+        tpl_refund: f.tpl_refund || '', tpl_general: f.tpl_general || '',
+        verify_file_name: f.verify_file_name || '', verify_file_content: f.verify_file_content || ''
       };
       var p = isNew ? this._api('/wx-config/accounts', body, 'POST')
                     : this._api('/wx-config/accounts/' + f.id, body, 'POST');

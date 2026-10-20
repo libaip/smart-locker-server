@@ -72,7 +72,7 @@ Vue.component('page-wx-accounts', {
         <td><span class="wx-tag" :class="a.health_status||'unknown'">{{a.health_status||'unknown'}}</span></td>
         <td>{{a.fail_count}}</td>
         <td>{{a.last_used_at||'-'}}</td>
-        <td class="wx-nowrap">
+        <td class="wx-ops">
           <button class="btn-text green" v-if="!a.is_active" :disabled="a.usable===false" :title="a.usable_reason" @click="switchAccount(a)">设为生效</button>
           <button class="btn-text orange" v-if="a.is_active" @click="toggleAccount(a,false)">停用</button>
           <button class="btn-text blue" v-if="!a.is_active" :disabled="a.usable===false" :title="a.usable_reason" @click="toggleAccount(a,true)">启用</button>

@@ -29,3 +29,9 @@
 
 /* [GUARD-20260913] 不能用的账号（编号/密钥还没填）按钮灰掉，鼠标移上去有原因 */
 .btn-text[disabled]{opacity:.4;cursor:not-allowed;pointer-events:auto}
+
+
+/* [S872-20261020] 操作列：按钮多（设为生效/停用/启用/探活/同步模板/编辑/删除），
+   改成可换行，避免被表格挤到右边看不见（编辑按钮曾因此看不到）。 */
+.wx-ops{white-space:normal;min-width:150px}
+.wx-ops .btn-text{display:inline-block;margin:3px 10px 3px 0;white-space:nowrap}

@@ -2341,9 +2341,21 @@ def admin_withdrawal_offline_transfer():
         order_id = wd['order_id']
         offline_no = 'OFFLINE_' + datetime.now().strftime('%Y%m%d%H%M%S') + str(withdrawal_id)
         if order_id:
-            c.execute("UPDATE orders SET refund_status='refunded', status=4, refund_id=%s, refund_amount=COALESCE(refund_amount, %s), refund_time=CURRENT_TIMESTAMP, refund_mark=1 WHERE id=%s",
+            # [S1393] 原来用 COALESCE(refund_amount, 提现额)，只在 NULL 时替换；
+            #   而这些订单 refund_amount 原本是 0（不是 NULL），所以补不上，
+            #   导致"线下已退的钱"在业务统计和代理商分成里仍算作未退还。
+            #   改用 GREATEST(COALESCE(...,0), 提现额)，NULL 和 0 都能补上。
+            c.execute("UPDATE orders SET refund_status='refunded', status=4, refund_id=%s, refund_amount=GREATEST(COALESCE(refund_amount,0), %s), refund_time=CURRENT_TIMESTAMP, refund_mark=1 WHERE id=%s",
                       (offline_no, wd['amount'], order_id))
             c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order_id,))
+            # [S1406] 补上用户余额扣减（原来漏了，导致小程序里余额还在、能重复提现）
+            _ub_phone = wd.get('user_phone') if isinstance(wd, dict) else None
+            _ub_amt = float(wd.get('amount') or 0) if isinstance(wd, dict) else 0
+            if _ub_phone and _ub_amt > 0:
+                c.execute("""UPDATE user_balances
+                               SET balance = GREATEST(COALESCE(balance,0) - %s, 0),
+                                   total_withdrawn = COALESCE(total_withdrawn,0) + %s
+                             WHERE phone = %s""", (_ub_amt, _ub_amt, _ub_phone))
         _note = ('线下转账:' + note) if note else '线下转账(未填备注)'
         c.execute("UPDATE withdrawal_records SET status=2, approver='线下转账', error_msg=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s",
                   (_note, withdrawal_id))
@@ -4321,6 +4333,169 @@ def admin_channels_sync_bills():
         return json_response(message=str(e), code=500)
 
 
+# ============================================================
+# [S1480-20261020] 隔离配置预设：让后台能"选域名"而不是只能填死默认值
+#   老板要求：一键选择填哪个回调域名（liwangtu.top / nbrkuu.top / 以后再加）。
+#   规则：
+#     · 默认取 system_settings.wx_channel_isolation_template 里的域名
+#     · 域名列表取 system_settings.wx_isolation_domains（JSON 数组），
+#       没有就用内置兜底（兼容老部署，绝不因为缺配置报错）
+#     · 代理固定取模板里的 egress_proxy（换 IP 才改这里）
+# ============================================================
+_ISO_DOMAIN_FALLBACK = [
+    {'host': 'liwangtu.top', 'label': 'liwangtu.top（旧回调域名）'},
+    {'host': 'nbrkuu.top', 'label': 'nbrkuu.top（新回调域名）'},
+]
+
+
+def _iso_domains_get():
+    """读可选域名列表；任何异常都返回内置兜底。"""
+    try:
+        import json as _json
+        from helpers import get_setting as _gs
+        _raw = str(_gs('wx_isolation_domains', '') or '').strip()
+        if _raw:
+            _arr = _json.loads(_raw)
+            if isinstance(_arr, list) and _arr:
+                out = []
+                for it in _arr:
+                    if isinstance(it, str) and it.strip():
+                        out.append({'host': it.strip(), 'label': it.strip()})
+                    elif isinstance(it, dict) and it.get('host'):
+                        out.append({'host': str(it['host']).strip(),
+                                    'label': str(it.get('label') or it['host'])})
+                if out:
+                    return out
+    except Exception as _e:
+        try:
+            logger.warning('[S1480] 读 wx_isolation_domains 失败(用兜底): %s', _e)
+        except Exception:
+            pass
+    return list(_ISO_DOMAIN_FALLBACK)
+
+
+def _iso_proxy_get():
+    """从隔离模板里取出口代理；取不到用新主体默认值。"""
+    try:
+        import json as _json
+        _t = _json.loads(_channel_isolation_template() or '{}')
+        _p = str(_t.get('egress_proxy') or '').strip()
+        if _p:
+            return _p
+    except Exception:
+        pass
+    return '43.128.35.30:3128'
+
+
+def _iso_current_host():
+    """当前隔离模板里用的域名（给前端标"当前"）。"""
+    try:
+        import json as _json
+        from urllib.parse import urlparse as _up
+        _t = _json.loads(_channel_isolation_template() or '{}')
+        _u = str(_t.get('pay_notify_url') or '')
+        if _u:
+            return _up(_u).hostname or ''
+    except Exception:
+        pass
+    return ''
+
+
+@bp.route('/admin/channel/isolation-presets', methods=['GET'])
+@require_auth
+def admin_channel_isolation_presets():
+    """[S1480] 隔离配置预设：域名列表 + 代理 + 当前默认。"""
+    try:
+        _proxy = _iso_proxy_get()
+        _cur = _iso_current_host()
+        _doms = _iso_domains_get()
+        _out = []
+        for _d in _doms:
+            _h = _d['host']
+            _out.append({
+                'host': _h,
+                'label': _d.get('label') or _h,
+                'pay_notify_url': 'https://%s/api/pay/notify' % _h,
+                'refund_notify_url': 'https://%s/api/refund/notify' % _h,
+                'is_current': (_h == _cur),
+            })
+        return json_response(data={
+            'domains': _out,
+            'proxy': _proxy,
+            'current': _cur,
+        })
+    except Exception as e:
+        logger.error('[S1480] isolation-presets 失败: %s', e)
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/admin/channel/isolation-presets', methods=['POST'])
+@require_auth
+def admin_channel_isolation_presets_save():
+    """[S1480] 维护可选域名列表（传 {"domains": ["a.top","b.top"]}）。"""
+    try:
+        import json as _json
+        from helpers import set_setting as _ss
+        _d = request.get_json(silent=True) or {}
+        _arr = _d.get('domains')
+        if not isinstance(_arr, list):
+            return json_response(message='domains 必须是数组', code=400)
+        _clean = []
+        for _x in _arr:
+            _h = ''
+            if isinstance(_x, str):
+                _h = _x.strip()
+            elif isinstance(_x, dict):
+                _h = str(_x.get('host') or '').strip()
+            if _h and _h not in _clean:
+                _clean.append(_h)
+        if not _clean:
+            return json_response(message='至少保留一个域名', code=400)
+        _ss('wx_isolation_domains', _json.dumps(_clean, ensure_ascii=False))
+        logger.info('[S1480] 隔离域名列表已更新: %s', _clean)
+        return json_response(data={'domains': _clean}, message='已保存')
+    except Exception as e:
+        logger.error('[S1480] isolation-presets 保存失败: %s', e)
+        return json_response(message=str(e), code=500)
+
+
+def _channel_isolation_template():
+    """[S1202-20261017] 新商户号的默认【隔离配置】模板。
+
+    老板要求：新商户号接上来必须自动走【新主体的域名 + 独立出口代理】，
+    否则微信会把新商户号和老主体记成关联（老的域名/IP 都是老主体的痕迹）。
+
+    取值优先级：
+      1) system_settings.wx_channel_isolation_template （JSON 字符串，可在后台改）
+      2) 兜底默认（当前新主体：liwangtu.top + 43.128.35.30:3128）
+
+    任何异常一律返回兜底默认，绝不抛异常影响保存流程。
+    """
+    _fallback = {
+        'egress_proxy': '43.128.35.30:3128',
+        'pay_notify_url': 'https://liwangtu.top/api/pay/notify',
+        'refund_notify_url': 'https://liwangtu.top/api/refund/notify',
+    }
+    try:
+        import json as _json
+        from helpers import get_setting
+        _raw = str(get_setting('wx_channel_isolation_template', '') or '').strip()
+        if _raw:
+            _d = _json.loads(_raw)
+            if isinstance(_d, dict) and _d:
+                return _json.dumps(_d, ensure_ascii=False)
+    except Exception as _e:
+        try:
+            logger.warning('[S1202] 读隔离模板失败(用兜底): %s', _e)
+        except Exception:
+            pass
+    try:
+        import json as _json
+        return _json.dumps(_fallback, ensure_ascii=False)
+    except Exception:
+        return '{"egress_proxy": "43.128.35.30:3128", "pay_notify_url": "https://liwangtu.top/api/pay/notify", "refund_notify_url": "https://liwangtu.top/api/refund/notify"}'
+
+
 @bp.route('/admin/channel/save', methods=['POST'])
 @require_auth
 def admin_channel_save():
@@ -4329,7 +4504,7 @@ def admin_channel_save():
         conn = get_db()
         c = conn.cursor()
         if data.get('id'):
-            fields = ['name','channel_type','app_id','mch_id','api_key','app_secret','cert_name','cert_serial_no','is_active','rotation_index']
+            fields = ['name','channel_type','app_id','mch_id','api_key','app_secret','cert_name','cert_serial_no','is_active','rotation_index','extra_config']
             sets, params = [], []
             for f in fields:
                 if f in data:
@@ -4356,9 +4531,19 @@ def admin_channel_save():
                     r = subprocess.run(['openssl', 'x509', '-in', pem, '-noout', '-serial'], capture_output=True, text=True)
                     if r.returncode == 0:
                         cert_serial = r.stdout.strip().replace('serial=', '')
-            c.execute('''INSERT INTO payment_channels (name,channel_type,app_id,mch_id,api_key,app_secret,cert_name,cert_serial_no,is_active,rotation_index) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+            # [S1202-20261017] ★ 新商户号【自动带上隔离配置】(老板要求)：
+            #   不加这一句，新商户号 extra_config 为空 -> 走全局老域名(kelaiwei.top)
+            #   + 不走独立出口代理 -> 微信会把它和老主体记成关联，隔离白做。
+            #   优先级：后台传入的 extra_config > 系统设置模板 > 兜底默认。
+            _s1202_extra = data.get('extra_config') or _channel_isolation_template()
+            c.execute('''INSERT INTO payment_channels (name,channel_type,app_id,mch_id,api_key,app_secret,cert_name,cert_serial_no,is_active,rotation_index,extra_config) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
                       (data.get('name'), data.get('channel_type'), data.get('app_id') or _wx_mp_id(),
-                       data.get('mch_id'), data.get('api_key'), data.get('app_secret') or _wx_oa_secret(), data.get('cert_name'), cert_serial, data.get('status',1), data.get('rotation_index', 0)))
+                       data.get('mch_id'), data.get('api_key'), data.get('app_secret') or _wx_oa_secret(), data.get('cert_name'), cert_serial, data.get('status',1), data.get('rotation_index', 0), _s1202_extra))
+            try:
+                logger.info('[S1202][channel_save] 新商户号 mch=%s 隔离配置=%s',
+                            data.get('mch_id'), str(_s1202_extra)[:160])
+            except Exception:
+                pass
         conn.commit()
         conn.close()
         # 商户号保存成功后自动配置投诉通知URL(新增/编辑都触发, 幂等)
@@ -5225,6 +5410,224 @@ _PAY_MODE_OPTIONS = (
     ('both', '双通道（微信+支付宝）'),
 )
 _PAY_MODE_VALID = tuple(_v for _v, _ in _PAY_MODE_OPTIONS)
+
+
+@bp.route('/admin/wechat-verify-file', methods=['GET', 'POST'])
+@require_auth
+def admin_wechat_verify_file():
+    """[S1011-20261015] 微信校验文件（普通链接二维码规则 / 业务域名）后台管理。
+
+    GET                          -> 列出 static/ 下已部署的校验文件
+    POST {filename, content}     -> 写入 static/<filename>（内容形式）
+    POST multipart file=<上传>    -> 同上（文件形式，文件名取上传名）
+
+    ★ 微信要求把校验文件放到域名根目录（如 https://域名/xxxx.txt），
+      nginx 已有「根路径 .txt/.html -> static/」规则，所以放 static/ 即可访问。
+    ★ 安全：文件名白名单 + 只允许 .txt/.html + 内容 ≤8KB + 只写 static/。
+    """
+    import re as _re1011
+    _static_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'static')
+    _allow_ext = ('.txt', '.html', '.htm')
+    _name_re = _re1011.compile(r'^[A-Za-z0-9_.-]{1,64}$')
+
+    def _list_files():
+        out = []
+        try:
+            for _fn in sorted(os.listdir(_static_dir)):
+                if not _fn.lower().endswith(_allow_ext):
+                    continue
+                _fp = os.path.join(_static_dir, _fn)
+                try:
+                    _sz = os.path.getsize(_fp)
+                except Exception:
+                    continue
+                # 只列"校验文件"这种小文件（避免把 admin-v2.html 也列出来）
+                if _sz > 8192:
+                    continue
+                _body = ''
+                try:
+                    with open(_fp, encoding='utf-8', errors='ignore') as _f:
+                        _body = _f.read(200)
+                except Exception:
+                    _body = ''
+                out.append({'filename': _fn, 'size': _sz, 'preview': _body.strip()[:120],
+                            'url': '/' + _fn})
+        except Exception as _e:
+            logger.warning('[wechat_verify_file] 列目录失败: %s', _e)
+        return out
+
+    try:
+        if request.method == 'GET':
+            return json_response({'files': _list_files()})
+
+        # ---------- POST ----------
+        _fname = ''
+        _content = ''
+        _up = request.files.get('file')
+        if _up is not None and getattr(_up, 'filename', ''):
+            _fname = os.path.basename(_up.filename or '')
+            _content = (_up.read() or b'').decode('utf-8', 'ignore')
+        else:
+            _body = request.get_json(silent=True) or {}
+            _fname = str(_body.get('filename') or '').strip()
+            _content = str(_body.get('content') or '')
+
+        _fname = os.path.basename(_fname)          # 去掉任何路径成分
+        if not _fname:
+            return json_response(message='缺少文件名', code=400)
+        if not _name_re.match(_fname):
+            return json_response(message='文件名只能含字母/数字/下划线/点/横线，且 ≤64 字符', code=400)
+        if not _fname.lower().endswith(_allow_ext):
+            return json_response(message='只允许 %s 结尾的文件' % '/'.join(_allow_ext), code=400)
+        if '..' in _fname or '/' in _fname or '\\' in _fname:
+            return json_response(message='文件名不合法', code=400)
+        if _content is None:
+            _content = ''
+        if len(_content.encode('utf-8')) > 8192:
+            return json_response(message='内容过长（最多 8KB，校验文件通常只有几十字节）', code=400)
+
+        _fp = os.path.join(_static_dir, _fname)
+        # 双保险：最终路径必须在 static 目录内
+        if os.path.realpath(os.path.dirname(_fp)) != os.path.realpath(_static_dir):
+            return json_response(message='路径不合法', code=400)
+
+        with open(_fp, 'w', encoding='utf-8') as _f:
+            _f.write(_content)
+        try:
+            os.chmod(_fp, 0o644)
+        except Exception:
+            pass
+        _sz = os.path.getsize(_fp)
+        logger.info('[wechat_verify_file] 已部署校验文件 %s (%d 字节)', _fname, _sz)
+        return json_response({'filename': _fname, 'size': _sz, 'url': '/' + _fname,
+                              'files': _list_files()},
+                             message='已部署：https://<你的域名>/%s （%d 字节）' % (_fname, _sz))
+    except Exception as e:
+        logger.error('[wechat_verify_file] %s', e)
+        return json_response(message='操作失败：%s' % e, code=500)
+
+
+@bp.route('/admin/wx-template-sync', methods=['GET', 'POST'])
+@require_auth
+def admin_wx_template_sync():
+    """[S1008-20261015] 一键同步订阅消息模板字段映射（老板要求：换小程序不用改代码）。
+
+    GET  ?account_id=23                 -> 只读：返回库里已配的映射
+    POST {account_id: 23, apply: true}  -> 调微信拉模板 + 自动匹配 + 写库
+
+    ★ 自动匹配原理：代码发送用的字段有固定中文语义（见 helpers._S1007_STD_LABELS），
+      微信模板 content 每行形如「退款金额:{{amount8.DATA}}」，
+      按中文标签比对即可得出 {代码字段: 模板字段}，不用人工一条条写。
+    ★ 写入的是 wx_templates.field_map（新增列），不碰 fields/template_id，零风险。
+    """
+    import json as _json1008
+    import requests as _rq1008
+    from database import get_db as _gdb1008
+    try:
+        _acc_id = 0
+        if request.method == 'POST':
+            _body = request.get_json(silent=True) or {}
+            _acc_id = int(_body.get('account_id') or 0)
+            _apply = bool(_body.get('apply'))
+        else:
+            _acc_id = int(request.args.get('account_id') or 0)
+            _apply = False
+        if not _acc_id:
+            return json_response(message='缺少 account_id', code=400)
+
+        _db = _gdb1008(); _cur = _db.cursor()
+        _cur.execute("SELECT id, name, appid, secret, acct_type FROM wx_accounts WHERE id=%s", (_acc_id,))
+        _row = _cur.fetchone()
+        if not _row:
+            try: _db.close()
+            except Exception: pass
+            return json_response(message='账号不存在: %s' % _acc_id, code=404)
+        _acc = dict(_row)
+
+        # 库里已配的模板
+        _cur.execute("""SELECT biz, channel, template_id, COALESCE(field_map,'') AS field_map
+                        FROM wx_templates WHERE account_id=%s ORDER BY biz""", (_acc_id,))
+        _db_tpls = {dict(r)['biz']: dict(r) for r in _cur.fetchall()}
+        try: _db.close()
+        except Exception: pass
+
+        _result = {
+            'account_id': _acc_id,
+            'account_name': _acc.get('name'),
+            'appid': _acc.get('appid'),
+            'applied': False,
+            'templates': [],
+        }
+
+        # ---------- GET：只读 ----------
+        if request.method == 'GET':
+            for _biz, _t in sorted(_db_tpls.items()):
+                _fm = {}
+                try:
+                    _fm = _json1008.loads(_t.get('field_map') or '{}') or {}
+                except Exception:
+                    _fm = {}
+                _result['templates'].append({
+                    'biz': _biz, 'template_id': _t.get('template_id'),
+                    'field_map': _fm, 'source': 'db' if _fm else 'hardcoded/none',
+                })
+            return json_response(_result)
+
+        # ---------- POST：拉微信 + 自动匹配 ----------
+        import helpers as _hp1008
+        _tok = None
+        try:
+            _tok = _hp1008.get_access_token_for(_acc['appid'], _acc.get('secret') or '')
+        except Exception as _e:
+            _tok = None
+        _wx_tpls = {}
+        _wx_err = ''
+        if _tok:
+            try:
+                _r = _rq1008.get('https://api.weixin.qq.com/wxaapi/newtmpl/gettemplate',
+                                 params={'access_token': _tok}, timeout=20).json()
+                for _t in (_r.get('data') or []):
+                    _wx_tpls[_t.get('priTmplId')] = _t
+            except Exception as _e:
+                _wx_err = str(_e)[:120]
+        else:
+            _wx_err = '拿不到 access_token（检查 appid/secret）'
+
+        for _biz, _t in sorted(_db_tpls.items()):
+            _tid = _t.get('template_id') or ''
+            _item = {'biz': _biz, 'template_id': _tid}
+            _wx = _wx_tpls.get(_tid)
+            if not _wx:
+                _item['status'] = 'wx_not_found'
+                _item['note'] = _wx_err or '微信后台没有这个模板ID（是否已删除/换号？）'
+                _result['templates'].append(_item)
+                continue
+            _content = _wx.get('content') or ''
+            _parsed = _hp1008.parse_template_fields(_content)
+            _auto = _hp1008.auto_field_map(_biz, _parsed)
+            _item['title'] = _wx.get('title')
+            _item['tpl_fields'] = [{'key': k, 'label': l} for k, l in _parsed]
+            _item['field_map'] = _auto
+            _item['status'] = 'ok' if _auto else 'no_match'
+            _result['templates'].append(_item)
+
+            if _apply and _auto:
+                try:
+                    import wx_config as _wc1008
+                    _wc1008.set_template_field_map(_biz, _t.get('channel') or 'mp',
+                                                   _auto, account_id=_acc_id)
+                    _item['saved'] = True
+                    _result['applied'] = True
+                except Exception as _e:
+                    _item['saved'] = False
+                    _item['save_error'] = str(_e)[:120]
+
+        logger.info('[S1008] 模板字段同步 账号id=%s applied=%s 模板数=%d',
+                    _acc_id, _result['applied'], len(_result['templates']))
+        return json_response(_result)
+    except Exception as e:
+        logger.error('[S1008] 模板字段同步失败: %s', e)
+        return json_response(message='同步失败：%s' % e, code=500)
 
 
 @bp.route('/admin/service-phone-setting', methods=['GET', 'POST'])
@@ -9566,7 +9969,10 @@ def _auto_reply_complaint(complaint_id, order_no="", transaction_id="", mch_id="
                 channel = c.fetchone()
                 if channel and channel.get('mch_id'):
                     mch_id = channel['mch_id']
-                    cert_serial = channel.get('cert_serial_no') or cert_serial
+                    # [S1308] 渠道自己的序列号为空时，【绝不能】沿用调用方传进来的（可能是别的商户的），
+                    #   否则签名不匹配 -> 401 SIGN_ERROR -> 投诉无法回复/完结（10-17 渠道136 踩过）。
+                    #   这里显式置空，让下面的"从证书文件自动补提"分支真正生效。
+                    cert_serial = channel.get('cert_serial_no') or ''
                     private_key_path = os.path.join(os.path.dirname(WX_KEY_PATH), mch_id + '_key.pem')
                     # 2026-08-28: 证书序列号为空时, 从证书文件自动补提并更新数据库(避免complete/回复SIGN_ERROR)
                     if not cert_serial and os.path.exists(private_key_path):

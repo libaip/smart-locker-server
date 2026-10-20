@@ -153,24 +153,35 @@ def _s871_apply_extra(account_id, d):
         _fc = str(d.get('verify_file_content') or '')
         if _fn:
             import re as _re
-            if not _re.match(r'^[A-Za-z0-9_.-]{1,64}$', _fn) or not _fn.lower().endswith(('.txt', '.html', '.htm')):
-                _log.warning('[S871] 校验文件名不合法，跳过: %s', _fn)
+            # [S888] 放宽：微信给的校验文件名可能不带后缀（如 8TCvDTxUtP）。
+            #   无后缀时同时部署 <name> 和 <name>.txt 两种，微信无论校验哪种都能访问到。
+            _ok = bool(_re.match(r'^[A-Za-z0-9_.-]{1,64}$', _fn))
+            if not _ok:
+                _log.warning('[S888] 校验文件名含非法字符，跳过: %s', _fn)
             else:
                 _static = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'static')
-                _fp = _os.path.join(_static, _fn)
-                with open(_fp, 'w', encoding='utf-8') as _f:
-                    _f.write(_fc)
-                try:
-                    _os.chmod(_fp, 0o644)
-                except Exception:
-                    pass
+                if '.' not in _fn:
+                    _names = [_fn, _fn + '.txt']
+                else:
+                    _names = [_fn]
+                _deployed = []
+                for _nm in _names:
+                    _fp = _os.path.join(_static, _nm)
+                    with open(_fp, 'w', encoding='utf-8') as _f:
+                        _f.write(_fc)
+                    try:
+                        _os.chmod(_fp, 0o644)
+                    except Exception:
+                        pass
+                    _deployed.append(_nm)
                 from database import get_db as _gdb871
                 _conn = _gdb871()
                 _c = _conn.cursor()
-                _c.execute('UPDATE wx_accounts SET verify_file_name=%s, verify_file_content=%s WHERE id=%s', (_fn, _fc, account_id))
+                _c.execute('UPDATE wx_accounts SET verify_file_name=%s, verify_file_content=%s WHERE id=%s',
+                           (_names[-1], _fc, account_id))
                 _conn.commit()
                 _conn.close()
-                _log.info('[S871] 账号%s 校验文件已部署: static/%s', account_id, _fn)
+                _log.info('[S888] 账号%s 校验文件已部署: %s', account_id, ', '.join('static/' + x for x in _deployed))
     except Exception as _e:
         _log.warning('[S871] 校验文件失败 账号%s: %s', account_id, _e)
 

@@ -134,6 +134,9 @@ def _s871_apply_extra(account_id, d):
     """
     import os as _os, logging as _lg
     _log = _lg.getLogger('wx_config_api')
+    _log.info('[S886] 收到保存: keys=%s tpl_refund=%r tpl_general=%r verify_name=%r verify_len=%s',
+              sorted([k for k in d.keys()]), d.get('tpl_refund'), d.get('tpl_general'),
+              d.get('verify_file_name'), len(str(d.get('verify_file_content') or '')))
     try:
         _rf = str(d.get('tpl_refund') or '').strip()
         _gf = str(d.get('tpl_general') or '').strip()
@@ -197,6 +200,8 @@ def api_account_create():
 def api_account_update(account_id):
     _guard()
     d = _body()
+    import logging as _lg886
+    _lg886.getLogger('wx_config_api').info('[S886] update 收到 body: %s', sorted(d.keys()))
     fields = {k: v for k, v in d.items() if k in (
         'name', 'appid', 'secret', 'token', 'aes_key', 'subject',
         'mch_relation', 'priority', 'note', 'openid_prefix')}

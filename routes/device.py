@@ -733,8 +733,12 @@ def device_lock_result():
                             logger.warning('[S400] 设备侧结束模板消息失败: %s', _tpl_e3)
                     else:
                         logger.warning(f"[lock_result] action=end but order update matched 0 rows: slot={slot_id} order={_o2['id']}, slot NOT released")
-                else:
+                elif _o2:
                     logger.info(f"[lock_result] no action mark: slot={slot_id} (mark={_o2.get('logical_mark','?')})")
+                else:
+                    # [S897] 该柜格没有进行中的订单：_o2 为 None，不能调 .get()（原来会抛
+                    #   'NoneType' object has no attribute 'get'，被外层 except 吞成 warning）
+                    logger.info(f"[lock_result] slot={slot_id} 没有进行中的订单(status=2)，无需处理动作")
             except Exception as _e2:
                 logger.warning(f"[lock_result] check action failed: {_e2}")
         logger.info(f"[lock_result] 开锁: device={device_id} slot_id={slot_id}")

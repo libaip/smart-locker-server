@@ -151,7 +151,7 @@
         .pay-agreement input[type="checkbox"] { width: 16px; height: 16px; accent-color: #FFC107; }
         .pay-agreement a { color: #4CAF50; text-decoration: none; font-weight: 500; }
 
-        /* ===== 押金协议弹窗 ===== */
+        /* ===== 用户服务协议弹窗 ===== */
         .agreement-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 300; align-items: flex-end; justify-content: center; }
         .agreement-overlay.show { display: flex; }
         .agreement-box { background: #fff; border-radius: 16px 16px 0 0; width: 100%; max-width: 500px; max-height: 75vh; display: flex; flex-direction: column; }
@@ -350,9 +350,9 @@
         <div id="helpContent" class="help-detail">
             1. 点击「存」按钮，选择柜格大小<br>
             2. 输入手机号和4位取件码<br>
-            3. 支付押金后柜门自动打开<br>
+            3. 支付预付款后柜门自动打开<br>
             4. 取包时点击「取」，输入手机号+取件码<br>
-            5. 取出物品关好柜门，押金原路退回
+            5. 取出物品关好柜门，预付款原路退回
         </div>
         <div class="action-cards">
             <div class="action-card action-card-store" onclick="goToStoreStep1()">
@@ -409,8 +409,8 @@
             <div class="notes">
                 <div class="notes-title">注意事项</div>
                 <div class="note-item">存放时间截止到当日23:00，请提前取走物品</div>
-                <div class="note-item">为避免柜门无效占用，需支付押金¥<span id="s1DepositNote">20</span></div>
-                <div class="note-item">寄存结束后押金即可退回，请务必关好柜门</div>
+                <div class="note-item">为避免柜门无效占用，需支付预付款¥<span id="s1DepositNote">20</span></div>
+                <div class="note-item">寄存结束后预付款即可退回，请务必关好柜门</div>
             </div>
             <div class="info-row door-row">
                 <span class="info-label">柜门号</span>
@@ -479,13 +479,13 @@
         </div>
         <div class="pay-warning">
             <span class="pay-warning-icon">⚠️</span>
-            <span>请支付后使用设备，结束使用后押金可申请原路退回。</span>
+            <span>请支付后使用设备，结束使用后预付款可申请原路退回。</span>
         </div>
         <div class="pay-action-area">
             <button class="pay-open-btn" id="payBtn" onclick="payDeposit()">支付开门</button>
             <div class="pay-agreement">
                 <input type="checkbox" id="agreementCheck" checked>
-                <span>请仔细阅读<a href="javascript:void(0)" onclick="showAgreement()">《用户押金协议》</a>，勾选即同意协议。</span>
+                <span>请仔细阅读<a href="javascript:void(0)" onclick="showAgreement()">《用户服务协议》</a>，勾选即同意协议。</span>
             </div>
         </div>
     </div>
@@ -541,7 +541,7 @@
         <div class="rc-card">
             <div class="rc-row"><span class="rc-label">柜格号</span><span class="rc-value" id="rcCompartment">-</span></div>
             <div class="rc-row"><span class="rc-label">存入时间</span><span class="rc-value" id="rcTime">-</span></div>
-            <div class="rc-row"><span class="rc-label">押金</span><span class="rc-value" id="rcDeposit">-</span></div>
+            <div class="rc-row"><span class="rc-label">预付款</span><span class="rc-value" id="rcDeposit">-</span></div>
         </div>
         <div class="rc-actions">
             <button class="rc-btn-mid" onclick="midOpen()">中途开柜</button>
@@ -611,7 +611,7 @@
             <span class="refunding-bar-icon">⏳</span>
             <span class="refunding-bar-text">有退款正在处理中，请耐心等待</span>
         </div>
-        <div class="balance-tip">余额来源：寄存订单完成后，押金将退回到余额中</div>
+        <div class="balance-tip">余额来源：寄存订单完成后，预付款将退回到余额中</div>
     </div>
 
     <!-- ========== 右侧浮标 ========== -->
@@ -656,26 +656,28 @@
         </div>
     </div>
 
-    <!-- ========== 押金协议弹窗 ========== -->
+    <!-- ========== 用户服务协议弹窗 ========== -->
     <div id="agreementOverlay" class="agreement-overlay" onclick="if(event.target===this)closeAgreement()">
         <div class="agreement-box">
             <div class="agreement-header">
-                <div class="agreement-title">用户押金协议</div>
+                <div class="agreement-title">用户服务协议</div>
                 <button class="agreement-close" onclick="closeAgreement()">&times;</button>
             </div>
             <div class="agreement-body">
-                <h3>一、押金说明</h3>
-                <p>1. 用户在使用寄存柜服务时，需按照柜格类型支付对应金额的押金（预付费）。</p>
-                <p>2. 押金仅作为寄存期间的有效使用担保，不属于寄存费用。</p>
-                <p>3. 当前押金标准：小柜¥10、中柜¥20、大柜¥30，具体以页面显示为准。</p>
-                <h3>二、押金退还</h3>
-                <p>1. 用户取包并关好柜门后，押金将在0-3个工作日内原路退回至支付账户。</p>
-                <p>2. 如超时未取包，系统将根据网点规则处理，押金退还规则以网点公示为准。</p>
-                <p>3. 退款仅支持原路退回，不支持更换退款账户。</p>
+                <h3>一、预付款说明</h3>
+                <p>1. 用户在使用寄存柜服务时，需按照柜格类型支付对应金额的预付款。</p>
+                <p>2. 预付款仅作为寄存期间的使用担保，使用结束后按本协议约定退还。</p>
+                <p>3. 当前预付款标准：小柜¥10、中柜¥20、大柜¥30，具体以页面显示为准。</p>
+                <h3>二、预付款退还</h3>
+                <p>1. 用户取包并关好柜门后，预付款将在0-3个工作日内原路退回至支付账户。</p>
+                <p>2. [S1623] 用户使用寄存柜服务超过 2 小时的，平台将收取超时保管服务费 1 元，
+                   该费用从预付款中扣除，剩余部分原路退回至支付账户。</p>
+                <p>3. 未超过 2 小时取包的，预付款全额原路退回，不收取任何费用。</p>
+                <p>4. 退款仅支持原路退回，不支持更换退款账户。</p>
                 <h3>三、用户责任</h3>
                 <p>1. 请勿存放违禁物品、贵重物品及易腐烂变质的物品。</p>
                 <p>2. 用户应妥善保管取包凭证（手机号+密码），因凭证泄露导致的损失由用户自行承担。</p>
-                <p>3. 存放物品如有损坏或遗失，赔偿金额不超过押金金额。</p>
+                <p>3. 存放物品如有损坏或遗失，赔偿金额不超过预付款金额。</p>
                 <h3>四、免责条款</h3>
                 <p>1. 因不可抗力（停电、网络故障、设备损坏等）导致无法正常存取的，运营方将尽快修复并及时通知用户。</p>
                 <p>2. 用户超过网点规定寄存时间未取走的物品，运营方有权进行清理，但会提前公示通知。</p>
@@ -704,14 +706,14 @@
                 <div class="help-step"><div class="help-step-num">1</div><div class="help-step-text">点击首页「取」按钮</div></div>
                 <div class="help-step"><div class="help-step-num">2</div><div class="help-step-text">输入存包时的手机号和取件密码</div></div>
                 <div class="help-step"><div class="help-step-num">3</div><div class="help-step-text">柜门打开，取走物品并关好柜门</div></div>
-                <h4>押金说明</h4>
-                <p>• 押金仅作为使用担保，不属于费用</p>
-                <p>• 取包并关好柜门后，押金退回至余额</p>
+                <h4>预付款说明</h4>
+                <p>• 预付款仅作为使用担保，使用结束后退还</p>
+                <p>• 取包并关好柜门后，预付款退回至余额</p>
                 <p>• 可在「我的余额」中查看和提现</p>
                 <h4>常见问题</h4>
                 <p><strong>Q: 取件密码忘记了怎么办？</strong></p>
                 <p>A: 联系客服400-698-1080，提供手机号核实后可查询。</p>
-                <p><strong>Q: 押金多久能退回？</strong></p>
+                <p><strong>Q: 预付款多久能退回？</strong></p>
                 <p>A: 取包成功后0-3个工作日内原路退回。</p>
             </div>
         </div>
@@ -997,7 +999,7 @@ var wxUnionid = params.get('unionid') || localStorage.getItem('wxUnionid') || ''
 
     function payDeposit() {
         var agreeCheck = document.getElementById('agreementCheck');
-        if (agreeCheck && !agreeCheck.checked) { alert('请先阅读并同意《用户押金协议》'); return; }
+        if (agreeCheck && !agreeCheck.checked) { alert('请先阅读并同意《用户服务协议》'); return; }
         var phone = document.getElementById('userPhone').value.trim();
         var btn = document.getElementById('payBtn');
         btn.disabled = true; btn.textContent = '处理中...';
@@ -1161,7 +1163,7 @@ var wxUnionid = params.get('unionid') || localStorage.getItem('wxUnionid') || ''
                     forceEndRetrieval();
                 }
             } else if (data.code === 200) {
-                alert('押金将原路退还，请关好柜门'); goToHomePage();
+                alert('预付款将原路退还，请关好柜门'); goToHomePage();
             } else { alert(data.message || '操作失败'); }
         })
         .catch(function() { alert('网络错误'); });
@@ -1172,7 +1174,7 @@ var wxUnionid = params.get('unionid') || localStorage.getItem('wxUnionid') || ''
         fetch(API_BASE + '/api/retrieve/confirm', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentRetrieveOrderId, action: 'end', force_end: true}) })
         .then(function(res) { return res.json(); })
         .then(function(data) {
-            if (data.code === 200) { alert('押金将原路退还，请关好柜门'); goToHomePage(); }
+            if (data.code === 200) { alert('预付款将原路退还，请关好柜门'); goToHomePage(); }
             else { alert(data.message || '操作失败'); }
         })
         .catch(function() { alert('网络错误'); });

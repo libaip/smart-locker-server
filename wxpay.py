@@ -254,7 +254,8 @@ class WxPay:
     def unifiedorder(self, trade_type: str, body: str, total_fee: int, out_trade_no: str, 
                      notify_url: str, openid: str = None, scene_info: str = None, 
                      time_start: str = None, time_expire: str = None,
-                     spbill_create_ip: str = None) -> Dict[str, Any]:
+                     spbill_create_ip: str = None,
+                     detail: str = None) -> Dict[str, Any]:
         """
         统一下单
         
@@ -287,6 +288,10 @@ class WxPay:
             'notify_url': notify_url,
             'trade_type': trade_type,
         }
+        
+        # [S1610] 商品明细（JSON 字符串）。不传时完全不影响原行为。
+        if detail:
+            params['detail'] = detail
         
         if openid:
             params['openid'] = openid

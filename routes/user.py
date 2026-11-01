@@ -2230,7 +2230,12 @@ def deposit_end_storage():
         if not data.get('local_opened') and not _device_online:
             # device offline: still allow end order (no door open), refund to balance
             logger.warning('[end_storage] device offline, skip remote open, end order: order=' + str(order_id))
-        refund_amount = order['deposit_amount']
+        # [S1623-20261101] 超时保管服务费：超过N分钟从押金中扣M元（开关控制，默认关）
+        _s1623_fee = _s1623_overdue_fee(order)
+        if _s1623_fee > 0:
+            refund_amount = max(float(order['deposit_amount'] or 0) - _s1623_fee, 0)
+        else:
+            refund_amount = order['deposit_amount']
         compartment_number = order['slot_number'] or order['compartment_number']
         cursor.execute('INSERT INTO storage_records (cabinet_id, compartment_number, user_phone, access_code, status, store_time, retrieve_time) VALUES (%s, %s, %s, %s, 1, %s, %s)',
                        (order['cabinet_id'], order['compartment_number'], order['user_phone'], order['access_code'], order['store_time'], datetime.now()))
@@ -5591,6 +5596,56 @@ def _get_s851_sem(n):
     return s
 
 
+# ============================================================
+# [S1623-20261101] 超时保管服务费（默认关闭，开关控制）
+#   规则：使用时长超过 N 分钟（默认 120），从押金中扣 M 元（默认 1.0）
+#   开关：system_settings.overdue_fee_enabled     '0'=关（默认）/ '1'=开
+#         system_settings.overdue_fee_minutes     默认 120
+#         system_settings.overdue_fee_amount      默认 1.0
+#   依据：小程序《用户押金协议》"二、押金退还"第 2 条已明示超时收取服务费
+#   安全：任何异常都返回 0（=全额退），绝不影响退款链路
+# ============================================================
+def _s1623_overdue_fee(order, now=None):
+    """返回应扣的超时服务费（元）。默认关闭时恒返回 0.0"""
+    try:
+        from helpers import get_setting as _gs1623
+    except Exception:
+        return 0.0
+    try:
+        _on = _gs1623('overdue_fee_enabled', None)
+        if _on is None or str(_on).strip() in ('', '0', 'false', 'False', 'no', 'off'):
+            return 0.0
+        try:
+            _limit = float(_gs1623('overdue_fee_minutes', 120) or 120)
+        except Exception:
+            _limit = 120.0
+        try:
+            _fee = float(_gs1623('overdue_fee_amount', 1.0) or 1.0)
+        except Exception:
+            _fee = 1.0
+        _st = order.get('store_time')
+        if not _st:
+            return 0.0
+        _now = now or datetime.now()
+        _mins = (_now - _st).total_seconds() / 60.0
+        if _mins <= _limit:
+            return 0.0
+        _dep = float(order.get('deposit_amount') or 0)
+        if _dep <= 0:
+            return 0.0
+        # 扣款不超过押金本身
+        _fee = min(_fee, _dep)
+        logger.info('[S1623] 超时收费 order_id=%s 时长=%.1f分钟 扣费=%.2f',
+                    order.get('id'), _mins, _fee)
+        return round(_fee, 2)
+    except Exception as _e1623:
+        try:
+            logger.warning('[S1623] 计算超时费异常(按0处理): %s', _e1623)
+        except Exception:
+            pass
+        return 0.0
+
+
 def _has_pending_withdrawal(cursor, order_id):
     cursor.execute("SELECT 1 FROM withdrawal_records WHERE order_id = %s AND status IN (0, 1) LIMIT 1", (order_id,))
     return cursor.fetchone() is not None
@@ -5933,11 +5988,18 @@ def user_withdraw():
                     return json_response(message='订单已有待处理提现，请勿重复提交', code=400)
             # 检查白名单
             # 白名单用户统一走队列，入口处不再即时退款
-            # 检查是否被拒绝后重提（按用户身份统计，避免同手机号另一微信的记录干扰）
-            if ident['user_id']:
+            # 检查是否被拒绝后重提
+            # [S1391] 改为"手机号优先"统计。原来有 user_id 就按 user_id 统计，
+            #   但用户换小程序/换微信后 openid 变了、系统会新建 user_id，
+            #   同一手机号对应多个 user_id（实测有的一人 3 个），
+            #   于是每次统计都只看到 0，永远拉不了白、拿不到豁免权。
+            #   手机号是稳定身份（check_whitelist 自己也是手机号优先）。
+            if phone:
+                cursor.execute('SELECT COUNT(*) as cnt FROM withdrawal_records wr WHERE wr.user_phone = %s AND wr.status = 3', (phone,))
+            elif ident['user_id']:
                 cursor.execute('SELECT COUNT(*) as cnt FROM withdrawal_records wr JOIN orders o ON wr.order_id = o.id WHERE o.user_id = %s AND wr.status = 3', (ident['user_id'],))
             else:
-                cursor.execute('SELECT COUNT(*) as cnt FROM withdrawal_records wr WHERE user_phone = %s AND status = 3', (phone,))
+                cursor.execute('SELECT COUNT(*) as cnt FROM withdrawal_records wr WHERE user_phone = %s AND status = 3', ('',))
             reject_cnt = cursor.fetchone()['cnt']
             _reject_th = 1
             if loc_row and loc_row.get('reject_whitelist_after') is not None:

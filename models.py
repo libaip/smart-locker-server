@@ -92,9 +92,13 @@ BRAND_DEFAULTS = {
 # 辅助函数
 # ============================================
 def generate_order_no():
-    """生成订单号"""
+    """生成订单号
+
+    [S1614] 格式从 [日期8][时间6][随机6] 改为 [随机6][日期8][时间6]
+    """
     import random, string
-    return datetime.now().strftime('%Y%m%d%H%M%S') + ''.join(random.choices(string.digits, k=6))
+    _rnd = ''.join(random.choices(string.digits, k=6))
+    return _rnd + datetime.now().strftime('%Y%m%d%H%M%S')
 
 def generate_access_code():
     """生成4位取件码"""

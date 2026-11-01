@@ -172,7 +172,7 @@
                     <div class="rules-title">📋 使用规则</div>
                     <div class="rules-list" id="rulesContainer">
                         <div class="rule-item"><span class="rule-num">1.</span><span>存放时间截至到当日23:00，请提前取走物品</span></div>
-                        <div class="rule-item"><span class="rule-num">2.</span><span>避免无效占用，请支付保证金20元</span></div>
+                        <div class="rule-item"><span class="rule-num">2.</span><span>避免无效占用，请支付预付款20元</span></div>
                         <div class="rule-item"><span class="rule-num">3.</span><span>寄存结束后预付款即可退回，请务必关好柜门</span></div>
                     </div>
                 </div>
@@ -281,7 +281,7 @@
                     <div class="complete-icon" id="completeIcon">✅</div>
                     <div class="complete-title" id="completeTitle">操作成功</div>
                     <div class="refund-info" id="refundInfo">
-                        <div class="refund-label">已退还保证金</div>
+                        <div class="refund-label">已退还预付款</div>
                         <div class="refund-amount" id="refundAmount">¥0.00</div>
                     </div>
                     <div class="countdown-hint" id="countdownHint">页面将在 <span id="countdown">20</span> 秒后返回首页</div>
@@ -922,7 +922,7 @@
                     document.getElementById('completeIcon').textContent = '✅';
                     document.getElementById('completeTitle').textContent = '继续存放成功';
                     document.getElementById('refundInfo').style.display = 'none';
-                    document.getElementById('countdownHint').innerHTML = '请关好柜门，保证金将保留在账户中';
+                    document.getElementById('countdownHint').innerHTML = '请关好柜门，预付款将保留在账户中';
                     startCountdown(20);
                 } else {
                     showError(result.message || '操作失败');

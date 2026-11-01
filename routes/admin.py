@@ -2654,7 +2654,7 @@ def admin_v2_cabinet_save():
             conn.commit()
     else:
         c.execute('INSERT INTO cabinets (name,location_id,group_id,deposit_amount,mainboard_device_id,slot_count,status,usage_rules,rules_title,reopen_times) VALUES (%s,%s,%s,%s,%s,%s,1,%s,%s,%s)',
-                  (data.get('name',''),data.get('location_id'),data.get('group_id'),data.get('deposit_amount',20),data.get('mainboard_device_id',''),data.get('slot_count',0),data.get('usage_rules') or '\n'.join(['24小时内取包免费','保证金{deposit_amount}元，寄存结束后按规则结算','存包后请保管好取件码','柜内禁止存放易燃易爆及违禁物品']),data.get('rules_title') or '',data.get('reopen_times') if data.get('reopen_times') not in ('', None) else None))
+                  (data.get('name',''),data.get('location_id'),data.get('group_id'),data.get('deposit_amount',20),data.get('mainboard_device_id',''),data.get('slot_count',0),data.get('usage_rules') or '\n'.join(['24小时内取包免费','预付款{deposit_amount}元，寄存结束后按规则结算','存包后请保管好取件码','柜内禁止存放易燃易爆及违禁物品']),data.get('rules_title') or '',data.get('reopen_times') if data.get('reopen_times') not in ('', None) else None))
         cabinet_id = c.lastrowid
         conn.commit()
     conn.close()

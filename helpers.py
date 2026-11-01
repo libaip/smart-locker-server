@@ -389,6 +389,31 @@ def alipay_mp_channel_by_appid(appid):
     return None
 
 
+def get_alipay_channel_by_appid(appid):
+    """[S1299] 按支付宝 appid 反查 payment_channels 行（用于取隔离配置）"""
+    try:
+        _appid = str(appid or '').strip()
+        if not _appid:
+            return None
+        conn = get_db()
+        try:
+            cur = conn.cursor()
+            cur.execute("""SELECT id, name, mch_id, app_id, extra_config, channel_type
+                           FROM payment_channels
+                           WHERE channel_type='alipay' AND app_id=%s AND is_active=1
+                           ORDER BY id LIMIT 1""", (_appid,))
+            r = cur.fetchone()
+            if not r:
+                return None
+            return dict(r) if isinstance(r, dict) else None
+        finally:
+            try: conn.close()
+            except Exception: pass
+    except Exception as e:
+        logger.warning('[S1299] 反查支付宝渠道失败: %s', e)
+        return None
+
+
 def get_alipay_mp_client(appid=None):
     """[S272] 支付宝【小程序应用】的客户端（登录 / 订阅消息用）
 
@@ -416,7 +441,20 @@ def get_alipay_mp_client(appid=None):
         logger.error('[get_alipay_mp_client] 读密钥失败: %s' % (e,))
         return None
     gw = SANDBOX_GATEWAY if str(appid).startswith('9021') else PROD_GATEWAY
-    return AlipayClient(app_id=appid, private_key=priv, alipay_public_key=pub, gateway=gw)
+    # [S1299] 按 appid 反查渠道，配出口代理（隔离用）
+    _c1299 = AlipayClient(app_id=appid, private_key=priv, alipay_public_key=pub, gateway=gw)
+    try:
+        import alipay as _alp1299
+        _ch1299 = get_alipay_channel_by_appid(str(appid))
+        _px1299 = _alp1299.alipay_proxy_for_channel(_ch1299) if _ch1299 else ''
+        if _px1299:
+            _full = _px1299 if '://' in _px1299 else ('http://' + _px1299)
+            _c1299.proxy = _full
+            _c1299.proxies = {'http': _full, 'https': _full}
+            logger.info('[S1299] 支付宝小程序客户端走代理 appid=%s proxy=%s', appid, _px1299)
+    except Exception as _e1299:
+        logger.warning('[S1299] 支付宝代理配置失败(走本机): %s', _e1299)
+    return _c1299
 
 
 def is_mobile_browser():
@@ -1069,21 +1107,24 @@ def wx_egress_proxy(channel=None):
             _p = ''
     if not _p:
         return ''
-    # ★ 白名单强制校验（S965）
+    # [S1507-20261021] 老板最新要求：
+    #   "除了153和154，我之前有的商户号都配置了代理IP，让配置了的不要生效
+    #    （除了153和154以及后面配置的）"
+    #   规则：
+    #     ① 渠道没配 egress_proxy          -> 不走代理（本机出口）
+    #     ② mch_id 在【排除名单】里         -> 配了也【不走】（历史老商户号）
+    #     ③ 其他（含 153/154 及以后新增的） -> 配了就走代理
+    #     ④ 任何异常 -> 走本机出口，绝不影响支付
+    #   排除名单：system_settings.wx_egress_proxy_exclude_mchids（逗号分隔 mch_id）
     try:
-        _raw = str(get_setting('wx_egress_proxy_mchids', '') or '')
-        _wl = {x.strip() for x in _raw.replace('，', ',').split(',') if x.strip()}
-    except Exception as _e2:
-        logger.warning('[S965] 读独立出口白名单失败(按不使用代理处理): %s', _e2)
-        _wl = set()
-    if not _wl:
-        logger.warning('[S965] 配了出口代理但没有配白名单 wx_egress_proxy_mchids，'
-                       '为防污染该 IP，本次【不使用代理】channel=%s mch=%s',
-                       channel.get('id'), _mch)
-        return ''
-    if _mch not in _wl:
-        logger.warning('[S965] 商户号 %s 不在独立出口白名单内 -> 【不使用代理】'
-                       '（防止被风控/老主体污染干净 IP）channel=%s', _mch, channel.get('id'))
+        _excl_raw = str(get_setting('wx_egress_proxy_exclude_mchids', '') or '')
+        _excl = {x.strip() for x in _excl_raw.replace('，', ',').split(',') if x.strip()}
+    except Exception as _e7:
+        logger.warning('[S1507] 读代理排除名单失败(按不排除处理): %s', _e7)
+        _excl = set()
+    if _mch and _mch in _excl:
+        logger.info('[S1507] 商户号 %s 在代理排除名单内(老渠道) -> 不使用代理 channel=%s',
+                    _mch, channel.get('id'))
         return ''
     return _p
 
@@ -1186,9 +1227,21 @@ def get_channel_wxpay(channel, use_mp_appid=False, openid=None, acct_type=None):
             logger.warning('[支付宝] 支付宝公钥读取失败(回调将走查单核对) %s: %s', pub_path, _e)
         _appid = str(channel.get('app_id') or '')
         _gw = extra.get('gateway') or (SANDBOX_GATEWAY if _appid.startswith('9021') else PROD_GATEWAY)
-        return AlipayClient(app_id=_appid, private_key=_priv, alipay_public_key=_pub, gateway=_gw,
-                            notify_url=_wx_payurl().replace('/api/pay/notify', '/api/pay/notify/alipay'),
-                            return_url=_wx_h5b() + '/store'), 'alipay'
+        # [S1299] 支付通道入口：按渠道 extra_config 配代理 + 独立回调域名
+        try:
+            import alipay as _alp2
+            _px2 = _alp2.alipay_proxy_for_channel(channel)
+            _nurl2 = _alp2.alipay_notify_url_for_channel(channel, 'pay')
+        except Exception as _e2:
+            _px2 = ''; _nurl2 = ''
+        _c2 = AlipayClient(app_id=_appid, private_key=_priv, alipay_public_key=_pub, gateway=_gw,
+                           notify_url=(_nurl2 or _wx_payurl().replace('/api/pay/notify', '/api/pay/notify/alipay')),
+                           return_url=_wx_h5b() + '/store',
+                           proxy=_px2)
+        if _px2:
+            logger.info('[S1299] 支付宝支付走代理 mch=%s proxy=%s notify=%s',
+                        channel.get('mch_id'), _px2, '独立' if _nurl2 else '默认')
+        return _c2, 'alipay'
     return None, None
 
 
@@ -1876,14 +1929,29 @@ def _alert_mch_restricted(channel, err_code, err_desc, trade_type=None):
         conn = get_db()
         cur = conn.cursor()
 
-        # 还有别的活跃微信渠道可用吗? 有就只是常规轮转, 不打扰
+        # [S1415] 老板要求"每个商户被封都要通知我"。原来 alive>0 就 return False
+        #   （有备用渠道不打扰），导致真封号时 0 条通知。现在不管有没有备用渠道都告警。
         cur.execute("SELECT count(*) FROM payment_channels "
                     "WHERE is_active=1 AND channel_type='wechat' AND id<>%s", (cid,))
         _r = cur.fetchone()
-        alive = (_r[0] if not isinstance(_r, dict) else list(_r.values())[0]) if _r else 0
-        if alive and alive > 0:
-            conn.close()
-            return False
+        alive = int((_r[0] if not isinstance(_r, dict) else list(_r.values())[0]) if _r else 0)
+
+        # [S1415] 自动停用被封商户号（仅"账号级受限 + 有备用渠道"时，避免全站不能付款）
+        if _kind == 'account' and alive > 0:
+            try:
+                cur.execute("UPDATE payment_channels SET is_active=0, auto_disabled=1 WHERE id=%s", (cid,))
+                conn.commit()
+                logger.warning('[S1415] 商户号被封，已自动停用: id=%s mch=%s（剩余可用渠道 %s 个）',
+                               cid, cmch, alive)
+            except Exception as _e_disable:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                logger.error('[S1415] 自动停用失败: id=%s err=%s', cid, _e_disable)
+        elif _kind == 'account' and alive <= 0:
+            logger.warning('[S1415] 商户号被封但无备用渠道，为避免全站停付【不停用】: id=%s mch=%s',
+                           cid, cmch)
 
         # 去重: 同渠道 10 分钟内只告警一次
         cur.execute("SELECT setting_value FROM system_settings WHERE setting_key=%s",
@@ -1916,17 +1984,31 @@ def _alert_mch_restricted(channel, err_code, err_desc, trade_type=None):
                        '\n该描述不属于已知的两种 NOAUTH 情形，请人工确认商户号状态。') % (
                 cname, cmch, cid, _prod, err_code, err_desc)
         else:
-            # [S531] 原文案逐字节保留(账号级 / 非 NOAUTH 都走这里)
-            title = '【寄存柜】微信商户号被封/收款受限'
-            content = ('微信支付商户号被限制收款，且当前已无其他可用微信渠道。\n'
-                       '商户名称: %s\n'
-                       '商户号(mch_id): %s\n'
-                       '渠道ID: %s\n'
-                       '错误码: %s\n'
-                       '错误描述: %s\n'
-                       '\n请立刻登录 pay.weixin.qq.com 查看，并到后台"支付渠道"启用备用商户号。') % (
-                cname, cmch, cid, err_code, err_desc)
-            # [S657] 只有账号级才追加这一行(非 NOAUTH 保持逐字节不变)
+            # [S1415] 按"还有没有备用渠道"分两种文案；两种情况都发
+            if alive > 0:
+                title = '【寄存柜】商户被封-已自动切换（%s）' % cmch
+                content = ('微信支付商户号被限制收款，系统已自动切到其他可用渠道。\n'
+                           '商户名称: %s\n'
+                           '商户号(mch_id): %s\n'
+                           '渠道ID: %s\n'
+                           '错误码: %s\n'
+                           '错误描述: %s\n'
+                           '\n★ 该商户号已自动停用，剩余可用微信渠道: %s 个。\n'
+                           '★ 请登录 pay.weixin.qq.com 申诉解封；现阶段支付不受影响。') % (
+                    cname, cmch, cid, err_code, err_desc, alive)
+            else:
+                title = '【寄存柜】商户被封-无可用渠道（%s）' % cmch
+                content = ('微信支付商户号被限制收款，且当前已无其他可用微信渠道。\n'
+                           '商户名称: %s\n'
+                           '商户号(mch_id): %s\n'
+                           '渠道ID: %s\n'
+                           '错误码: %s\n'
+                           '错误描述: %s\n'
+                           '\n★★ 已经没有可用微信渠道了，用户现在付不了款！\n'
+                           '\n★ 为避免全站停付，本商户号【未自动停用】，请人工处理。\n'
+                           '★★ 请立刻登录 pay.weixin.qq.com 查看，并到后台"支付渠道"启用备用商户号。') % (
+                    cname, cmch, cid, err_code, err_desc)
+            # [S657] 只有账号级才追加这一行
             if _kind == 'account':
                 content = content + '\n失败产品: %s' % _prod
         ok = send_pushplus(title, content)
@@ -1940,7 +2022,8 @@ def _alert_mch_restricted(channel, err_code, err_desc, trade_type=None):
         except Exception as _we:
             logger.warning('[MchRestricted] 告警状态写库失败: %s' % _we)
         conn.close()
-        logger.warning('[MchRestricted] 告警已发(%s): %s' % ('成功' if ok else '失败', title))
+        logger.warning('[MchRestricted] 告警已发(%s): %s (alive=%s)' % (
+            '成功' if ok else '失败', title, alive))
         return ok
     except Exception as e:
         logger.error('[MchRestricted] 告警失败: %s' % e)
@@ -2016,7 +2099,77 @@ _mch_fail_poll_count = {}
 #   原因：电话/营销词（原「人工加急电话：4006981080」）属微信支付商品描述的风控弱信号，
 #   而全站微信收款只有一个商户号（1750896171），一旦被限制=全站收不到钱，风险收益不划算。
 #   只影响【下单时】的商品名 -> 只对新订单生效，已支付的老订单账单不变。改这一个常量即可全局生效。
-PAY_GOODS_NAME = '储物柜预付款'  # [S806-20260930] 老板定稿：与支付宝口径对齐，去掉"提现"等资金引导词
+PAY_GOODS_NAME = '寄存预付款-客服热线4006981080'
+
+
+# [S1610] 微信支付商品明细 + 商品名服务化（开关可回退）
+_S1610_SERVICE_NAME = '储物柜使用服务'
+_S1610_GOODS_ID = 'LOCKER-STORAGE-001'
+
+
+def _s1610_switch(key, default=True):
+    try:
+        _v = get_setting(key, None)
+        if _v is None or str(_v).strip() == '':
+            return default
+        return str(_v).strip() not in ('0', 'false', 'False', 'no', 'off')
+    except Exception:
+        return default
+
+
+def s1610_pay_body(default_body=None, channel=None):
+    """[S1614] 优先用该渠道自己的商品名（指纹差异化）"""
+    try:
+        if channel:
+            _gn = (channel.get('goods_name') if isinstance(channel, dict)
+                   else getattr(channel, 'goods_name', None)) or ''
+            _gn = str(_gn).strip()
+            if _gn:
+                return _gn[:128]
+    except Exception:
+        pass
+    if _s1610_switch('wx_pay_body_service', True):
+        return _S1610_SERVICE_NAME
+    return default_body or PAY_GOODS_NAME
+
+
+def s1610_goods_detail(total_fee, channel=None):
+    """[S1610] 按金额生成微信 detail；sum(price*qty) 必须等于 total_fee"""
+    if not _s1610_switch('wx_pay_detail_enabled', True):
+        return None
+    try:
+        _fee = int(round(float(total_fee or 0)))
+    except Exception:
+        return None
+    if _fee <= 0:
+        return None
+    _gid = _S1610_GOODS_ID
+    _gnm = _S1610_SERVICE_NAME
+    try:
+        if channel:
+            _g1 = (channel.get('goods_id') if isinstance(channel, dict)
+                   else getattr(channel, 'goods_id', None)) or ''
+            _g2 = (channel.get('goods_name') if isinstance(channel, dict)
+                   else getattr(channel, 'goods_name', None)) or ''
+            if str(_g1).strip():
+                _gid = str(_g1).strip()[:32]
+            if str(_g2).strip():
+                _gnm = str(_g2).strip()[:128]
+    except Exception:
+        pass
+    try:
+        import json as _j1610
+        return _j1610.dumps({
+            'goods_detail': [{
+                'goods_id': _gid,
+                'goods_name': _gnm,
+                'quantity': 1,
+                'price': _fee,
+            }]
+        }, ensure_ascii=False)
+    except Exception:
+        return None  # [S1437-20261019] 老板改：账单商品名带客服热线
+#   原值 '储物柜预付款'（S806 定稿）；微信 body 限制 128 字节，本串约 35 字节。
 
 
 
@@ -2241,8 +2394,12 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
         wxpay, ch_type = get_channel_wxpay(current_channel, use_mp_appid=False, openid=openid)
         if ch_type == 'third_party' and wxpay:
             third_party_type = 'alipay' if not is_wechat_browser() else 'wechat'
-            result = wxpay.unifiedorder(trade_type=third_party_type, body=PAY_GOODS_NAME,
-                                         total_fee=int(round(deposit_amount * 100)), out_trade_no=order_no)
+            result = wxpay.unifiedorder(trade_type=third_party_type,
+                                         body=s1610_pay_body(channel=current_channel),
+                                         total_fee=int(round(deposit_amount * 100)),
+                                         out_trade_no=order_no,
+                                         detail=s1610_goods_detail(int(round(deposit_amount * 100)),
+                                                                   channel=current_channel))
             if result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS':
                 # 更新渠道统计（用于轮转）
                 if current_channel:
@@ -2254,7 +2411,7 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
             # [S255] 支付宝手机网站支付：生成跳转链接与自动提交表单（无需预下单接口）
             try:
                 _pay = wxpay.wap_pay(out_trade_no=order_no, total_amount=deposit_amount,
-                                     subject='储物柜预付款', quit_url=_wx_h5b() + '/store')
+                                     subject='寄存预付款-客服热线4006981080', quit_url=_wx_h5b() + '/store')  # [S1437]
             except Exception as _e:
                 logger.error('[支付宝] 下单失败: %s', _e)
                 return {'mode': 'error', 'error_msg': '支付宝下单失败'}
@@ -2305,11 +2462,13 @@ def get_payment_params(order_id, order_no, deposit_amount, user_phone=None, open
                         'error_msg': '支付账号不匹配：请退出后用微信扫柜机上的二维码，进入新版小程序下单'}
         except Exception as _e958:
             logger.warning('[S958] openid 前缀校验异常(放行): %s', _e958)
-    result = wxpay.unifiedorder(trade_type=trade_type, body=PAY_GOODS_NAME,
+    result = wxpay.unifiedorder(trade_type=trade_type,
+                                 body=s1610_pay_body(channel=current_channel),
                                  total_fee=total_fee, out_trade_no=order_no,
                                  notify_url=wx_notify_url(current_channel, 'pay'), openid=openid,
                                  scene_info=scene_info, time_expire=time_expire,
-                                 spbill_create_ip=_s826_ip or None)
+                                 spbill_create_ip=_s826_ip or None,
+                                 detail=s1610_goods_detail(total_fee, channel=current_channel))
 
     # [S657-20260924] 被动记录本次【真实下单】结果(成功也记一笔 -> 可看"最后成功时间")。
     #   账号级受限会立即告警; 产品级只落库不告警。异常在函数内吞掉, 绝不影响支付链路。
@@ -2910,11 +3069,13 @@ def get_mp_jsapi_params(order_id, order_no, amount, mp_openid,
                            _s955b_appid, _s955b_mch, order_no, str(mp_openid or '')[:8])
             return {'ok': False, 'mode': 'error',
                     'error_msg': '当前入口暂不支持支付，请退出后重新扫柜机上的二维码，用新版小程序下单'}
-        result = wxpay.unifiedorder(trade_type='JSAPI', body=body,
+        result = wxpay.unifiedorder(trade_type='JSAPI',
+                                    body=s1610_pay_body(body, channel=channel),
                                     total_fee=total_fee, out_trade_no=order_no,
                                     notify_url=wx_notify_url(channel, 'pay'), openid=mp_openid,
                                     scene_info=_s826_scene, time_expire=time_expire,
-                                    spbill_create_ip=_s826_ip or None)
+                                    spbill_create_ip=_s826_ip or None,
+                                    detail=s1610_goods_detail(total_fee, channel=channel))
         # [S657-20260924] 同上: 被动记录本次真实下单结果(小程序支付 JSAPI)
         _record_mch_last_error(channel, result, 'JSAPI', 'mp-jsapi', order_no=order_no)
         if not (result.get('return_code') == 'SUCCESS' and result.get('result_code') == 'SUCCESS'):
@@ -3111,7 +3272,7 @@ def _mp_pick_alipay_channel(channel_id=None, appid=None):
 
 
 def get_alipay_mp_trade_params(order_id, order_no, amount, alipay_uid,
-                               payment_channel_id=None, subject='储物柜预付款',
+                               payment_channel_id=None, subject='寄存预付款-客服热线4006981080',  # [S1437]
                                timeout_express='15m'):
     """[S334] 支付宝【小程序】支付：服务端 alipay.trade.create + 前端 my.tradePay({tradeNO})
 
@@ -5521,9 +5682,12 @@ def settle_withdrawal_for_order(cur, order_id, amount, approver='投诉自动退
                         (round(_new_amt, 2), _json_s.dumps(_oids), _next_oid, _id))
             stat['deducted'] += 1
         else:
+            # [S1292] 方案B：金额会被扣成 0（该订单已单独原路退款），
+            #   把【实际退款金额】写进 error_msg，后台/用户才能看懂这张单的真实含义。
+            _msg_s1292 = '%s ¥%.2f(原提现单已联动扣减)' % (approver, amt)
             cur.execute("""UPDATE withdrawal_records SET status=2, amount=%s, order_ids=%s,
-                           approver=%s, approve_time=CURRENT_TIMESTAMP, error_msg=NULL WHERE id=%s""",
-                        (round(_new_amt, 2), _json_s.dumps([]), approver, _id))
+                           approver=%s, approve_time=CURRENT_TIMESTAMP, error_msg=%s WHERE id=%s""",
+                        (round(_new_amt, 2), _json_s.dumps([]), approver, _msg_s1292, _id))
             stat['approved'] += 1
 
     # 2) 补一条该订单自己的已通过记录(保证用户提现记录里能看到这笔退款)
@@ -5535,7 +5699,7 @@ def settle_withdrawal_for_order(cur, order_id, amount, approver='投诉自动退
                            VALUES (%s, %s, %s, 2, %s, %s, CURRENT_TIMESTAMP, %s, %s, CURRENT_TIMESTAMP)
                            ON CONFLICT DO NOTHING""",
                         (oid, phone, round(amt, 2), approver, _json_s.dumps([oid]),
-                         '%s(原提现单已联动扣减)' % approver, 'C:%s:%s' % (phone, oid)))
+                         '%s ¥%.2f(原提现单已联动扣减)' % (approver, amt), 'C:%s:%s' % (phone, oid)))
             stat['inserted'] = True
         except Exception as _ie:
             logger.warning('[settle_withdrawal] 补建提现记录失败 order_id=%s err=%s', oid, _ie)
@@ -5680,12 +5844,19 @@ def get_access_token(force_refresh=False):
 
         if result.get('errcode') == 0:
             logger.info(f'[subscribe_msg] 发送成功: openid={openid[:8]}..., template={template_id}')
+            log_subscribe_status(openid, template_id, 'ok', 0, '',
+                                 phone=phone, order_id=order_id, order_ids=order_ids)
             return True
         else:
             logger.error(f'[subscribe_msg] 发送失败: {result}')
+            log_subscribe_status(openid, template_id, 'fail', result.get('errcode'),
+                                 str(result.get('errmsg') or ''), phone=phone,
+                                 order_id=order_id, order_ids=order_ids)
             return False
     except Exception as e:
         logger.error(f'[subscribe_msg] 异常: {e}')
+        log_subscribe_status(openid, template_id, 'fail', None, 'exception: %s' % str(e)[:200],
+                             phone=phone, order_id=order_id, order_ids=order_ids)
         return False
 
 
@@ -7264,6 +7435,67 @@ def _send_subscribe_for_account(account_id, openid, template_id, data, page, pho
                 _tpl = _row['template_id']
     except Exception as _e:
         logger.warning('[subscribe_msg] 换模板失败(用原ID): %s', _e)
+    # ============================================================
+    # [S1546-20261026] 发送前护栏：没有字段映射就【不要发】
+    #   原因：微信对 47003（参数错误）也扣订阅额度。配错的账号一旦发，
+    #   用户授权的额度就被烧掉，之后只能收到 43101。
+    #   2026-10-26 不归物因此烧掉 314 个用户的额度（319 次 47003）。
+    #   这里只针对"确实需要字段映射"的三个 biz 生效，其它 biz 原样放行。
+    # ============================================================
+    try:
+        _guard_needed = ('subscribe_general', 'subscribe_refund',
+                         'subscribe_deposit')
+        _guard_on = True
+        try:
+            _guard_on = str(get_setting('subscribe_guard_enabled', '1')).strip().lower() not in (
+                '0', 'false', 'off', 'no')
+        except Exception:
+            _guard_on = True
+        if _guard_on and (_biz in _guard_needed):
+            _has_map = False
+            try:
+                _m1546 = _wc.get_template_field_map(_biz, account_id=account_id)
+                _has_map = bool(_m1546)
+            except Exception:
+                _has_map = False
+            if not _has_map:
+                _has_map = bool(_SUBSCRIBE_FIELD_MAP.get((int(account_id or 0), _biz)))
+            if not _has_map:
+                # [S1546b] 无映射也不立刻拦 —— 再看历史：发过且全失败才拦。
+                #   避免误伤"无 field_map 但字段恰好一致、能正常发"的账号
+                #   （如 acct 11 卓蓝时 / acct 14 瑞郎，近7天 47003=0 有成功）。
+                _bad = False
+                try:
+                    from database import get_db as _gdb1546
+                    _c1546 = _gdb1546()
+                    _u1546 = _c1546.cursor()
+                    _u1546.execute(
+                        """SELECT COUNT(*) AS n,
+                                  COUNT(*) FILTER (WHERE status='ok') AS ok
+                           FROM user_subscribe_status
+                           WHERE acct_id=%s AND biz=%s
+                             AND created_at >= NOW() - INTERVAL '7 days'""",
+                        (account_id, _biz))
+                    _r1546 = _u1546.fetchone()
+                    if _r1546:
+                        _n = int((_r1546.get('n') if isinstance(_r1546, dict) else _r1546[0]) or 0)
+                        _ok = int((_r1546.get('ok') if isinstance(_r1546, dict) else _r1546[1]) or 0)
+                        _bad = (_n >= 3 and _ok == 0)
+                    _c1546.close()
+                except Exception as _e1546b:
+                    _bad = False
+                    logger.warning('[S1546b] 查历史失败(按放行处理): %s', _e1546b)
+                if _bad:
+                    logger.error(
+                        '[S1546b] 拒绝发送：账号id=%s biz=%s 无字段映射且近7天发送全失败，'
+                        '继续发只会白烧订阅额度（openid=%s... order_id=%s）。'
+                        '请先在 wx_templates 配 field_map，或用 '
+                        'check_mp_subscribe.py --send 验证后再启用。',
+                        account_id, _biz, str(openid or '')[:10], order_id)
+                    return False
+    except Exception as _e1546:
+        logger.warning('[S1546] 护栏判断异常(按放行处理): %s', _e1546)
+
     # [S343] 调用方按老模板字段名构造 data，这里按目标账号的模板字段重映射一次
     try:
         _rdata = _remap_subscribe_data(account_id, _biz, data)
@@ -7282,12 +7514,19 @@ def _send_subscribe_for_account(account_id, openid, template_id, data, page, pho
         _res = r.json()
         if _res.get('errcode') == 0:
             logger.info('[subscribe_msg] OK 账号=%s openid=%s...', _acc.get('name'), (openid or '')[:10])
+            log_subscribe_status(openid, _tpl, 'ok', 0, '', phone=phone,
+                                 acct_id=account_id, biz=_biz)
             return True
         logger.warning('[subscribe_msg] 失败 账号=%s errcode=%s errmsg=%s',
                        _acc.get('name'), _res.get('errcode'), _res.get('errmsg'))
+        log_subscribe_status(openid, _tpl, 'fail', _res.get('errcode'),
+                             str(_res.get('errmsg') or ''), phone=phone,
+                             acct_id=account_id, biz=_biz)
         return False
     except Exception as e:
         logger.error('[subscribe_msg] 异常: %s', e)
+        log_subscribe_status(openid, _tpl, 'fail', None, 'exception: %s' % str(e)[:200],
+                             phone=phone, acct_id=account_id, biz=_biz)
         return False
 
 
@@ -8052,6 +8291,75 @@ def pick_order_mp_openid(order):
         return ''
 
 
+def log_subscribe_status(openid, template_id, status, err_code=None, err_msg='',
+                         phone=None, order_id=None, order_ids=None, acct_id=None, biz=None):
+    """[S1206-20261017] 把小程序订阅消息的【发送结果】落库 user_subscribe_status。
+
+    背景：老板发现"订阅失败"的用户投诉率明显更高（同小程序内 3.15x），
+    但订阅结果以前只写日志，journald 只留 1.5 天，历史查不到。
+    落库后就能长期按"有没有订阅到退款通知"做用户画像 / 预判。
+
+    ★ 纯旁路：内部异常一律吞掉，绝不影响订阅消息本身的发送与返回值。
+    """
+    try:
+        import json as _json
+        _acct = acct_id
+        _biz = biz
+        _tpl = str(template_id or '')
+        # 反查 biz / 账号（拿不到就留空）
+        try:
+            if not _biz or not _acct:
+                _db0 = get_db()
+                _c0 = _db0.cursor()
+                _c0.execute('SELECT biz, account_id FROM wx_templates WHERE template_id=%s LIMIT 1', (_tpl,))
+                _r0 = _c0.fetchone()
+                if _r0:
+                    _biz = _biz or (_r0.get('biz') if isinstance(_r0, dict) else _r0[0])
+                    _acct = _acct or (_r0.get('account_id') if isinstance(_r0, dict) else _r0[1])
+                _db0.close()
+        except Exception:
+            pass
+        _acct_name = ''
+        try:
+            if _acct:
+                _db1 = get_db()
+                _c1 = _db1.cursor()
+                _c1.execute('SELECT name FROM wx_accounts WHERE id=%s', (_acct,))
+                _r1 = _c1.fetchone()
+                if _r1:
+                    _acct_name = (_r1.get('name') if isinstance(_r1, dict) else _r1[0]) or ''
+                _db1.close()
+        except Exception:
+            pass
+        _ec = None
+        try:
+            _ec = int(err_code) if err_code is not None and str(err_code).strip() != '' else None
+        except Exception:
+            _ec = None
+        _ois = ''
+        try:
+            _ois = _json.dumps(order_ids, ensure_ascii=False) if order_ids else ''
+        except Exception:
+            _ois = str(order_ids or '')
+        _db2 = get_db()
+        _c2 = _db2.cursor()
+        _c2.execute("""INSERT INTO user_subscribe_status
+            (openid, phone, acct_id, acct_name, biz, template_id, status,
+             err_code, err_msg, order_id, order_ids)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (str(openid or '')[:64], str(phone or '')[:20], int(_acct) if _acct else None,
+             str(_acct_name or '')[:64], str(_biz or '')[:32], _tpl[:128],
+             str(status or '')[:16], _ec, str(err_msg or '')[:400],
+             int(order_id) if order_id else None, _ois[:200]))
+        _db2.commit()
+        _db2.close()
+    except Exception as _e:
+        try:
+            logger.debug('[S1206] 订阅状态落库失败(忽略): %s', _e)
+        except Exception:
+            pass
+
+
 def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, unionid=None,
                               order_id=None, order_ids=None, pay_channel_id=None):
     """发送微信订阅消息（仅支持小程序mp_openid）
@@ -8106,10 +8414,24 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
             _em420 = _gem420()
         except Exception:
             _em420 = ''
+        # [S1305] 老板点名：「就算改了渠道，之前的订单该怎么发就该怎么发」。
+        #   入口模式(entry_mode)只决定"新用户从哪个入口进来"，
+        #   【不能】拿它去拦停已有订单的通知 —— 那是两条完全不同的事。
+        #   新口径：只有【确实拿不到任何小程序 openid】时才按 alipay/oa 跳过；
+        #   只要 openid 能对应到一个已登记的小程序账号，就照常发。
         if _em420 in ('oa', 'alipay'):
-            logger.info('[subscribe_msg] 入口模式=%s（无小程序场景），跳过小程序订阅消息 openid=%s...',
+            _s1305_has_mp = False
+            try:
+                import wx_config as _wc1305
+                _s1305_has_mp = bool(_wc1305.account_id_by_openid(openid or ''))
+            except Exception:
+                _s1305_has_mp = False
+            if not _s1305_has_mp:
+                logger.info('[subscribe_msg] 入口模式=%s 且无小程序 openid，跳过 openid=%s...',
+                            _em420, str(openid or '')[:8])
+                return False
+            logger.info('[subscribe_msg] 入口模式=%s 但 openid 属于小程序(仍发送) openid=%s...',
                         _em420, str(openid or '')[:8])
-            return False
         if str(_wc_sw.get_config('mp_subscribe_enabled', 'true')).strip().lower() in ('0', 'false', 'off', 'no'):
             logger.info('[subscribe_msg] 小程序订阅消息手动应急开关=off，跳过 openid=%s...', str(openid or '')[:8])
             return False
@@ -8278,9 +8600,14 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
 
         if result.get('errcode') == 0:
             logger.info(f'[subscribe_msg] 发送成功: openid={openid[:8]}..., template={template_id}')
+            log_subscribe_status(openid, template_id, 'ok', 0, '',
+                                 phone=phone, order_id=order_id, order_ids=order_ids)
             return True
         else:
             logger.error(f'[subscribe_msg] 发送失败: openid={openid[:8]}..., phone={phone}, template={template_id}, result={result}')
+            log_subscribe_status(openid, template_id, 'fail', result.get('errcode'),
+                                 str(result.get('errmsg') or ''), phone=phone,
+                                 order_id=order_id, order_ids=order_ids)
             # [S231] 过渡期回退：换成新"账户余额"模板后，老用户只有旧"预付款退还"模板的授权 ->
             #        新模板必然被拒(43101)，这里用旧模板再发一次；过渡期结束(大家都重新授权过)可去掉这段。
             if template_id == _TPL_ACCOUNT_NEW:
@@ -8299,6 +8626,8 @@ def send_wx_subscribe_message(openid, template_id, data, page='', phone=None, un
             return False
     except Exception as e:
         logger.error(f'[subscribe_msg] 异常: {e}')
+        log_subscribe_status(openid, template_id, 'fail', None, 'exception: %s' % str(e)[:200],
+                             phone=phone, order_id=order_id, order_ids=order_ids)
         return False
 
 

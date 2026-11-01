@@ -2330,7 +2330,8 @@ def admin_withdrawal_offline_transfer():
         note = str(data.get('note') or '').strip()
         conn = get_db()
         c = conn.cursor()
-        c.execute('SELECT id, status, user_phone, amount, order_id FROM withdrawal_records WHERE id=%s', (withdrawal_id,))
+        # [S1602] 补上 order_ids：打包提现时 order_id 只有一个，真实订单列表在 order_ids
+        c.execute('SELECT id, status, user_phone, amount, order_id, order_ids FROM withdrawal_records WHERE id=%s', (withdrawal_id,))
         wd = c.fetchone()
         if not wd:
             conn.close()
@@ -2340,22 +2341,79 @@ def admin_withdrawal_offline_transfer():
             return json_response(message='该记录已完成，无需重复处理', code=400)
         order_id = wd['order_id']
         offline_no = 'OFFLINE_' + datetime.now().strftime('%Y%m%d%H%M%S') + str(withdrawal_id)
+        # [S1602] 打包提现：真实订单列表在 order_ids，order_id 只是第一笔
+        _s1602_ids = []
+        try:
+            import json as _pj1602
+            _raw_ids = wd.get('order_ids') if isinstance(wd, dict) else None
+            if _raw_ids:
+                _parsed = _pj1602.loads(_raw_ids) if isinstance(_raw_ids, str) else _raw_ids
+                if isinstance(_parsed, list):
+                    for _x in _parsed:
+                        try:
+                            _xi = int(_x)
+                        except Exception:
+                            continue
+                        if _xi > 0 and _xi not in _s1602_ids:
+                            _s1602_ids.append(_xi)
+        except Exception as _e1602:
+            logger.warning('[S1602] 解析 order_ids 失败(只用 order_id): %s', _e1602)
         if order_id:
-            # [S1393] 原来用 COALESCE(refund_amount, 提现额)，只在 NULL 时替换；
-            #   而这些订单 refund_amount 原本是 0（不是 NULL），所以补不上，
-            #   导致"线下已退的钱"在业务统计和代理商分成里仍算作未退还。
-            #   改用 GREATEST(COALESCE(...,0), 提现额)，NULL 和 0 都能补上。
-            c.execute("UPDATE orders SET refund_status='refunded', status=4, refund_id=%s, refund_amount=GREATEST(COALESCE(refund_amount,0), %s), refund_time=CURRENT_TIMESTAMP, refund_mark=1 WHERE id=%s",
-                      (offline_no, wd['amount'], order_id))
-            c.execute("UPDATE user_balance_details SET status='withdrawn' WHERE order_id=%s AND status IN ('available','pending')", (order_id,))
-            # [S1406] 补上用户余额扣减（原来漏了，导致小程序里余额还在、能重复提现）
-            _ub_phone = wd.get('user_phone') if isinstance(wd, dict) else None
-            _ub_amt = float(wd.get('amount') or 0) if isinstance(wd, dict) else 0
-            if _ub_phone and _ub_amt > 0:
-                c.execute("""UPDATE user_balances
-                               SET balance = GREATEST(COALESCE(balance,0) - %s, 0),
-                                   total_withdrawn = COALESCE(total_withdrawn,0) + %s
-                             WHERE phone = %s""", (_ub_amt, _ub_amt, _ub_phone))
+            try:
+                _oi = int(order_id)
+                if _oi > 0 and _oi not in _s1602_ids:
+                    _s1602_ids.append(_oi)
+            except Exception:
+                pass
+        logger.info('[S1602] 线下转账 wid=%s 需标记订单: %s（提现总额 %.2f）',
+                    withdrawal_id, _s1602_ids, float(wd.get('amount') or 0))
+        _s1603b_need_total = 0.0
+        _s1603b_already = 0.0
+        for _s1602_oid in _s1602_ids:
+            c.execute('SELECT deposit_amount, COALESCE(refund_amount,0) AS _ra FROM orders WHERE id=%s',
+                      (_s1602_oid,))
+            _s1602_od = c.fetchone()
+            if not _s1602_od:
+                logger.warning('[S1602] 订单 %s 不存在，跳过', _s1602_oid)
+                continue
+            _s1602_need = float(_s1602_od['deposit_amount'] or 0) - float(_s1602_od['_ra'] or 0)
+            if _s1602_need <= 0.001:
+                _s1603b_already += float(_s1602_od['deposit_amount'] or 0)
+                c.execute("UPDATE user_balance_details SET status='withdrawn' "
+                          "WHERE order_id=%s AND status IN ('available','pending')", (_s1602_oid,))
+                continue
+            _s1603b_need_total += _s1602_need
+            c.execute("UPDATE orders SET refund_status='refunded', status=4, refund_id=%s, "
+                      "refund_amount=GREATEST(COALESCE(refund_amount,0), %s), "
+                      "refund_time=CURRENT_TIMESTAMP, refund_mark=1 WHERE id=%s",
+                      ('%s_%d' % (offline_no, _s1602_oid), _s1602_need, _s1602_oid))
+            c.execute("UPDATE user_balance_details SET status='withdrawn' "
+                      "WHERE order_id=%s AND status IN ('available','pending')", (_s1602_oid,))
+        # [S1603b] 全已退 -> 自动关闭提现单，不扣台账
+        _ub_phone = wd.get('user_phone') if isinstance(wd, dict) else None
+        _ub_amt = float(wd.get('amount') or 0) if isinstance(wd, dict) else 0
+        if _s1602_ids and _s1603b_need_total <= 0.001:
+            c.execute("UPDATE withdrawal_records "
+                      "SET status=3, approver='线下转账', error_msg=%s, "
+                      "approve_time=CURRENT_TIMESTAMP WHERE id=%s",
+                      ('订单已全部退款(重复申请,已自动关闭,未扣余额)', withdrawal_id))
+            conn.commit()
+            conn.close()
+            logger.info('[S1603b] 重复申请自动关闭 wid=%s orders=%s 已退合计=%.2f',
+                        withdrawal_id, _s1602_ids, _s1603b_already)
+            return json_response(
+                message='这些订单已全部退过款（合计 %.2f 元），本条提现单已自动关闭，余额未扣'
+                        % _s1603b_already)
+        _s1603b_deduct = _ub_amt
+        if _s1602_ids and _s1603b_need_total + 0.001 < _ub_amt:
+            _s1603b_deduct = _s1603b_need_total
+            logger.info('[S1603b] 部分已退 wid=%s 提现额=%.2f 实际需退=%.2f 按需退扣台账',
+                        withdrawal_id, _ub_amt, _s1603b_need_total)
+        if _ub_phone and _s1603b_deduct > 0:
+            c.execute("""UPDATE user_balances
+                           SET balance = GREATEST(COALESCE(balance,0) - %s, 0),
+                               total_withdrawn = COALESCE(total_withdrawn,0) + %s
+                         WHERE phone = %s""", (_s1603b_deduct, _s1603b_deduct, _ub_phone))
         _note = ('线下转账:' + note) if note else '线下转账(未填备注)'
         c.execute("UPDATE withdrawal_records SET status=2, approver='线下转账', error_msg=%s, approve_time=CURRENT_TIMESTAMP WHERE id=%s",
                   (_note, withdrawal_id))
@@ -4360,10 +4418,12 @@ def _iso_domains_get():
                 out = []
                 for it in _arr:
                     if isinstance(it, str) and it.strip():
-                        out.append({'host': it.strip(), 'label': it.strip()})
+                        out.append({'host': it.strip(), 'label': it.strip(), 'proxy': ''})
                     elif isinstance(it, dict) and it.get('host'):
+                        # [S1512] 允许域名项自带 proxy（每个域名可对应不同的独立出口服务器）
                         out.append({'host': str(it['host']).strip(),
-                                    'label': str(it.get('label') or it['host'])})
+                                    'label': str(it.get('label') or it['host']),
+                                    'proxy': str(it.get('proxy') or '').strip()})
                 if out:
                     return out
     except Exception as _e:
@@ -4412,9 +4472,12 @@ def admin_channel_isolation_presets():
         _out = []
         for _d in _doms:
             _h = _d['host']
+            # [S1512] 每个域名可带自己的出口代理；没配才回落全局
+            _dp = str(_d.get('proxy') or '').strip() or _proxy
             _out.append({
                 'host': _h,
                 'label': _d.get('label') or _h,
+                'proxy': _dp,
                 'pay_notify_url': 'https://%s/api/pay/notify' % _h,
                 'refund_notify_url': 'https://%s/api/refund/notify' % _h,
                 'is_current': (_h == _cur),

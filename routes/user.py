@@ -5630,6 +5630,35 @@ def _s1623_overdue_fee(order, now=None):
         _mins = (_now - _st).total_seconds() / 60.0
         if _mins <= _limit:
             return 0.0
+        # [S1641] 按网点排除：这两个网点不收超时费
+        try:
+            _ex = _gs1623('overdue_fee_exempt_locations', None)
+            if _ex:
+                _exset = set(int(x) for x in str(_ex).replace('，', ',').split(',') if str(x).strip().isdigit())
+                _lid1641 = order.get('_location_id')
+                if _lid1641 is None:
+                    _cid1641 = order.get('cabinet_id')
+                    if _cid1641:
+                        try:
+                            from database import get_db as _gdb1641
+                            _db1641 = _gdb1641()
+                            _cu1641 = _db1641.cursor()
+                            _cu1641.execute('SELECT location_id FROM cabinets WHERE id=%s', (_cid1641,))
+                            _r1641 = _cu1641.fetchone()
+                            _db1641.close()
+                            _lid1641 = _r1641['location_id'] if _r1641 else None
+                            order['_location_id'] = _lid1641
+                        except Exception:
+                            _lid1641 = None
+                if _lid1641 is not None and int(_lid1641) in _exset:
+                    logger.info('[S1641] 网点 %s 在免收名单，跳过超时费 order_id=%s',
+                                _lid1641, order.get('id'))
+                    return 0.0
+        except Exception as _e1641:
+            try:
+                logger.warning('[S1641] 免收名单检查异常(继续正常扣费): %s', _e1641)
+            except Exception:
+                pass
         _dep = float(order.get('deposit_amount') or 0)
         if _dep <= 0:
             return 0.0

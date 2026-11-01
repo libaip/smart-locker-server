@@ -769,7 +769,7 @@
                             <div class="value">{{orderStats.active_count || 0}}</div>
                         </div>
                         <div class="stat-card">
-                            <div class="label">保证金收入</div>
+                            <div class="label">预付款收入</div>
                             <div class="value">¥{{orderStats.deposit_total || 0}}</div>
                         </div>
                         <div class="stat-card">
@@ -796,7 +796,7 @@
                             <el-table-column prop="merchant_name" label="所属商家" min-width="120"></el-table-column>
                             <el-table-column prop="order_count" label="订单数" width="100" align="center"></el-table-column>
                             <el-table-column prop="active_count" label="使用中" width="100" align="center"></el-table-column>
-                            <el-table-column label="保证金收入" width="120" align="right">
+                            <el-table-column label="预付款收入" width="120" align="right">
                                 <template slot-scope="scope">¥{{(scope.row.deposit_total || 0).toFixed(2)}}</template>
                             </el-table-column>
                             <el-table-column label="退款总额" width="120" align="right">
@@ -1070,10 +1070,10 @@
                                 <el-option label="每周" :value="7"></el-option>
                             </el-select>
                         </el-form-item>
-                        <el-divider content-position="left">保证金随机金额</el-divider>
+                        <el-divider content-position="left">预付款随机金额</el-divider>
                         <el-form-item label="启用随机金额">
                             <el-switch v-model="locationForm.deposit_random"></el-switch>
-                            <span style="margin-left: 10px; color: #999; font-size: 12px;">开启后每次随机收取保证金</span>
+                            <span style="margin-left: 10px; color: #999; font-size: 12px;">开启后每次随机收取预付款</span>
                         </el-form-item>
                         <template v-if="locationForm.deposit_random">
                             <el-form-item label="最小金额">
@@ -1182,11 +1182,11 @@
                         <el-form-item label="是否收费">
                             <el-select v-model="cabinetForm.charge_mode" style="width: 150px;">
                                 <el-option label="免费" value="free"></el-option>
-                                <el-option label="保证金" value="deposit"></el-option>
+                                <el-option label="预付款" value="deposit"></el-option>
                             </el-select>
                         </el-form-item>
                         <template v-if="cabinetForm.charge_mode === 'deposit'">
-                            <el-form-item label="保证金金额" style="margin-top:-8px;">
+                            <el-form-item label="预付款金额" style="margin-top:-8px;">
                                 <el-input-number v-model="cabinetForm.deposit_amount" :min="0" :step="1" style="width: 130px;"></el-input-number>
                                 <span style="margin-left: 8px;">元</span>
                             </el-form-item>
@@ -1306,7 +1306,7 @@
                     <el-descriptions-item label="用户手机">{{currentOrderDetail.user_phone}}</el-descriptions-item>
                     <el-descriptions-item label="柜体编号">{{currentOrderDetail.cabinet_code}}</el-descriptions-item>
                     <el-descriptions-item label="柜格号">{{currentOrderDetail.compartment_number}}</el-descriptions-item>
-                    <el-descriptions-item label="保证金">¥{{currentOrderDetail.deposit_amount}}</el-descriptions-item>
+                    <el-descriptions-item label="预付款">¥{{currentOrderDetail.deposit_amount}}</el-descriptions-item>
                     <el-descriptions-item label="状态"><span :class="'status-tag status-' + currentOrderDetail.status">{{getStatusText(currentOrderDetail.status)}}</span></el-descriptions-item>
                     <el-descriptions-item label="存包时间">{{currentOrderDetail.store_time}}</el-descriptions-item>
                     <el-descriptions-item label="取包时间">{{currentOrderDetail.retrieve_time || '-'}}</el-descriptions-item>
@@ -2166,7 +2166,7 @@ showCabinetDialog(row = null) {
                     if (!this.statsChart) { const el = document.getElementById('statsChart'); if (el) this.statsChart = echarts.init(el); }
                     if (!this.statsChart) return;
                     const dates = data.map(d => d.date), orders = data.map(d => d.order_count), deposits = data.map(d => (d.deposit_total || 0).toFixed(2)), refunds = data.map(d => (d.refund_total || 0).toFixed(2));
-                    this.statsChart.setOption({ tooltip: { trigger: 'axis' }, legend: { data: ['订单数', '保证金收入', '退款'] }, xAxis: { type: 'category', data: dates }, yAxis: [{ type: 'value', name: '订单数' }, { type: 'value', name: '金额', axisLabel: { formatter: '¥{value}' } }], series: [{ name: '订单数', type: 'bar', data: orders, itemStyle: { color: '#409EFF' } }, { name: '保证金收入', type: 'line', yAxisIndex: 1, data: deposits, itemStyle: { color: '#67C23A' } }, { name: '退款', type: 'line', yAxisIndex: 1, data: refunds, itemStyle: { color: '#F56C6C' } }] });
+                    this.statsChart.setOption({ tooltip: { trigger: 'axis' }, legend: { data: ['订单数', '预付款收入', '退款'] }, xAxis: { type: 'category', data: dates }, yAxis: [{ type: 'value', name: '订单数' }, { type: 'value', name: '金额', axisLabel: { formatter: '¥{value}' } }], series: [{ name: '订单数', type: 'bar', data: orders, itemStyle: { color: '#409EFF' } }, { name: '预付款收入', type: 'line', yAxisIndex: 1, data: deposits, itemStyle: { color: '#67C23A' } }, { name: '退款', type: 'line', yAxisIndex: 1, data: refunds, itemStyle: { color: '#F56C6C' } }] });
                 },
                 
                 // 设置

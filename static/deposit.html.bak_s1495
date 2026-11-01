@@ -1,0 +1,3144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>智能寄存柜 v2-trial</title>
+>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #eef1f5; min-height: 100vh; overflow-x: hidden; }
+        .container { max-width: 500px; margin: 0 auto; min-height: 100vh; position: relative; background: #fff; }
+        .page-hidden { display: none !important; }
+        [hidden] { display: none !important; }
+        .order-card { transition: background 0.15s; }
+        .order-card:active { background: #f5f5f5; }
+
+        /* 顶部导航栏 */
+        .top-nav { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; background: #fff; border-bottom: 1px solid #f0f0f0; position: sticky; top: 0; z-index: 50; }
+        .top-nav-close { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+        .top-nav-close::before, .top-nav-close::after { content: ''; position: absolute; width: 16px; height: 2px; background: #333; }
+        .top-nav-close::before { transform: rotate(45deg); }
+        .top-nav-close::after { transform: rotate(-45deg); }
+        .top-nav-center { text-align: center; }
+        .top-nav-title { font-size: 16px; font-weight: 600; color: #333; }
+        .top-nav-domain { font-size: 11px; color: #bbb; }
+        .top-nav-more { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; }
+        .top-nav-more span { display: flex; gap: 3px; }
+        .top-nav-more span::before, .top-nav-more span::after, .top-nav-more i { content: ''; width: 4px; height: 4px; border-radius: 50%; background: #333; }
+
+        /* 首页 */
+        .home-page { padding: 0 16px 80px; }
+        .help-banner { display: flex; align-items: center; justify-content: space-between; background: linear-gradient(135deg, #FFF3E0, #FFE0B2); border-radius: 14px; padding: 18px 16px; margin-top: 14px; }
+        .help-banner-left { flex: 1; }
+        .help-banner-title { font-size: 17px; font-weight: 700; color: #1a1a1a; margin-bottom: 10px; }
+        .help-banner-btn { display: inline-block; background: #FFC107; color: #1a1a1a; border: none; border-radius: 18px; padding: 7px 20px; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .help-banner-btn:active { opacity: 0.8; }
+        .help-banner-illust { flex-shrink: 0; margin-left: 10px; width: 110px; height: 90px; position: relative; }
+        .illust-cabinet { position: absolute; right: 0; bottom: 0; width: 60px; height: 70px; }
+        .illust-cab-body { width: 60px; height: 55px; background: #FFC107; border-radius: 6px; position: absolute; bottom: 0; display: grid; grid-template-columns: repeat(3,1fr); grid-template-rows: repeat(2,1fr); gap: 3px; padding: 5px; }
+        .illust-cab-cell { background: #FFD54F; border-radius: 2px; }
+        .illust-cab-screen { position: absolute; top: 5px; left: 50%; transform: translateX(-50%); width: 14px; height: 10px; background: #42A5F5; border-radius: 2px; }
+        .illust-box1 { position: absolute; right: 65px; bottom: 5px; width: 22px; height: 18px; background: #8D6E63; border-radius: 3px; }
+        .illust-box2 { position: absolute; right: 55px; bottom: 0; width: 18px; height: 15px; background: #A1887F; border-radius: 2px; }
+        .illust-cat { position: absolute; right: 40px; bottom: 2px; width: 20px; height: 24px; }
+        .illust-cat-body { width: 16px; height: 14px; background: #FFC107; border-radius: 8px 8px 4px 4px; position: absolute; bottom: 0; }
+        .illust-cat-head { width: 12px; height: 12px; background: #FFC107; border-radius: 50%; position: absolute; bottom: 12px; left: 2px; }
+        .illust-cat-ear1, .illust-cat-ear2 { position: absolute; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 6px solid #FFC107; }
+        .illust-cat-ear1 { top: -4px; left: 0; }
+        .illust-cat-ear2 { top: -4px; right: 0; }
+        .illust-star1 { position: absolute; top: 5px; right: 15px; color: #E91E63; font-size: 10px; }
+        .illust-star2 { position: absolute; top: 15px; right: 5px; color: #FFC107; font-size: 8px; }
+        .illust-star3 { position: absolute; top: 2px; right: 30px; color: #42A5F5; font-size: 7px; }
+        .illust-cloud { position: absolute; top: 8px; right: 50px; width: 28px; height: 12px; background: #E0E0E0; border-radius: 6px; }
+        .help-detail { display: none; background: #fff; border-radius: 10px; padding: 14px; margin-top: 10px; font-size: 13px; color: #666; line-height: 1.8; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+        .help-detail.show { display: block; }
+        .action-cards { display: flex; gap: 12px; margin-top: 18px; }
+        .action-card { flex: 1; border-radius: 16px; padding: 24px 14px 20px; text-align: center; cursor: pointer; transition: transform 0.15s; position: relative; overflow: hidden; }
+        .action-card:active { transform: scale(0.97); }
+        .action-card-store { background: #FFFDE7; border: 1.5px solid #FFE082; }
+        .action-card-fetch { background: #F5F5F5; border: 1.5px solid #E0E0E0; }
+        .action-card-bg-char { font-size: 72px; font-weight: 900; opacity: 0.1; position: absolute; top: -8px; left: 50%; transform: translateX(-50%); pointer-events: none; }
+        .action-card-store .action-card-bg-char { color: #FFC107; }
+        .action-card-fetch .action-card-bg-char { color: #9E9E9E; }
+        .action-card-en { font-size: 11px; font-weight: 600; letter-spacing: 3px; color: #999; margin-top: 8px; position: relative; }
+        .action-card-desc { font-size: 12px; color: #bbb; margin-top: 2px; position: relative; }
+        .action-card-store .action-card-desc { color: #F9A825; }
+        .action-card-fetch .action-card-desc { color: #9E9E9E; }
+        .action-card-btn { display: inline-block; margin-top: 14px; padding: 8px 32px; border-radius: 22px; font-size: 15px; font-weight: 700; cursor: pointer; border: none; position: relative; }
+        .action-card-store .action-card-btn { background: #FFC107; color: #1a1a1a; }
+        .action-card-fetch .action-card-btn { background: #E0E0E0; color: #333; }
+        .site-info { text-align: center; margin-top: 18px; padding: 12px; background: #FAFAFA; border-radius: 10px; }
+        .site-info-name { font-size: 14px; font-weight: 600; color: #333; }
+        .site-info-addr { font-size: 12px; color: #999; margin-top: 3px; }
+
+        /* 右侧浮标 */
+        .float-buttons { position: fixed; right: 12px; bottom: 90px; z-index: 90; display: flex; flex-direction: column; gap: 14px; }
+        .float-circle { width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; color: #fff; cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,0.15); text-align: center; line-height: 1.2; padding: 4px; }
+        .float-circle:active { opacity: 0.8; transform: scale(0.95); }
+        .float-circle-service { background: #42A5F5; }
+        .float-circle-complaint { background: #FF9800; }
+
+        /* 底部导航 */
+        .bottom-nav { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 500px; background: #fff; display: flex; border-top: 1px solid #eee; padding: 8px 0 env(safe-area-inset-bottom, 8px); z-index: 100; }
+        .nav-item { flex: 1; text-align: center; cursor: pointer; padding: 4px 0; }
+        .nav-item-icon svg { width: 24px; height: 24px; }
+        .nav-item-text { font-size: 11px; color: #999; margin-top: 2px; }
+        .nav-item.active .nav-item-text { color: #F9A825; font-weight: 600; }
+        .nav-item.active .nav-item-icon svg { color: #F9A825; fill: #F9A825; }
+
+        /* ===== 通用页头 ===== */
+        .page-header { display: flex; align-items: center; padding: 12px 16px; background: #fff; position: sticky; top: 0; z-index: 50; border-bottom: 1px solid #f0f0f0; }
+        .page-back { background: none; border: none; font-size: 18px; cursor: pointer; padding: 4px 8px 4px 0; color: #333; display: flex; align-items: center; gap: 2px; }
+        .page-back svg { width: 20px; height: 20px; fill: #333; }
+        .page-title { font-size: 17px; font-weight: 700; color: #1a1a1a; flex: 1; text-align: center; }
+        .page-actions { display: flex; gap: 12px; align-items: center; }
+        .page-actions svg { width: 22px; height: 22px; fill: #666; }
+
+        /* ===== 存包第一步：设置密码 ===== */
+        .step1-page { background: #eef1f5; min-height: 100vh; padding-bottom: 30px; }
+        .info-card { background: #fff; margin: 10px 12px; border-radius: 12px; padding: 16px; }
+        .info-row { display: flex; justify-content: space-between; align-items: center; padding: 11px 0; border-bottom: 1px solid #f2f2f2; }
+        .info-row:last-child { border-bottom: none; }
+        .info-label { font-size: 14px; color: #666; }
+        .info-value { font-size: 14px; color: #333; font-weight: 500; }
+        .info-price { color: #E65100; font-weight: 700; font-size: 15px; }
+        .size-bar { display: flex; gap: 8px; margin: 10px 0; padding: 6px 0; border-bottom: 1px solid #f2f2f2; }
+        .size-btn { flex: 1; text-align: center; padding: 8px 0; border: 1.5px solid #e0e0e0; border-radius: 8px; font-size: 13px; color: #666; cursor: pointer; background: #fff; transition: all 0.15s; }
+        .size-btn.active { border-color: #FFC107; color: #F57F17; background: #FFFDE7; font-weight: 600; }
+        .size-btn:active { transform: scale(0.97); }
+        .notes { padding: 10px 0; border-bottom: 1px solid #f2f2f2; }
+        .notes-title { font-size: 19px; color: #333; font-weight: 900; margin-bottom: 6px; }
+        .note-item { font-size: 16px; color: #333; font-weight: 700; line-height: 1.8; position: relative; padding-left: 10px; }
+        .note-item::before { content: '\2022'; position: absolute; left: 0; color: #ccc; }
+        .door-row { border-bottom: none !important; }
+        .door-num { color: #FF9800; font-size: 20px; font-weight: 800; }
+        .cred-title { font-size: 16px; font-weight: 700; color: #333; margin-bottom: 14px; }
+        .cred-group { margin-bottom: 12px; }
+        .cred-label { font-size: 13px; color: #888; margin-bottom: 5px; }
+        .cred-input { width: 100%; padding: 12px 14px; border: 1.5px solid #e0e0e0; border-radius: 10px; font-size: 15px; outline: none; background: #fafafa; transition: border-color 0.2s, background 0.2s; }
+        .cred-input:focus { border-color: #FFC107; background: #fff; }
+        .cred-row { display: flex; gap: 10px; }
+        .cred-row .cred-input { flex: 1; }
+        .sms-btn { background: #FFC107; color: #1a1a1a; border: none; border-radius: 10px; padding: 0 16px; font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+        .sms-btn:disabled { background: #ccc; color: #999; }
+        .next-btn { display: block; width: 100%; padding: 14px; background: #FFC107; color: #1a1a1a; border: none; border-radius: 24px; font-size: 17px; font-weight: 700; cursor: pointer; margin-top: 6px; }
+        .next-btn:active { opacity: 0.85; }
+        .usage-tips { margin: 12px 12px 0; padding: 14px 16px; background: #fff; border-radius: 10px; font-size: 12px; color: #999; line-height: 2.2; }
+        .usage-tips b { color: #FF9800; }
+
+        /* ===== 存包第二步：支付确认 ===== */
+        .step2-page { background: #eef1f5; min-height: 100vh; padding-bottom: 30px; }
+        .pay-countdown { text-align: center; padding: 16px 0 0; font-size: 13px; color: #999; }
+        .pay-countdown span { color: #E65100; font-weight: 700; font-size: 15px; }
+        .pay-amount-card { background: #fff; margin: 10px 12px; border-radius: 12px; padding: 28px 20px; text-align: center; }
+        .pay-amount-label { font-size: 13px; color: #999; }
+        .pay-amount-value { font-size: 44px; font-weight: 900; color: #E65100; margin: 6px 0 2px; }
+        .pay-amount-value small { font-size: 20px; }
+        .pay-amount-sub { font-size: 12px; color: #bbb; }
+        .pay-detail-card { background: #fff; margin: 10px 12px; border-radius: 12px; padding: 16px; }
+        .pay-detail-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #f2f2f2; }
+        .pay-detail-row:last-child { border-bottom: none; }
+        .pay-detail-label { font-size: 14px; color: #666; }
+        .pay-detail-value { font-size: 14px; color: #333; font-weight: 600; }
+        .pay-detail-door { color: #FF9800; font-size: 18px; font-weight: 800; }
+        .pay-warning { margin: 10px 12px; padding: 12px 14px; background: #FFF8E1; border-radius: 10px; display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: #E65100; line-height: 1.6; }
+        .pay-warning-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+        .pay-action-area { margin: 20px 12px 0; }
+        .pay-open-btn { display: block; width: 100%; padding: 15px; background: #FFC107; color: #1a1a1a; border: none; border-radius: 24px; font-size: 17px; font-weight: 700; cursor: pointer; }
+        .pay-open-btn:active { opacity: 0.85; }
+        .pay-open-btn:disabled { background: #ccc; color: #999; }
+        .pay-agreement { display: flex; align-items: center; justify-content: center; margin-top: 12px; gap: 6px; font-size: 12px; color: #999; }
+        .pay-agreement input[type="checkbox"] { width: 16px; height: 16px; accent-color: #FFC107; }
+        .pay-agreement a { color: #4CAF50; text-decoration: none; font-weight: 500; }
+
+        /* ===== 预付款协议弹窗 ===== */
+        .agreement-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 300; align-items: flex-end; justify-content: center; }
+        .agreement-overlay.show { display: flex; }
+        .agreement-box { background: #fff; border-radius: 16px 16px 0 0; width: 100%; max-width: 500px; max-height: 75vh; display: flex; flex-direction: column; }
+        .agreement-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid #f0f0f0; }
+        .agreement-title { font-size: 16px; font-weight: 700; color: #333; }
+        .agreement-close { background: none; border: none; font-size: 22px; color: #999; cursor: pointer; }
+        .agreement-body { padding: 16px 20px; overflow-y: auto; font-size: 13px; color: #666; line-height: 2; flex: 1; }
+        .agreement-body h3 { font-size: 15px; color: #333; margin: 14px 0 6px; }
+        .agreement-body p { margin-bottom: 8px; }
+
+        /* 取包页 */
+        .retrieve-page { background: #eef1f5; min-height: 100vh; padding-bottom: 30px; }
+        .store-section { background: #fff; margin: 12px 16px; border-radius: 14px; padding: 20px; }
+        .form-group { margin-bottom: 14px; }
+        .form-label { font-size: 13px; color: #888; margin-bottom: 6px; }
+        .form-input { width: 100%; padding: 12px 14px; border: 1.5px solid #e0e0e0; border-radius: 10px; font-size: 15px; outline: none; }
+        .form-input:focus { border-color: #FFC107; }
+        .btn-main { display: block; width: calc(100% - 32px); margin: 20px auto 0; padding: 15px; background: linear-gradient(135deg, #FFC107, #FF9800); color: #1a1a1a; border: none; border-radius: 14px; font-size: 17px; font-weight: 700; cursor: pointer; }
+        .btn-main:active { opacity: 0.85; }
+
+        /* 开门中 */
+        .opening-page { background: #fff; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; }
+        .opening-icon { font-size: 64px; margin-bottom: 20px; animation: bounce 1s infinite; }
+        @keyframes bounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+        .opening-title { font-size: 22px; font-weight: 800; color: #1a1a1a; margin-bottom: 8px; }
+        .opening-door-num { font-size: 48px; font-weight: 900; color: #FF9800; margin: 10px 0; }
+        .opening-desc { font-size: 14px; color: #999; }
+        .opening-bar-wrap { width: 80%; max-width: 280px; height: 6px; background: #f0f0f0; border-radius: 3px; margin-top: 30px; overflow: hidden; }
+        .opening-bar { height: 100%; background: linear-gradient(90deg, #FFC107, #FF9800); border-radius: 3px; width: 0; transition: width 0.4s; }
+
+        /* 完成页 */
+        .done-page { background: #fff; min-height: 100vh; padding: 40px 20px; text-align: center; }
+        .done-icon { font-size: 64px; margin-bottom: 16px; }
+        .done-title { font-size: 22px; font-weight: 800; color: #1a1a1a; margin-bottom: 20px; }
+        .done-info-card { background: #FAFAFA; border-radius: 14px; padding: 20px; text-align: left; margin: 0 16px; }
+        .done-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #f0f0f2; }
+        .done-row:last-child { border-bottom: none; }
+        .done-label { font-size: 14px; color: #888; }
+        .done-value { font-size: 14px; color: #333; font-weight: 600; }
+        .done-actions { margin-top: 24px; display: flex; gap: 12px; padding: 0 16px; }
+        .done-btn-reopen { flex: 1; padding: 14px; border: 2px solid #FF9800; border-radius: 12px; background: #fff; color: #FF9800; font-size: 15px; font-weight: 600; cursor: pointer; }
+        .done-btn-finish { flex: 1; padding: 14px; border: none; border-radius: 12px; background: linear-gradient(135deg, #FFC107, #FF9800); color: #1a1a1a; font-size: 15px; font-weight: 700; cursor: pointer; }
+
+        /* 取包确认页 */
+        .retrieve-confirm-page { background: #fff; min-height: 100vh; padding: 40px 20px; text-align: center; }
+        .rc-icon { font-size: 64px; margin-bottom: 16px; }
+        .rc-title { font-size: 20px; font-weight: 700; color: #1a1a1a; margin-bottom: 20px; }
+        .rc-card { background: #FAFAFA; border-radius: 14px; padding: 20px; margin: 0 16px; text-align: left; }
+        .rc-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #f0f0f2; }
+        .rc-row:last-child { border-bottom: none; }
+        .rc-label { font-size: 14px; color: #888; }
+        .rc-value { font-size: 14px; color: #333; font-weight: 600; }
+        .rc-actions { margin-top: 24px; display: flex; gap: 12px; padding: 0 16px; }
+        .rc-btn-mid { flex: 1; padding: 14px; border: 2px solid #FF9800; border-radius: 12px; background: #fff; color: #FF9800; font-size: 15px; font-weight: 600; cursor: pointer; }
+        .rc-btn-end { flex: 1; padding: 14px; border: none; border-radius: 12px; background: linear-gradient(135deg, #FFC107, #FF9800); color: #1a1a1a; font-size: 15px; font-weight: 700; cursor: pointer; }
+
+        /* ===== 个人中心 - 改造后（青绿色主题） ===== */
+        .profile-page { background: #eef1f5; min-height: 100vh; padding-bottom: 80px; }
+        .profile-header { background: linear-gradient(135deg, #26A69A, #4DB6AC); padding: 30px 20px 40px; text-align: center; color: #fff; position: relative; overflow: hidden; }
+        .profile-header::before { content: ''; position: absolute; bottom: -20px; left: -20px; right: -20px; height: 40px; background: #fff; border-radius: 50% 50% 0 0; }
+        .profile-top-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+        .profile-top-actions { display: flex; gap: 10px; }
+        .profile-top-btn { background: rgba(255,255,255,0.25); border: none; border-radius: 18px; padding: 5px 14px; font-size: 12px; color: #fff; cursor: pointer; }
+        .profile-main { display: flex; align-items: center; gap: 16px; position: relative; z-index: 1; }
+        .profile-avatar { width: 64px; height: 64px; border-radius: 50%; background: rgba(255,255,255,0.9); border: 3px solid rgba(255,255,255,0.5); margin: 0 auto; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .profile-avatar svg { width: 36px; height: 36px; }
+        .profile-info { flex: 1; }
+        .profile-phone { font-size: 18px; font-weight: 600; color: #fff; }
+        .profile-menu { margin: 14px 16px; }
+        .pm-item { background: #fff; display: flex; align-items: center; justify-content: space-between; padding: 16px; margin-bottom: 1px; cursor: pointer; }
+        .pm-item:first-child { border-radius: 12px 12px 0 0; }
+        .pm-item:last-child { border-radius: 0 0 12px 12px; margin-bottom: 0; }
+        .pm-item-left { display: flex; align-items: center; gap: 10px; font-size: 15px; color: #333; }
+        .pm-item-left span { font-size: 18px; }
+        .pm-item-right { color: #ccc; font-size: 14px; }
+
+        /* ===== 余额页面 ===== */
+        .balance-page { background: #eef1f5; min-height: 100vh; padding-bottom: 80px; }
+        .balance-card { background: linear-gradient(135deg, #E3F2FD, #BBDEFB); margin: 16px; border-radius: 16px; padding: 28px 20px; position: relative; overflow: hidden; }
+        .balance-card::before { content: '¥'; position: absolute; left: -10px; bottom: -20px; font-size: 120px; color: rgba(255,255,255,0.4); font-weight: 700; }
+        .balance-card-label { font-size: 14px; color: #666; margin-bottom: 8px; }
+        .balance-card-amount { font-size: 42px; font-weight: 900; color: #1976D2; margin-bottom: 16px; position: relative; z-index: 1; }
+        .balance-card-amount small { font-size: 20px; }
+        .balance-card-actions { display: flex; gap: 12px; position: relative; z-index: 1; }
+        .balance-withdraw-btn { background: linear-gradient(135deg, #FF9800, #FFB74D); color: #fff; border: none; border-radius: 22px; padding: 10px 28px; font-size: 15px; font-weight: 700; cursor: pointer; }
+        .balance-withdraw-btn:disabled { background: #ccc; color: #999; cursor: not-allowed; }
+.countdown-area { background: rgba(255,255,255,0.25); border-radius: 10px; padding: 12px 14px; margin-top: 12px; }
+.countdown-bar { height: 4px; background: rgba(255,255,255,0.3); border-radius: 2px; margin-bottom: 8px; overflow: hidden; }
+.countdown-progress { height: 100%; background: #fff; border-radius: 2px; transition: width 1s linear; }
+.countdown-text { font-size: 13px; color: rgba(255,255,255,0.9); }
+.balance-btn-group { display: flex; gap: 10px; margin-top: 12px; }
+.btn-express { background: linear-gradient(135deg, #FFC107, #FFB300); color: #1a1a1a; border: none; border-radius: 20px; padding: 10px 20px; font-size: 14px; font-weight: 700; cursor: pointer; flex: 1; }
+.btn-free { background: rgba(255,255,255,0.2); color: #fff; border: 1px solid rgba(255,255,255,0.4); border-radius: 20px; padding: 10px 20px; font-size: 14px; cursor: pointer; flex: 1; }
+
+.countdown-area { background: rgba(255,255,255,0.25); border-radius: 10px; padding: 12px 14px; margin-top: 12px; }
+.countdown-bar { height: 4px; background: rgba(255,255,255,0.3); border-radius: 2px; margin-bottom: 8px; overflow: hidden; }
+.countdown-progress { height: 100%; background: #fff; border-radius: 2px; transition: width 1s linear; }
+.countdown-text { font-size: 13px; color: rgba(255,255,255,0.9); }
+.balance-btn-group { display: flex; gap: 10px; margin-top: 12px; }
+.btn-express { background: linear-gradient(135deg, #FFC107, #FFB300); color: #1a1a1a; border: none; border-radius: 20px; padding: 10px 20px; font-size: 14px; font-weight: 700; cursor: pointer; flex: 1; }
+.btn-free { background: rgba(255,255,255,0.2); color: #fff; border: 1px solid rgba(255,255,255,0.4); border-radius: 20px; padding: 10px 20px; font-size: 14px; cursor: pointer; flex: 1; }
+
+        .balance-tip { font-size: 12px; color: #999; padding: 0 16px; margin-top: 12px; }
+        .refunding-bar { background: #FFF8E1; margin: 0 16px; padding: 12px 16px; border-radius: 10px; display: flex; align-items: center; gap: 10px; }
+        .refunding-bar-icon { font-size: 20px; }
+        .refunding-bar-text { font-size: 13px; color: #F57C00; }
+
+        /* 订单页 */
+        .orders-page { background: #eef1f5; min-height: 100vh; padding: 0 16px 80px; }
+        .order-card { background: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; }
+        .order-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .order-no { font-size: 13px; color: #999; }
+        .order-status { font-size: 12px; padding: 3px 10px; border-radius: 10px; font-weight: 600; }
+        .order-status.pending { background: #FFF3E0; color: #E65100; }
+        .order-status.completed { background: #E8F5E9; color: #2E7D32; }
+        .order-status.refunded { background: #E3F2FD; color: #1565C0; }
+        .order-status.refunding { background: #FFF8E1; color: #F57C00; }
+        .order-info { display: flex; flex-wrap: wrap; gap: 8px; }
+        .order-tag { font-size: 12px; color: #888; background: #F5F5F5; padding: 3px 8px; border-radius: 6px; }
+        .order-empty { text-align: center; padding: 60px 20px; }
+        .order-empty-icon { font-size: 48px; margin-bottom: 12px; }
+        .order-empty-text { font-size: 14px; color: #999; }
+
+        /* 弹窗 */
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 200; align-items: center; justify-content: center; }
+        .modal-overlay.show { display: flex; }
+        .modal-box { background: #fff; border-radius: 16px; padding: 24px 20px; width: 85%; max-width: 360px; }
+        .modal-title { font-size: 17px; font-weight: 700; color: #1a1a1a; margin-bottom: 14px; text-align: center; }
+        .modal-btns { display: flex; gap: 12px; margin-top: 18px; }
+        .modal-btn { flex: 1; padding: 12px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; border: none; }
+        .modal-btn-cancel { background: #f0f0f0; color: #666; }
+        .modal-btn-confirm { background: #FF9800; color: #fff; }
+        .complaint-type-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+        .complaint-type-btn { padding: 6px 14px; border: 1.5px solid #e0e0e0; border-radius: 18px; font-size: 13px; background: #fff; color: #666; cursor: pointer; }
+        .complaint-type-btn.active { border-color: #FF9800; color: #FF9800; background: #FFF3E0; }
+        .complaint-textarea { width: 100%; height: 80px; border: 1.5px solid #e0e0e0; border-radius: 10px; padding: 10px; font-size: 14px; resize: none; outline: none; }
+        .complaint-textarea:focus { border-color: #FFC107; }
+
+        /* 使用帮助弹窗 */
+        .help-modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 200; align-items: flex-end; justify-content: center; }
+        .help-modal-overlay.show { display: flex; }
+        .help-modal-box { background: #fff; border-radius: 16px 16px 0 0; width: 100%; max-width: 500px; max-height: 80vh; display: flex; flex-direction: column; }
+        .help-modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid #f0f0f0; }
+        .help-modal-title { font-size: 16px; font-weight: 700; color: #333; }
+        .help-modal-close { background: none; border: none; font-size: 22px; color: #999; cursor: pointer; }
+        .help-modal-body { padding: 16px 20px; overflow-y: auto; font-size: 14px; color: #666; line-height: 2; }
+        .help-modal-body h4 { font-size: 15px; color: #333; margin: 12px 0 6px; }
+        .help-modal-body h4:first-child { margin-top: 0; }
+        .help-step { display: flex; gap: 10px; margin: 8px 0; }
+        .help-step-num { width: 22px; height: 22px; background: #4DB6AC; color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+        .help-step-text { flex: 1; }
+    
+        .done-door-big {
+            font-size: 96px;
+            font-weight: 900;
+            color: #1a73e8;
+            text-align: center;
+            margin: 20px 0 0 0;
+            line-height: 1.1;
+        }
+        .done-door-label {
+            font-size: 24px;
+            font-weight: 700;
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        /* 白屏检测提示 */
+        .blank-screen-check { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #fff; z-index: 9999; display: none; align-items: center; justify-content: center; flex-direction: column; }
+        .blank-screen-check.show { display: flex; }
+        .blank-screen-spinner { width: 40px; height: 40px; border: 4px solid #f0f0f0; border-top-color: #4DB6AC; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .blank-screen-text { margin-top: 16px; font-size: 14px; color: #999; }
+    
+        /* ===== 提现规则 ===== */
+        .withdraw-rules { background: #fff; border-radius: 12px; padding: 16px; margin-top: 16px; }
+        .withdraw-rules .rules-title { font-size: 14px; font-weight: 700; color: #333; margin-bottom: 10px; }
+        .withdraw-rules .rules-row { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid #f5f5f5; }
+        .withdraw-rules .rules-row:last-child { border-bottom: none; }
+        .withdraw-rules .rules-label { font-size: 13px; color: #999; }
+        .withdraw-rules .rules-value { font-size: 13px; color: #333; font-weight: 600; }
+
+    
+        .order-detail-info { margin-top: 10px; padding: 10px; background: #f9f9f9; border-radius: 8px; font-size: 13px; }
+        .detail-row { display: flex; justify-content: space-between; margin-bottom: 6px; line-height: 1.6; }
+        .detail-row:last-child { margin-bottom: 0; }
+        .detail-label { color: #999; flex-shrink: 0; }
+        .detail-value { color: #333; text-align: right; word-break: break-all; }
+        .order-actions { margin-top: 10px; text-align: right; }
+        .end-order-btn { background: #ff5722; color: #fff; border: none; padding: 8px 20px; border-radius: 6px; font-size: 14px; cursor: pointer; }
+        .end-order-btn:active { background: #e64a19; }
+        .complaint-tips { margin-top: 12px; padding: 12px; background: #fff8e1; border-radius: 8px; font-size: 12px; color: #666; line-height: 2; }
+        .complaint-tips b { color: #FF9800; }
+    </style>
+<script defer>
+!function(){var p=document.querySelectorAll("[id$=Page]");for(var i=0;i<p.length;i++){if(p[i].id!="homePage"){p[i].style.display="none";p[i].setAttribute("hidden","")}}}
+();
+</script>
+
+<style id= profileModeStyle>
+    .bottom-nav { display: flex; }
+    .profile-mode .bottom-nav,
+    .profile-mode #complaintFloat { display: none !important; }
+</style>
+<script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
+<script>window.__jweixinFallback=function(){if(typeof wx==="undefined"||!wx.config){var s=document.createElement("script");s.src="https://res2.wx.qq.com/open/js/jweixin-1.6.0.js";document.head.appendChild(s);}};setTimeout(__jweixinFallback,800);</script>
+</head>
+<body>
+<script>
+/* [S391] 纯公众号模式：先把"存包页"盖住，等关注检查出结果再决定露出还是跳关注页，
+   避免"先看到存包页 -> 又被弹回微信"的闪一下。非 oa 模式下这段什么也不做。 */
+(function () {
+  try {
+    if ("{oa_forced}" !== "1") { return; }
+    var ov = document.createElement('div');
+    ov.id = 'oaGate';
+    ov.style.cssText = 'position:fixed;left:0;top:0;right:0;bottom:0;background:#fff;z-index:99998;'
+      + 'display:flex;align-items:center;justify-content:center;flex-direction:column;color:#666;font-size:14px';
+    ov.innerHTML = '<div style="width:34px;height:34px;border:3px solid #eee;border-top-color:#43B581;'
+      + 'border-radius:50%;animation:oaspin .8s linear infinite"></div>'
+      + '<div id="oaGateText" style="margin-top:14px">正在进入存包…</div>'
+      + '<style>@keyframes oaspin{to{transform:rotate(360deg)}}</style>';
+    document.body.appendChild(ov);
+    window.__oaGate = function () { try { ov.style.display = 'none'; } catch (e) {} };
+    window.__oaGateText = function (t) { try { document.getElementById('oaGateText').textContent = t; } catch (e) {} };
+    /* 保险丝：3 秒后无论发生什么都不会再挡着 */
+    setTimeout(function () { try { ov.style.display = 'none'; } catch (e) {} }, 3000);
+  } catch (e) {}
+})();
+</script>
+<div class="container">
+
+    <!-- ========== 首页 ========== -->
+    <div id="homePage" class="home-page">
+        <div class="top-nav">
+            <div class="top-nav-close"></div>
+            <div class="top-nav-center">
+                <div class="top-nav-title">扫一扫</div>
+                <div class="top-nav-domain">locker.cqdyxl.com</div>
+            </div>
+            <div class="top-nav-more"><span><i></i></span></div>
+        </div>
+        <div class="help-banner" onclick="toggleHelp()">
+            <div class="help-banner-left">
+                <div class="help-banner-title">使用帮助</div>
+                <div class="help-banner-btn">去查看</div>
+            </div>
+            <div class="help-banner-illust">
+                <div class="illust-cloud"></div>
+                <div class="illust-star1">★</div><div class="illust-star2">★</div><div class="illust-star3">★</div>
+                <div class="illust-cabinet">
+                    <div class="illust-cab-body">
+                        <div class="illust-cab-cell"></div><div class="illust-cab-cell"></div><div class="illust-cab-cell"></div>
+                        <div class="illust-cab-cell"></div><div class="illust-cab-cell"></div><div class="illust-cab-cell"></div>
+                    </div>
+                    <div class="illust-cab-screen"></div>
+                </div>
+                <div class="illust-box1"></div><div class="illust-box2"></div>
+                <div class="illust-cat">
+                    <div class="illust-cat-body"></div>
+                    <div class="illust-cat-head"><div class="illust-cat-ear1"></div><div class="illust-cat-ear2"></div></div>
+                </div>
+            </div>
+        </div>
+        <div id="helpContent" class="help-detail">
+            1. 点击「存」按钮，选择柜格大小<br>
+            2. 输入手机号和4位取件码<br>
+            3. 支付预付款后柜门自动打开<br>
+            4. 取包时点击「取」，输入手机号+取件码<br>
+            5. 取出物品关好柜门，预付款退回至余额，可在钱包提现
+        </div>
+        <div class="action-cards">
+            <div class="action-card action-card-store" onclick="goToStoreStep1()">
+                <div class="action-card-bg-char">存</div>
+                <div class="action-card-en">STORE</div>
+                <div class="action-card-desc">点击存入</div>
+                <div class="action-card-btn">存</div>
+            </div>
+            <div class="action-card action-card-fetch" onclick="goToRetrievePage()">
+                <div class="action-card-bg-char">取</div>
+                <div class="action-card-en">FETCH</div>
+                <div class="action-card-desc">点击取出</div>
+                <div class="action-card-btn">取</div>
+            </div>
+        </div>
+        <div class="site-info">
+            <div class="site-info-name" id="siteName">智能寄存柜</div>
+            <div class="site-info-addr" id="siteAddr">加载中...</div>
+        </div>
+    </div>
+
+    <!-- ========== 存包第一步：设置密码 ========== -->
+    <div id="step1Page" class="step1-page page-hidden" hidden>
+        <div class="page-header">
+            <button class="page-back" onclick="goToHomePage()">
+                <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                首页
+            </button>
+            <div class="page-title">设置密码</div>
+            <div class="page-actions">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+            </div>
+        </div>
+        <!-- 网点信息 -->
+        <div class="info-card">
+            <div class="info-row">
+                <span class="info-label">寄存网点</span>
+                <span class="info-value" id="s1SiteName">智能寄存柜</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">运营时间</span>
+                <span class="info-value">00:00~24:00</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">收费规则</span>
+            </div>
+            <div class="size-bar">
+                <div class="size-btn" data-size="S" onclick="selectSize('S')">小柜 ¥<span id="priceS">10</span></div>
+                <div class="size-btn active" data-size="M" onclick="selectSize('M')">中柜 ¥<span id="priceM">20</span></div>
+                <div class="size-btn" data-size="L" onclick="selectSize('L')">大柜 ¥<span id="priceL">30</span></div>
+            </div>
+            <div class="notes" id="feeNotes">
+                <div class="notes-title">收费规则</div>
+                <div class="note-item">限时免费使用<span id="ruleFreeDays">1</span>天</div>
+                <div class="note-item">收费<span id="ruleDailyFee">0.5</span>元/天，预付费<span id="ruleDeposit">20</span>元，封顶<span id="ruleCap">20</span>元</div>
+                <div class="note-item">存放时间截止到当日23:00，请提前取走物品</div>
+                <div class="note-item">请务必确认锁好柜门</div>
+            </div>
+            <div class="info-row door-row" style="display:none">
+                <span class="info-label">柜门号</span>
+                <span class="door-num" id="s1DoorNum">待分配</span>
+            </div>
+        </div>
+        <!-- 设置取包凭证 -->
+        <div class="info-card">
+            <div class="cred-title">设置取包凭证</div>
+            <div class="cred-group">
+                <div class="cred-label">电话号码</div>
+                <input class="cred-input" id="userPhone" type="tel" maxlength="11" placeholder="请输入手机号">
+            </div>
+            <div id="smsCodeGroup" class="cred-group" style="display:none">
+                <div class="cred-label">验证码</div>
+                <div class="cred-row">
+                    <input class="cred-input" id="smsCode" type="text" maxlength="6" placeholder="输入验证码">
+                    <button class="sms-btn" id="sendCodeBtn" onclick="sendSmsCode()">发送验证码</button>
+                </div>
+            </div>
+            <div class="cred-group">
+                <div class="cred-label">取包密码</div>
+                <input class="cred-input" id="accessCode" type="text" maxlength="4" placeholder="设置4位数密码" inputmode="numeric" pattern="[0-9]*">
+            </div>
+            <div style="position:relative">
+                <button id="oaOrigBtn" class="next-btn" onclick="onStep1Next()">下一步</button>
+            </div>
+            <!-- [2026-09-14] 公众号订阅弹层：只在"没跳进小程序、继续走 H5 支付"时弹一次 -->
+            <div id="oaSubWrap" style="display:none;position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.55);z-index:99998;align-items:center;justify-content:center;padding:22px;box-sizing:border-box">
+                <div style="background:#fff;border-radius:16px;padding:22px 20px;max-width:340px;width:100%;box-sizing:border-box;text-align:center">
+                    <div style="font-size:19px;font-weight:700;color:#1a1a1a;margin-bottom:8px">订阅通知</div>
+                    <div style="font-size:13px;color:#666;line-height:1.7;margin-bottom:14px">订阅后，“预付款退还 / 退款到账”会用微信“服务通知”提醒你<br>只点这一次，以后不再打扰</div>
+                    <wx-open-subscribe id="oaSubBtn" template="RyvAHJzC46JDEk_w8nAJHlLppNtNiAgkqP_GdHGWEUg,pG1ieUsHgBg5y0ZJCfjNiUrF7QuftlSWwDYXSpAp6js,nDTX0vT_wODrTnM4A1qSNnSXDUTNgw2Fm0CMF0eZe-o" style="display:block;width:100%">
+                        <script type="text/wxtag-template">
+                            <style>.oa-hit{display:block;width:100%;padding:14px;background:#FFC107;color:#1a1a1a;border:0;border-radius:24px;font-size:17px;font-weight:700;text-align:center;box-sizing:border-box}</style>
+                            <button class="oa-hit">订阅通知</button>
+                        </script>
+                    </wx-open-subscribe>
+                    <div id="oaSubSkip" style="font-size:13px;color:#999;margin-top:16px;text-decoration:underline">暂不订阅，继续支付</div>
+                </div>
+            </div>
+        </div>
+        <!-- 存取包说明 -->
+        <div class="usage-tips">
+            <b>存包</b>，先下单再认准"手机上提示的柜门号"存放<br>
+            <b>取包</b>，在屏幕上输入凭证"手机号+密码"取包
+        </div>
+    </div>
+
+    <!-- ========== 存包第二步：支付确认 ========== -->
+    <div id="step2Page" class="step2-page page-hidden" hidden>
+        <div class="page-header">
+            <button class="page-back" onclick="goToStoreStep1()">
+                <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                首页
+            </button>
+            <div class="page-title">存包</div>
+            <div class="page-actions">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+            </div>
+        </div>
+        <div class="pay-countdown">支付剩余时间 <span id="payCountdown">05:00</span></div>
+        <div class="pay-amount-card">
+            <div class="pay-amount-label">预付款</div>
+            <div class="pay-amount-value"><small>¥</small><span id="payAmount">20</span></div>
+            <div class="pay-amount-sub">预付款</div>
+        </div>
+        <div class="pay-detail-card">
+            <div class="pay-detail-row">
+                <span class="pay-detail-label">租借店铺</span>
+                <span class="pay-detail-value" id="paySiteName">智能寄存柜</span>
+            </div>
+            <div class="pay-detail-row">
+                <span class="pay-detail-label">计费规则</span>
+                <span class="pay-detail-value" id="payRule">预付款：20</span>
+            </div>
+            <div class="pay-detail-row">
+                <span class="pay-detail-label">柜门号</span>
+                <span class="pay-detail-door" id="payDoorNum">待分配</span>
+            </div>
+        </div>
+        <div class="pay-warning">
+            <span class="pay-warning-icon">⚠️</span>
+            <span>请支付后使用设备，结束使用后预付款退回至余额，可随时提现。</span>
+        </div>
+        <div class="pay-action-area">
+            <button class="pay-open-btn" id="payBtn" onclick="payDeposit()">支付开门</button>
+            <div class="pay-agreement">
+                <input type="checkbox" id="agreementCheck" checked>
+                <span>请仔细阅读<a href="javascript:void(0)" onclick="showAgreement()">《用户预付款协议》</a>，勾选即同意协议。</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== 取包页 ========== -->
+    <div id="retrievePage" class="retrieve-page page-hidden" hidden>
+        <div class="page-header">
+            <button class="page-back" onclick="goToHomePage()">
+                <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                首页
+            </button>
+            <div class="page-title">取包</div>
+            <div class="page-actions"></div>
+        </div>
+        <div class="store-section">
+            <div class="form-group">
+                <div class="form-label">手机号</div>
+                <input class="form-input" id="retrievePhone" type="tel" maxlength="11" placeholder="请输入存包时的手机号">
+            </div>
+            <div class="form-group">
+                <div class="form-label">取件码</div>
+                <input class="form-input" id="retrieveCode" type="text" maxlength="4" placeholder="请输入4位取件码">
+            </div>
+        </div>
+        <button class="btn-main" onclick="retrieveOrder()">📦 取包开柜</button>
+    </div>
+
+    <!-- ========== 开门中 ========== -->
+    <div id="openingPage" class="opening-page page-hidden" hidden>
+        <div class="opening-icon">🚪</div>
+        <div class="opening-title">正在开门</div>
+        <div class="opening-door-num" id="openingDoor">-</div>
+        <div class="opening-desc">请稍候，柜门即将打开...</div>
+        <div class="opening-bar-wrap"><div class="opening-bar" id="openingBar"></div></div>
+    </div>
+
+    <!-- ========== 存包完成 ========== -->
+    <div id="donePage" class="done-page page-hidden" hidden>
+        <div class="done-icon">✅</div>
+        <div class="done-title">存包成功</div>
+        <div class="done-door-big" id="doneDoorBig">-</div>
+        <div class="done-door-label">号柜门</div>
+        <div class="done-actions">
+            <button class="done-btn-reopen" onclick="reopenCabinet()">再开一次</button>
+            <button class="done-btn-finish" onclick="finishDeposit()">完成</button>
+        </div>
+    </div>
+
+    <!-- ========== 取包确认 ========== -->
+    <div id="retrieveConfirmPage" class="retrieve-confirm-page page-hidden" hidden>
+        <div class="rc-icon">📦</div>
+        <div class="rc-title">取包确认</div>
+        <div class="rc-card">
+            <div class="rc-row"><span class="rc-label">柜格号</span><span class="rc-value" id="rcCompartment">-</span></div>
+            <div class="rc-row"><span class="rc-label">存入时间</span><span class="rc-value" id="rcTime">-</span></div>
+            <div class="rc-row"><span class="rc-label">预付款</span><span class="rc-value" id="rcDeposit">-</span></div>
+        </div>
+        <div class="rc-actions">
+            <button class="rc-btn-mid" onclick="midOpen()">中途开柜</button>
+            <button class="rc-btn-end" onclick="alert('请在小程序或订单中心结束订单退预付款')" style="display:none">取包结束</button>
+        </div>
+    </div>
+
+    <!-- ========== 个人中心 - 改造后 ========== -->
+    <div id="profilePage" class="profile-page page-hidden" hidden>
+        <div class="profile-header">
+            <div class="profile-top-row">
+                <div></div>
+                <div class="profile-top-actions">
+                    <button class="profile-top-btn" onclick="showHelpModal()">使用帮助</button>
+                </div>
+            </div>
+            <div class="profile-main">
+                <div class="profile-avatar">
+                    <svg viewBox="0 0 24 24" fill="#BDBDBD">
+                        <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+                    </svg>
+                </div>
+                <div class="profile-info">
+                    <div class="profile-phone" id="profilePhone">未登录</div>
+                </div>
+            </div>
+        </div>
+        <div class="profile-menu">
+            <div class="pm-item" onclick="goToOrdersPage()"><div class="pm-item-left"><span>📋</span>我的订单</div><div class="pm-item-right">›</div></div>
+            <div class="pm-item" onclick="goToBalancePage()"><div class="pm-item-left"><span>💰</span>我的余额</div><div class="pm-item-right">›</div></div>
+            <div class="pm-item" onclick="showHelpModal()"><div class="pm-item-left"><span>❓</span>使用帮助</div><div class="pm-item-right">›</div></div>
+            <div class="pm-item" onclick="clearCache()"><div class="pm-item-left"><span>🗑️</span>清除缓存</div><div class="pm-item-right">›</div></div>
+        </div>
+    </div>
+
+    <!-- ========== 我的订单 ========== -->
+    <div id="ordersPage" class="orders-page page-hidden" hidden>
+        <div class="page-header">
+            <button class="page-back" onclick="goToProfilePage()">
+                <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                返回
+            </button>
+            <div class="page-title">我的订单</div>
+            <div class="page-actions"></div>
+        </div>
+        <div id="ordersList"></div>
+    </div>
+
+    <!-- ========== 我的余额 ========== -->
+    <div id="balancePage" class="balance-page page-hidden" hidden>
+        <div class="page-header">
+            <button class="page-back" onclick="goToProfilePage()">
+                <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                返回
+            </button>
+            <div class="page-title">我的余额</div>
+            <div class="page-actions"></div>
+        </div>
+        <div class="balance-card">
+            <div class="balance-card-label">我的余额(元)</div>
+            <div class="balance-card-amount">¥<span id="balanceAmount">0.00</span></div>
+            <div class="balance-card-actions">
+                <button class="balance-withdraw-btn" id="withdrawBtn" onclick="handleWithdraw()">立即提现</button>
+            </div>
+        </div>
+        <div class="withdraw-rules">
+            <div class="rules-title">提现规则</div>
+            <div class="rules-row"><span class="rules-label">到账时间</span><span class="rules-value">0-3个工作日到账</span></div>
+            <div class="rules-row"><span class="rules-label">提现额度</span><span class="rules-value">可提现全额</span></div>
+            <div class="rules-row"><span class="rules-label">提现时间</span><span class="rules-value">00:00-23:59</span></div>
+        </div>
+        <div id="refundingBar" class="refunding-bar" style="display:none">
+            <span class="refunding-bar-icon">⏳</span>
+            <span class="refunding-bar-text">有退款正在处理中，请耐心等待</span>
+        </div>
+        <div class="balance-tip">余额来源：寄存订单完成后，预付款将退回到余额中</div>
+    </div>
+
+    <!-- ========== 右侧浮标 ========== -->
+    <div id="complaintFloat" class="float-buttons">
+        <div class="float-circle float-circle-service" onclick="callComplaint()">联系<br>客服</div>
+        <div class="float-circle float-circle-complaint" onclick="showComplaintModal()">订单<br>投诉</div>
+    </div>
+
+    <!-- ========== 底部导航 ========== -->
+    
+    <div id="orderDetailPage" class="page-hidden" hidden style="background:#eef1f5;min-height:100vh;padding-bottom:80px;">
+        <div class="page-header">
+            <button class="page-back" onclick="showPage('ordersPage')"><svg viewBox="0 0 24 24" style="width:20px;height:20px"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></button>
+            <div class="page-title">订单详情</div>
+            <div class="page-actions"></div>
+        </div>
+        <div id="orderDetailContent" style="padding:16px;"></div>
+    </div>
+
+<div class="bottom-nav">
+        <div class="nav-item active" id="navHome" onclick="goToHomePage()">
+            <div class="nav-item-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm13.5-9 1.96 2.5H17V9.5h2.5zm-1.5 9c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg></div>
+            <div class="nav-item-text">存/取包</div>
+        </div>
+        <div class="nav-item" id="navProfile" onclick="goToProfilePage()">
+            <div class="nav-item-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg></div>
+            <div class="nav-item-text">个人中心</div>
+        </div>
+    </div>
+
+    <!-- ========== H5支付弹窗 ========== -->
+    <div id="h5PayModal" class="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-title">确认支付</div>
+            <p style="text-align:center;font-size:14px;color:#666;margin-bottom:10px">即将跳转到微信支付</p>
+            <div class="modal-btns">
+                <button class="modal-btn modal-btn-cancel" onclick="cancelH5Pay()">取消</button>
+                <button class="modal-btn modal-btn-confirm" onclick="checkPayResult()">去支付</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== 小程序跳转提示 ========== -->
+    <div id="mpTipModal" class="modal-overlay" onclick="if(event.target===this){closeMpTipModal()}">
+        <div class="modal-box">
+            <div class="modal-title">请跳转小程序进行下一步</div>
+            <p id="mpTipDesc" style="text-align:center;font-size:14px;color:#666;margin-bottom:10px">请在弹出的“即将打开小程序”里点【允许】；进入后再允许“订阅通知”，这样才能收到预付款退还 / 退款到账的微信提醒</p>
+            <p id="mpRetryHint" style="display:none;text-align:center;font-size:13px;color:#e6a23c;margin-bottom:10px">没跳过去？再点一次【去小程序】就行（点几次都可以）</p>
+            <div class="modal-btns">
+                <!-- [S1449] 开放标签容器：能用就走它（官方推荐，稳定），不能用则显示下面的兜底按钮 -->
+                <div id="mpLaunchWrap" style="display:none;width:100%"></div>
+                <button id="mpOpenBtn" class="modal-btn modal-btn-confirm" onclick="launchMp()">去小程序</button>
+            </div>
+            <div id="mpEscLine" style="display:none;text-align:center;margin-top:14px">
+                <span id="mpEscBtn" style="font-size:13px;color:#576b95;text-decoration:underline">一直跳不过去？点这里用网页支付</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== [S245] 软提醒条：不阻塞，仅提示"没进小程序、通知可能收不到" ========== -->
+    <div id="mpSoftBar" style="display:none;position:fixed;left:0;right:0;top:0;z-index:9999;background:#FFF8E7;border-top:1px solid #F5D9A0;padding:10px 12px;font-size:13px;color:#8a6d3b;box-shadow:0 -2px 8px rgba(0,0,0,.08);line-height:1.6">
+        <span>刚才没进小程序，<b>通知可能收不到</b>（取件/退款提醒）。</span>
+        <span onclick="mpSoftRejump()" style="color:#576b95;text-decoration:underline;margin-left:6px">再去一次小程序</span>
+        <span onclick="mpSoftDismiss()" style="color:#999;text-decoration:underline;margin-left:10px">继续支付</span>
+    </div>
+
+    <!-- ========== 预付款协议弹窗 ========== -->
+    <div id="agreementOverlay" class="agreement-overlay" onclick="if(event.target===this)closeAgreement()">
+        <div class="agreement-box">
+            <div class="agreement-header">
+                <div class="agreement-title">用户预付款协议</div>
+                <button class="agreement-close" onclick="closeAgreement()">&times;</button>
+            </div>
+            <div class="agreement-body">
+                <h3>一、预付款说明</h3>
+                <p>1. 用户在使用寄存柜服务时，需按照柜格类型支付对应金额的预付款（预付款）。</p>
+                <p>2. 预付款仅作为寄存期间的有效使用担保，不属于寄存费用。</p>
+                <p>3. 当前预付款标准：小柜¥10、中柜¥20、大柜¥30，具体以页面显示为准。</p>
+                <h3>二、预付款退还</h3>
+                <p>1. 用户取包并关好柜门后，预付款将即时退回至小程序余额，可在钱包提现。</p>
+                <p>2. 如超时未取包，系统将根据网点规则处理，预付款退还规则以网点公示为准。</p>
+                <p>3. 提现仅支持退回原支付账户，不支持更换账户。</p>
+                <h3>三、用户责任</h3>
+                <p>1. 请勿存放违禁物品、贵重物品及易腐烂变质的物品。</p>
+                <p>2. 用户应妥善保管取包凭证（手机号+密码），因凭证泄露导致的损失由用户自行承担。</p>
+                <p>3. 存放物品如有损坏或遗失，赔偿金额不超过预付款金额。</p>
+                <h3>四、免责条款</h3>
+                <p>1. 因不可抗力（停电、网络故障、设备损坏等）导致无法正常存取的，运营方将尽快修复并及时通知用户。</p>
+                <p>2. 用户超过网点规定寄存时间未取走的物品，运营方有权进行清理，但会提前公示通知。</p>
+                <h3>五、其他</h3>
+                <p>1. 本协议自用户勾选同意后生效。</p>
+                <p>2. 运营方保留对本协议的最终解释权，如有变更将在页面公示。</p>
+                <p>3. 如有疑问，请联系客服电话：{service_phone}。</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== 使用帮助弹窗 ========== -->
+    <div id="helpModalOverlay" class="help-modal-overlay" onclick="if(event.target===this)closeHelpModal()">
+        <div class="help-modal-box">
+            <div class="help-modal-header">
+                <div class="help-modal-title">使用帮助</div>
+                <button class="help-modal-close" onclick="closeHelpModal()">&times;</button>
+            </div>
+            <div class="help-modal-body">
+                <h4>如何存包？</h4>
+                <div class="help-step"><div class="help-step-num">1</div><div class="help-step-text">点击首页「存」按钮，选择合适的柜格大小</div></div>
+                <div class="help-step"><div class="help-step-num">2</div><div class="help-step-text">输入手机号，设置4位取件密码</div></div>
+                <div class="help-step"><div class="help-step-num">3</div><div class="help-step-text">完成支付后，柜门自动打开</div></div>
+                <div class="help-step"><div class="help-step-num">4</div><div class="help-step-text">将物品放入柜门，记住房门号</div></div>
+                <h4>如何取包？</h4>
+                <div class="help-step"><div class="help-step-num">1</div><div class="help-step-text">点击首页「取」按钮</div></div>
+                <div class="help-step"><div class="help-step-num">2</div><div class="help-step-text">输入存包时的手机号和取件密码</div></div>
+                <div class="help-step"><div class="help-step-num">3</div><div class="help-step-text">柜门打开，取走物品并关好柜门</div></div>
+                <h4>预付款说明</h4>
+                <p>• 预付款仅作为使用担保，不属于费用</p>
+                <p>• 取包并关好柜门后，预付款退回至余额</p>
+                <p>• 可在「我的余额」中查看和提现</p>
+                <h4>常见问题</h4>
+                <p><strong>Q: 取件密码忘记了怎么办？</strong></p>
+                <p>A: 联系客服{service_phone}，提供手机号核实后可查询。</p>
+                <p><strong>Q: 预付款多久能退回？</strong></p>
+                <p>A: 取包成功后预付款即时退回小程序余额，可在「我的余额」提现。</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== 投诉弹窗 ========== -->
+    <div id="complaintModal" class="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-title">订单投诉</div>
+            <div class="complaint-type-btns">
+                <div class="complaint-type-btn active" data-type="设备故障" onclick="selectComplaintType(this)">设备故障</div>
+                <div class="complaint-type-btn" data-type="柜门问题" onclick="selectComplaintType(this)">柜门问题</div>
+                <div class="complaint-type-btn" data-type="支付问题" onclick="selectComplaintType(this)">支付问题</div>
+                <div class="complaint-type-btn" data-type="其他" onclick="selectComplaintType(this)">其他</div>
+            </div>
+            <input class="form-input" id="complaintPhone" type="tel" maxlength="11" placeholder="手机号" style="margin-bottom:10px">
+            <textarea class="complaint-textarea" id="complaintContent" placeholder="请描述您的问题或建议..."></textarea>
+            <div class="complaint-tips">
+                <b>💡 温馨提示</b><br>
+                • 我们会在1-3个工作日内处理您的投诉<br>
+                • 请留意手机通知消息
+            </div>
+            <div class="modal-btns">
+                <button class="modal-btn modal-btn-cancel" onclick="closeComplaintModal()">取消</button>
+                <button class="modal-btn modal-btn-confirm" onclick="submitComplaint()">提交</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    
+    var s={ssr_cabinet}||{};var DI="{device}";var OI="{openid}";var CI="{cabinet_id}";var DA={deposit_amount}||0;
+    var params = new URLSearchParams(window.location.search);
+    var _oaForceH5 = params.get('h5only') === '1';    // [测试] 跳过跳小程序, 强制走 H5
+    var _oaTestOnly = params.get('oatest') === '1';   // [测试] 只弹订阅层, 不创建订单
+    // [A1-b] 跳小程序最多点几次（后台设置 mp_jump_max_retry；没注入时按 3）
+    var MP_RETRY_LIMIT = parseInt("{mp_retry_limit}", 10) || 3;
+    if (params.get("page") === "profile") {
+        var _oidList = params.getAll("openid");
+        var _hasOid = false;
+        for (var _i2 = 0; _i2 < _oidList.length; _i2++) { if (_oidList[_i2]) { _hasOid = true; break; } }
+        if (_hasOid) {
+            var newUrl = "/static/h5/index.html" + window.location.search;
+            window.location.replace(newUrl);
+        }
+    }
+    var API_BASE = window.location.origin;
+    var currentCabinetId = CI || params.get('cabinet_id') || '';
+    var _deviceParam = DI || params.get('device') || '';
+    if (!currentCabinetId && _deviceParam) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', API_BASE + '/api/cabinets/by-mainboard/' + encodeURIComponent(_deviceParam), false);
+        try { xhr.send(); var _r = JSON.parse(xhr.responseText); if (_r.code===200 && _r.data && _r.data.id) { currentCabinetId = String(_r.data.id); _chargeMode=_r.data.charge_mode||'deposit'; _perUsePrice=_r.data.per_use_price||0; _freeDays=_r.data.free_days?parseInt(_r.data.free_days,10)||1:1; _dailyFee=_r.data.daily_fee?parseFloat(_r.data.daily_fee)||0:0; _depMin=_r.data.deposit_min||0; _depMax=_r.data.deposit_max||0; if (_r.data.deposit_amount && _r.data.deposit_amount > 0) { _baseDeposit = _r.data.deposit_amount; depositPrices['S'] = Math.round(_baseDeposit * 0.5); depositPrices['M'] = _baseDeposit; depositPrices['L'] = Math.round(_baseDeposit * 1.5); depositPrices['small'] = depositPrices['S']; depositPrices['medium'] = depositPrices['M']; depositPrices['large'] = depositPrices['L']; } try{applyChargeUI();}catch(e){} } } catch(e) {}
+    } else if (currentCabinetId) {
+        // 已有 cabinet_id 时也要查一次预付款
+        try {
+            var xhr2 = new XMLHttpRequest();
+            xhr2.open('GET', API_BASE + '/api/cabinets/info/' + currentCabinetId, false);
+            xhr2.send();
+            var _r2 = JSON.parse(xhr2.responseText);
+            if (_r2.code===200 && _r2.data) { _chargeMode=_r2.data.charge_mode||'deposit'; _perUsePrice=_r2.data.per_use_price||0; _freeDays=_r2.data.free_days?parseInt(_r2.data.free_days,10)||1:1; _dailyFee=_r2.data.daily_fee?parseFloat(_r2.data.daily_fee)||0:0; _depMin=_r2.data.deposit_min||0; _depMax=_r2.data.deposit_max||0; if (_r2.data.deposit_amount && _r2.data.deposit_amount > 0) {
+                _baseDeposit = _r2.data.deposit_amount;
+                depositPrices['S'] = Math.round(_baseDeposit * 0.5);
+                depositPrices['M'] = _baseDeposit;
+                depositPrices['L'] = Math.round(_baseDeposit * 1.5);
+                depositPrices['small'] = depositPrices['S'];
+                depositPrices['medium'] = depositPrices['M'];
+                depositPrices['large'] = depositPrices['L'];
+            }
+            try{applyChargeUI();}catch(e){}
+            }
+        } catch(e2) {}
+    }
+    if (!currentCabinetId) currentCabinetId = '8';
+    // get last non-empty openid/wechat_name (skip empty initial values)
+    var _oidAll = params.getAll('openid');
+    var wxOpenid = '';
+    for (var _i = _oidAll.length - 1; _i >= 0; _i--) { if (_oidAll[_i]) { wxOpenid = _oidAll[_i]; break; } }
+    if (!wxOpenid) { wxOpenid = (OI && OI.indexOf('{') !== 0 && OI.length > 5 ? OI : ''); }
+    var _wnAll = params.getAll('wechat_name');
+    var wxWechatName = '';
+    for (var _j = _wnAll.length - 1; _j >= 0; _j--) { if (_wnAll[_j]) { wxWechatName = _wnAll[_j]; break; } }
+    if (wxWechatName) { try { localStorage.setItem('locker_wx_name', decodeURIComponent(wxWechatName)); } catch(e){} } else { wxWechatName = localStorage.getItem('locker_wx_name') || ''; }
+    var wxUnionid = params.get('unionid') || '';
+    var isWechat = /MicroMessenger/i.test(navigator.userAgent);
+    // [S350-模式② STEP2] 服务端注入（除 oa 外全为 0 / 空）：
+    //   _oaForced   = "1" → 本次入口是"纯公众号"，按老板要求强制关注
+    //   _oaNoSkip   = "1" → 关注遮罩里不渲染"暂不关注，继续存包"（L2 硬拦截）
+    //   _oaPrefix   = 当前生效公众号的 openid 前缀（SSOT: wx_config.oa_openid_prefix()）
+    //   _oaFollowQr = 关注引导二维码（只读取号；取不到回落页面兜底串）
+    var _oaForced = "{oa_forced}" === "1";
+    var _oaNoSkip = "{oa_no_skip}" === "1";
+    var _oaPrefix = "{oa_prefix}";
+    var _oaFollowQr = "{oa_follow_qr}";
+    var allowH5ToMp = s.allow_h5_to_mp || 0;
+    var mpAppId = s.mp_appid || '';
+    var mpPath = s.mp_path || '';
+    var gIsOnline = s.is_online !== false;
+
+    // SSR pre-render: set site name from server-side data immediately
+    if (s.site_name) {
+        var sn = document.getElementById('siteName');
+        var sn1 = document.getElementById('s1SiteName');
+        if (sn) sn.textContent = s.site_name;
+        if (sn1) sn1.textContent = s.site_name;
+    }
+    if (s.site_addr) {
+        var sa = document.getElementById('siteAddr');
+        if (sa) sa.textContent = s.site_addr;
+    }
+
+    if (!wxOpenid && isWechat) { window.location.href = API_BASE + '/api/wx/oauth?redirect_uri=' + encodeURIComponent(window.location.href); }
+
+    var selectedSize = 'M';
+    var cabinetSizes = [];
+    var currentOrderId = null;
+    var currentDepositAmount = null;
+    var currentOrderNo = null;
+    var currentAccessCode = null;
+    var currentCompartmentNumber = null;
+    var currentRetrieveOrderId = null;
+    var smsEnabled = false;
+    var mpOpenedTime = 0;
+    var h5RedirectUrl = '';
+    var sizeNames = { 'S': '小柜', 'M': '中柜', 'L': '大柜' };
+    var _chargeMode=(typeof s!=='undefined'&&s.charge_mode)?s.charge_mode:'deposit'; var _perUsePrice=(typeof s!=='undefined'&&s.per_use_price)?s.per_use_price:0; var _baseDeposit = (typeof DA !== 'undefined' && DA > 0) ? DA : 20; var _freeDays = (typeof s!=='undefined'&&s.free_days)?(parseInt(s.free_days,10)||1):1; var _dailyFee = (typeof s!=='undefined'&&s.daily_fee)?(parseFloat(s.daily_fee)||0):0; var _depMin = 0; var _depMax = 0; var depositPrices = { 'S': Math.round(_baseDeposit * 0.5), 'M': _baseDeposit, 'L': Math.round(_baseDeposit * 1.5), 'small': Math.round(_baseDeposit * 0.5), 'medium': _baseDeposit, 'large': Math.round(_baseDeposit * 1.5) }; function _setTxt(id,val){ var el=document.getElementById(id); if(el) el.textContent=val; } function _fmtAmt(n){ n=Number(n)||0; return String(Math.round(n*100)/100); } function _depositTxt(){ if(currentDepositAmount){ return _fmtAmt(currentDepositAmount); } return _fmtAmt(_baseDeposit); } function _capTxt(){ return _depositTxt(); } function _showPrice(size){ if(_chargeMode==='per_use'){ var t=(_baseDeposit||0)+(_perUsePrice||0); return Math.round(t*100)/100; } if(_depMin>0&&_depMax>_depMin){ return _depositTxt(); } return depositPrices[size]||0; } function _ruleText(size){ if(_chargeMode==='per_use'){ var d=_baseDeposit||0,p=_perUsePrice||0; return '按次收费：预付款'+_fmtAmt(d)+'元+按次费'+_fmtAmt(p)+'元，本次收取'+_fmtAmt(d+p)+'元；\n寄存结束退预付款'+_fmtAmt(d)+'元'; } if(_chargeMode==='free'){ return '免费寄存，不收取任何费用'; } var df=_dailyFee||0, fd=_freeDays||1; var depSeg='预付费'+_depositTxt()+'元，封顶'+_capTxt()+'元'; return ['限时免费使用'+fd+'天','收费'+_fmtAmt(df)+'元/天，'+depSeg,'存放时间截止到当日23:00，请提前取走物品','请务必确认锁好柜门'].join('\n'); } function _updateFeeRules(){ var el=document.getElementById('feeNotes'); if(!el) return; var d=_baseDeposit||0,p=_perUsePrice||0,t=d+p; var html=''; if(_chargeMode==='per_use'){ html='<div class="note-item">按次收费：预付款'+_fmtAmt(d)+'元+按次费'+_fmtAmt(p)+'元，本次收取'+_fmtAmt(t)+'元</div><div class="note-item">寄存结束退预付款'+_fmtAmt(d)+'元</div>'; } else if(_chargeMode==='free'){ html='<div class="note-item">免费寄存，不收取任何费用</div>'; } else { var depSeg='预付费'+_depositTxt()+'元，封顶'+_capTxt()+'元'; html='<div class="note-item">限时免费使用'+(_freeDays||1)+'天</div><div class="note-item">收费'+_fmtAmt(_dailyFee||0)+'元/天，'+depSeg+'</div><div class="note-item">存放时间截止到当日23:00，请提前取走物品</div><div class="note-item">请务必确认锁好柜门</div>'; } el.innerHTML=html; } function applyChargeUI(){ var d=_baseDeposit||0,p=_perUsePrice||0,t=d+p; var lab=document.getElementById('s1PriceLabel'); var note=document.getElementById('s1Note2'); if(lab){ if(_chargeMode==='per_use'){ lab.textContent='按次收费：'; if(note)note.innerHTML='按次收费：预付款'+_fmtAmt(d)+'元+按次费'+_fmtAmt(p)+'元，本次收取'+_fmtAmt(t)+'元；寄存结束退预付款'+_fmtAmt(d)+'元'; } else if(_chargeMode==='free'){ lab.textContent='免费寄存：'; if(note)note.innerHTML='免费寄存，不收取任何费用'; } else { lab.textContent='预付款：'; if(note)note.innerHTML='为避免柜门无效占用，需支付预付款¥'+_fmtAmt(t); } } _updateFeeRules(); } try{applyChargeUI();}catch(e){}
+    var selectedComplaintType = '设备故障';
+    var countdownTimer = null;
+    var countdownSeconds = 300;
+
+    var savedPhone = localStorage.getItem('locker_saved_phone') || localStorage.getItem('userPhone') || '';
+    var currentPhone = savedPhone;
+
+    // 白屏检测
+    (function() {
+        if (params.get("page") === "profile") return;
+        var checkPassed = false;
+        var checkTimer = setTimeout(function() {
+            if (!checkPassed) {
+                var el = document.getElementById('homePage');
+                if (el && !el.classList.contains('page-hidden')) {
+                    // 页面已正常渲染
+            } else {
+                    // 可能白屏，强制刷新
+                    localStorage.clear();
+                    sessionStorage.clear();
+                    window.location.href = window.location.pathname + '?t=' + Date.now();
+            }
+        }
+        }, 3000);
+        window.addEventListener('load', function() {
+            checkPassed = true;
+            clearTimeout(checkTimer);
+        });
+    })();
+
+    function showToast(msg) {
+        var t = document.createElement("div");
+        t.textContent = msg;
+        t.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.8);color:#fff;padding:12px 24px;border-radius:8px;z-index:99999;font-size:14px;transition:opacity 0.3s";
+        document.body.appendChild(t);
+        setTimeout(function(){ t.style.opacity="0"; }, 2000);
+        setTimeout(function(){ t.remove(); }, 2300);
+    }
+
+    function showPage(id) {
+        var pages = document.querySelectorAll('.container > div[id]');
+        for (var i = 0; i < pages.length; i++) {
+            var el = pages[i];
+            if (el.id && el.id !== 'complaintFloat'
+                && !el.classList.contains('modal-overlay')
+                && !el.classList.contains('agreement-overlay')
+                && !el.classList.contains('help-modal-overlay')
+                && !el.classList.contains('blank-screen-check')) {
+                el.classList.add('page-hidden');el.setAttribute('hidden','');
+            }
+        }
+        document.getElementById(id).classList.remove('page-hidden');document.getElementById(id).removeAttribute('hidden');
+        var navHome = document.getElementById('navHome');
+        var navProfile = document.getElementById('navProfile');
+        if (navHome && navProfile) {
+            navHome.classList.remove('active');
+            navProfile.classList.remove('active');
+            if (id === 'homePage' || id === 'step1Page' || id === 'step2Page' || id === 'openingPage' || id === 'donePage' || id === 'retrievePage' || id === 'retrieveConfirmPage') {
+                navHome.classList.add('active');
+        } else if (id === 'profilePage' || id === 'ordersPage' || id === 'balancePage' || id === 'orderDetailPage') {
+                navProfile.classList.add('active');
+        }
+        }
+        var floatEl = document.getElementById('complaintFloat');
+        if (floatEl) {
+            floatEl.style.display = (id === 'homePage' || id === 'profilePage') ? 'flex' : 'none';
+        }
+        window.scrollTo(0, 0);
+    }
+
+    function goToHomePage() {
+        showPage('homePage');
+        loadCabinetInfo();
+        if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+    }
+
+    function goToStoreStep1() {
+        // 实时检查设备在线状态
+        checkDeviceOnline(function(online) {
+            if (!online) {
+                showToast('设备离线，请稍后再试');
+                return;
+            }
+            showPage('step1Page');
+            fillSavedPhone();
+        });
+    // FIX-20260912b
+    // 原来在这里注册 pageshow：位置不对（写在 goToStoreStep1 里，调用一次注册一次），
+    // 而且只靠内存变量 —— 从小程序返回时 WebView 被重新载入的话内存全丢，什么都不会发生。
+    // 已挪到脚本末尾统一注册，并升级为"跳转前存档 → 回来后直接进支付页"，见 mpReturnCheck()。
+    }
+
+    function onStep1Next() {
+        var phone = document.getElementById('userPhone').value.trim();
+        var accessCode = document.getElementById('accessCode').value.trim();
+        if (!phone || !/^1[3-9]\d{9}$/.test(phone)) { alert('请输入正确的手机号'); return; }
+        if (smsEnabled) {
+            var code = document.getElementById('smsCode').value.trim();
+            if (!code) { alert('请输入验证码'); return; }
+        }
+        if (!accessCode || !/^\d{4}$/.test(accessCode)) { alert('请设置4位数字密码'); return; }
+
+        currentAccessCode = accessCode;
+        currentPhone = phone;
+        localStorage.setItem('locker_saved_phone', phone);
+        localStorage.setItem('userPhone', phone);
+        // Sync openid + wechat_name to backend for admin display
+        if (wxOpenid) {
+            fetch(API_BASE + '/api/user/link-openid', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({phone: phone, openid: wxOpenid, wechat_name: wxWechatName || '', unionid: wxUnionid || ''})
+            }).catch(function(e){ console.warn('link-openid failed:', e); });
+        }
+
+        // 支付前实时检查设备状态
+        checkDeviceOnline(function(online) {
+            if (!online) {
+                showToast('设备离线，请稍后再试');
+                return;
+            }
+            // 提前锁定柜门，防止跳转小程序期间柜门被抢
+            reserveDoorAndProceed();
+        });
+    }
+
+    function reserveDoorAndProceed() {
+        mpClearPendingJump();             // FIX-20260912b 新下单，先清掉上一次的存档
+        try { if (mpEnterPoll) { clearInterval(mpEnterPoll); mpEnterPoll = null; } } catch (e) {}   // [S228] 新单开始，旧轮询作废
+        var phone = currentPhone || document.getElementById('userPhone').value.trim();
+        var code = currentAccessCode || document.getElementById('accessCode').value.trim();
+        var btn = document.querySelector('.next-btn');
+        if (btn) { btn.disabled = true; btn.textContent = '分配柜门中...'; }
+        fetch(API_BASE + '/api/store/init', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({cabinet_id: parseInt(currentCabinetId), phone: phone, access_code: code, slot_size: selectedSize, openid: wxOpenid || '', unionid: wxUnionid || ''})
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (btn) { btn.disabled = false; btn.textContent = '下一步'; }
+            if (d.code === 200 && d.data) {
+                currentOrderId = d.data.order_id;
+                currentDepositAmount = d.data.deposit_amount || null;
+                try{initDepositPrices();_updateFeeRules();}catch(e){}
+                currentOrderNo = d.data.order_no;
+                currentCompartmentNumber = d.data.compartment_number;
+                currentAccessCode = d.data.access_code || code;
+                document.getElementById('s1DoorNum').textContent = (d.data.compartment_number || '') + '号';
+                document.getElementById('payDoorNum').textContent = (d.data.compartment_number || '') + '号';
+                console.log("[DEBUG] allowH5ToMp:", allowH5ToMp, "mpAppId:", mpAppId);
+                if (_oaForceH5) {
+                    mpSavePendingJump();   // [测试] 存档，回来才能接着付
+                    showMpTipModal();      // [测试] 强制走 H5: 直接看到 A1 的拦截弹层(请跳转小程序)
+                } else if (isAlipayEnv()) {
+                    // [S530-20260921] 支付宝纯小程序模式：H5 不建单、不支付，任何支付宝路径都回"去小程序"引导
+                    alipayPureMpRedirect(true);
+                } else if (allowH5ToMp === 1) {
+                    mpSavePendingJump();      // FIX-20260912b 跳转前存档，回来才能接着付
+                    mpAutoJump();
+                } else {
+                    goToStep2Direct();
+                }
+            } else {
+                alert(d.message || '柜门分配失败，请重试');
+            }
+        })
+        .catch(function(e) {
+            if (btn) { btn.disabled = false; btn.textContent = '下一步'; }
+            alert('网络错误，请重试');
+        });
+    }
+
+    function closeMpTipModal() {
+        // [A1-20260914] 只是关掉提示层，人留在第 1 步；**没有"跳过"出口**：不跳小程序就不进支付页
+        document.getElementById('mpTipModal').classList.remove('show');
+        if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); mpGiveupTimer = null; }
+        if (mpRescueTimer) { clearTimeout(mpRescueTimer); mpRescueTimer = null; }
+        mpOpenedTime = 0;
+    }
+
+    // ===== [FIX-20260912] H5→小程序跳转加固(救 iPhone) =====
+    // 原因: 原来是"创建订单回调 → launchMp() → 要scheme的回调 → location.href=scheme",
+    //       全程不在用户点击手势里; iOS 对这类 scheme 跳转拦截严格(还会弹"即将离开微信"),
+    //       安卓宽松 → 实测 安卓≈78% / iPhone≈54%, 每天约 121 次没跳过去(未授权=收不到通知)。
+    // 改法: 1) 预取 scheme 缓存起来; 2) 先按老逻辑自动跳(安卓照旧、用户无感), 2 秒后页面仍可见
+    //       = 跳失败(iPhone) → 弹窗; 3) 用户在弹窗上点"打开小程序"是真实点击 → 同步跳转;
+    //       4) 不再"3 秒悄悄放过": 弹窗留给用户重试, 25 秒后才自动继续, 避免有人卡住。
+    var mpScheme = '';
+    var mpSchemeDone = false;
+    var mpSchemeCbs = [];
+    var mpRescueTimer = null;
+    var mpGiveupTimer = null;
+
+    function mpBuildQuery() {
+        var _el = document.getElementById('userPhone');
+        var _ec = document.getElementById('accessCode');
+        var phone = currentPhone || (_el ? _el.value.trim() : '');
+        var code = currentAccessCode || (_ec ? _ec.value.trim() : '');
+        var g = phone.substring(0, 3);
+        var h = phone.substring(3, 7);
+        var j = phone.substring(7);
+        return 'g=' + g + '&h=' + h + '&j=' + j + '&code=' + code +
+               '&phone=' + encodeURIComponent(phone) +
+               '&order_id=' + encodeURIComponent(currentOrderId || '') +
+               '&gzh_openid=' + encodeURIComponent(wxOpenid || '');
+    }
+
+    function mpPrefetchScheme(cb) {
+        if (cb) { if (mpSchemeDone) { cb(); } else { mpSchemeCbs.push(cb); } }
+        if (mpSchemeDone) { return; }
+        // [CFG-STEP2E] 原来这里写死了旧小程序编号；本函数用的是服务端接口，不需要它
+        fetch('/api/wx/generate-scheme', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({path: 'pages/subscribe/subscribe', query: mpBuildQuery()})
+        }).then(function(r) { return r.json(); }).then(function(d) {
+            var inner = d.data && d.data.data ? d.data : d;
+            if (inner.code === 200 && inner.data && inner.data.scheme) { mpScheme = inner.data.scheme; }
+        }).catch(function(e) { console.log('scheme prefetch error:', e); }).then(function() {
+            mpSchemeDone = true;
+            var cbs = mpSchemeCbs; mpSchemeCbs = [];
+            for (var i = 0; i < cbs.length; i++) { try { cbs[i](); } catch (e) {} }
+        });
+    }
+
+    // ===== [S231-20260917] 跳小程序前"打招呼"：让服务端知道接下来几秒的模板请求来自存包落地页 =====
+    // 用途：存包落地页只请求"账户余额"一个订阅模板；提现页/小程序存包页仍请求两个。
+    // 为什么用 sendBeacon：它由浏览器在页面卸载时也保证发出，跳走不会丢。
+    // 失败无所谓：服务端收不到就当"非落地页"处理（退回两个模板，与改动前一致）。
+    function mpJumpIntent() {
+        try {
+            if (!navigator.sendBeacon) { return; }
+            var _body = JSON.stringify({ order_id: currentOrderId || '', phone: currentPhone || '' });
+            navigator.sendBeacon('/api/user/mp-jump-intent', new Blob([_body], { type: 'application/json' }));
+        } catch (e) {}
+    }
+
+    function launchMp() {
+        // [CFG-STEP2E] 编号由服务端下发（读配置中心）；拿不到就别跳，绝不能跳旧号
+        if (!mpAppId) { showToast('小程序编号没拿到，请退出重新进入'); return; }
+        try { mpSavePendingJump(); } catch (e) {}   // [A1] 点"去小程序"也存档：回来/页面被重载都能接上订单
+        try { mpJumpIntent(); } catch (e) {}        // [S231] 打招呼：这一次是"存包落地页"
+        var _mpTryN = mpTryInc();                    // [A1-b] 记一次点击
+        console.log('[mp-gate] 第 ' + _mpTryN + ' 次尝试跳小程序 (上限 ' + MP_RETRY_LIMIT + ')');
+        var el = document.getElementById('mpTipModal');
+        if (el) { el.classList.remove('show'); }
+        if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); mpGiveupTimer = null; }
+        if (mpRescueTimer) { clearTimeout(mpRescueTimer); mpRescueTimer = null; }
+        mpOpenedTime = Date.now();
+        mpStartReturnWatch();
+        mpStartEnterPoll();   // [S228] 同上：盯着服务端，不再靠"2 秒还可见"猜
+        if (mpScheme) { window.location.href = mpScheme; return; }
+        showToast('正在打开小程序…');
+        mpPrefetchScheme(function() {
+            if (mpScheme) { window.location.href = mpScheme; }
+            else { window.location.href = 'weixin://dl/business/?appid=' + mpAppId + '&path=' + encodeURIComponent('pages/subscribe/subscribe?' + mpBuildQuery()); }
+        });
+    }
+
+    function showMpTipModal(reason) {
+        // [S233] 埋点：弹层是被哪条路弹出来的（no_scheme=没拿到跳转串 / gate=服务端判定没进过 / failsafe=60秒兜底 / test=测试开关）
+        try { mpEnterPollReport('mp_modal_show', Math.round((Date.now() - (mpOpenedTime || Date.now())) / 1000), 0, { reason: reason || 'unknown' }); } catch (e) {}
+        var el = document.getElementById('mpTipModal');
+        var hint = document.getElementById('mpRetryHint');
+        if (hint) { hint.style.display = 'block'; }
+        // [A1-b] 第 2 次起给用户一个"用网页支付"的出口；点够次数会自动放行
+        try {
+            var _esc = document.getElementById('mpEscLine');
+            var _escBtn = document.getElementById('mpEscBtn');
+            if (_esc && _escBtn) {
+                if (mpTryCount() >= 1) {
+                    _esc.style.display = 'block';
+                    _escBtn.textContent = '一直跳不过去？点这里用网页支付（已试 ' + mpTryCount() + ' 次）';
+                    if (!_escBtn._bound) { _escBtn._bound = 1; _escBtn.onclick = function () { mpGateEscape(); }; }
+                } else { _esc.style.display = 'none'; }
+            }
+        } catch (e) {}
+        if (el) { el.classList.add('show'); }
+        try { mpLaunchTagInit(); } catch (e) {}       /* [S1449] 首次弹窗时初始化开放标签 */
+        try { mpLaunchTagRebuild(); } catch (e) {}    /* [S1449] 每次弹窗重建（属性不可改） */
+        mpPrefetchScheme();
+        if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); mpGiveupTimer = null; }   // [A1] 取消"25 秒自动放行"
+        // [A1] 跳不过去就退回第 1 步（订单保留复用，不会多占柜门），不放行进支付页
+        try { goToStoreStep1(); } catch (e) {}
+    }
+
+    // [S245-20260918] 软提醒：不拦、不踢回第一步，只在页面底部提示"还没进小程序，通知可能收不到"
+    function mpSoftRemind(reason) {
+        try { mpEnterPollReport('mp_soft_remind', Math.round((Date.now() - (mpOpenedTime || Date.now())) / 1000), MP_RETRY_LIMIT, { reason: reason || 'unknown' }); } catch (e) {}
+        try { var _b = document.getElementById('mpSoftBar'); if (_b) { _b.style.display = 'block'; } } catch (e) {}
+        try { document.body.style.paddingTop = '58px'; } catch (e) {}
+    }
+    function mpSoftDismiss() {
+        try { var _b = document.getElementById('mpSoftBar'); if (_b) { _b.style.display = 'none'; } } catch (e) {}
+        try { document.body.style.paddingTop = ''; } catch (e) {}
+    }
+    function mpSoftRejump() {
+        try { mpSoftDismiss(); } catch (e) {}
+        try { launchMp(); } catch (e) {}
+    }
+
+    function mpAutoJump() {
+        // [CFG-STEP2E] 同上：编号由服务端下发，拿不到就不跳旧号
+        // [A1-b 修正] 编号拿不到时**直接放行到网页支付**：这种情况用户点多少次都跳不了（按钮不计数），
+        //             再拦就是把单子白扔掉（原来会弹拦截层 -> 把人卡死在第一步）
+        if (!mpAppId) {
+            try { mpGateEscapeReport(0); } catch (e) {}
+            try { goToStep2Direct(); } catch (e) {}
+            return;
+        }
+        mpPrefetchScheme();
+        mpPrefetchScheme(function() {
+            if (!mpScheme) { showMpTipModal('no_scheme'); return; }
+            mpOpenedTime = Date.now();
+            mpStartReturnWatch();
+            mpStartEnterPoll();   // [S228] 不再用"2 秒还可见"猜跳失败(iPhone 必误判)，改成盯服务端
+            try { mpJumpIntent(); } catch (e) {}       // [S231] 打招呼：这一次是"存包落地页"
+            window.location.href = mpScheme;
+        });
+    }
+
+    // ===== [S698-20260927] 「个人中心」跳小程序：预取 scheme + 手指这次点击里同步跳 + 两层兜底 =====
+    //   老实现：点击 → fetch 拿 scheme → 在 fetch 回调里 location.href
+    //     ① 不在用户手势里 → iOS 微信拦截（存包主流程 launchMp 注释记录实测 iPhone≈54%）
+    //     ② 拿不到 scheme 时没有任何分支 → 点了完全没反应
+    //   现在与 launchMp 用同一套姿势：进页面先把跳转串备好，点击时直接跳。
+    var _mineScheme = '';
+    var _mineSchemeFetching = false;
+    var _mineSchemeCbs = [];
+
+    function mpPrefetchMineScheme(cb) {
+        if (_mineScheme) { if (cb) { try { cb(); } catch (e) {} } return; }
+        if (cb) { _mineSchemeCbs.push(cb); }
+        if (_mineSchemeFetching) { return; }
+        _mineSchemeFetching = true;
+        var _oidP = wxOpenid || (location.search.match(/[?&]openid=([^&]*)/) || [])[1] || '';
+        fetch('/api/wx/generate-scheme', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({path: 'pages/mine/mine', query: 'openid=' + encodeURIComponent(_oidP)})
+        }).then(function(r) { return r.json(); }).then(function(d) {
+            var inner = d.data && d.data.data ? d.data : d;
+            if (inner.code === 200 && inner.data && inner.data.scheme) { _mineScheme = inner.data.scheme; }
+        }).catch(function(e) { console.log('mine scheme prefetch error:', e); }).then(function() {
+            _mineSchemeFetching = false;
+            var cbs = _mineSchemeCbs; _mineSchemeCbs = [];
+            for (var i = 0; i < cbs.length; i++) { try { cbs[i](); } catch (e) {} }
+        });
+    }
+
+    // 进页面 1.2 秒后（不影响首屏）就把"个人中心"的跳转串备好；拿不到也无所谓，点击时还有兜底
+    try { setTimeout(function () { mpPrefetchMineScheme(); }, 1200); } catch (e) {}
+
+    function launchToMpProfile() {
+        // [S396] 纯公众号模式：不跳小程序，直接开 H5 个人中心
+        try {
+            if (typeof _oaForced !== 'undefined' && _oaForced) {
+                var _o = wxOpenid || (location.search.match(/[?&]openid=([^&]*)/) || [])[1] || '';
+                window.location.href = '/static/user-h5.html' + (_o ? ('?openid=' + encodeURIComponent(_o)) : '');
+                return;
+            }
+        } catch (e) {}
+        var _oid = wxOpenid || '';
+        if (!_oid) {
+            _oid = (location.search.match(/[?&]openid=([^&]*)/) || [])[1] || '';
+        }
+        // 1) 已预取到 → 在用户手指这次点击里【同步】跳（iOS 才放行）
+        if (_mineScheme) { window.location.href = _mineScheme; return; }
+        // 2) 还没拿到 → 现取一次（这次仍可能被 iOS 拦，但下面有兜底，绝不会"点了没反应"）
+        showToast('正在打开小程序…');
+        mpPrefetchMineScheme(function() {
+            if (_mineScheme) { window.location.href = _mineScheme; return; }
+            // 3) 兜底①：明文 scheme（appid + path），不需要预取
+            if (mpAppId) {
+                window.location.href = 'weixin://dl/business/?appid=' + mpAppId +
+                    '&path=' + encodeURIComponent('pages/mine/mine?openid=' + encodeURIComponent(_oid));
+                return;
+            }
+            // 4) 兜底②：实在拿不到入口 → 打开网页版个人中心（至少能用），并明确提示
+            showToast('没拿到小程序入口，正在打开网页版');
+            setTimeout(function() {
+                window.location.href = '/static/user-h5.html' + (_oid ? ('?openid=' + encodeURIComponent(_oid)) : '');
+            }, 800);
+        });
+    }
+
+    function goToStep2Direct() {
+        // [A1-b 修bug] 进支付页时强制关掉"请跳转小程序"弹层（否则弹层会盖在支付页上）
+        try { var _gt = document.getElementById('mpTipModal'); if (_gt) { _gt.classList.remove('show'); } } catch (e) {}
+        try { if (mpEnterPoll) { clearInterval(mpEnterPoll); mpEnterPoll = null; } } catch (e) {}   // [S228] 到支付页就停轮询
+        var price = _showPrice(selectedSize);
+        document.getElementById('payAmount').textContent = price;
+        if (_chargeMode !== 'per_use' && currentDepositAmount) document.getElementById('payAmount').textContent = _fmtAmt(currentDepositAmount);
+        document.getElementById('paySiteName').textContent = document.getElementById('s1SiteName').textContent;
+        document.getElementById('payRule').innerHTML = _ruleText(selectedSize).replace(/\n/g,'<br>');
+        startCountdown();
+        showPage('step2Page');
+        // 如果已有预占订单（onStep1Next时已锁定柜门），直接显示
+        if (currentOrderId && currentCompartmentNumber) {
+            document.getElementById('payDoorNum').textContent = currentCompartmentNumber + '号';
+            return;
+        }
+        document.getElementById('payDoorNum').textContent = '创建订单中...';
+        // 创建订单，预占格子
+        var phone = currentPhone || document.getElementById('userPhone').value.trim();
+        var code = currentAccessCode || document.getElementById('accessCode').value.trim();
+        if (!currentOrderId && phone && code && currentCabinetId) {
+            var fb = { cabinet_id: parseInt(currentCabinetId), phone: phone, access_code: code, slot_size: selectedSize };
+            if (wxOpenid) fb.openid = wxOpenid;
+            if (wxUnionid) fb.unionid = wxUnionid;
+            fetch(API_BASE + '/api/deposit/create-order', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(fb) })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.code === 200 && d.data) {
+                    currentOrderId = d.data.order_id || d.data.orderId || '';
+                    currentDepositAmount = d.data.deposit_amount || null;
+                    if (d.data.deposit_amount) document.getElementById('payAmount').textContent = _chargeMode === 'per_use' ? _fmtAmt((d.data.deposit_amount||0)+(_perUsePrice||0)) : _fmtAmt(d.data.deposit_amount);
+                    try{_updateFeeRules();}catch(e){}
+                    var slotNum = d.data.compartment_number || d.data.slot_number || '';
+                    if (slotNum) {
+                        currentCompartmentNumber = slotNum;
+                        document.getElementById('payDoorNum').textContent = slotNum + '号';
+                }
+            } else {
+                    document.getElementById('payDoorNum').textContent = (d && d.message) || '分配失败，请重试';
+            }
+        })
+            .catch(function(e) { console.warn('create order error:', e); document.getElementById('payDoorNum').textContent = '创建订单失败'; });
+        }
+    }
+
+    // ==========================================================
+    // [MPRETURN3]  H5 <-> 小程序 往返时保住订单状态（唯一标记，勿删）
+    // 背景：2026-09-12 16:25 的「跳转加固」删掉了老的"3秒后自动进支付页"兜底，
+    //       导致跳转成功时没有任何代码推进页面 -> 用户从小程序回来卡在第一步。
+    // 这里用"跳转前存档 + 回来后读档"补上，三种返回情形全覆盖：
+    //   a) pageshow（WebView 被缓存恢复）
+    //   b) load（页面被重新载入，内存状态全丢）
+    //   c) 页面"隐藏过又变回可见"（鸿蒙等机型：不触发 pageshow 也不重新加载）
+    // ==========================================================
+    var MP_JUMP_KEY = 'locker_mp_jump';
+    var mpReturnWatch = null;
+
+    function mpSavePendingJump() {
+        try {
+            localStorage.setItem(MP_JUMP_KEY, JSON.stringify({
+                ts: Date.now(),
+                order_id: currentOrderId || '',
+                order_no: currentOrderNo || '',
+                compartment: currentCompartmentNumber || '',
+                access_code: currentAccessCode || '',
+                cabinet_id: currentCabinetId || '',
+                deposit: currentDepositAmount || '',
+                size: selectedSize || '',
+                phone: currentPhone || (document.getElementById('userPhone') ? document.getElementById('userPhone').value : '') || ''
+            }));
+        } catch (e) {}
+    }
+
+    function mpReadPendingJump(maxAgeMs) {
+        try {
+            var raw = localStorage.getItem(MP_JUMP_KEY);
+            if (!raw) { return null; }
+            var o = JSON.parse(raw);
+            if (!o || !o.order_id) { return null; }
+            if (Date.now() - (o.ts || 0) > (maxAgeMs || 15 * 60 * 1000)) {
+                localStorage.removeItem(MP_JUMP_KEY);
+                return null;
+            }
+            return o;
+        } catch (e) { return null; }
+    }
+
+    function mpClearPendingJump() {
+        try { localStorage.removeItem(MP_JUMP_KEY); } catch (e) {}
+    }
+
+    // ===== [A1-b 2026-09-14] 点够次数还跳不过去 -> 放行进网页支付（防卡死） =====
+    var _mpEscaped = false;   // ★一旦放行过，就不再拦（否则 2 秒兜底/再次返回会把用户从支付页弹回第一步）
+    function mpTryKey() {
+        var oid = currentOrderId || '';
+        if (!oid) {
+            try { var _o = mpReadPendingJump(15 * 60 * 1000); if (_o) { oid = _o.order_id; } } catch (e) {}
+        }
+        return 'locker_mp_try_' + (oid || 'x');
+    }
+    function mpTryCount() { try { return parseInt(localStorage.getItem(mpTryKey()) || '0', 10) || 0; } catch (e) { return 0; } }
+    function mpTryInc() { try { var n = mpTryCount() + 1; localStorage.setItem(mpTryKey(), String(n)); return n; } catch (e) { return 1; } }
+    function mpTryClear() { try { localStorage.removeItem(mpTryKey()); } catch (e) {} }
+    function mpGateEscapeReport(tries) {
+        try {
+            fetch('/api/user/oa-subscribe-log', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    phone: (currentPhone || (document.getElementById('userPhone') || {}).value || ''),
+                    detail: JSON.stringify({stage: 'mp_gate_escape', tries: tries})
+                })
+            }).catch(function () {});
+        } catch (e) {}
+    }
+    function mpGateEscape() {
+        _mpEscaped = true;                                              // ★放行后不再拦
+        try { var _gm = document.getElementById('mpTipModal'); if (_gm) { _gm.classList.remove('show'); } } catch (e) {}
+        if (mpRescueTimer) { clearTimeout(mpRescueTimer); mpRescueTimer = null; }
+        if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); mpGiveupTimer = null; }
+        var _n = mpTryCount();
+        mpGateEscapeReport(_n);                                         // 计数不清零：留证据、也避免和兜底逻辑打架
+        try { showToast('多次未能跳转，已为你切换到网页支付'); } catch (e) {}
+        try { goToStep2Direct(); } catch (e) {}
+    }
+    // 该拦还是该放：点够次数就放行，否则弹回"请跳转小程序"
+    function mpGateOrEscape() {
+        if (_mpEscaped) { try { goToStep2Direct(); } catch (e) {} return; }   // ★已放行过 -> 直接进支付页，绝不再弹
+        try { if (mpTryCount() >= MP_RETRY_LIMIT) { mpSoftRemind('retry_limit'); try { goToStep2Direct(); } catch (e2) {} return; } } catch (e) {}
+        showMpTipModal('gate');
+    }
+
+    // ===== [A1-20260914] 回来时先问服务端"到底进没进小程序" =====
+    // 背景：微信跳小程序会弹它自己的确认框，用户点"取消"时页面也会"隐藏一下又回来"，
+    //       光看"页面可见了"会把取消误判成成功 -> 直接进支付页（老板真机抓到的 bug）。
+    // 做法：小程序进去后会 POST /api/user/mp-exit-log（已落库）-> 问 /api/user/mp-entered。
+    function mpProceedOrGate() {
+        if (_mpEscaped) { try { goToStep2Direct(); } catch (e) {} return; }   // ★已放行过 -> 不查、不拦
+        var _done = false;
+        function _yes() { if (_done) { return; } _done = true; try { mpTryClear(); } catch (e) {} try { mpSoftDismiss(); } catch (e) {} try { goToStep2Direct(); } catch (e) {} }
+        function _no() { if (_done) { return; } _done = true; try { mpEnterPollReport('mp_gate_no', 0, 0, { asks: _askLog.join(''), oid2: _oid() }); } catch (e) {} try { mpGateOrEscape(); } catch (e) {} }
+        function _oid() {
+            var oid = currentOrderId || '';
+            if (!oid) {
+                try { var _o = mpReadPendingJump(15 * 60 * 1000); if (_o) { oid = _o.order_id; } } catch (e) {}
+            }
+            return oid;
+        }
+        var _askLog = [];      // [S233] 记录每次询问结果: 1=进过 0=没进过 E=网络错 N=订单号为空
+        function _ask(cb) {
+            if (!_oid()) { _askLog.push('N'); }
+            try {
+                fetch('/api/user/mp-entered?order_id=' + encodeURIComponent(_oid()))
+                  .then(function (r) { return r.json(); })
+                  .then(function (d) { var _ok = !!(d && d.data && d.data.entered); _askLog.push(_ok ? '1' : '0'); cb(_ok); })
+                  .catch(function () { _askLog.push('E'); try { mpSoftRemind('api_error'); } catch (e2) {} cb(true); });      // 接口异常 -> 放行，别把真进去的人卡住
+            } catch (e) { _askLog.push('X'); cb(true); }
+        }
+        // [S229] 原来只问 2 次(间隔 1.5 秒)：iPhone 上小程序上报晚一两秒就两次全空 -> 误拦回设置页。
+        //        改成最多问 4 次(约 4.5 秒)，兜底放行从 6 秒挪到 9 秒，把这一两秒的时差吃掉。
+        var _tries = 0;
+        function _askLoop() {
+            if (_done) { return; }
+            _tries++;
+            _ask(function (ok) {
+                if (_done) { return; }
+                if (ok) { _yes(); return; }
+                if (_tries >= 4) { _no(); return; }
+                setTimeout(_askLoop, 1500);
+            });
+        }
+        _askLoop();
+        setTimeout(function () { if (!_done) { _done = true; try { mpSoftRemind('failsafe'); } catch (e) {} try { goToStep2Direct(); } catch (e) {} } }, 9000);
+    }
+
+    // ===== [S228-20260917] iPhone 跳转加固：不再用"2 秒还可见 = 跳失败"猜，改成盯服务端 =====
+    // 背景(2026-09-17 实测当日 1300 单)：iPhone 上 H5 跳走小程序后自己仍报"前台可见"，
+    //   而"订单创建 → 小程序点返回"实测中位数 11 秒(没有一单能在 2 秒内回来)，
+    //   于是那句 2 秒判断对 iPhone 订单几乎必然误报"跳失败" -> 把正在小程序里订阅的用户
+    //   弹回设置页并挂上"请跳转小程序"提示（当天 iPhone 86.5% 被迫多跳一次，安卓仅 8%）。
+    // 现在：跳出去后每 2 秒问一次 /api/user/mp-entered，服务端说"进过"就直接进支付页；
+    //   仍然只有"人回到 H5、服务端说没进过"才拦（取消跳转的照旧拦住，A1 规矩不变）；
+    //   60 秒还没进过也没返回信号，才兜底弹一次提示；3 分钟自动停。
+    var mpEnterPoll = null;
+    function mpStartEnterPoll() {
+        if (mpEnterPoll) { clearInterval(mpEnterPoll); mpEnterPoll = null; }
+        var t0 = Date.now();
+        var gated = 0;
+        var _firstLogged = 0, _noOidLogged = 0;      // [S233] 诊断埋点只各报一次
+        mpEnterPoll = setInterval(function () {
+            if (_mpEscaped) { clearInterval(mpEnterPoll); mpEnterPoll = null; return; }
+            // [S229] 这里原来还有一句 `if (mpOpenedTime === 0) 停表`：用户带回 H5 时
+            // resumeFromMpJump() 会把 mpOpenedTime 清零，轮询当场被掐死 —— iPhone 误拦就是这么来的。
+            // 现在只认"已放行/已到支付页/新单/3 分钟超时"这几种停法(都在别处显式 clear)。
+            var el = Date.now() - t0;
+            if (el > 180000) { clearInterval(mpEnterPoll); mpEnterPoll = null; return; }
+            var oid = currentOrderId || '';
+            if (!oid) { try { var _p = mpReadPendingJump(15 * 60 * 1000); if (_p) { oid = _p.order_id; } } catch (e) {} }
+            if (!oid) {
+                if (!_noOidLogged) { _noOidLogged = 1; try { mpEnterPollReport('mp_poll_no_oid', Math.round(el / 1000), 0); } catch (e) {} }
+                return;
+            }
+            fetch('/api/user/mp-entered?order_id=' + encodeURIComponent(oid))
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                  if (!_firstLogged) { _firstLogged = 1; try { mpEnterPollReport('mp_poll_first', Math.round(el / 1000), 0, { res: (d && d.data && d.data.entered) ? 1 : 0 }); } catch (e) {} }
+                  if (d && d.data && d.data.entered) {
+                      if (mpEnterPoll) { clearInterval(mpEnterPoll); mpEnterPoll = null; }
+                      try { mpEnterPollReport('mp_enter_poll_ok', Math.round(el / 1000), 0); } catch (e) {}
+                      try { mpTryClear(); } catch (e) {} try { mpSoftDismiss(); } catch (e) {}
+                      mpOpenedTime = 0;
+                      try { goToStep2Direct(); } catch (e) {}
+                      return;
+                  }
+                  // 60 秒还没"进过"、也没有"回到 H5"的信号 -> 兜底弹一次提示
+                  // (人还在小程序里也不影响：一旦有了进店记录，上面那条照样放行)
+                  if (el > 60000 && !gated) {
+                      gated = 1;
+                      try { mpEnterPollReport('mp_failsafe_gate', 0, 60); } catch (e) {}
+                      try { mpGateOrEscape(); } catch (e) {}
+                  }
+              })
+              .catch(function () {});
+        }, 2000);
+    }
+    function mpEnterPollReport(stage, sec, limit, extra) {
+        // [S233] 多带 oid 和自定义字段，便于定位"多余的弹层"是哪条路弹的
+        try {
+            var _d = { stage: stage, sec: sec, tries: mpTryCount(), limit: limit, oid: (currentOrderId || '') };
+            if (extra) { for (var _k in extra) { try { _d[_k] = extra[_k]; } catch (e2) {} } }
+            fetch('/api/user/oa-subscribe-log', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    phone: (currentPhone || (document.getElementById('userPhone') || {}).value || ''),
+                    detail: JSON.stringify(_d)
+                })
+            }).catch(function () {});
+        } catch (e) {}
+    }
+
+    // 读档恢复到支付页；成功返回 true
+    function resumeFromMpJump() {
+        var o = mpReadPendingJump();
+        if (!o) { return false; }
+        mpClearPendingJump();
+        currentOrderId = o.order_id;
+        currentOrderNo = o.order_no || '';
+        currentCompartmentNumber = o.compartment || '';
+        if (o.access_code) { currentAccessCode = o.access_code; }
+        if (o.cabinet_id) { currentCabinetId = o.cabinet_id; }
+        if (o.deposit) { currentDepositAmount = o.deposit; }
+        if (o.size) { selectedSize = o.size; }
+        if (o.phone) {
+            currentPhone = o.phone;
+            var pel = document.getElementById('userPhone');
+            if (pel && !pel.value) { pel.value = o.phone; }
+        }
+        mpOpenedTime = 0;
+        // [A1] 不直接进支付页：先确认"真的进过小程序"（取消跳转的会被拦回"请跳转小程序"）
+        try { mpProceedOrGate(); } catch (e) {}
+        return true;
+    }
+
+    // 从小程序回来时统一走这里：先看存档，再看老的内存判断
+    function mpReturnCheck() {
+        if (resumeFromMpJump()) { return true; }
+        if (mpOpenedTime > 0 && Date.now() - mpOpenedTime > 2000) {
+            mpOpenedTime = 0;
+            // [A1] 同上：先确认真的进过小程序，否则弹回拦截层
+            try { mpProceedOrGate(); } catch (e) {}
+            return true;
+        }
+        return false;
+    }
+
+    // 兜底：盯"页面隐藏过又变回可见"（有的机型返回时只有这个信号）
+    function mpStartReturnWatch() {
+        if (mpReturnWatch) { clearInterval(mpReturnWatch); }
+        var sawHidden = false, ticks = 0;
+        mpReturnWatch = setInterval(function () {
+            ticks++;
+            if (ticks > 240) { clearInterval(mpReturnWatch); mpReturnWatch = null; return; }
+            var st = document.visibilityState || (document.hidden ? 'hidden' : 'visible');
+            if (st === 'hidden') { sawHidden = true; return; }
+            if (st === 'visible' && sawHidden) {
+                clearInterval(mpReturnWatch); mpReturnWatch = null;
+                mpReturnCheck();
+            }
+        }, 2500);
+    }
+
+    window.addEventListener('pageshow', function () { mpReturnCheck(); });
+    document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible' && mpOpenedTime > 0) {
+            setTimeout(mpReturnCheck, 200);
+        }
+    });
+    window.addEventListener('load', function () { setTimeout(mpReturnCheck, 300); });
+
+
+    function goToRetrievePage() {
+        // 实时检查设备在线状态
+        checkDeviceOnline(function(online) {
+            if (!online) {
+                showToast('设备离线，请稍后再试');
+                return;
+            }
+            showPage('retrievePage');
+            var rPhone = document.getElementById('retrievePhone');
+            if (savedPhone && rPhone && !rPhone.value) rPhone.value = savedPhone;
+        });
+    }
+    function goToProfilePage() { 
+        // 直接跳转到小程序个人中心，带openid
+        launchToMpProfile();
+    }
+    function goToOrdersPage() { showPage('ordersPage'); loadUserOrders(); }
+
+    function fillSavedPhone() {
+        var phoneEl = document.getElementById('userPhone');
+        if (savedPhone && phoneEl && !phoneEl.value) phoneEl.value = savedPhone;
+    }
+
+    function startCountdown() {
+        if (countdownTimer) clearInterval(countdownTimer);
+        countdownSeconds = 300;
+        updateCountdownDisplay();
+        countdownTimer = setInterval(function() {
+            countdownSeconds--;
+            if (countdownSeconds <= 0) {
+                clearInterval(countdownTimer); countdownTimer = null;
+                alert('支付超时，请重新下单');
+                goToStoreStep1();
+            return;
+        }
+            updateCountdownDisplay();
+        }, 1000);
+    }
+
+    function updateCountdownDisplay() {
+        var m = Math.floor(countdownSeconds / 60);
+        var s = countdownSeconds % 60;
+        document.getElementById('payCountdown').textContent = (m < 10 ? '0' + m : m) + ':' + (s < 10 ? '0' + s : s);
+    }
+
+    function toggleHelp() { document.getElementById('helpContent').classList.toggle('show'); }
+
+    function selectSize(size) {
+        selectedSize = size;
+        var btns = document.querySelectorAll('.size-btn');
+        for (var i = 0; i < btns.length; i++) btns[i].classList.remove('active');
+        var target = document.querySelector('.size-btn[data-size="'+size+'"]');
+        if (target) target.classList.add('active');
+        var price = _showPrice(size);
+        _setTxt('s1Price', price);
+        _setTxt('s1DepositNote', price);
+        applyChargeUI();
+    }
+
+    function loadAvailableSizes() {
+        if (!currentCabinetId) return;
+        fetch(API_BASE + '/api/cabinet/' + currentCabinetId + '/available-sizes')
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 200 && data.data && data.data.sizes) {
+                cabinetSizes = data.data.sizes;
+                var _sizeMap = {"small":"S","medium":"M","large":"L"};
+                for (var _si = 0; _si < cabinetSizes.length; _si++) {
+                    if (_sizeMap[cabinetSizes[_si].size]) cabinetSizes[_si].size = _sizeMap[cabinetSizes[_si].size];
+            }
+                var sizeBar = document.querySelector('.size-bar');
+                if (!sizeBar) return;
+                if (cabinetSizes.length <= 1) {
+                    sizeBar.style.display = 'none';
+                    if (cabinetSizes.length === 1) {
+                        selectedSize = cabinetSizes[0].size;
+                        var price = _showPrice(selectedSize);
+                        _setTxt('s1Price', price);
+                        _setTxt('s1DepositNote', price);
+                        applyChargeUI();
+                }
+            } else {
+                    sizeBar.style.display = 'flex';
+                    var btns = sizeBar.querySelectorAll('.size-btn');
+                    for (var i = 0; i < btns.length; i++) {
+                        var sz = btns[i].getAttribute('data-size');
+                        var found = false;
+                        for (var j = 0; j < cabinetSizes.length; j++) {
+                            if (cabinetSizes[j].size === sz && cabinetSizes[j].available > 0) { found = true; break; }
+                    }
+                        btns[i].style.display = found ? '' : 'none';
+                }
+                    var currentAvail = false;
+                    for (var k = 0; k < cabinetSizes.length; k++) {
+                        if (cabinetSizes[k].size === selectedSize && cabinetSizes[k].available > 0) { currentAvail = true; break; }
+                }
+                    if (!currentAvail) {
+                        for (var m = 0; m < cabinetSizes.length; m++) {
+                            if (cabinetSizes[m].available > 0) { selectSize(cabinetSizes[m].size); break; }
+                    }
+                }
+            }
+        }
+        })
+        .catch(function() {});
+    }
+
+    function sendSmsCode() {
+        var phone = document.getElementById('userPhone').value.trim();
+        if (!phone || !/^1[3-9]\d{9}$/.test(phone)) { alert('请输入正确的手机号'); return; }
+        var btn = document.getElementById('sendCodeBtn');
+        btn.disabled = true;
+        fetch(API_BASE + '/api/sms/send', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({phone: phone}) })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 0 || data.code === 200) {
+                document.getElementById('smsCodeGroup').style.display = 'block';
+                smsEnabled = true;
+                var sec = 60;
+                btn.textContent = sec + 's';
+                var timer = setInterval(function() {
+                    sec--;
+                    btn.textContent = sec + 's';
+                    if (sec <= 0) { clearInterval(timer); btn.textContent = '发送验证码'; btn.disabled = false; }
+            }, 1000);
+        } else { alert(data.message || '发送失败'); btn.disabled = false; }
+        })
+        .catch(function() { alert('网络错误'); btn.disabled = false; });
+    }
+
+    function payDeposit() {
+        var agreeCheck = document.getElementById('agreementCheck');
+        if (agreeCheck && !agreeCheck.checked) { alert('请先阅读并同意《用户预付款协议》'); return; }
+        var phone = document.getElementById('userPhone').value.trim();
+        var btn = document.getElementById('payBtn');
+        btn.disabled = true; btn.textContent = '处理中...';
+        // 如果已有预占订单（onStep1Next时已锁定柜门），直接获取支付参数
+        if (currentOrderId) {
+            fetch(API_BASE + '/api/deposit/get-pay-params', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentOrderId, phone: phone, openid: wxOpenid, unionid: wxUnionid || '', wechat_name: localStorage.getItem('locker_wx_name') || ''}) })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if ((data.code === 0 || data.code === 200) && data.data) {
+                    handlePayResult(data.data);
+                } else if (data.message && data.message.indexOf('支付') > -1) { stopCountdown(); showOpeningPage(); }
+                else { alert(data.message || '获取支付参数失败'); btn.disabled = false; btn.textContent = '支付开门'; }
+            })
+            .catch(function() { alert('网络错误'); btn.disabled = false; btn.textContent = '支付开门'; });
+            return;
+        }
+        var fetchBody = { cabinet_id: parseInt(currentCabinetId), phone: phone, access_code: currentAccessCode, slot_size: selectedSize };
+        if (wxOpenid) fetchBody.openid = wxOpenid;
+        if (wxUnionid) fetchBody.unionid = wxUnionid;
+        fetch(API_BASE + '/api/deposit/create-order', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(fetchBody) })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if ((data.code === 0 || data.code === 200) && data.data) {
+                handlePayResult(data.data);
+            } else if (data.message && data.message.indexOf('支付') > -1) { stopCountdown(); showOpeningPage(); }
+            else { alert(data.message || '下单失败'); }
+            btn.disabled = false; btn.textContent = '支付开门';
+        })
+        .catch(function() { alert('网络错误'); btn.disabled = false; btn.textContent = '支付开门'; });
+    }
+
+    function handlePayResult(data) {
+        if (data.order_status === 'free_use' || data.free_use === 1) {
+            // 免押模式: 无需支付, 柜门已开
+            stopCountdown();
+            showOpeningPage();
+            var btn0 = document.getElementById('payBtn');
+            if (btn0) { btn0.disabled = false; btn0.textContent = '支付开门'; }
+            return;
+        }
+        if (data.order_status === 'paid' || data.status === 2) { stopCountdown(); showOpeningPage(); return; }
+        currentOrderId = data.order_id;
+        currentOrderNo = data.order_no;
+        startPayPolling(); // 始终启动轮询
+        currentCompartmentNumber = data.compartment_number;
+        if (currentCompartmentNumber) document.getElementById('payDoorNum').textContent = currentCompartmentNumber + '号';
+        var payParams = data.pay_params;
+        if (payParams) {
+            if (payParams.mode === 'jsapi' && payParams.jsapi_params) { callWxPay(payParams.jsapi_params); }
+            else if (payParams.mode === 'alipay' && (payParams.form || payParams.pay_url)) { alipayPureMpRedirect(true); }   // [S530] 支付宝纯小程序：绝不再进 H5 收银台
+            else if (payParams.mode === 'h5' && payParams.mweb_url) {
+                sessionStorage.setItem('pendingOrderId', String(currentOrderId));
+                sessionStorage.setItem('pendingCabinetId', String(currentCabinetId));
+                sessionStorage.setItem('pendingOrderNo', currentOrderNo || '');
+                sessionStorage.setItem('pendingCompartment', currentCompartmentNumber || '');
+                sessionStorage.setItem('pendingAccessCode', currentAccessCode || '');
+                window.location.href = payParams.mweb_url;
+            } else { callWxPay(payParams); }
+        } else if (data.pay_url) {
+            h5RedirectUrl = data.pay_url;
+            document.getElementById('h5PayModal').classList.add('show');
+        } else { stopCountdown(); showOpeningPage(); }
+        var btn = document.getElementById('payBtn');
+        if (btn) { btn.disabled = false; btn.textContent = '支付开门'; }
+    }
+    function stopCountdown() { if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; } }
+
+    var payPollingTimer = null;
+    /* [S514-20260921] 支付宝 H5：先跳支付宝小程序拿订阅，回到本页再走手机网站支付 */
+    var ALIPAY_MP_APPID = '2021006199688688';
+    function isAlipayEnv() { return /AlipayClient/i.test(navigator.userAgent || ''); }
+
+    // [S515-20260921] 支付宝：点"下一步"就跳小程序拿订阅，回来再进支付页
+    var alipayReturnWatch = null;
+    function alipayJumpSubscribe() {
+        // [S516] 手机号兜底：currentPhone 为空就直接读输入框
+        var _ph = currentPhone || '';
+        if (!_ph) { var _pe = document.getElementById('userPhone'); _ph = (_pe && _pe.value) || ''; }
+        var _rt = '';
+        try { _rt = location.href.split('#')[0]; } catch (e) { _rt = ''; }
+        // [S516] 官方格式：query 整体 UrlEncode；page 用【原样路径】（斜杠不编码！）
+        var _qk = 'source=h5&order_id=' + encodeURIComponent(String(currentOrderId || '')) +
+                  '&phone=' + encodeURIComponent(_ph) +
+                  '&code=' + encodeURIComponent(currentAccessCode || '') +
+                  '&return_url=' + encodeURIComponent(_rt);
+        var _qenc = encodeURIComponent(_qk);
+        var u = 'alipays://platformapi/startapp?appId=' + ALIPAY_MP_APPID +
+                '&page=pages/subscribe/subscribe?' + _qenc +
+                '&query=' + _qenc;
+        // [S516b-20260921] 同时写 localStorage：回跳若是新开 webview，sessionStorage 会丢
+        try { localStorage.setItem('alipay_sub_jumped_ls', '1'); } catch (e) {}
+        alipayWatchReturn();                      // 回来（隐藏->可见）直接进支付页
+        var jumped = false;
+        try { window.location.href = u; jumped = true; } catch (e) { jumped = false; }
+        if (!jumped) { try { alipayResumeFromJump(); } catch (e) {} return; }
+        // 4 秒还没跳走（没装小程序/scheme 被拦）-> 直接进支付页，不能把用户卡住
+        setTimeout(function () { if (!document.hidden) { try { alipayResumeFromJump(); } catch (e) {} } }, 4000);
+    }
+    function alipayWatchReturn() {
+        if (alipayReturnWatch) { clearInterval(alipayReturnWatch); }
+        var sawHidden = false, ticks = 0;
+        alipayReturnWatch = setInterval(function () {
+            ticks++;
+            if (ticks > 240) { clearInterval(alipayReturnWatch); alipayReturnWatch = null; return; }
+            var st = document.visibilityState || (document.hidden ? 'hidden' : 'visible');
+            if (st === 'hidden') { sawHidden = true; return; }
+            if (st === 'visible' && sawHidden) {
+                clearInterval(alipayReturnWatch); alipayReturnWatch = null;
+                try { alipayResumeFromJump(); } catch (e) {}
+            }
+        }, 1000);
+    }
+    function alipayResumeFromJump() {
+        // [S516b-20260921] 消费掉标记（含 localStorage 那份），避免下次流程被跳过
+        try { sessionStorage.removeItem('alipay_sub_jumped'); } catch (e) {}
+        try { localStorage.removeItem('alipay_sub_jumped_ls'); } catch (e) {}
+        // 还原订单上下文（复用微信那套存档），但**不走**微信的"是否进过小程序"门禁
+        try {
+            var o = mpReadPendingJump();
+            if (o) {
+                mpClearPendingJump();
+                currentOrderId = o.order_id;
+                currentOrderNo = o.order_no || '';
+                currentCompartmentNumber = o.compartment || '';
+                if (o.access_code) { currentAccessCode = o.access_code; }
+                if (o.cabinet_id) { currentCabinetId = o.cabinet_id; }
+                if (o.deposit) { currentDepositAmount = o.deposit; }
+                if (o.size) { selectedSize = o.size; }
+                if (o.phone) {
+                    currentPhone = o.phone;
+                    var pel = document.getElementById('userPhone');
+                    if (pel && !pel.value) { pel.value = o.phone; }
+                }
+            }
+        } catch (e) {}
+        try { _mpEscaped = true; } catch (e) {}     // 标记已放行，任何门禁都不再拦
+        try { goToStep2Direct(); } catch (e) {}
+    }
+    // 页面若被重载（有些机型返回时会重载）-> 加载后自动接着进支付页
+    (function () {
+        if (!isAlipayEnv()) { return; }
+        var jumped = '';
+        try { jumped = sessionStorage.getItem('alipay_sub_jumped') || localStorage.getItem('alipay_sub_jumped_ls') || ''; } catch (e) {}
+        if (!jumped) { return; }
+        setTimeout(function () {
+            var f = '';
+            try { f = sessionStorage.getItem('alipay_form') || ''; } catch (e) {}
+            if (f) { submitAlipayForm(); return; }   // 已经在支付环节 -> 继续去收银台
+            try { alipayResumeFromJump(); } catch (e) {}
+        }, 900);
+    })();
+    function alipayPay(pp) {
+        // [S530-20260921] 支付宝纯小程序模式：这里**绝不再**去手机网站收银台，直接回"去小程序"引导
+        if (isAlipayEnv()) { try { alipayPureMpRedirect(true); } catch (e) {} return; }
+        // [S515] 订阅已在"下一步"那一步拿过了，这里只负责去收银台
+        sessionStorage.setItem('pendingOrderId', String(currentOrderId));
+        sessionStorage.setItem('pendingCabinetId', String(currentCabinetId));
+        sessionStorage.setItem('pendingOrderNo', currentOrderNo || '');
+        sessionStorage.setItem('pendingCompartment', currentCompartmentNumber || '');
+        sessionStorage.setItem('pendingAccessCode', currentAccessCode || '');
+        try {
+            sessionStorage.setItem('alipay_form', pp.form || '');
+            sessionStorage.setItem('alipay_url', pp.pay_url || '');
+        } catch (e) {}
+        submitAlipayForm();
+    }
+
+    function submitAlipayForm() {
+        // [S530-20260921] 支付宝纯小程序模式：禁止 document.write 收银台表单 / 跳手机网站支付地址
+        if (isAlipayEnv()) { try { alipayPureMpRedirect(true); } catch (e) {} return; }
+        var f = '', u = '';
+        try {
+            f = sessionStorage.getItem('alipay_form') || '';
+            u = sessionStorage.getItem('alipay_url') || '';
+            sessionStorage.removeItem('alipay_form');
+            sessionStorage.removeItem('alipay_url');
+        } catch (e) {}
+        if (f) { document.open(); document.write(f); document.close(); return; }
+        if (u) { window.location.href = u; return; }
+        showToast('支付宝下单失败，请重试');
+    }
+    document.addEventListener('visibilitychange', function () {
+        if (!document.hidden && isAlipayEnv()) {
+            var f = '';
+            try { f = sessionStorage.getItem('alipay_form') || ''; } catch (e) {}
+            if (f) { submitAlipayForm(); }
+        }
+    });
+
+    /* ==========================================================================
+     * [S530-20260921] 支付宝【纯小程序模式】：H5 不做任何支付
+     *   老板要求：支付宝里扫现在这张老二维码（就是本 H5 链接）-> 进来【立刻】跳小程序，
+     *   存包 / 支付 / 取包全在小程序里完成；【不要】H5 手机网站支付兜底。
+     *   · 所有入口都由 isAlipayEnv() 守着 —— 微信分支一行都不碰。
+     *   · 跳转串格式（S516 踩过坑的官方规则）：page 用【原样路径】（斜杠不编码），
+     *     ? 后面的参数整体 UrlEncode，query 复用同一串。
+     *   · 跳转前先铺提示 + 打开按钮；4 秒后页面仍可见 = 没跳过去 -> 失败文案 + 客服电话。
+     *   · 全程不出现任何 H5 支付 / 收银台。
+     * ======================================================================== */
+    var _alipayPureMpAutoDone = false;
+    var _alipayPureMpFailTimer = null;
+
+    // 目标页（调研结论：pages/deposit/deposit 吃 cabinet_id，直接进存包页最省事；
+    //   拿不到显式 cabinet_id 时退到 pages/index/index?q=原链接，由首页解析 device/group_code）
+    function alipayPureMpUrl() {
+        var _p = null;
+        try { _p = new URLSearchParams(window.location.search); } catch (e) { _p = null; }
+        var _cid = (_p && _p.get('cabinet_id')) || '';
+        if (!_cid) {
+            try { if (typeof CI !== 'undefined' && CI && CI.indexOf('{') !== 0) { _cid = String(CI); } } catch (e) {}
+        }
+        var _oid = '';
+        try { _oid = (typeof wxOpenid !== 'undefined' && wxOpenid) ? String(wxOpenid) : ''; } catch (e) { _oid = ''; }
+        var _page = '', _qk = '';
+        if (_cid) {
+            _page = 'pages/deposit/deposit';
+            _qk = 'cabinet_id=' + encodeURIComponent(_cid) + '&from=h5' +
+                  (_oid ? ('&openid=' + encodeURIComponent(_oid)) : '');
+        } else {
+            var _orig = '';
+            try { _orig = location.href.split('#')[0]; } catch (e) { _orig = ''; }
+            _page = 'pages/index/index';
+            _qk = 'q=' + encodeURIComponent(_orig);
+        }
+        var _qenc = encodeURIComponent(_qk);
+        return {
+            page: _page,
+            query: _qk,
+            url: 'alipays://platformapi/startapp?appId=' + ALIPAY_MP_APPID +
+                 '&page=' + _page + '?' + _qenc +
+                 '&query=' + _qenc
+        };
+    }
+
+    function alipayPureMpText(failed) {
+        var t = document.getElementById('alipayPureMpTitle');
+        var h = document.getElementById('alipayPureMpHint');
+        var b = document.getElementById('alipayPureMpRetry');
+        if (t) { t.textContent = failed ? '跳转失败，请点重试' : '正在打开支付宝小程序…'; }
+        if (h) {
+            h.innerHTML = failed
+                ? '仍不行请联系客服 <a href="tel:{service_phone_tel}" style="color:#1677FF;text-decoration:none;font-weight:700">{service_phone}</a><br>本页面不支持支付，请在小程序里完成。'
+                : '存包、支付、取包都在小程序里完成，请稍候。';
+        }
+        if (b) { b.textContent = failed ? '重新打开小程序' : '打开小程序'; }
+    }
+
+    function alipayPureMpOverlay() {
+        var d = document.getElementById('alipayPureMpMask');
+        if (d) { return d; }
+        d = document.createElement('div');
+        d.id = 'alipayPureMpMask';
+        d.style.cssText = 'position:fixed;left:0;top:0;right:0;bottom:0;background:#fff;z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;text-align:center';
+        d.innerHTML = ''
+          + '<div style="max-width:360px;width:100%">'
+          + '<div style="font-size:38px;line-height:1;margin-bottom:14px">&#128230;</div>'
+          + '<div id="alipayPureMpTitle" style="font-size:19px;font-weight:700;color:#1a1a1a;margin-bottom:10px">正在打开支付宝小程序…</div>'
+          + '<div id="alipayPureMpHint" style="font-size:14px;color:#666;line-height:1.7;margin-bottom:22px">存包、支付、取包都在小程序里完成，请稍候。</div>'
+          + '<div id="alipayPureMpRetry" style="background:#1677FF;color:#fff;padding:13px;border-radius:24px;font-size:16px;font-weight:700;cursor:pointer">打开小程序</div>'
+          + '<div style="font-size:12px;color:#999;line-height:1.7;margin-top:16px">若多次打不开，请拨打客服电话<br><a href="tel:{service_phone_tel}" style="color:#1677FF;text-decoration:none">{service_phone}</a></div>'
+          + '</div>';
+        try { (document.body || document.documentElement).appendChild(d); } catch (e) { try { document.documentElement.appendChild(d); } catch (e2) {} }
+        var _b = document.getElementById('alipayPureMpRetry');
+        if (_b) { _b.onclick = function () { try { alipayPureMpRedirect(true); } catch (e) {} }; }
+        return d;
+    }
+
+    // 支付宝内唯一的动作：铺提示 -> 跳小程序 -> 4 秒没跳走就报失败
+    function alipayPureMpRedirect(force) {
+        if (!isAlipayEnv()) { return; }                    // ★非支付宝环境：一个字都不做（微信路径完全不受影响）
+        try { alipayPureMpOverlay(); } catch (e) {}
+        if (_alipayPureMpAutoDone && !force) { return; }   // 同一次加载只自动跳一次，重试靠用户点按钮
+        _alipayPureMpAutoDone = true;
+        try { alipayPureMpText(false); } catch (e) {}
+        if (_alipayPureMpFailTimer) { clearTimeout(_alipayPureMpFailTimer); _alipayPureMpFailTimer = null; }
+        var _t = alipayPureMpUrl();
+        try { console.log('[S530][alipay-pure-mp] jump page=' + _t.page + ' query=' + _t.query); } catch (e) {}
+        try { window.location.href = _t.url; } catch (e) {}
+        _alipayPureMpFailTimer = setTimeout(function () {
+            try {
+                var vis = document.visibilityState || (document.hidden ? 'hidden' : 'visible');
+                if (vis !== 'hidden') { alipayPureMpText(true); }   // 人还在这页 = 没跳过去
+            } catch (e) {}
+        }, 4000);
+    }
+
+    // 进页面就跳：支付宝里打开本 H5 后，不再有任何"填资料/选柜格/收银台"的 H5 步骤
+    (function () {
+        try {
+            if (!isAlipayEnv()) { return; }
+            var _go = function () { try { alipayPureMpRedirect(); } catch (e) {} };
+            if (document.body) { _go(); }
+            else if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', _go); }
+            else { _go(); }
+        } catch (e) {}
+    })();
+
+    function startPayPolling() {
+        if (payPollingTimer) clearInterval(payPollingTimer);
+        var count = 0;
+        payPollingTimer = setInterval(function() {
+            count++;
+            if (count > 30 || !currentOrderId) { clearInterval(payPollingTimer); return; }
+            fetch(API_BASE + '/api/order/' + currentOrderId + '/pay-status')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.code === 200 && d.data && (d.data.status === 2 || d.data.status === 3 || d.data.status === 'paid')) {
+                    clearInterval(payPollingTimer); stopCountdown(); showOpeningPage();
+            }
+        });
+        }, 2000);
+    }
+
+    function callWxPay(params) {
+        if (typeof WeixinJSBridge !== 'undefined') {
+            WeixinJSBridge.invoke('getBrandWCPayRequest', params, function(res) {
+                if (res.err_msg === 'get_brand_wcpay_request:ok') { if(payPollingTimer)clearInterval(payPollingTimer); stopCountdown(); showOpeningPage(); }
+                else { startPayPolling(); }
+        });
+            startPayPolling();
+        } else {
+            document.addEventListener('WeixinJSBridgeReady', function() {
+                WeixinJSBridge.invoke('getBrandWCPayRequest', params, function(res) {
+                    if (res.err_msg === 'get_brand_wcpay_request:ok') { if(payPollingTimer)clearInterval(payPollingTimer); stopCountdown(); showOpeningPage(); }
+                    else { startPayPolling(); }
+            });
+        });
+            startPayPolling();
+        }
+    }
+
+    function showOpeningPage() {
+        showPage('openingPage');
+        document.getElementById('openingDoor').textContent = currentCompartmentNumber || '-';
+        var progress = 30;
+        var bar = document.getElementById('openingBar');
+        bar.style.width = progress + '%';
+        var timer = setInterval(function() {
+            progress += 10;
+            bar.style.width = progress + '%';
+            if (progress >= 100) { clearInterval(timer); setTimeout(showDonePage, 500); }
+        }, 400);
+    }
+
+    function showDonePage() {
+        mpClearPendingJump();             // FIX-20260912b 已经存好了，存档没用了
+        document.getElementById('doneDoorBig').textContent = currentCompartmentNumber || '-';
+        sessionStorage.setItem('reopenOrderId', String(currentOrderId));
+        sessionStorage.setItem('reopenCompartment', currentCompartmentNumber || '');
+        showPage('donePage');
+        setTimeout(function() {
+            var p = new URLSearchParams(window.location.search);
+            var device = p.get('device') || '';
+            var openid = p.get('openid') || '';
+            var qs = device ? '?device=' + device : '';
+            if (openid) qs += (qs ? '&' : '?') + 'openid=' + openid;
+            window.location.href = window.location.origin + '/store' + qs;
+        }, 8000);
+    }
+
+    function finishDeposit() { goToHomePage(); }
+    function reopenCabinet() {
+        var oid = currentOrderId || parseInt(sessionStorage.getItem('reopenOrderId') || '0') || 0;
+        if (!oid) return;
+        fetch(API_BASE + '/api/order/reopen', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({order_id: oid})
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code === 0 || data.code === 200) { showToast('开门指令已发送'); }
+            else { showToast(data.message || '开门失败'); }
+        })
+        .catch(function() { showToast('网络错误'); });
+    }
+
+    function checkPayResult() {
+        document.getElementById('h5PayModal').classList.remove('show');
+        if (h5RedirectUrl) {
+            sessionStorage.setItem('pendingOrderId', String(currentOrderId));
+            sessionStorage.setItem('pendingCabinetId', String(currentCabinetId));
+            sessionStorage.setItem('pendingOrderNo', currentOrderNo || '');
+            sessionStorage.setItem('pendingCompartment', currentCompartmentNumber || '');
+            sessionStorage.setItem('pendingAccessCode', currentAccessCode || '');
+            window.location.href = h5RedirectUrl;
+        } else { checkPayStatus(); }
+    }
+    function cancelH5Pay() { document.getElementById('h5PayModal').classList.remove('show'); }
+
+    function checkPayStatus() {
+        if (!currentOrderId) return;
+        fetch(API_BASE + '/api/order/' + currentOrderId + '/pay-status')
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 200 && data.data && data.data.status === 'paid') { showOpeningPage(); }
+            else { alert('未查询到支付成功，请重试'); }
+        })
+        .catch(function() { alert('网络错误'); });
+
+
+    function refreshBalanceAfterEnd() {
+        var phone = currentPhone || localStorage.getItem("locker_saved_phone") || "";
+        if (!phone && !wxOpenid) return;
+        fetch(API_BASE + "/api/user/balance?phone=" + (phone || "") + "&openid=" + (wxOpenid || "") + "&unionid=" + (wxUnionid || "") + "&cabinet_id=" + (currentCabinetId || ""))
+        .then(function(r){return r.json();})
+        .then(function(bd){
+            if (bd.code === 200 && bd.data) {
+                var el = document.getElementById("balanceAmount");
+                if (el) {
+                    if (bd.data.balance_hidden) {
+                        el.textContent = '****';
+                    } else {
+                        var b = parseFloat(bd.data.balance) || 0;
+                        el.textContent = b.toFixed(2);
+                    }
+                }
+            }
+        })
+        .catch(function(){});
+    }
+    }
+
+    function retrieveOrder() {
+        var phone = document.getElementById('retrievePhone').value.trim();
+        var code = document.getElementById('retrieveCode').value.trim();
+        if (!phone || !/^1[3-9]\d{9}$/.test(phone)) { alert('请输入正确的手机号'); return; }
+        if (!code || !/^\d{4}$/.test(code)) { alert('请输入4位取件码'); return; }
+        fetch(API_BASE + '/api/retrieve/verify', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({phone: phone, access_code: code, cabinet_id: parseInt(currentCabinetId)}) })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if ((data.code === 0 || data.code === 200) && data.data) {
+                currentRetrieveOrderId = data.data.order_id;
+                document.getElementById('rcCompartment').textContent = data.data.compartment_number || '-';
+                document.getElementById('rcTime').textContent = data.data.created_at || '-';
+                document.getElementById('rcDeposit').textContent = '¥' + (data.data.deposit_amount || 0);
+                showPage('retrieveConfirmPage');
+        } else { alert(data.message || '验证失败'); }
+        })
+        .catch(function() { alert('网络错误'); });
+    }
+
+    function endRetrieval() {
+        if (!currentRetrieveOrderId) return;
+        fetch(API_BASE + '/api/retrieve/confirm', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentRetrieveOrderId, action: 'end', cabinet_id: parseInt(currentCabinetId)}) })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 200 && data.data && data.data.need_confirm) {
+                if (confirm(data.data.message || '存放时间不足，确定要结束订单吗？')) {
+                    forceEndRetrieval();
+            }
+        } else if (data.code === 0 || data.code === 200) {
+                alert(data.data && data.data.message ? data.data.message : '取包成功，预付款已退至余额'); refreshBalanceAfterEnd(); goToHomePage();
+        } else { alert(data.message || '操作失败'); }
+        })
+        .catch(function() { alert('网络错误'); });
+    }
+
+    function forceEndRetrieval() {
+        if (!currentRetrieveOrderId) return;
+        fetch(API_BASE + '/api/retrieve/confirm', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentRetrieveOrderId, action: 'end', force_end: true, cabinet_id: parseInt(currentCabinetId)}) })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 0 || data.code === 200) { alert(data.data && data.data.message ? data.data.message : '取包成功，预付款已退至余额'); refreshBalanceAfterEnd(); goToHomePage(); }
+            else { alert(data.message || '操作失败'); }
+        })
+        .catch(function() { alert('网络错误'); });
+    }
+
+    function midOpen() {
+        if (!currentRetrieveOrderId) return;
+        fetch(API_BASE + '/api/deposit/mid-retrieve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({order_id: currentRetrieveOrderId, cabinet_id: parseInt(currentCabinetId)}) })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 0 || data.code === 200) { showToast('柜门已开，取物后请关好柜门'); }
+            else { showToast(data.message || '操作失败'); }
+        })
+        .catch(function() { showToast('网络错误'); });
+    }
+
+    function loadCabinetInfo() {
+        var infoUrl = _deviceParam ? (API_BASE + "/api/cabinets/by-mainboard/" + encodeURIComponent(_deviceParam)) : (API_BASE + "/api/cabinets/info/" + currentCabinetId);
+        fetch(infoUrl)
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if ((data.code === 0 || data.code === 200) && data.data) {
+                var loc = data.data;
+                var locName = loc.location_name || loc.site_name || '';
+                var cabName = loc.name || '';
+                var name = locName && cabName ? locName + '-' + cabName : (locName || cabName);
+                var addr = loc.site_address || loc.location_address || '';
+                if (name) {
+                    document.getElementById('siteName').textContent = name;
+                    document.getElementById('s1SiteName').textContent = name;
+            }
+                if (addr) document.getElementById('siteAddr').textContent = addr;
+                allowH5ToMp = loc.allow_h5_to_mp || 0;
+                mpAppId = loc.mp_appid || '';
+                mpPath = loc.mp_path || '';
+                if (typeof loc.is_online !== 'undefined') gIsOnline = loc.is_online;
+                // 显示第一个可用格子门上号
+                if (loc.available_slots_list && loc.available_slots_list.length > 0) {
+                    var firstSlot = loc.available_slots_list[0];
+                    if (firstSlot.slot_label) {
+                        document.getElementById('s1DoorNum').textContent = firstSlot.slot_label + '号';
+                        document.getElementById('payDoorNum').textContent = firstSlot.slot_label + '号';
+                }
+            }
+        }
+        })
+        .catch(function() {});
+    }
+
+    function initDepositPrices() {
+        var rng = (_depMin>0&&_depMax>_depMin)?(_depTxt()):'';
+        document.getElementById('priceS').textContent = rng || depositPrices['S'];
+        document.getElementById('priceM').textContent = rng || depositPrices['M'];
+        document.getElementById('priceL').textContent = rng || depositPrices['L'];
+        _setTxt('s1Price', rng || depositPrices[selectedSize]);
+        _updateFeeRules();
+    }
+    initDepositPrices();
+
+    // 实时检查设备在线状态
+    function checkDeviceOnline(callback) {
+        if (!currentCabinetId) { callback(true); return; }
+        fetch(API_BASE + '/api/cabinets/info/' + currentCabinetId)
+            .then(function(r) { return r.json(); })
+            .then(function(r) {
+                if (r.code === 200 && r.data) {
+                    _freeDays=r.data.free_days?parseInt(r.data.free_days,10)||1:1; _dailyFee=r.data.daily_fee?parseFloat(r.data.daily_fee)||0:0; _depMin=r.data.deposit_min||0; _depMax=r.data.deposit_max||0;
+                    // 同时更新预付款（防止SSR数据过期）
+                    if (r.data.deposit_amount && r.data.deposit_amount > 0 && r.data.deposit_amount !== _baseDeposit) {
+                        _baseDeposit = r.data.deposit_amount;
+                        depositPrices['S'] = Math.round(_baseDeposit * 0.5);
+                        depositPrices['M'] = _baseDeposit;
+                        depositPrices['L'] = Math.round(_baseDeposit * 1.5);
+                        depositPrices['small'] = depositPrices['S'];
+                        depositPrices['medium'] = depositPrices['M'];
+                        depositPrices['large'] = depositPrices['L'];
+                    }
+                    initDepositPrices();
+                    // 优先用服务端 is_online（已按 120 秒心跳计算），兼容 iOS 日期解析
+                    if (typeof r.data.is_online !== 'undefined') {
+                        s.is_online = !!r.data.is_online;
+                    } else {
+                        var hb = String(r.data.last_heartbeat || '').replace(' ', 'T');
+                        if (hb) {
+                            var hbTime = new Date(hb).getTime();
+                            var now = Date.now();
+                            s.is_online = !isNaN(hbTime) && (now - hbTime) < 120000;
+                        } else {
+                            s.is_online = false;
+                        }
+                    }
+                    gIsOnline = s.is_online !== false;
+                    callback(s.is_online !== false);
+                } else {
+                    callback(true);
+                }
+            })
+            .catch(function(e) {
+                callback(true);
+            });
+    }
+
+
+    function loadSettings() {
+        fetch(API_BASE + '/api/settings')
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if ((data.code === 0 || data.code === 200) && data.data) {
+                var s = data.data;
+                var rng = (_depMin>0&&_depMax>_depMin)?(_depTxt()):'';
+                document.getElementById('priceS').textContent = rng || depositPrices['S'];
+                document.getElementById('priceM').textContent = rng || depositPrices['M'];
+                document.getElementById('priceL').textContent = rng || depositPrices['L'];
+                document.getElementById('s1Price').textContent = rng || depositPrices[selectedSize];
+                _updateFeeRules();
+                if (s.site_name) {
+                    var curName = document.getElementById('s1SiteName').textContent || '';
+                    if (curName === '智能寄存柜' || curName === '') {
+                        document.getElementById('siteName').textContent = s.site_name;
+                        document.getElementById('s1SiteName').textContent = s.site_name;
+                    }
+            }
+                if (s.site_address) document.getElementById('siteAddr').textContent = s.site_address;
+        }
+        })
+        .catch(function() {});
+    }
+
+    // 个人中心 - 改造后
+    function loadUserProfile() {
+        var phone = currentPhone || localStorage.getItem('locker_saved_phone') || '';
+        var wxName = wxWechatName || localStorage.getItem('locker_wx_name') || '';
+        if (wxOpenid) {
+            document.getElementById('profilePhone').textContent = wxName || '微信用户';
+        } else if (phone) {
+            document.getElementById('profilePhone').textContent = phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2');
+        } else {
+            document.getElementById('profilePhone').textContent = '未登录';
+        }
+    }
+
+    // 余额页面
+    function goToBalancePage() { showPage('balancePage'); loadBalancePage(); }
+
+    function loadBalancePage() {
+        var phone = currentPhone || localStorage.getItem('locker_saved_phone') || '';
+        // [Agent-modified 2026-07-04] 有openid也允许查余额
+        if (!phone && !wxOpenid) {
+            document.getElementById('balanceAmount').textContent = '0.00';
+            document.getElementById('withdrawBtn').disabled = true;
+            return;
+        }
+        fetch(API_BASE + '/api/user/balance?phone=' + phone + '&openid=' + (wxOpenid || '') + '&unionid=' + (wxUnionid || ''))
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if ((data.code === 0 || data.code === 200) && data.data) {
+                if (data.data.phone) { currentPhone = data.data.phone; localStorage.setItem('locker_saved_phone', data.data.phone); }
+                var hasActive = data.data.has_active_orders === true;
+                var balanceAmountEl = document.getElementById('balanceAmount');
+                var withdrawBtn = document.getElementById('withdrawBtn');
+                var refundingBar = document.getElementById('refundingBar');
+                if (hasActive) {
+                    // 有未结束订单，不显示余额
+                    balanceAmountEl.textContent = '--';
+                    balanceAmountEl.style.fontSize = '36px';
+                    withdrawBtn.disabled = true;
+                    withdrawBtn.textContent = '订单结束后即可提现';
+                    refundingBar.style.display = 'flex';
+                    refundingBar.querySelector('.refunding-bar-text').textContent = '您的订单尚未结束，结束订单后余额可提现';
+                } else {
+                    var balance = parseFloat(data.data.available_balance) || 0;
+                    balanceAmountEl.textContent = balance.toFixed(2);
+                    balanceAmountEl.style.fontSize = '';
+                    withdrawBtn.disabled = balance <= 0;
+                    withdrawBtn.textContent = '立即提现';
+                    var ca_el = document.getElementById('countdownArea');
+                    var ct_el = document.getElementById('countdownText');
+                    var pb_el = document.getElementById('progressBar');
+                    var eb_el = document.getElementById('expressBtn');
+                    var wh_val = data.data.withhold_hours || 0;
+                    var at_val = data.data.arrival_time || '';
+                    if (wh_val > 0 && !data.data.has_pending_withdrawal) {
+                        ca_el.style.display = 'block';
+                        ct_el.textContent = wh_val + '小时后 (' + (at_val||'').substring(5,16) + ')';
+                        pb_el.style.width = '100%';
+                        eb_el.style.display = data.data.has_triggered_withdraw ? 'none' : 'block';
+                    } else {
+                        ca_el.style.display = 'none';
+                        eb_el.style.display = 'none';
+                    }
+                    var ca_el = document.getElementById('countdownArea');
+                    var ct_el = document.getElementById('countdownText');
+                    var pb_el = document.getElementById('progressBar');
+                    var eb_el = document.getElementById('expressBtn');
+                    var wh_val = data.data.withhold_hours || 0;
+                    var at_val = data.data.arrival_time || '';
+                    if (wh_val > 0 && !data.data.has_pending_withdrawal) {
+                        ca_el.style.display = 'block';
+                        ct_el.textContent = wh_val + '小时后 (' + (at_val||'').substring(5,16) + ')';
+                        pb_el.style.width = '100%';
+                        eb_el.style.display = data.data.has_triggered_withdraw ? 'none' : 'block';
+                    } else {
+                        ca_el.style.display = 'none';
+                        eb_el.style.display = 'none';
+                    }
+                    if (data.data.has_pending_withdrawal === true) {
+                        refundingBar.style.display = 'flex';
+                        refundingBar.querySelector('.refunding-bar-text').textContent = '有退款正在处理中，请耐心等待';
+                    } else {
+                        refundingBar.style.display = 'none';
+                    }
+                }
+            } else {
+                document.getElementById('balanceAmount').textContent = '0.00';
+                document.getElementById('withdrawBtn').disabled = true;
+                document.getElementById('refundingBar').style.display = 'none';
+            }
+        })
+        .catch(function() {
+            document.getElementById('balanceAmount').textContent = '0.00';
+            document.getElementById('withdrawBtn').disabled = true;
+            document.getElementById('refundingBar').style.display = 'none';
+        });
+    }
+
+    function handleWithdraw() {
+        if (!wxOpenid) { showToast('请先登录'); return; }
+        var balance = 0;
+        var balanceEl = document.getElementById('balanceAmount');
+        if (balanceEl) balance = parseFloat(parseFloat(balanceEl.textContent.replace(/[^0-9.]/g, '')).toFixed(2)) || 0;
+        if (balance <= 0) { showToast('余额不足，无法提现'); return; }
+        var h = '<div class="modal-overlay" id="withdrawModalOverlay" style="display:flex;align-items:center;justify-content:center;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:10000">';
+        h += '<div style="background:#fff;border-radius:16px;padding:24px;width:85%;max-width:360px;text-align:center">';
+        h += '<h3 style="margin:0 0 12px;font-size:18px">确认提现</h3>';
+        h += '<p style="color:#666;margin:0 0 16px;font-size:14px">将全额提现到当前账户</p>';
+        h += '<p style="margin:0 0 20px;font-size:28px;font-weight:700;color:#FF9800">￥' + balance.toFixed(2) + '</p>';
+        h += '<div style="display:flex;gap:12px;justify-content:center">';
+        h += '<button onclick="closeWithdrawModal()" style="padding:10px 24px;border:1px solid #ddd;border-radius:20px;background:#fff;color:#666;font-size:15px">取消</button>';
+        h += '<button onclick="submitWithdraw()" style="padding:10px 24px;border:none;border-radius:20px;background:linear-gradient(135deg,#FF9800,#FFB74D);color:#fff;font-size:15px;font-weight:700">确认提现</button>';
+        h += '</div></div></div>';
+        document.body.insertAdjacentHTML('beforeend', h);
+    }
+
+    function closeWithdrawModal() {
+        var m = document.getElementById('withdrawModalOverlay');
+        if (m) m.remove();
+    }
+
+    function submitWithdraw() {
+        var phone = currentPhone || localStorage.getItem('locker_saved_phone') || '';
+        var balance = 0;
+        var balanceEl = document.getElementById('balanceAmount');
+        if (balanceEl) balance = parseFloat(parseFloat(balanceEl.textContent.replace(/[^0-9.]/g, '')).toFixed(2)) || 0;
+        var amount = balance;
+        if (!amount || amount <= 0) { showToast('余额不足'); return; }
+        fetch(API_BASE + '/api/user/withdraw', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({amount: amount, openid: wxOpenid || '', unionid: wxUnionid || '', phone: phone})
+        }).then(function(r) { return r.json(); }).then(function(data) {
+            closeWithdrawModal();
+            if (data.code === 0 || data.code === 200) {
+            var _msg = (data.data && data.data.auto_approved) ? '提现成功，预计30分钟内到账' : '提现申请已提交，预计3天内到账';
+            showToast(_msg);
+                loadBalancePage();
+        } else {
+            showToast(data.message || '提现失败');
+        }
+        }).catch(function(e) {
+            closeWithdrawModal();
+            showToast('网络错误，请重试');
+        });
+    }
+
+    // 使用帮助弹窗
+    function expressWithdraw() {
+        var phone = currentPhone || localStorage.getItem('locker_saved_phone') || '';
+        var el = document.getElementById('balanceAmount');
+        if (!el) { showToast('网络错误'); return; }
+        var amt = parseFloat(el.textContent.replace(/[^0-9.]/g, '')) || 0;
+        if (amt <= 0) { showToast('余额不足'); return; }
+        fetch(API_BASE + '/api/user/withdraw', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({amount: amt, openid: wxOpenid || '', unionid: wxUnionid || '', phone: phone, express: true})
+        }).then(function(r) { return r.json(); }).then(function(data) {
+            if (data.code === 0 || data.code === 200) {
+                showToast('提现成功，预计30秒到账');
+                loadBalancePage();
+            } else {
+                showToast(data.message || '提现失败');
+            }
+        }).catch(function() { showToast('网络错误'); });
+    }
+
+    function showHelpModal() { document.getElementById('helpModalOverlay').classList.add('show'); }
+    function closeHelpModal() { document.getElementById('helpModalOverlay').classList.remove('show'); }
+
+    function loadUserOrders() {
+        var phone = currentPhone || localStorage.getItem('locker_saved_phone') || '';
+        var ordersList = document.getElementById('ordersList');
+        if (!phone && !wxOpenid) {
+            ordersList.innerHTML = '<div class="order-empty"><div class="order-empty-icon">👤</div><div class="order-empty-text">请先在存包页面输入手机号</div></div>';
+            return;
+        }
+        fetch(API_BASE + '/api/user/orders?openid=' + encodeURIComponent(wxOpenid) + '&phone=' + phone)
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 200 && data.data && data.data.length > 0) {
+                var html = '';
+                data.data.forEach(function(order) {
+                    window._cachedOrders = data.data;
+                    var statusText = '', statusClass = '';
+                    if (order.status === 1) { statusText = '待支付'; statusClass = 'pending'; }
+                    else if (order.status === 2 || order.status === 'paid') { statusText = '使用中'; statusClass = 'pending'; }
+                    else if (order.status === 3) { statusText = '已完成'; statusClass = 'completed'; }
+                    else if (order.status === 4) { statusText = ''; statusClass = ''; }
+                    else if (order.status === 5) { statusText = ''; statusClass = ''; }
+                    else { statusText = '进行中'; statusClass = 'pending'; }
+                    
+                    // Format times
+                    var storeTime = order.store_time ? order.store_time.replace('T', ' ').substring(0, 16) : '-';
+                    var retrieveTime = order.retrieve_time ? order.retrieve_time.replace('T', ' ').substring(0, 16) : '-';
+                    
+                    html += '<div class="order-card" onclick="showOrderDetail(' + order.id + ')" style="cursor:pointer;">';
+                    html += '<div class="order-header"><span class="order-no">' + (order.order_no||'-') + '</span><span class="order-status ' + statusClass + '">' + statusText + '</span></div>';
+                    html += '<div class="order-info">';
+                    html += '<span class="order-tag">📦 ' + (order.slot_size||'M') + '柜</span>';
+                    html += '<span class="order-tag">📍 ' + (order.compartment_number||'-') + '号柜</span>';
+                    html += '<span class="order-tag">💰 ¥' + (order.deposit_amount||0) + '</span>';
+                    html += '</div>';
+                    html += '<div class="order-detail-info">';
+                    html += '<div class="detail-row"><span class="detail-label">开始时间：</span><span class="detail-value">' + storeTime + '</span></div>';
+                    html += '<div class="detail-row"><span class="detail-label">结束时间：</span><span class="detail-value">' + retrieveTime + '</span></div>';
+                    html += '<div class="detail-row"><span class="detail-label">存包密码：</span><span class="detail-value">' + (order.access_code||'-') + '</span></div>';
+                    html += '<div class="detail-row"><span class="detail-label">手机号：</span><span class="detail-value">' + (order.user_phone||'-') + '</span></div>';
+                    html += '</div>';
+                    
+                    // Add end order button for active orders
+                    if (order.status === 2 || order.status === 'paid') {
+                        html += '<div class="order-actions"><button class="end-order-btn" onclick="endOrder(' + order.id + ', \'' + (order.order_no||'') + '\')">结束订单</button></div>';
+                    }
+                    
+                    html += '</div>';
+                });
+                ordersList.innerHTML = html;
+            } else {
+                ordersList.innerHTML = '<div class="order-empty"><div class="order-empty-icon">📦</div><div class="order-empty-text">暂无订单记录</div></div>';
+            }
+        })
+        .catch(function() {
+            ordersList.innerHTML = '<div class="order-empty"><div class="order-empty-icon">❌</div><div class="order-empty-text">加载失败，请重试</div></div>';
+        });
+    }
+    
+    // End order function
+    function showOrderDetail(orderId) {
+        var orders = window._cachedOrders || [];
+        var order = orders.find(function(o) { return o.id === orderId; });
+        if (!order) return;
+        var statusText = '';
+        if (order.status === 1) statusText = '待支付';
+        else if (order.status === 2) statusText = '使用中';
+        else if (order.status === 3) statusText = '已结束';
+        else if (order.status === 4) statusText = '已退款';
+        else if (order.status === 5) statusText = '已取消';
+        else statusText = '进行中';
+        var storeTime = order.store_time ? order.store_time.replace('T', ' ').substring(0, 16) : '-';
+        var retrieveTime = order.retrieve_time ? order.retrieve_time.replace('T', ' ').substring(0, 16) : '-';
+        var html = '<div style="background:#fff;border-radius:14px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.06);">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;"><span style="font-size:16px;font-weight:700;color:#333;">' + (order.order_no||'-') + '</span><span style="font-size:13px;padding:3px 12px;border-radius:10px;' + (order.status===2?'background:#E8F5E9;color:#2E7D32':'background:#f5f5f5;color:#999') + '">' + statusText + '</span></div>';
+        html += '<div style="font-size:14px;line-height:2.2;color:#555;"><div><span style="color:#999;">开始时间：</span>' + storeTime + '</div>';
+        html += '<div><span style="color:#999;">结束时间：</span>' + retrieveTime + '</div>';
+        html += '<div><span style="color:#999;">密码：</span><span style="font-size:18px;font-weight:700;color:#FF8F00;letter-spacing:2px;">' + (order.access_code||'-') + '</span></div>';
+        html += '<div><span style="color:#999;">金额：</span>¥' + (order.deposit_amount||0).toFixed(2) + '</div>';
+        html += '<div><span style="color:#999;">柜体：</span>' + (order.slot_size||'M') + '柜·' + (order.compartment_number||'-') + '号</div>';
+        if (order.status === 2) {
+        }
+        html += '</div></div>';
+        document.getElementById('orderDetailContent').innerHTML = html;
+        showPage('orderDetailPage');
+    }
+    function _cachedOrders(orders) { window._cachedOrders = orders; }
+
+    function endOrder(orderId, orderNo) {
+        if (!confirm('确定要结束订单 ' + orderNo + ' 吗？')) return;
+        
+        var phone = currentPhone || localStorage.getItem('locker_saved_phone') || '';
+        var openid = localStorage.getItem('locker_openid') || (location.search.match(/openid=([^&]*)/) || [])[1] || '';
+        fetch(API_BASE + '/api/deposit/end-storage', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                order_id: orderId,
+                phone: phone,
+                openid: openid,
+                access_code: '',
+                source: 'h5_order_center'
+            })
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.code === 200) {
+                alert('订单已结束');
+                loadUserOrders();
+            } else {
+                alert(data.message || '操作失败');
+            }
+        })
+        .catch(function() {
+            alert('网络错误');
+        });
+    }
+
+    // 增强版清除缓存
+    function clearCache() {
+        localStorage.removeItem('locker_saved_phone');
+        localStorage.removeItem('userPhone');
+        sessionStorage.clear();
+        // 清除所有localStorage
+        localStorage.clear();
+        // 尝试清除caches
+        if ('caches' in window) {
+            caches.keys().then(function(names) {
+                names.forEach(function(name) {
+                    caches.delete(name);
+            });
+        });
+        }
+        alert('缓存已清理，页面将重新加载');
+        window.location.href = window.location.pathname + '?t=' + Date.now();
+    }
+
+    function callComplaint() { window.location.href = 'tel:{service_phone_tel}'; }
+    function showComplaintModal() { document.getElementById('complaintModal').classList.add('show'); var phone = localStorage.getItem('locker_saved_phone') || ''; document.getElementById('complaintPhone').value = phone; }
+    function closeComplaintModal() { document.getElementById('complaintModal').classList.remove('show'); }
+    function selectComplaintType(btn) { var btns = document.querySelectorAll('.complaint-type-btn'); btns.forEach(function(b){b.classList.remove('active');}); btn.classList.add('active'); selectedComplaintType = btn.getAttribute('data-type'); }
+    function submitComplaint() {
+        var phone = document.getElementById('complaintPhone').value.trim();
+        var content = document.getElementById('complaintContent').value.trim();
+        if (!phone || !/^1[3-9]\d{9}$/.test(phone)) { alert('请输入正确的手机号'); return; }
+        if (!content) { alert('请输入投诉内容'); return; }
+        
+        // Include openid for auto-matching
+        var complaintData = {
+            phone: phone, 
+            type: selectedComplaintType, 
+            content: content,
+            openid: wxOpenid || ''
+        };
+        
+        fetch(API_BASE + '/api/complaints', { 
+            method: 'POST', 
+            headers: {'Content-Type':'application/json'}, 
+            body: JSON.stringify(complaintData) 
+        })
+        .then(function(res){return res.json();})
+        .then(function(data){ 
+            if(data.code===200){
+                alert('投诉提交成功，我们会尽快处理！');
+                closeComplaintModal();
+                document.getElementById('complaintContent').value='';
+            }else{
+                alert(data.message||'提交失败，请重试');
+            } 
+        })
+        .catch(function(){alert('网络错误');});
+    }
+
+    function showAgreement() { document.getElementById('agreementOverlay').classList.add('show'); }
+    function closeAgreement() { document.getElementById('agreementOverlay').classList.remove('show'); }
+
+    loadSettings();
+    loadCabinetInfo();
+    loadAvailableSizes();
+
+    if (savedPhone) { var phoneEl = document.getElementById('userPhone'); if (phoneEl) phoneEl.value = savedPhone; }
+
+    // H5支付返回检测
+    (function() {
+        var pendingId = sessionStorage.getItem('pendingOrderId');
+        if (pendingId) {
+            currentOrderId = parseInt(pendingId);
+            currentCabinetId = sessionStorage.getItem('pendingCabinetId') || currentCabinetId;
+            currentOrderNo = sessionStorage.getItem('pendingOrderNo') || '';
+            currentCompartmentNumber = sessionStorage.getItem('pendingCompartment') || '';
+            currentAccessCode = sessionStorage.getItem('pendingAccessCode') || '';
+            sessionStorage.removeItem('pendingOrderId');
+            sessionStorage.removeItem('pendingCabinetId');
+            sessionStorage.removeItem('pendingOrderNo');
+            sessionStorage.removeItem('pendingCompartment');
+            sessionStorage.removeItem('pendingAccessCode');
+            var btn = document.getElementById('payBtn');
+            if (btn) { btn.disabled = true; btn.textContent = '支付确认中...'; }
+            showPage('step2Page');
+            startCountdown();
+            var count = 0;
+            var si = setInterval(function() {
+                count++;
+                if (count > 40) { clearInterval(si); if(btn){btn.disabled=false;btn.textContent='支付开门';} return; }
+                fetch(API_BASE + '/api/order/' + currentOrderId + '/pay-status')
+                .then(function(r){return r.json();})
+                .then(function(d){
+                    if (d.code===200 && d.data && (d.data.status===2||d.data.status===3)) {
+                        clearInterval(si); stopCountdown(); showOpeningPage();
+                }
+            });
+        }, 1500);
+        }
+    
+    // ===== [FIX-20260912b] 公众号订阅通知接入(第I期) =====
+    // 目的: 让用户在 H5 页面上"顺手"完成公众号订阅授权, 不必跳小程序。
+    // 机制: 把微信开放标签 <wx-open-subscribe> 透明覆盖在"下一步"按钮上; 首次弹一次授权框
+    //       (建议勾"总是保持以上选择"), 之后静默完成 => 无感。
+    // 安全: 低版本微信或标签不可用时, 覆盖层始终不显示, 用户点的仍是原来的"下一步"按钮,
+    //       存包主流程完全不受影响。
+    // ===== [总开关] 公众号订阅通知功能 =====
+    // 2026-09-12 老板决定: 【先关闭, 留作备用】。
+    // 将来小程序被封 / 不可用时, 把下面的 false 改成 true 即可一键启用(只改这一处, 改完立即生效, 无需重启服务)。
+    var OA_SUBSCRIBE_ENABLED = {oa_sub_on};   // 由后台「系统设置→通知设置→公众号订阅通知」控制
+    var _oaSubBusy = false;
+    function oaSubDiag(stage, extra) {
+        try {
+            fetch('/api/user/oa-subscribe-log', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ phone: '', detail: JSON.stringify({
+                    stage: stage, extra: String(extra || '').slice(0, 260),
+                    ua: (navigator.userAgent || '').slice(0, 140)
+                })})
+            }).catch(function() {});
+        } catch (e) {}
+        console.log('[oa-subscribe] diag:', stage, extra || '');
+    }
+    function oaSubHide(reason) {
+        var w = document.getElementById('oaSubWrap');
+        if (w) { w.style.display = 'none'; }
+        console.log('[oa-subscribe] 订阅弹层关闭:', reason || '');
+    }
+    function oaSubReport(detail) {
+        try {
+            fetch('/api/user/oa-subscribe-log', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    phone: (document.getElementById('userPhone') || {}).value || '',
+                    detail: JSON.stringify((detail && detail.subscribeDetails) || detail || {})
+                })
+            }).catch(function() {});
+        } catch (e) {}
+        console.log('[oa-subscribe] 订阅结果:', detail);
+    }
+    function oaSubProceed(detail) {
+        if (_oaSubBusy) { return; }
+        _oaSubBusy = true;
+        oaSubReport(detail);
+        oaSubDiag('interact');
+        oaSubFinish();
+        setTimeout(function() { _oaSubBusy = false; }, 1500);
+    }
+    // ===== [2026-09-14] 公众号订阅弹层（只给走 H5 支付的用户） =====
+    var _oaSubCb = null, _oaSubShown = false;
+    function oaSubFinish() {
+        var w = document.getElementById('oaSubWrap');
+        if (w) { w.style.display = 'none'; }
+        var cb = _oaSubCb; _oaSubCb = null;
+        if (cb) { try { cb(); } catch (e) { console.log('[oa-subscribe] 继续异常', e); } }
+    }
+    function oaSubPrompt(cb) {
+        // 开关关着 / 已经弹过 / 标签不在 -> 直接继续，绝不影响存包
+        try {
+            if (typeof OA_SUBSCRIBE_ENABLED === 'undefined' || !OA_SUBSCRIBE_ENABLED || _oaSubShown) { cb(); return; }
+            var w = document.getElementById('oaSubWrap');
+            var tag = document.getElementById('oaSubBtn');
+            if (!w || !tag) { cb(); return; }
+            _oaSubShown = true; _oaSubCb = cb;
+            if (typeof _oaTestOnly !== 'undefined' && _oaTestOnly) {   // [测试] 去重也跳过
+                var sk0 = document.getElementById('oaSubSkip');
+                if (sk0 && !sk0._bound) { sk0._bound = 1; sk0.onclick = function () { oaSubDiag('skip'); oaSubFinish(); }; }
+                w.style.display = 'flex';
+                oaSubDiag('prompt_show_test');
+                return;
+            }
+            var sk = document.getElementById('oaSubSkip');
+            if (sk && !sk._bound) { sk._bound = 1; sk.onclick = function () { oaSubDiag('skip'); oaSubFinish(); }; }
+            var phone = (currentPhone || (document.getElementById('userPhone') ? document.getElementById('userPhone').value : '') || '');
+            // 已经订阅过的（服务端 oa_subscribe_log 里有 accept）就不弹了
+            fetch('/api/user/oa-subscribe-status?phone=' + encodeURIComponent(phone))
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                  if (d && d.data && d.data.subscribed) { oaSubDiag('already_subscribed'); oaSubFinish(); return; }
+                  w.style.display = 'flex';
+                  oaSubDiag('prompt_show');
+              })
+              .catch(function () { w.style.display = 'flex'; oaSubDiag('prompt_show_nochk'); });
+        } catch (e) { try { cb(); } catch (e2) {} }
+    }
+    // ============================================================
+    // [S1449-20261019] wx-open-launch-weapp 开放标签（跳小程序主通道）
+    //   背景：原来只有 URL Scheme + weixin:// 兜底，Scheme 会过期/一次性、
+    //         weixin:// 又被微信限制，所以"有概率跳不过去"。
+    //   做法：开放标签可用 -> 用标签；标签报 error -> 回退 launchMp()（原 Scheme 逻辑）。
+    //   注意：开放标签的 appid/path 属性创建后不可修改，所以每次弹窗都重建一次。
+    // ============================================================
+    var mpLaunchTagOk = false;
+    var mpLaunchInited = false;
+
+    function mpLaunchTagInit() {
+        try {
+            if (mpLaunchInited) { return; }
+            mpLaunchInited = true;
+            if (!mpAppId) { console.log('[mp-launch] 无 mpAppId，跳过'); return; }
+            if (!/MicroMessenger/i.test(navigator.userAgent || '')) {
+                console.log('[mp-launch] 非微信环境，跳过');
+                return;
+            }
+            if (typeof wx === 'undefined' || !wx.config) {
+                console.log('[mp-launch] jweixin 未就绪，跳过');
+                return;
+            }
+            var u = location.href.split('#')[0];
+            fetch('/api/wx/jsapi-signature?url=' + encodeURIComponent(u))
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (!d || d.code !== 200 || !d.data) {
+                        console.log('[mp-launch] 签名失败，走 Scheme 兜底', d);
+                        return;
+                    }
+                    wx.config({
+                        debug: false,
+                        appId: d.data.appId,
+                        timestamp: d.data.timestamp,
+                        nonceStr: d.data.nonceStr,
+                        signature: d.data.signature,
+                        jsApiList: [],
+                        openTagList: ['wx-open-launch-weapp']
+                    });
+                    wx.ready(function() {
+                        mpLaunchTagOk = true;
+                        console.log('[mp-launch] config ok，开放标签可用');
+                        try { mpLaunchTagRebuild(); } catch (e) {}
+                    });
+                    wx.error(function(res) {
+                        console.log('[mp-launch] config 失败，走 Scheme 兜底',
+                                    (res && res.errMsg) || res);
+                    });
+                })
+                .catch(function(e) {
+                    console.log('[mp-launch] 取签名异常，走 Scheme 兜底', e);
+                });
+        } catch (e) {
+            console.log('[mp-launch] init 异常（不影响跳转）', e);
+        }
+    }
+
+    function mpLaunchTagRebuild() {
+        try {
+            var wrap = document.getElementById('mpLaunchWrap');
+            var btn = document.getElementById('mpOpenBtn');
+            if (!wrap) { return; }
+            wrap.innerHTML = '';
+            if (!mpLaunchTagOk) {
+                // 标签不可用 -> 只显示原按钮
+                wrap.style.display = 'none';
+                if (btn) { btn.style.display = ''; }
+                return;
+            }
+            var _path = 'pages/subscribe/subscribe?' + mpBuildQuery();
+            var tag = document.createElement('wx-open-launch-weapp');
+            tag.setAttribute('appid', mpAppId);
+            tag.setAttribute('path', _path);
+            tag.setAttribute('style', 'display:block;width:100%;height:auto;border:0;padding:0;margin:0;background:transparent;');
+            var tpl = document.createElement('script');
+            tpl.setAttribute('type', 'text/wxtag-template');
+            tpl.innerHTML = '<button style="width:100%;padding:12px 0;border:none;border-radius:8px;'
+                          + 'background:#07c160;color:#fff;font-size:16px;font-weight:500;'
+                          + 'cursor:pointer;">去小程序</button>';
+            tag.appendChild(tpl);
+            tag.addEventListener('launch', function(e) {
+                console.log('[mp-launch] 开放标签已触发跳转', (e && e.detail) || '');
+            });
+            tag.addEventListener('error', function(e) {
+                console.log('[mp-launch] 开放标签失败，回退 Scheme', (e && e.detail) || '');
+                try { launchMp(); } catch (_e) {}
+            });
+            wrap.appendChild(tag);
+            wrap.style.display = 'block';
+            if (btn) { btn.style.display = 'none'; }   // 有标签时藏掉兜底按钮
+            console.log('[mp-launch] 已挂载开放标签 appid=' + mpAppId + ' path=' + _path);
+        } catch (e) {
+            console.log('[mp-launch] 建标签异常，退回原按钮', e);
+            try {
+                var _w = document.getElementById('mpLaunchWrap');
+                var _b = document.getElementById('mpOpenBtn');
+                if (_w) { _w.style.display = 'none'; }
+                if (_b) { _b.style.display = ''; }
+            } catch (_e2) {}
+        }
+    }
+
+    function oaSubscribeInit() {
+        oaSubDiag('init');
+        if (typeof wx === 'undefined' || !wx.config) { oaSubDiag('no_jweixin'); return; }
+        oaSubDiag('wx_present', (typeof wx) + ' ver=' + ((wx && wx.version) || '?'));
+        var tag = document.getElementById('oaSubBtn');
+        if (!tag) { oaSubDiag('no_tag_el'); return; }
+        tag.addEventListener('ready', function() {
+            // [2026-09-14] 标签不再盖在"下一步"按钮上：只在走 H5 支付时才弹订阅层
+            var w = document.getElementById('oaSubWrap');
+            var h = document.getElementById('oaSubHint');
+            var ob = document.getElementById('oaOrigBtn');
+            function _rc(el) { if (!el) { return 'null'; } var r = el.getBoundingClientRect(); return Math.round(r.left) + ',' + Math.round(r.top) + ',' + Math.round(r.width) + 'x' + Math.round(r.height); }
+            oaSubDiag('tag_ready', 'tag=' + _rc(tag) + ' wrap=' + _rc(w) + ' origBtn=' + _rc(ob) + ' innerH=' + window.innerHeight);
+        });
+        var _wrapEl = document.getElementById('oaSubWrap');
+        if (_wrapEl) { _wrapEl.addEventListener('click', function() { oaSubDiag('click_layer'); }, true); }
+        var _origEl = document.getElementById('oaOrigBtn');
+        if (_origEl) { _origEl.addEventListener('click', function() { oaSubDiag('click_origbtn'); }, true); }
+        tag.addEventListener('success', function(e) { oaSubProceed(e.detail); });
+        tag.addEventListener('error', function(e) { oaSubProceed(e.detail); });
+        document.addEventListener('WeixinOpenTagsError', function(e) {
+            oaSubHide('开放标签不可用');
+            oaSubDiag('opentags_err', (e.detail && e.detail.errMsg) || '');
+        });
+        var u = location.href.split('#')[0];
+        fetch('/api/wx/jsapi-signature?url=' + encodeURIComponent(u))
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d || d.code !== 200 || !d.data) { oaSubDiag('sig_fail', JSON.stringify(d).slice(0,120)); return; }
+                oaSubDiag('sig_ok');
+                wx.config({
+                    debug: false,
+                    appId: d.data.appId,
+                    timestamp: d.data.timestamp,
+                    nonceStr: d.data.nonceStr,
+                    signature: d.data.signature,
+                    jsApiList: [],
+                    openTagList: ['wx-open-subscribe', 'wx-open-launch-weapp']   /* [S1449] 加跳小程序开放标签 */
+                });
+                wx.ready(function() { oaSubDiag('config_ok'); });
+                wx.error(function(res) { oaSubHide('wx.config 失败'); oaSubDiag('config_err', (res && res.errMsg) || JSON.stringify(res).slice(0,150)); });
+            })
+            .catch(function(e) { oaSubDiag('fetch_err', (e && e.message) || String(e)); });
+    }
+    setTimeout(function() {
+        var w = document.getElementById('oaSubWrap');
+        // 弹层默认隐藏, 所以这里只在"该弹却没弹"时才记一条(原来无条件记, 会误报)
+        if (w && w.style.display !== 'flex' && !_oaSubShown && !OA_SUBSCRIBE_ENABLED) { oaSubDiag('tag_not_prompted'); }
+        if (_oaTestOnly && !_oaSubShown) { oaSubDiag('test_mode_no_prompt'); }
+    }, 5000);
+    if (!OA_SUBSCRIBE_ENABLED) {
+        // 备用状态: 不请求签名、不显示订阅按钮、不隐藏原按钮,
+        // 页面行为与功能上线前完全一致。
+        console.log('[oa-subscribe] 功能已关闭(备用状态)');
+        // [S1449] 订阅关闭时，这条 config 不会执行 -> 开放标签也拿不到 wx.config
+        //        这里单独初始化一次（只带 launch-weapp），保证跳小程序主通道可用
+        try { mpLaunchTagInit(); } catch (e) {}
+    } else {
+        oaSubDiag('boot', (document.getElementById('oaSubBtn') ? 'tag_in_dom' : 'tag_missing') + '|ready=' + document.readyState + '|ua=' + (navigator.userAgent || '').slice(-60));
+        try { oaSubscribeInit(); } catch (e) { oaSubDiag('init_exc', (e && e.message) || String(e)); }
+        if (_oaTestOnly) {
+            // [测试] 进页面就弹订阅层（不创建订单、不跳小程序）
+            setTimeout(function () { try { oaSubPrompt(function () { console.log('[oa-subscribe] 测试模式结束'); }); } catch (e) {} }, 1200);
+        }
+    }
+
+    // ===== [FIX-20260912d] 强制关注引导(由【网点开关 force_follow_mp】控制) =====
+    // 微信没有"点一下直接关注"的接口, 所以做成: 按钮 -> 打开公众号主页 -> 点"关注"; 另给二维码兜底。
+    // 进来先查一次关注状态, 未关注才显示遮罩; 每5秒自动复查, 关注后自动放行; 也有"暂不关注"可跳过。
+    // 任何异常(接口失败/非微信环境/拿不到openid)都不会挡住存包流程。
+    (function () {
+        try {
+            var _ff = (typeof s !== 'undefined' && s && s.force_follow_mp) ? 1 : 0;
+            if (!_ff) { return; }
+            var _oid = (typeof OI !== 'undefined') ? OI : '';
+            // [S350-模式② STEP2] 前缀不再写死旧公众号 oLhbm2。
+            //   生效号已从 智能寄存柜(wxd85204d0ec930d46 / oLhbm2) 换成
+            //   重庆景钧达(wx4f65dc701e9111fa / ov47M3)——写死旧前缀会让这里
+            //   对**所有真实用户**直接 return，关注遮罩永远不显示。
+            //   取值顺序（SSOT）：SSR w.oa_openid_prefix → 页面 {oa_prefix} → 'oLhbm2'（老行为兜底）。
+            var _oaPfx = '';
+            try {
+                if (typeof s !== 'undefined' && s && s.oa_openid_prefix) { _oaPfx = String(s.oa_openid_prefix); }
+            } catch (e) {}
+            if (!_oaPfx) { _oaPfx = (typeof _oaPrefix !== 'undefined' && _oaPrefix) ? String(_oaPrefix) : ''; }
+            if (!_oaPfx) { _oaPfx = 'oLhbm2'; }
+            if (!_oid || _oid.indexOf(_oaPfx) !== 0) { console.log('[follow] 非微信环境或拿不到公众号openid, 不拦 (prefix=' + _oaPfx + ')'); try { window.__oaGate && window.__oaGate(); } catch (e) {} return; }
+            // [S367] 换成本公众号（重庆卓蓝时 wx9d559811f476d9d5）的 __biz。
+            //   原来这里的 __biz 是老公众号的；本变量此前定义了却从未被使用（死代码）。
+            //   现在启用了：未关注 -> 页面【自动跳转】到关注页，用户不需要长按识别二维码。
+            var _OA_BIZ = 'MzY4MjQ1NjQzNA==';
+            var MP_PROFILE = 'https://mp.weixin.qq.com/mp/profile_ext?action=home&__biz=' + _OA_BIZ + '&scene=110#wechat_redirect';
+            // 备选入口（兼容性更好）：第一个被拦截、页面没跳走时自动再试这个
+            var MP_PROFILE2 = 'https://mp.weixin.qq.com/mp/getmasssendmsg?__biz=' + _OA_BIZ + '#wechat_redirect';
+            var _FOLLOW_JUMPED_KEY = 'locker_oa_follow_jumped';
+            var _oaJumping = false;
+            function oaAutoFollowJump() {
+                if (_oaJumping) { return; }
+                _oaJumping = true;
+                try { sessionStorage.setItem(_FOLLOW_JUMPED_KEY, '1'); } catch (e) {}
+                // [S398-B] 关注完微信不会自动跳回 H5，卡片链接里也没有柜机号（关注事件不带场景）。
+                //   所以在跳走之前，把这台柜机记到本机 localStorage；回来时落地页据此给"继续存包"按钮。
+                try {
+                    var _ldDev = (typeof DI !== 'undefined' && DI && DI.indexOf('{') !== 0) ? String(DI) : '';
+                    var _ldCab = (typeof CI !== 'undefined' && CI && CI.indexOf('{') !== 0) ? String(CI) : '';
+                    if (_ldDev || _ldCab) {
+                        localStorage.setItem('locker_last_device', _ldDev);
+                        localStorage.setItem('locker_last_cabinet', _ldCab);
+                        try {
+                            localStorage.setItem('locker_last_site', (typeof s !== 'undefined' && s && s.site_name) ? String(s.site_name) : '');
+                        } catch (e2) {}
+                        localStorage.setItem('locker_last_ts', String(Math.floor(Date.now() / 1000)));
+                        console.log('[follow] 已记住柜机 device=' + _ldDev + ' cabinet=' + _ldCab);
+                    }
+                } catch (e3) {}
+                console.log('[follow] 自动跳转关注页...');
+                try { window.__oaGateText && window.__oaGateText('正在前往公众号关注页…'); } catch (e) {}
+                try { location.href = MP_PROFILE; } catch (e) {}
+                // 如果没跳走(被拦截/页面还在)，2.5 秒后自动试备选链接
+                setTimeout(function () {
+                    try { console.log('[follow] 首次跳转未生效, 试备选入口'); location.href = MP_PROFILE2; } catch (e) {}
+                }, 2500);
+            }
+            var QR_URL = ((typeof s !== 'undefined' && s && s.force_follow_qr) ? s.force_follow_qr : 'https://mp.weixin.qq.com/cgi-bin/showqrcode?ticket=gQFI8TwAAAAAAAAAAS5odHRwOi8vd2V4aW4ucXEuY29tL3EvMDJIQ0VwMFBLbWZDbzEwMDAwdzAzdUFBZ1RNTnFWcUF3UUFBQUFB');
+            try {
+                if (typeof _oaNoSkip !== 'undefined' && _oaNoSkip && _oaFollowQr && /^https:\/\/mp\.weixin\.qq\.com\/cgi-bin\/showqrcode\?ticket=/.test(_oaFollowQr)) { QR_URL = _oaFollowQr; }
+            } catch (e) {}
+            var mask = document.createElement('div');
+            mask.id = 'followMask';
+            mask.style.cssText = 'position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.78);z-index:99999;display:none;align-items:center;justify-content:center;padding:22px;box-sizing:border-box';
+            mask.innerHTML = ''
+              + '<div style="background:#fff;border-radius:16px;padding:22px 20px;max-width:340px;width:100%;text-align:center;box-sizing:border-box">'
+              + '<div style="font-size:19px;font-weight:700;color:#1a1a1a;margin-bottom:8px">请先关注公众号</div>'
+              + '<div style="font-size:13px;color:#666;line-height:1.7;margin-bottom:16px">关注后可接收<b>寄存成功、退款到账</b>等通知，也能随时查看订单和余额。</div>'
+              + '<div style="font-size:12px;color:#999;margin:14px 0 6px">或 长按识别二维码</div>'
+              + '<img src="' + QR_URL + '" style="width:200px;height:200px;display:block;margin:0 auto 8px" alt="公众号二维码">'
+              + '<div style="font-size:12px;color:#999;line-height:1.6;margin-bottom:14px">长按上方二维码 → 识别图中二维码 → 点关注<br>关注后公众号会回一条消息，点它就能回到存包页</div>'
+              + '<div id="followRecheck" style="display:block;background:#43B581;color:#fff;padding:12px;border-radius:24px;font-size:16px;font-weight:700">我已关注，继续</div>'
+              // [S350-模式② STEP2] L2 硬拦截：oa（纯公众号）下不再给"暂不关注"出口。
+              //   除 oa 外 _oaNoSkip 恒为 false → 这一行的渲染结果与改动前逐字节相同。
+              + (_oaNoSkip ? '' : '<div id="followSkip" style="font-size:13px;color:#999;margin-top:16px;text-decoration:underline">暂不关注，继续存包</div>')
+              + '</div>';
+            document.body.appendChild(mask);
+            var timer = null;
+            function isFollow(d) {
+                if (!d) { return false; }
+                if (d.data && typeof d.data.follow !== 'undefined') { return !!d.data.follow; }
+                return !!d.follow;
+            }
+            function stop(reason) {
+                if (timer) { clearInterval(timer); timer = null; }
+                mask.style.display = 'none';
+                try { sessionStorage.removeItem(_FOLLOW_JUMPED_KEY); } catch (e) {}
+                console.log('[follow] 已放行:', reason || '');
+            }
+            function start() {
+                try { window.__oaGate && window.__oaGate(); } catch (e) {}
+                mask.style.display = 'flex';
+                timer = setInterval(function () {
+                    fetch('/api/user/check-follow?openid=' + encodeURIComponent(_oid))
+                      .then(function (r) { return r.json(); })
+                      .then(function (d) { if (isFollow(d)) { stop('已关注'); } })
+                      .catch(function () {});
+                }, 5000);
+            }
+            if (!_oaNoSkip) { document.getElementById('followSkip').onclick = function () { stop('用户跳过'); }; }
+            document.getElementById('followRecheck').onclick = function () {
+                fetch('/api/user/check-follow?openid=' + encodeURIComponent(_oid))
+                  .then(function (r) { return r.json(); })
+                  .then(function (dd) {
+                      if (isFollow(dd)) { stop('已关注'); }
+                      else { alert('还没检测到关注，请先长按二维码完成关注'); }
+                  })
+                  .catch(function () { alert('检查失败，请重试'); });
+            };
+            fetch('/api/user/check-follow?openid=' + encodeURIComponent(_oid))
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                  if (isFollow(d)) {
+                      try { sessionStorage.removeItem(_FOLLOW_JUMPED_KEY); } catch (e) {}
+                      console.log('[follow] 已关注, 不显示');
+                      try { window.__oaGate && window.__oaGate(); } catch (e) {}
+                      return;
+                  }
+                  // [S367] 未关注：先【自动】跳到关注页；不再让用户长按识别
+                  var _jumped = '';
+                  try { _jumped = sessionStorage.getItem(_FOLLOW_JUMPED_KEY) || ''; } catch (e) {}
+                  if (!_jumped) {
+                      oaAutoFollowJump();
+                      // 兜底：万一跳不过去 / 用户返回，1.2 秒后把二维码遮罩显示出来
+                      setTimeout(function () { try { start(); } catch (e) {} }, 1200);
+                      return;
+                  }
+                  console.log('[follow] 已自动跳过一次, 显示兜底遮罩');
+                  start();
+              })
+              .catch(function (e) { console.log('[follow] 检查失败, 不拦', e); try { window.__oaGate && window.__oaGate(); } catch (e) {} });
+        } catch (e) { console.log('[follow] 异常, 不拦', e); }
+    })();
+})();
+
+
+
+</script>

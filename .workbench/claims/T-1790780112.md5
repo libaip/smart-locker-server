@@ -1,0 +1,5 @@
+TASK=T-1790780112
+SID=S339
+DESC=S821b-20260930 堵死老后台审批口的支付宝提现漏洞: routes/admin.py PUT /withdrawal/<id>/approve 对支付宝提现单改为委托 routes.admin_v2._process_alipay_withdrawal(原路退回+支付宝账本结算); 原来它会对有order_id的单调 do_real_refund 但【不】结算 alipay_balance_details(钱冻在钱包账本)且只置status=1, 对无order_id的纯余额提现还会走 do_balance_transfer【打款】(老板口径:余额提现是原路退回,不是打款); 纯新增24行0删除
+FILES=routes/admin.py
+MD5|routes/admin.py|efd2c899882f13b9c516cdb9b0ed3d4b

@@ -1,0 +1,6 @@
+TASK=T-1790122252
+SID=S313
+DESC=S631b-20260923 修正支付宝订阅消息 data 字段名: 首版误用 keyword1/keyword2, 按 helpers.py:5575-5577 记载的真实模板字段(老板纠正)改为 subscribe_general: amount1金额/time2时间/thing4变动原因/thing3温馨提示、subscribe_refund: amount2金额/time5时间/thing4退款方式/thing3备注; 并勘误 _ALIPAY_SUBSCRIBE_FIELD_MAP 上方那句自相矛盾的'直接给 keyword1..keywordN'注释; 离线断言 66/66 PASS, 微信端仍逐字节不变
+FILES=helpers.py,routes/user.py
+MD5|helpers.py|8c6b581ad9810189f377ea73fd86204f
+MD5|routes/user.py|dbc7256cbb1a7ea07cd7dcf5db23f110

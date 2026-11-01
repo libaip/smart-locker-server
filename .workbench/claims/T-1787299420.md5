@@ -1,0 +1,5 @@
+TASK=T-1787299420
+SID=S11
+DESC=工作台追加规则:向老板汇报一律大白话
+FILES=.workbench/TASKS.md
+MD5|.workbench/TASKS.md|a6cd5c03e4610d24e66eca7a506fa934

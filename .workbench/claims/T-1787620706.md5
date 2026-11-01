@@ -1,0 +1,5 @@
+TASK=T-1787620706
+SID=S59
+DESC=客服菜单恢复显示第7条(预付款未到账)
+FILES=wecom-kf/app.py
+MD5|wecom-kf/app.py|MISSING

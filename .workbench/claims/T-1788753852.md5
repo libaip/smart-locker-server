@@ -1,0 +1,6 @@
+TASK=T-1788753852
+SID=S121
+DESC=微信账单对订单有疑惑-常用工具申请退款: 新增后端接口/order/refund-by-tool(按order_no查订单校验本人+do_real_refund原路退押金全额+释放柜门结单) + 小程序新页面pages/refund/refund(接out_trade_no显示金额确认退款) + 微信申请配置常用工具(文档指引邮件)
+FILES=routes/user.py,小程序pages/refund/refund
+MD5|routes/user.py|038f42787afe0be18ed41631843d80e7
+MD5|小程序pages/refund/refund|MISSING

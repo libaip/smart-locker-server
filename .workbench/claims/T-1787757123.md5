@@ -1,0 +1,7 @@
+TASK=T-1787757123
+SID=S81
+DESC=免押开关改存PG: 开关接口与store_init判断统一读PG(system_settings), 修复SQLite WAL/连接缓存导致开关切换页面后状态丢失; 前端补Vue data字段+传参格式修复
+FILES=routes/admin_v2.py,routes/user.py,static/admin-v2.html
+MD5|routes/admin_v2.py|152eed4c8c2084011fd8c46aad3720eb
+MD5|routes/user.py|3c1d6314f9a0ca1fed16944f89193448
+MD5|static/admin-v2.html|000352bac9e3d69be6ac32f0968d5523

@@ -1,0 +1,5 @@
+TASK=T-1787317845
+SID=S19
+DESC=网点管理加代理商筛选
+FILES=static/admin-v2.html
+MD5|static/admin-v2.html|947f1085b4eeccc3d1e2f12b8f33979c

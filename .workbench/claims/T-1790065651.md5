@@ -1,0 +1,8 @@
+TASK=T-1790065651
+SID=S303
+DESC=提现免审白名单改手机号优先+openid/unionid兜底 并拉白双写openid+phone
+FILES=helpers.py,routes/admin.py,routes/admin_v2.py,routes/user.py
+MD5|helpers.py|7f581deab5c7f567a4c28affb348cf49
+MD5|routes/admin.py|af10a0ebaf3049c7d131506c870e9f33
+MD5|routes/admin_v2.py|23db9527539511758132b519e83ae554
+MD5|routes/user.py|f109d885f581c7cec9e348f790dfbd9f

@@ -1,0 +1,5 @@
+TASK=T-1787665260
+SID=S65
+DESC=拉黑累计投诉>=2次用户: 调度器自动拉黑(手机号+unionid), 历史批量拉黑
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|852e412357103288614f857eb7fb1765

@@ -1,0 +1,6 @@
+TASK=T-1787476978
+SID=S48
+DESC=余额不足隐藏+同步隐藏订单: 失败单保持pending不退余额+订单logic_mark=Y; 超期隐藏定时任务同步隐藏订单
+FILES=routes/admin_v2.py,app.py
+MD5|routes/admin_v2.py|8aa60da84648f534ce6e8aaf17feda21
+MD5|app.py|958953d8b0f0a0aee4515e9db2ca204c

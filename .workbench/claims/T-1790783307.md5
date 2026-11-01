@@ -1,0 +1,5 @@
+TASK=T-1790783307
+SID=S343
+DESC=S821q-20260930 支付宝支付参数接口两处修复: ①归属校验补上"按支付宝 uid 认人"(订单 alipay_pay_uid/alipay_mp_uid == 调用方 uid 即放行; 原来只比 user_id/手机号, 而支付宝 users 行 phone 为空、H5 进来的单 user_id 也对不上 -> 用户给自己的订单付款却拿 403) ②该接口所有错误响应改走 _s818_ali_resp = HTTP 200 + 业务码(支付宝 my.request 对非 2xx 直接 fail, 用户只看到"网络请求失败: request:fail http status error", 看不到真正原因) ③缺 alipay_uid 时加 WARNING 打出请求体便于定位
+FILES=routes/user.py
+MD5|routes/user.py|79a6a87156de85d8eca0b8e4a929823f

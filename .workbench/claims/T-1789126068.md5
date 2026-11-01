@@ -1,0 +1,6 @@
+TASK=T-1789126068
+SID=S140
+DESC=发布1.4.14到生产服务器(static/app_1.4.14.apk新增+locker.apk换成1.4.14+apk_version登记271)+启动100100守护并推送实测远程更新全链路(下载/静默安装/上报成功)
+FILES=smart-locker-apk/app/build/outputs/apk/release/app-release.apk,apk_version(生产库数据)
+MD5|smart-locker-apk/app/build/outputs/apk/release/app-release.apk|73706097725748d8a3c339e332673d03
+MD5|apk_version(生产库数据)|MISSING

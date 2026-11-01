@@ -1,0 +1,7 @@
+TASK=T-1790126216
+SID=S314
+DESC=S633-20260923 鎶婃敮浠樺疂璁㈤槄娑堟伅鏀规垚鐪熻兘鍙戝嚭鍘? data 閿悕浠庡井淇″瓧娈靛悕(amount1/time2/thing4/thing3)鏀瑰洖 keyword1..keywordN(渚濇嵁 alipay.open.mini.message.template.batchquery 瀹炴祴 keyword_desc: general=c142ac.. 璐︽埛浣欓,鍙樺姩鏃堕棿,娓╅Θ鎻愮ず,娓╅Θ鎻愰啋 / refund=de68d9.. 瀵勫瓨鍗曞彿,閫€杩樻椂闂?閫€杩樼姸鎬?閫€杩橀噾棰?; 鏀朵欢浜烘寜褰㈢姸鍒嗘祦 to_open_id(47浣峯penid)/to_user_id(2088寮€澶?6浣?; refund keyword1 琛?order_no(瀵勫瓨鍗曞彿); 鍕樿 S631b 閭ｅ彞"涓嶈浼?keyword1..keywordN"
+FILES=alipay.py,helpers.py,routes/user.py
+MD5|alipay.py|299adebcaba2472ac0cda2f3ffd44a5c
+MD5|helpers.py|35b3bb24a1f63a0bbf00f8eb26c1f9b3
+MD5|routes/user.py|28503b339d2f695d27dde5e9d083b243

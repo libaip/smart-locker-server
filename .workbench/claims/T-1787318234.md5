@@ -1,0 +1,5 @@
+TASK=T-1787318234
+SID=S20
+DESC=自有投诉卡单修复:调度器non-wechat段纳入status=1半截单+claim兼容
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|d1c5cff40b9023395eb879d6c8a81dc6

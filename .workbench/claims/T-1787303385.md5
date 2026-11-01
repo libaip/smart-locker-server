@@ -1,0 +1,5 @@
+TASK=T-1787303385
+SID=S15
+DESC=一键开门乱序修复: ws_proxy /send 改同步发送(去gevent.spawn), 指令按序到达设备
+FILES=ws_proxy.py
+MD5|ws_proxy.py|6b35601ade529614f3ddebe68d45c515

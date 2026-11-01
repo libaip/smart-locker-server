@@ -1,0 +1,5 @@
+TASK=T-1790259730
+SID=S327
+DESC=S658-20260924 微信支付商品详情(统一下单body)改文案: 【小云伧存】寄存预付款 -> 寄存服务预付款，使用完剩余款项在小程序钱包进行余额提现; 只改 helpers.py:1122 常量 PAY_GOODS_NAME 一行, 4 个引用点结构一字不动; 支付宝商品名独立未动
+FILES=helpers.py
+MD5|helpers.py|8ec0360ed2dfac18fce28e02ff62b7de

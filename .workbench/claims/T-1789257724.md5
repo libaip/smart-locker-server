@@ -1,0 +1,5 @@
+TASK=T-1789257724
+SID=S174
+DESC=H5跳小程序返回后到不了支付页修复: 跳转前把订单存档到localStorage + 回到H5读档直接进支付页 + 把写在goToStoreStep1里的pageshow注册挪到顶层(扫码进存包页时那条监听从没注册过=真正根因)
+FILES=static/deposit.html
+MD5|static/deposit.html|bdfbd28a1403b52e106a18ff442c77ac

@@ -1,0 +1,5 @@
+TASK=T-1787647961
+SID=S64
+DESC=结束订单设备离线不再拒绝: 离线时跳过远程开门直接结束退押金, 防止设备故障/断电导致订单卡死(18888889999订单68857)
+FILES=routes/user.py
+MD5|routes/user.py|ab754de55f0c47a2066f9214ffc0b99a

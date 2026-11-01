@@ -1,0 +1,10 @@
+TASK=T-1792084246
+SID=S350
+DESC=行为画像系统(S1113-S1122): 打分模块+决策引擎+日报+回填+埋点, 4张表, 用户画像日报daily_report.py(修user_key→openid)
+FILES=behavior_scorer.py,behavior_decision.py,behavior_report.py,backfill_behavior.py,behavior_log.py,daily_report.py
+MD5|behavior_scorer.py|2493c455bc10e6d5b06ee7afd9ff505c
+MD5|behavior_decision.py|909f0c71bb8a6527932d6e9e6b73359e
+MD5|behavior_report.py|859c2285e76abf95e1b012b154899da3
+MD5|backfill_behavior.py|be0a2f9f4ad637f5e81c3e36549048d5
+MD5|behavior_log.py|8c4aeca0f9df82d3d965ea1e676aa1a2
+MD5|daily_report.py|aa7441e07bc174eec8a9431d1bf60cf0

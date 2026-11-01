@@ -1,0 +1,9 @@
+TASK=T-1788184335
+SID=S106
+DESC=短信宝短信接入: 结束订单退押金时发短信(场景A), 网点级开关控制发不发(sms_enabled字段+前端配置), send_sms.py调短信宝API, 模板{fee}{amount}{appName}
+FILES=routes/user.py,routes/admin_v2.py,static/admin-v2.html,config.py,helpers.py
+MD5|routes/user.py|11dc1e6620a4ec00812609728871c277
+MD5|routes/admin_v2.py|8be6ec2b926db215cc469b083ffc702a
+MD5|static/admin-v2.html|cc0ed0d98970367ba372c4b842d3d433
+MD5|config.py|62942b423f4baa0aed1431b3350f0346
+MD5|helpers.py|0db6a3c9d8e535833cce9aea8d8beaf2

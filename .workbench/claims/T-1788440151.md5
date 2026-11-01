@@ -1,0 +1,5 @@
+TASK=T-1788440151
+SID=S115
+DESC=短信宝模板切回已通过版(带appName+搜索小程序): S114误改新模板(服务通知版未过审), 后台已通过的是老模板
+FILES=config.py
+MD5|config.py|1f4baeaa4e1840d201c0405faf03f28a

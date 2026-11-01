@@ -1,0 +1,5 @@
+TASK=T-1787453512
+SID=S41
+DESC=客服自动回复菜单6: 开启小程序卡片推送(MP_CARD_ENABLED=True)+新缩略图media_id+兼容'6 退预付款'文本触发
+FILES=wecom-kf/app.py
+MD5|wecom-kf/app.py|MISSING

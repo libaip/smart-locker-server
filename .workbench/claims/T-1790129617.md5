@@ -1,0 +1,5 @@
+TASK=T-1790129617
+SID=S315
+DESC=S636-20260923 微信支付商品名(统一下单 body)第二次改文案: 老板最终确认, 只在 helpers.py:962 常量 PAY_GOODS_NAME 的「在小程序」与「我的钱包提现」之间插入全角【小云伧存】共 6 字符(U+3010 小云伧存 U+3011), 其余一字不改(半角 - 与半角 ()、全角逗号、结尾无感叹号); 3 个引用点(helpers.py:1020 第三方 unifiedorder / :1058 主 JSAPI·MWEB / :1436 get_mp_jsapi_params 默认参数)结构一字不动; 改后 41 字符 / 117 UTF-8 字节 <= 微信 body 上限 String(127); 作废文案「创优网络」全句 0 处; 离线断言三条路径 body 逐字节==新文案 + 老文案 0 处残留; diff 仅 1 行; 同步 175 并 HUP
+FILES=helpers.py
+MD5|helpers.py|6e1ecebee1ed9cca544bd42186380ef9

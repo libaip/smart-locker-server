@@ -1,0 +1,5 @@
+TASK=T-1787891983
+SID=S87
+DESC=彻底修复设备离线误判: is_device_online先查WS在线列表(实时最准)再回退心跳, 5004查询失败容错不误判
+FILES=helpers.py
+MD5|helpers.py|c9984707444dba15f63a8db5162a17dc

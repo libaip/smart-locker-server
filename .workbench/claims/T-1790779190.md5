@@ -1,0 +1,5 @@
+TASK=T-1790779190
+SID=S337
+DESC=S818c-20260930 支付宝端提现入口临时挡住 + /user/balance 累计存入修好: /user/withdraw 顶部按平台分流(带 alipay_uid / platform=alipay / UA 含 AlipayClient / Referer 含 alipay-eco.com -> 交 _s818_alipay_withdraw, 不进微信口径 SQL), 第5批未上线时只回人话; /user/balance 支付宝端 total_deposited/total_withdrawn 取自 alipay_balances(原恒0); 微信端逐字节不变
+FILES=routes/user.py
+MD5|routes/user.py|1b18ea8bc22fe4275abefc150c1dec95

@@ -1,0 +1,5 @@
+TASK=T-1790171492
+SID=S318
+DESC=S642-20260923 【P0 资金安全·退错单】后台「投诉管理-重试退款」在投诉无 order_id 时退掉全站最新挂单: 删除 unionid=空串 子查询+ORDER BY id DESC LIMIT 1 兜底, 改为"要么唯一确定要么拒绝"(投诉自带 order_id/order_no 优先并校验归属 -> openid 精确匹配恰好1笔 -> 否则拒绝返回人话+日志列候选); 同一场景改前解析到错单、改后 0 次 do_real_refund 0 次写库; 离线断言含改前世界复现+反向可逆; 同步 175 并 HUP
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|ff0e9e6eec79266ec68efc512b16cc36

@@ -1,0 +1,6 @@
+TASK=T-1790474298
+SID=S331
+DESC=S673-20260927 余额/身份改造第一步止血：B1 /user/balance 公众号openid改按openid列认人认行(读写同列,两列都试,小程序路径逐字节不变) + B2 upsert入账命中行phone与订单phone不一致则跳过入账(开关balance_phone_guard默认OFF) ; C组只留开关骨架balance_strict_identity默认OFF(认人手机号兜底/钱的mp_openid+openid+phone三段) ; D 订阅发送目标加只读断言日志
+FILES=helpers.py,routes/user.py
+MD5|helpers.py|0e6b3f050fa4bae91b2db3d2c47493e3
+MD5|routes/user.py|9a45eb552b89cc7b2a0a81d26ecc7bd8

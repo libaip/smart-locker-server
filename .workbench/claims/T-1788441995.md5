@@ -1,0 +1,6 @@
+TASK=T-1788441995
+SID=S116
+DESC=云片短信接入: 新增send_yunpian函数(模板6449738, 变量fee/amount), config加云片配置, 与短信宝并存, 结束后台短信开关场景发云片
+FILES=config.py,helpers.py
+MD5|config.py|e8e013b7821c22840aaa82173c2f0a38
+MD5|helpers.py|1a268c23815e7a861652e9146db1f0cd

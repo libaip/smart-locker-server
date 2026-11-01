@@ -1,0 +1,6 @@
+TASK=T-1788103123
+SID=S103
+DESC=在线订单列表支付商户列显示渠道名称: admin_orders返回pc.name as pay_mch_name, 前端显示pay_mch_name||pay_mch_id兜底
+FILES=routes/admin_v2.py,static/admin-v2.html
+MD5|routes/admin_v2.py|63ab50f81d0c00bffd3829b50e191afa
+MD5|static/admin-v2.html|2a9fe84f3bcc0e38c2f64bccfd8d9302

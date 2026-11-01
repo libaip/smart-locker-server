@@ -1,0 +1,5 @@
+TASK=T-1787922760
+SID=S93
+DESC=投诉自动退款成功时补建提现记录: _auto_refund_complaint_order退款成功后同步插入withdrawal_records(status=2, approver=投诉自动退款), 修复余额明细withdrawn但提现记录空白
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|a56843b74e76c592f2358d7ed0f74d7c

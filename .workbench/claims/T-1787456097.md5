@@ -1,0 +1,6 @@
+TASK=T-1787456097
+SID=S44
+DESC=统计分析加退款实时金额+使用人数(顶部+网点明细); 会员提现加审批人筛选
+FILES=routes/admin_v2.py,static/admin-v2.html
+MD5|routes/admin_v2.py|28fd7c08e468657767b867a8cba00afa
+MD5|static/admin-v2.html|fecce18db114e52a6788cda29370e469

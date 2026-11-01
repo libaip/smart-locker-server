@@ -1,0 +1,5 @@
+TASK=T-1791328392
+SID=S347
+DESC=S827-20261007 柜机 APK 升级到 1.4.16(仅限 1.4.12 以上): ① 登记 apk_version 1.4.16(code273/file_md5) 修好『手动更新提示已是最新版本』② websocket 自动推送加最低版本门槛(system_settings.apk_auto_update_min_version_code, 默认0=行为不变) ③ 修 admin.py 保存新版本时写不存在的 force_update 列导致 500 ④ 附在线设备清单与下载失败率证据
+FILES=routes/websocket.py
+MD5|routes/websocket.py|b66d1c65eeda3067538adbd72af2f244

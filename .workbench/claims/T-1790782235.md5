@@ -1,0 +1,6 @@
+TASK=T-1790782235
+SID=S340
+DESC=S821d/e/h-20260930 支付宝提现四处修复: d) 支付宝分支响应改 HTTP 200(支付宝 my.request 对非2xx直接fail, 用户只看到"网络请求失败", 看不到人话)+缺uid时给可自助提示与诊断日志; e) 修资金原子性——连接池连接是 autocommit=True 导致 conn.rollback() 是空操作(实测冻结+扣款已提交但INSERT撞唯一键没回滚, 22.36悬空冻结已人工修回), 改为显式开真事务并在finally恢复autocommit=True; dedup_key 加每次不同的nonce(原来固定键导致一笔提现完成后同订单再也提不出钱); 新增 _alipay_withdraw_janitor 兜底(明细pending却无在途提现单->自动退回钱包+告警; 账本不一致只告警不动钱, 一致性公式=可用+冻结-在途); h) /user/wallet/withdrawals 与 /user/wallet/transactions 加支付宝分支(原来要求openid非空且查微信账本->支付宝端必然400、页面永远空白), 改按 alipay_uid 读 withdrawal_records / alipay_balance_details
+FILES=routes/user.py,routes/admin_v2.py
+MD5|routes/user.py|934d331f7aaedaea293ae38aeb80293a
+MD5|routes/admin_v2.py|c55ee9c654f0695c6c146959909303c4

@@ -1,0 +1,5 @@
+TASK=T-1787793358
+SID=S82
+DESC=关闭余额不足自动拒绝的订阅通知(不再给用户发'提现被拒绝-余额不足'消息)
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|152eed4c8c2084011fd8c46aad3720eb

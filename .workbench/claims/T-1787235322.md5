@@ -1,0 +1,5 @@
+TASK=T-1787235322
+SID=S5
+DESC=存量refund_id回填脚本(orders从payments补单号)+修复deploy_check.sh多文件md5比对bug
+FILES=.workbench/deploy_check.sh
+MD5|.workbench/deploy_check.sh|b0e0077d51408635f25411b99d2aa7ca

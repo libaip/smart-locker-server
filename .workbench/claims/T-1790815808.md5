@@ -1,0 +1,5 @@
+TASK=T-1790815808
+SID=S345
+DESC=S825-20261001 支付宝官方交易投诉接入: 新建 alipay_complaint_auto.py cron 脚本(batchquery 拉取->按 alipay_complain_id 幂等登记进 complaints(type=alipay)->复用 _auto_refund_complaint_order 自动原路退款), complaints 加 alipay_complain_id 列+唯一索引, system_settings 加开关 alipay_complaint_auto_refund, crontab 每2分钟
+FILES=alipay_complaint_auto.py
+MD5|alipay_complaint_auto.py|MISSING

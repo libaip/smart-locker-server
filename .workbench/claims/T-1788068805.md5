@@ -1,0 +1,5 @@
+TASK=T-1788068805
+SID=S101
+DESC=商户异常隐藏记录收尾: ①8条wr=1卡住置为拒绝(status=3)+bd隐藏 ②订单已refunded但wr挂失败的置为完成(status=2) ③新增后台已线下转账处理入口(wr置2+bd withdrawn+订单refunded+备注)
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|ca19fc2943dca43fb46a58251a90f578

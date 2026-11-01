@@ -1,0 +1,9 @@
+TASK=T-1792084477
+SID=S351
+DESC=部署S1007-S1011(订阅模板字段映射+微信账号页)+S1053埋点接入 到175
+FILES=app.py,helpers.py,wx_config.py,static/wx_accounts_page.js,risk_profile.py
+MD5|app.py|fc48456427073ef05b5da15110a45dac
+MD5|helpers.py|55735d19674893c334530374db061d0c
+MD5|wx_config.py|f886e8daa8135458ab7093f7f3aa0032
+MD5|static/wx_accounts_page.js|224e8fb420fc4e3c223e0dbccba31325
+MD5|risk_profile.py|139559105411f450cb9c76496fb40af0

@@ -1,0 +1,7 @@
+TASK=T-1787357943
+SID=S28
+DESC=一键开门乱序根因修复: open_all三个入口SQL加ORDER BY slot_number(PostgreSQL无ORDER BY返回物理顺序导致乱)
+FILES=routes/admin.py,routes/merchant.py,routes/admin_v2.py
+MD5|routes/admin.py|111a6781e41f08f0bdb9fe50b6e8d640
+MD5|routes/merchant.py|567002ff28ffaeaf9df0925ba18b5fba
+MD5|routes/admin_v2.py|25791824ae2539a9830190e4038a2e60

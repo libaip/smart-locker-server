@@ -1,0 +1,6 @@
+TASK=T-1787705366
+SID=S68
+DESC=黑名单加筛选(手机号/原因/状态)+解除改为临时解除(status=0保留记录)+重新封禁
+FILES=routes/admin_v2.py,static/admin-v2.html
+MD5|routes/admin_v2.py|9ed58c987a520ee5fa64ce5a7232fef8
+MD5|static/admin-v2.html|11a35c9910c373d39928eea01b1c7a01

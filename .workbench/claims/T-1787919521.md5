@@ -1,0 +1,5 @@
+TASK=T-1787919521
+SID=S90
+DESC=小程序交易明细隐藏超时订单: get_user_transactions排除订单余额pending且无available/withdrawn/提现的明细
+FILES=routes/user.py
+MD5|routes/user.py|069944ff9a752b596dbf8a473183704e

@@ -1,0 +1,5 @@
+TASK=T-1792163586
+SID=S353
+DESC=行为规则上线:一次点15下以上自动退款
+FILES=behavior_scorer.py
+MD5|behavior_scorer.py|2493c455bc10e6d5b06ee7afd9ff505c

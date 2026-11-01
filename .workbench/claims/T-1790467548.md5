@@ -1,0 +1,9 @@
+TASK=T-1790467548
+SID=S330
+DESC=S670-20260926 订阅通知点击落地页: 账户余额通知→pages/withdraw/withdraw, 退款成功通知→pages/withdraw-record/withdraw-record
+FILES=app.py,routes/user.py,routes/admin.py,routes/admin_v2.py,routes/offline.py
+MD5|app.py|6c7c4856178dbfdef4ab9d0fdf4918f2
+MD5|routes/user.py|0372af9829985ac3ea5fe4a47b90bd77
+MD5|routes/admin.py|26a46d5100b66ee8f0eb9b29cc621a0e
+MD5|routes/admin_v2.py|3833edf166f593215ea834a55c964edc
+MD5|routes/offline.py|f50422de56968ee36fd789df83e439b2

@@ -1,0 +1,6 @@
+TASK=T-1787495358
+SID=S54
+DESC=修复商户订单比例隐藏被破坏: 移除S48两处打logic_mark=Y(定时任务+失败单), 恢复auto_hidden比例隐藏
+FILES=app.py,routes/admin_v2.py
+MD5|app.py|4f8ecd786a8ab0f6ce9c6bb4c3b32877
+MD5|routes/admin_v2.py|b884c9c1569d8c394e751304c3f08b53

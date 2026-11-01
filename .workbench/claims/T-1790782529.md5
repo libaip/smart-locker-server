@@ -1,0 +1,5 @@
+TASK=T-1790782529
+SID=S341
+DESC=S821j-20260930 支付宝入账资金安全: alipay_balance_add 原为"先UPDATE余额、再INSERT明细 ON CONFLICT DO NOTHING"+依赖 conn.rollback(), 而连接池是 autocommit=True 导致回滚是空操作——并发两次入账时明细只落1条、余额却加2次(凭空多出可提现的钱), 中途失败也会留下"加了钱没明细"; 改为①显式开真事务(finally恢复autocommit=True)②先写明细, rowcount=0(唯一索引冲突)则整笔真回滚、一个字段都不动 ③明细落定后才UPDATE余额; 离线断言23/23, 生产用假uid实测"入账两次只加一次"后清理
+FILES=helpers.py
+MD5|helpers.py|f4ccb0b540b4af0ac69c9ccf62e80b6b

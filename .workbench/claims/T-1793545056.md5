@@ -1,0 +1,14 @@
+TASK=T-1793545056
+SID=S380
+DESC=S1602-S1626 打包提现全量标记/重复申请兜底/行为退款关单/支付detail/商品名差异化/订单号新格式/超时收费/敏感词清零
+FILES=helpers.py,wxpay.py,models.py,routes/user.py,routes/admin_v2.py,behavior_decision.py,templates/deposit.html,static/screen.html,static/user-center.html,routes/admin.py
+MD5|helpers.py|b141d4374ef5a7a38ff55a178d54f23f
+MD5|wxpay.py|5200e573cf3df4e0838ca9a86cbea8d7
+MD5|models.py|839c7b9f99f400749bbfd22f54fbc6a1
+MD5|routes/user.py|541ac06c10f59ead5305adcdc112a24a
+MD5|routes/admin_v2.py|f40e3ae19ab07403993157b1d84912ce
+MD5|behavior_decision.py|58b5f3577555bbdd317d0adbb79706f0
+MD5|templates/deposit.html|972781692ec79dc23a559c2558321368
+MD5|static/screen.html|4d42efba6b861be08dc1ee90add6dc6d
+MD5|static/user-center.html|3bc1c68d25c8cb5715ddbc7dd02d06c1
+MD5|routes/admin.py|b30fd9a76338236abee4e86fb362d66e

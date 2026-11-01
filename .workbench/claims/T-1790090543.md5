@@ -1,0 +1,6 @@
+TASK=T-1790090543
+SID=S307
+DESC=S?-20260922 link_openid 500 修复: helpers.upsert_user_balance_row 在 unionid 为空的两个 INSERT 分支(elif mp_openid/elif openid)前增加[手机号恰好一行空 unionid -> UPDATE 该行身份字段(openid/mp_openid, 复用 keep_new_mp_openid), 多行/零行保持原行为+warning], SQL 加金额列防御断言(命中 balance/total_deposited/total_withdrawn 则拒绝执行); routes/user.py link_openid 外层精确捕获 UniqueViolation+constraint_name==idx_user_balances_phone_empty_union 按成功继续, 其余异常照旧冒泡; 500 响应体不再回显 str(e)
+FILES=helpers.py,routes/user.py
+MD5|helpers.py|1d7216bbb58711232a82c89844461a66
+MD5|routes/user.py|fc9c40899882cf33dbf4ef474745c140

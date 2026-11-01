@@ -1,0 +1,5 @@
+TASK=T-1787751058
+SID=S77
+DESC=修复微信投诉拉取: complaint_auto分页拉取(数据量大400), 同时登记PENDING+PROCESSING状态投诉
+FILES=complaint_auto.py
+MD5|complaint_auto.py|2da2f30af156f38ec577a93b2dd69a8d

@@ -1,0 +1,5 @@
+TASK=T-1787405255
+SID=S36
+DESC=商户订单详情开门记录补齐: door_records同时按数字id与订单号查询(存包记录存的是订单号,导致商户端只能看到取包记录)
+FILES=routes/merchant.py
+MD5|routes/merchant.py|097d8eb6c2f7c507987b319f3cad7e21

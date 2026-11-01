@@ -14,7 +14,57 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.backends import default_backend
 
 SRC = '/home/ubuntu/smart-locker'
-NOTIFY_URL = 'https://locker.cqdyxl.com/api/admin_v2/wechat-complaint/notify'
+# [S1203-20261017] ★ 投诉通知URL【不再硬编码老域名】
+#   老板发现：新商户号接上来后，这个脚本会把它自动"修复"成老域名
+#   (locker.cqdyxl.com)，微信看到"新商户号 + 老域名回调"就会记成关联。
+#   现在改为：按商户号判断 —— 配了隔离 extra_config（走新主体）的商户号，
+#   投诉回调也用新主体的隔离域名；其余老商户号保持原来的老域名不变。
+_OLD_NOTIFY_URL = 'https://locker.cqdyxl.com/api/admin_v2/wechat-complaint/notify'
+
+
+def _notify_url_for_mch(mch_id, extra_config=None):
+    """[S1203] 该商户号应该用的投诉通知URL。
+
+    优先级：
+      1) 该商户号 extra_config.complaint_notify_url（显式配置）
+      2) 该商户号配了隔离（有 egress_proxy 或 *_notify_url）-> 用隔离域名
+      3) 系统设置 wx_config_items.complaint_notify_url
+      4) 老域名（完全兜底，保持历史行为）
+    """
+    import json as _json
+    _iso_default = 'https://liwangtu.top/api/admin_v2/wechat-complaint/notify'
+    _d = {}
+    try:
+        if extra_config:
+            _d = _json.loads(extra_config) if isinstance(extra_config, str) else (extra_config or {})
+    except Exception:
+        _d = {}
+    _u = str((_d or {}).get('complaint_notify_url') or '').strip()
+    if _u:
+        return _u
+    # 配了隔离 -> 用隔离域名
+    if _d and (_d.get('egress_proxy') or _d.get('pay_notify_url') or _d.get('refund_notify_url')):
+        try:
+            from helpers import get_setting
+            _t = str(get_setting('wx_complaint_notify_url_isolated', '') or '').strip()
+            if _t:
+                return _t
+        except Exception:
+            pass
+        return _iso_default
+    # 系统设置里的投诉通知URL
+    try:
+        from wx_config import get_config
+        _c = str(get_config('complaint_notify_url') or '').strip()
+        if _c:
+            return _c
+    except Exception:
+        pass
+    return _OLD_NOTIFY_URL
+
+
+# 兼容旧引用：默认值仍是老域名（只在拿不到商户号上下文时用）
+NOTIFY_URL = _OLD_NOTIFY_URL
 
 logging.basicConfig(
     filename=os.path.join(SRC, 'logs', 'complaint_notify_check.log'),

@@ -1,0 +1,8 @@
+TASK=T-1787328454
+SID=S26
+DESC=一键开门列表方案C: send_open_lock_list(单命令带门列表) + 一键开门改用它
+FILES=helpers.py,routes/admin_v2.py,routes/admin.py,routes/merchant.py
+MD5|helpers.py|67aa4cd277bebb29876e642a835c951d
+MD5|routes/admin_v2.py|2e59fca8dc5c3340dca2645803219426
+MD5|routes/admin.py|c131f559bb82cb916190dcdf27d1e0b8
+MD5|routes/merchant.py|6c631bb3200ec2c53c9471676200a868

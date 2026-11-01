@@ -1,0 +1,5 @@
+TASK=T-1787892713
+SID=S88
+DESC=修复小程序中途开门提示系统维护中: deposit_mid_retrieve注释_is_miniprogram_request拦截(接口有归属/次数/网点校验安全)
+FILES=routes/user.py
+MD5|routes/user.py|4e57e681211491c3f62cd3a0ebccb022

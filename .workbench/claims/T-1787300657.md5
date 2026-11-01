@@ -1,0 +1,6 @@
+TASK=T-1787300657
+SID=S13
+DESC=修复一键开门(批量): batch_open补device_id/board_no/lock_no+统一在线判断; pending_update放行open_lock指令
+FILES=routes/admin_v2.py,routes/device.py
+MD5|routes/admin_v2.py|5b61cf96d07d3e2668a1554a2fa457ed
+MD5|routes/device.py|ac87b2d1d2a417e81f80f761f485c4c8

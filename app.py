@@ -972,6 +972,316 @@ def store_page():
         return "页面加载失败", 500
 
 
+@app.route('/mpjump-test')
+def mpjump_test_page():
+    """[S1450-20261019] 开放标签独立测试页（纯净版，不读网点配置）
+
+    用途：单独验证 wx-open-launch-weapp 在"当前生效的公众号+小程序"下能不能跳。
+    页面上并排给出两条通道（开放标签 / URL Scheme），哪条通了立刻看得出来。
+    不需要 allow_h5_to_mp，也不走存包流程，打开就能点。
+    """
+    try:
+        from wx_config import mp_appid as _mpid, oa_appid as _oaid
+        _mp = _mpid() or ''
+        _oa = _oaid() or ''
+    except Exception:
+        _mp = ''
+        _oa = ''
+    _html = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>开放标签测试</title>
+<script src="https://res2.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f6f8;color:#222;padding:14px;font-size:14px}
+.card{background:#fff;border-radius:10px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+h2{font-size:16px;margin-bottom:10px;color:#111}
+.row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #eee;font-size:13px}
+.row:last-child{border-bottom:0}
+.row b{color:#07c160;font-weight:600}
+code{background:#f2f3f5;padding:1px 5px;border-radius:4px;font-size:12px;word-break:break-all}
+.btn{display:block;width:100%;padding:12px;border:0;border-radius:8px;font-size:15px;font-weight:600;margin-top:10px;cursor:pointer}
+.btn-a{background:#07c160;color:#fff}
+.btn-b{background:#576b95;color:#fff}
+.btn-c{background:#eee;color:#333}
+#launchWrap{margin-top:10px}
+#log{margin-top:12px;background:#1e1e1e;color:#9ef;padding:10px;border-radius:8px;font-size:12px;line-height:1.7;max-height:320px;overflow:auto;font-family:Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all}
+.ok{color:#07c160;font-weight:700}
+.err{color:#fa5151;font-weight:700}
+.warn{color:#ffc300;font-weight:700}
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h2>① 环境信息</h2>
+  <div class="row"><span>公众号 appid</span><b>__OA__</b></div>
+  <div class="row"><span>小程序 appid</span><b>__MP__</b></div>
+  <div class="row"><span>是否微信内</span><b id="inWx">检测中…</b></div>
+  <div class="row"><span>当前 URL</span><span><code id="curUrl"></code></span></div>
+</div>
+
+<div class="card">
+  <h2>② 开放标签通道（官方推荐）</h2>
+  <button class="btn btn-a" id="btnInit">初始化 wx.config（点这个）</button>
+  <div id="launchWrap"></div>
+  <div style="margin-top:8px;font-size:12px;color:#888">说明：绿色按钮出现 = 标签可用，点它应该直接弹出"即将打开小程序"</div>
+</div>
+
+<div class="card">
+  <h2>③ 跳【订阅页】测完整流程</h2>
+  <div style="margin-bottom:8px;font-size:13px;color:#666">
+    真实业务跳的是 <code>pages/subscribe/subscribe</code>（带 g/h/j/code/phone/order_id 参数），
+    进去会弹"订阅消息"。订阅完点微信左上角返回，回到本页看日志有没有认到"已进入"。
+  </div>
+  <input id="inpPhone" type="tel" maxlength="11" placeholder="输入手机号（测试用，可不填）"
+         style="width:100%;padding:11px;border:1px solid #ddd;border-radius:8px;font-size:15px;margin-bottom:8px">
+  <input id="inpCode" type="text" maxlength="12" placeholder="取件码（可不填）"
+         style="width:100%;padding:11px;border:1px solid #ddd;border-radius:8px;font-size:15px;margin-bottom:8px">
+  <button class="btn btn-a" id="btnSubPage">① 开放标签跳订阅页</button>
+  <button class="btn btn-b" id="btnSubScheme" style="margin-top:8px">② URL Scheme 跳订阅页</button>
+  <div id="subWrap" style="margin-top:10px"></div>
+</div>
+
+<div class="card">
+  <h2>④ URL Scheme 通道（对照组）</h2>
+  <button class="btn btn-b" id="btnScheme">用 URL Scheme 跳转</button>
+  <div style="margin-top:8px;font-size:12px;color:#888">说明：这条是现在线上用的方式，用来对比成功率</div>
+</div>
+
+<div class="card">
+  <h2>⑤ 日志</h2>
+  <div id="log"></div>
+  <button class="btn btn-c" id="btnClear">清空日志</button>
+</div>
+
+<script>
+var OA_APPID = "__OA__";
+var MP_APPID = "__MP__";
+var MP_PATH = "pages/index/index";
+var MP_SUB_PATH = "pages/subscribe/subscribe";   /* [S1451] 真实业务页 */
+var _jumpAt = 0;
+
+function log(msg, cls) {
+  var el = document.getElementById('log');
+  var t = new Date().toTimeString().slice(0, 8);
+  var span = document.createElement('div');
+  span.innerHTML = '<span style="color:#666">[' + t + ']</span> '
+                 + (cls ? '<span class="' + cls + '">' : '<span>')
+                 + String(msg).replace(/</g, '&lt;') + '</span>';
+  el.appendChild(span);
+  el.scrollTop = el.scrollHeight;
+}
+
+document.getElementById('curUrl').textContent = location.href.split('#')[0];
+var _inWx = /MicroMessenger/i.test(navigator.userAgent || '');
+document.getElementById('inWx').innerHTML = _inWx
+    ? '<span class="ok">是</span>' : '<span class="err">否（开放标签只在微信内有效）</span>';
+log('页面加载完成，微信内=' + _inWx);
+log('jweixin: ' + (typeof wx === 'undefined' ? '未加载' : ('已加载 v' + (wx.version || '?'))));
+
+document.getElementById('btnClear').onclick = function () {
+  document.getElementById('log').innerHTML = '';
+};
+
+document.getElementById('btnInit').onclick = function () {
+  var u = location.href.split('#')[0];
+  log('开始取签名… url=' + u);
+  fetch('/api/wx/jsapi-signature?url=' + encodeURIComponent(u))
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d || d.code !== 200 || !d.data) {
+        log('签名失败: ' + JSON.stringify(d), 'err');
+        return;
+      }
+      log('签名 OK：appId=' + d.data.appId + ' nonceStr=' + String(d.data.nonceStr).slice(0, 8) + '…', 'ok');
+      if (d.data.appId !== OA_APPID) {
+        log('注意：签名 appId 与页面注入的公众号 appid 不一致！页面=' + OA_APPID, 'warn');
+      }
+      if (typeof wx === 'undefined' || !wx.config) {
+        log('jweixin 未就绪，无法 config', 'err');
+        return;
+      }
+      wx.config({
+        debug: false,
+        appId: d.data.appId,
+        timestamp: d.data.timestamp,
+        nonceStr: d.data.nonceStr,
+        signature: d.data.signature,
+        jsApiList: [],
+        openTagList: ['wx-open-launch-weapp']
+      });
+      wx.ready(function () {
+        log('wx.config 成功（ready）', 'ok');
+        buildLaunchTag();
+      });
+      wx.error(function (res) {
+        log('wx.config 失败: ' + ((res && res.errMsg) || JSON.stringify(res)), 'err');
+      });
+    })
+    .catch(function (e) {
+      log('取签名异常: ' + ((e && e.message) || e), 'err');
+    });
+};
+
+function buildLaunchTag() {
+  var wrap = document.getElementById('launchWrap');
+  wrap.innerHTML = '';
+  try {
+    var tag = document.createElement('wx-open-launch-weapp');
+    tag.setAttribute('appid', MP_APPID);
+    tag.setAttribute('path', MP_PATH);
+    tag.setAttribute('style', 'display:block;width:100%;');
+    var tpl = document.createElement('script');
+    tpl.setAttribute('type', 'text/wxtag-template');
+    tpl.innerHTML = '<button style="width:100%;padding:12px;border:none;border-radius:8px;'
+                  + 'background:#07c160;color:#fff;font-size:15px;font-weight:600;">'
+                  + '点我跳小程序（开放标签）</button>';
+    tag.appendChild(tpl);
+    tag.addEventListener('launch', function (e) {
+      log('★ 开放标签触发跳转成功！detail=' + JSON.stringify((e && e.detail) || {}), 'ok');
+    });
+    tag.addEventListener('error', function (e) {
+      log('★ 开放标签失败：' + JSON.stringify((e && e.detail) || {}), 'err');
+    });
+    wrap.appendChild(tag);
+    log('开放标签已挂载 appid=' + MP_APPID + ' path=' + MP_PATH, 'ok');
+  } catch (e) {
+    log('创建标签异常: ' + ((e && e.message) || e), 'err');
+  }
+}
+
+document.addEventListener('WeixinOpenTagsError', function (e) {
+  log('WeixinOpenTagsError: ' + JSON.stringify((e && e.detail) || {}), 'err');
+});
+
+/* [S1451] 构造订阅页参数（跟 deposit.html 的 mpBuildQuery 同一套字段） */
+function buildSubQuery() {
+  var ph = ((document.getElementById('inpPhone') || {}).value || '').trim();
+  var cd = ((document.getElementById('inpCode') || {}).value || '').trim();
+  var g = ph.substring(0, 3), h = ph.substring(3, 7), j = ph.substring(7);
+  return 'g=' + g + '&h=' + h + '&j=' + j
+       + '&code=' + encodeURIComponent(cd)
+       + '&phone=' + encodeURIComponent(ph)
+       + '&order_id=' + encodeURIComponent('TEST_' + Date.now())
+       + '&gzh_openid=' + encodeURIComponent('');
+}
+
+/* 跳转后开"等返回"监听：页面从 hidden 变回 visible 就说明用户回来了 */
+function watchReturn(tag) {
+  _jumpAt = Date.now();
+  try {
+    var sawHidden = false, ticks = 0;
+    var iv = setInterval(function () {
+      ticks++;
+      if (ticks > 240) { clearInterval(iv); return; }
+      var st = document.visibilityState || (document.hidden ? 'hidden' : 'visible');
+      if (st === 'hidden') { sawHidden = true; return; }
+      if (st === 'visible' && sawHidden) {
+        clearInterval(iv);
+        var sec = Math.round((Date.now() - _jumpAt) / 1000);
+        log('★ 检测到已返回本页（离开 ' + sec + ' 秒）tag=' + tag, 'ok');
+        log('★ 真实业务里这一刻 H5 会问 /api/user/mp-entered 拿 entered=true 才放行', 'warn');
+      }
+    }, 1000);
+    log('已开启"等返回"监听 tag=' + tag, 'warn');
+  } catch (e) {}
+}
+
+document.getElementById('btnSubPage').onclick = function () {
+  if (typeof wx === 'undefined' || !wx.config) { log('jweixin 未就绪', 'err'); return; }
+  var wrap = document.getElementById('subWrap');
+  wrap.innerHTML = '';
+  var q = buildSubQuery();
+  log('准备挂"订阅页"开放标签：' + MP_SUB_PATH + '?' + q);
+  try {
+    var tag = document.createElement('wx-open-launch-weapp');
+    tag.setAttribute('appid', MP_APPID);
+    tag.setAttribute('path', MP_SUB_PATH + '?' + q);
+    tag.setAttribute('style', 'display:block;width:100%;');
+    var tpl = document.createElement('script');
+    tpl.setAttribute('type', 'text/wxtag-template');
+    tpl.innerHTML = '<button style="width:100%;padding:12px;border:none;border-radius:8px;'
+                  + 'background:#07c160;color:#fff;font-size:15px;font-weight:600;">'
+                  + '点我去订阅页（会弹订阅）</button>';
+    tag.appendChild(tpl);
+    tag.addEventListener('launch', function (e) {
+      log('★ 订阅页跳转已触发！', 'ok');
+      watchReturn('opentag-sub');
+    });
+    tag.addEventListener('error', function (e) {
+      log('★ 订阅页标签失败：' + JSON.stringify((e && e.detail) || {}), 'err');
+    });
+    wrap.appendChild(tag);
+    log('订阅页标签已挂载，点下面绿按钮', 'ok');
+  } catch (e) {
+    log('建标签异常: ' + ((e && e.message) || e), 'err');
+  }
+};
+
+document.getElementById('btnSubScheme').onclick = function () {
+  var q = buildSubQuery();
+  log('请求订阅页 URL Scheme：' + MP_SUB_PATH + '?' + q);
+  fetch('/api/wx/generate-scheme', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: MP_SUB_PATH, query: q })
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      var inner = (d && d.data && d.data.data) ? d.data : d;
+      if (inner && inner.code === 200 && inner.data && inner.data.scheme) {
+        log('拿到 Scheme: ' + String(inner.data.scheme).slice(0, 60) + '…', 'ok');
+        watchReturn('scheme-sub');
+        log('即将跳转…', 'warn');
+        location.href = inner.data.scheme;
+      } else {
+        log('没拿到 Scheme: ' + JSON.stringify(d).slice(0, 200), 'err');
+      }
+    })
+    .catch(function (e) {
+      log('Scheme 接口异常: ' + ((e && e.message) || e), 'err');
+    });
+};
+
+document.getElementById('btnScheme').onclick = function () {
+  log('请求 URL Scheme…');
+  fetch('/api/wx/generate-scheme', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: MP_PATH, query: '' })
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      var inner = (d && d.data && d.data.data) ? d.data : d;
+      if (inner && inner.code === 200 && inner.data && inner.data.scheme) {
+        log('拿到 Scheme: ' + String(inner.data.scheme).slice(0, 60) + '…', 'ok');
+        try { watchReturn('scheme-home'); } catch (e) {}
+        log('即将跳转…');
+        location.href = inner.data.scheme;
+      } else {
+        log('没拿到 Scheme: ' + JSON.stringify(d).slice(0, 200), 'err');
+      }
+    })
+    .catch(function (e) {
+      log('Scheme 接口异常: ' + ((e && e.message) || e), 'err');
+    });
+};
+</script>
+</body>
+</html>"""
+    _html = _html.replace('__OA__', _oa).replace('__MP__', _mp)
+    from flask import make_response as _mr
+    _r = _mr(_html)
+    _r.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    _r.headers['Pragma'] = 'no-cache'
+    _r.headers['Expires'] = '0'
+    return _r
+
+
 @app.route('/retrieve')
 def retrieve_page():
     """取包页面"""
@@ -1258,63 +1568,117 @@ def card_icon_img():
 
 @app.route('/api/wx/jsapi-signature', methods=['GET'])
 def wx_jsapi_signature():
-    """为H5页面提供微信JS-SDK签名,用于wx-open-launch-weapp开放标签"""
+    """为H5页面提供微信JS-SDK签名,用于wx-open-launch-weapp / wx-open-subscribe 开放标签
+
+    [S1447-20261019] 修"有概率失败"：
+      旧实现把 access_token / jsapi_ticket 缓存在 app 对象上，gunicorn 多 worker 下
+      各存一份、各自去微信取 token；微信 access_token 全局唯一，后取的顶掉先取的，
+      被顶掉的 worker 换 jsapi_ticket 必失败 -> 同一页面"有时能签名有时不能"。
+      现改为：
+        · access_token 复用 helpers.get_access_token_for()（缓存落 system_settings，
+          多 worker 共享；用 stable_token 接口不会互相顶掉）
+        · jsapi_ticket 落 system_settings（键 wx_jsapi_ticket_<appid>）共享
+        · 公众号凭据缺失时返回 hint=oa_account_inactive，便于区分"没配账号"和"微信报错"
+      对外返回结构（code/data.appId|timestamp|nonceStr|signature）保持不变。
+    """
     try:
         url = request.args.get('url', '')
         if not url:
             return jsonify({'code': -1, 'msg': '缺少url参数'})
-        
-        import hashlib, time
-        from config import WX_APP_ID, WX_APP_SECRET
-        
-        # 获取access_token
-        token_key = 'wx_jsapi_access_token'
-        token_data = getattr(app, '_wx_jsapi_token', None)
-        if not token_data or time.time() - token_data.get('ts', 0) > 7000:
-            import urllib.request
-            token_url = f'https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid={_wx_oa_id()}&secret={_wx_oa_secret()}'
-            with urllib.request.urlopen(token_url, timeout=10) as resp:
-                token_json = json.loads(resp.read().decode())
-            access_token = token_json.get('access_token', '')
-            if not access_token:
-                return jsonify({'code': -1, 'msg': '获取access_token失败: ' + str(token_json)})
-            app._wx_jsapi_token = {'token': access_token, 'ts': time.time()}
-        else:
-            access_token = token_data['token']
-        
-        # 获取jsapi_ticket
-        ticket_key = 'wx_jsapi_ticket'
-        ticket_data = getattr(app, '_wx_jsapi_ticket', None)
-        if not ticket_data or time.time() - ticket_data.get('ts', 0) > 7000:
-            import urllib.request
-            ticket_url = f'https://api.weixin.qq.com/cgi-bin/ticket/getticket?access_token={access_token}&type=jsapi'
-            with urllib.request.urlopen(ticket_url, timeout=10) as resp:
-                ticket_json = json.loads(resp.read().decode())
+
+        import hashlib as _hl, time as _tm, json as _js
+
+        _oa_id = (_wx_oa_id() or '').strip()
+        _oa_sec = (_wx_oa_secret() or '').strip()
+        if not _oa_id or not _oa_sec:
+            logger.warning('[S1447] jsapi-signature 缺公众号凭据 appid=%r secret=%s',
+                           _oa_id, '有' if _oa_sec else '无')
+            return jsonify({'code': -1,
+                            'msg': '公众号未启用（appid/secret 为空），请先在后台启用公众号账号',
+                            'hint': 'oa_account_inactive'})
+
+        # ── access_token：复用带 DB 缓存、跨 worker 共享的实现 ──
+        try:
+            from helpers import get_access_token_for as _get_tok_for
+            access_token = _get_tok_for(_oa_id, _oa_sec)
+        except Exception as _e0:
+            logger.error('[S1447] get_access_token_for 调用异常: %s', _e0)
+            access_token = None
+        if not access_token:
+            logger.error('[S1447] jsapi-signature 取 access_token 失败 appid=%s', _oa_id)
+            return jsonify({'code': -1, 'msg': '获取access_token失败（appid=%s）' % _oa_id,
+                            'hint': 'access_token_failed'})
+
+        # ── jsapi_ticket：落库共享，避免每个 worker 各取一次 ──
+        _tk_key = 'wx_jsapi_ticket_' + _oa_id
+        jsapi_ticket = ''
+        _conn = None
+        try:
+            from database import get_db as _sig_db
+            _conn = _sig_db()
+            _c = _conn.cursor()
+            _c.execute("SELECT setting_value FROM system_settings WHERE setting_key = %s", (_tk_key,))
+            _r = _c.fetchone()
+            if _r and _r.get('setting_value'):
+                try:
+                    _d = _js.loads(_r['setting_value'])
+                    if _tm.time() < float(_d.get('expires_at') or 0) - 600:
+                        jsapi_ticket = _d.get('ticket') or ''
+                except Exception:
+                    jsapi_ticket = ''
+        except Exception as _e1:
+            logger.warning('[S1447] 读 jsapi_ticket 缓存失败（继续走微信取）: %s', _e1)
+        finally:
+            try:
+                if _conn:
+                    _conn.close()
+            except Exception:
+                pass
+
+        if not jsapi_ticket:
+            import urllib.request as _ur
+            ticket_url = ('https://api.weixin.qq.com/cgi-bin/ticket/getticket'
+                          '?access_token=%s&type=jsapi' % access_token)
+            with _ur.urlopen(ticket_url, timeout=10) as _resp:
+                ticket_json = _js.loads(_resp.read().decode())
             jsapi_ticket = ticket_json.get('ticket', '')
             if not jsapi_ticket:
-                return jsonify({'code': -1, 'msg': '获取jsapi_ticket失败: ' + str(ticket_json)})
-            app._wx_jsapi_ticket = {'ticket': jsapi_ticket, 'ts': time.time()}
-        else:
-            jsapi_ticket = ticket_data['ticket']
-        
-        # 生成签名
-        nonce_str = hashlib.md5(str(time.time()).encode()).hexdigest()[:16]
-        timestamp = str(int(__import__('time').time()))
-        sign_str = f'jsapi_ticket={jsapi_ticket}&noncestr={nonce_str}&timestamp={timestamp}&url={url}'
-        signature = hashlib.sha1(sign_str.encode()).hexdigest()
-        
+                logger.error('[S1447] 取 jsapi_ticket 失败 appid=%s resp=%s', _oa_id, ticket_json)
+                return jsonify({'code': -1, 'msg': '获取jsapi_ticket失败: ' + str(ticket_json),
+                                'hint': 'jsapi_ticket_failed'})
+            # 落库共享（ticket 有效期 7200s，留 600s 余量）
+            try:
+                _conn2 = _sig_db()
+                _c2 = _conn2.cursor()
+                _c2.execute(
+                    "INSERT INTO system_settings (setting_key, setting_value) VALUES (%s, %s) "
+                    "ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value",
+                    (_tk_key, _js.dumps({'ticket': jsapi_ticket,
+                                         'expires_at': _tm.time() + 7200})))
+                _conn2.commit()
+                _conn2.close()
+            except Exception as _e2:
+                logger.warning('[S1447] 写 jsapi_ticket 缓存失败（不影响本次签名）: %s', _e2)
+
+        # ── 生成签名 ──
+        nonce_str = _hl.md5(str(_tm.time()).encode()).hexdigest()[:16]
+        timestamp = str(int(_tm.time()))
+        sign_str = ('jsapi_ticket=%s&noncestr=%s&timestamp=%s&url=%s'
+                    % (jsapi_ticket, nonce_str, timestamp, url))
+        signature = _hl.sha1(sign_str.encode()).hexdigest()
+
         return jsonify({
             'code': 200,
             'data': {
-                'appId': _wx_oa_id(),
+                'appId': _oa_id,
                 'timestamp': timestamp,
                 'nonceStr': nonce_str,
                 'signature': signature
             }
         })
     except Exception as e:
-        return jsonify({'code': -1, 'msg': str(e)})
-
+        logger.error('[S1447] jsapi-signature 异常: %s', e)
+        return jsonify({'code': -1, 'msg': str(e), 'hint': 'exception'})
 
 @app.route('/api/wx/generate-scheme', methods=['POST'])
 def wx_generate_scheme():

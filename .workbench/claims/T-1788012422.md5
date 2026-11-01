@@ -1,0 +1,5 @@
+TASK=T-1788012422
+SID=S97
+DESC=问题1修复: 会员管理手动退款与用户提现撞车导致余额负数-①member_refund退款前检查待审核wr(有则拦截) ②admin_withdrawal_approve审核时订单已refunded则不再重复退款并把用户提现扣的余额补回
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|5d88f384e19853ee62d5523b7a6629c3

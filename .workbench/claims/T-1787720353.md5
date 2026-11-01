@@ -1,0 +1,5 @@
+TASK=T-1787720353
+SID=S76
+DESC=修复扫码误报设备离线: is_device_online心跳过期时也查WS连接/5004在线列表,避免心跳延迟误判
+FILES=helpers.py
+MD5|helpers.py|8b833a88b696c75a32faf2fd8468fb6c

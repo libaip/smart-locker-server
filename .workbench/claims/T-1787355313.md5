@@ -1,0 +1,6 @@
+TASK=T-1787355313
+SID=S27
+DESC=小程序查询/一键开门修复: admin_v2一键开门改方案C, merchant两个查询接口改DB共享表方案返回真实状态
+FILES=routes/admin_v2.py,routes/merchant.py
+MD5|routes/admin_v2.py|e4226bb86919a1c46c34a96e829ce7d3
+MD5|routes/merchant.py|360c2b2c7abb081539434e8af6e79e52

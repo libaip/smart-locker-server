@@ -1,0 +1,453 @@
+# -*- coding: utf-8 -*-
+"""[S1053] 用户行为埋点 —— 精确到每个用户，永久保留
+
+设计要点（避免拖慢主流程）：
+  ① 只记录【白名单】动作（查余额/查订单/提现/取件/存件/登录/投诉...）
+  ② 写【内存队列】，后台线程每 5 秒或攒够 200 条批量 INSERT
+  ③ 队列满则丢弃（绝不阻塞请求）
+  ④ 全程 try/except，任何异常都不影响主流程
+  ⑤ 手机号自动从 openid 解析（带缓存，避免每次都查库）
+
+用法（在 app.py 里）：
+    import behavior_log
+    behavior_log.install(app)      # 挂在 app 上
+"""
+import threading
+import time
+import logging
+from collections import deque
+from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
+
+# ---------------- 配置 ----------------
+MAX_QUEUE = 20000            # 队列上限，超过就丢（保护内存）
+BATCH_SIZE = 200            # 每批最多写多少条
+FLUSH_INTERVAL = 5           # 秒；每 5 秒刷一次
+# [S1365] 源头去重：同一 openid + 同一秒 + 同一动作只记一条
+DEDUPE_TTL = 5               # 秒；去重表保留多久（过期即清，内存可控）
+
+# 白名单：路径片段 -> action 名
+#   ★ 只记录"用户侧"的关键动作，管理端/设备端不记
+ACTION_MAP = [
+    ('/api/user/balance',              'balance'),      # 查余额
+    ('/api/user/orders',               'orders'),       # 查订单
+    ('/api/user/order-detail',         'order_detail'), # 订单详情
+    ('/api/user/wallet/transactions',  'transactions'), # 交易流水
+    ('/api/user/wallet/withdrawals',   'withdraw_list'),# 提现记录
+    ('/api/user/withdraw',             'withdraw'),     # 发起提现
+    ('/api/user/help-refund',          'help_refund'),  # 求助退款
+    ('/api/user/info',                 'user_info'),    # 用户信息
+    ('/api/user/subscribe-templates',  'sub_templates'),# 订阅模板
+    ('/api/retrieve/verify',           'retrieve'),     # 取件验证
+    ('/api/deposit/get-pay-params',    'deposit_pay'),  # 存件支付
+    ('/api/wx/login',                  'login'),        # 登录
+    ('/api/cabinets/by-mainboard',     'cabinet_scan'), # 扫码/柜机
+    ('/api/active-orders/by-device',   'active_orders'),# 活动订单
+    ('/api/complaints',                'complaint'),    # 提交投诉
+]
+
+_queue = deque()
+_lock = threading.Lock()
+_started = False
+_stats = {'in': 0, 'out': 0, 'drop': 0, 'err': 0, 'dup': 0}
+
+# [S1365] 源头去重表：key=(openid, 秒, action) -> 该秒内已记过
+_dedupe = {}
+_dedupe_lock = threading.Lock()
+_DEDUPE_MAX = 200000         # 去重表上限，超了整体清空（保护内存）
+_dedupe_gc_sec = [-1]        # [S1365b] 上次 GC 的秒，秒变化时清理一次
+
+
+def _dedupe_gc(now_sec):
+    """清理过期的去重 key（每 DEDUPE_TTL 秒最多清一次，摊薄开销）"""
+    global _dedupe
+    if len(_dedupe) > _DEDUPE_MAX:
+        _dedupe = {}
+        return
+    stale = now_sec - DEDUPE_TTL
+    for k in [k for k in _dedupe if k[1] < stale]:
+        _dedupe.pop(k, None)
+
+
+# openid -> phone 缓存（避免每次查库）
+_oid2ph = {}
+_oid2ph_lock = threading.Lock()
+_OID2PH_MAX = 50000
+
+
+def _match_action(path):
+    for frag, act in ACTION_MAP:
+        if path.startswith(frag):
+            return act
+    return None
+
+
+def _resolve_phone(openid):
+    """openid -> 手机号（带缓存）。查不到返回空。"""
+    if not openid:
+        return ''
+    with _oid2ph_lock:
+        if openid in _oid2ph:
+            return _oid2ph[openid]
+    ph = ''
+    try:
+        from database import get_db
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("""SELECT user_phone FROM orders
+                     WHERE (mp_openid=%s OR openid=%s) AND COALESCE(user_phone,'')<>''
+                     ORDER BY id DESC LIMIT 1""", (openid, openid))
+        row = c.fetchone()
+        if row:
+            ph = (dict(row).get('user_phone') or '')
+        try:
+            conn.close()
+        except Exception:
+            pass
+    except Exception:
+        ph = ''
+    with _oid2ph_lock:
+        if len(_oid2ph) < _OID2PH_MAX:
+            _oid2ph[openid] = ph
+    return ph
+
+
+def record(path, openid='', phone='', detail='', ts=None):
+    """记录一条行为（非阻塞，失败静默）"""
+    try:
+        act = _match_action(path or '')
+        if not act:
+            return
+        # [S1365] 源头去重：同一 openid 同一秒同一动作只记一条。
+        #   前端一次页面加载会并发调同一接口多次（实测 balance 5-11 次），
+        #   不去重会让"次数"类特征虚高十几倍，进而误判高风险、批量退款。
+        _t = ts or time.time()
+        _oid = openid or ''
+        if _oid:
+            _sec = int(_t)
+            _key = (_oid, _sec, act)
+            with _dedupe_lock:
+                if _key in _dedupe:
+                    _stats['dup'] += 1
+                    return
+                _dedupe[_key] = _t
+                # [S1365b] 秒一变就回收一次过期 key（每秒最多一次）
+                if _sec != _dedupe_gc_sec[0]:
+                    _dedupe_gc_sec[0] = _sec
+                    _dedupe_gc(_sec)
+        with _lock:
+            if len(_queue) >= MAX_QUEUE:
+                _stats['drop'] += 1
+                return
+            _queue.append((phone or '', _oid, act, (path or '')[:120],
+                           (detail or '')[:200], _t))
+            _stats['in'] += 1
+    except Exception:
+        _stats['err'] += 1
+
+
+def _flush_once():
+    """把队列里的一批写库"""
+    batch = []
+    with _lock:
+        while _queue and len(batch) < BATCH_SIZE:
+            batch.append(_queue.popleft())
+    if not batch:
+        return 0
+    # 补手机号
+    rows = []
+    for (ph, oid, act, path, detail, ts) in batch:
+        if not ph and oid:
+            ph = _resolve_phone(oid)
+        # [S1322] INSERT 声明了 8 个字段(openid,user_phone,action,path,method,ip,created_at,source)，
+        #   但这里原来只给 6 个值 -> "INSERT has more target columns than expressions"，
+        #   从 10-17 10:47 起全部写库失败（968 次报错，行为数据断了 11 小时）。
+        #   补上 method / ip 两个空值，source 记 live，与 install() 里的调用口径一致。
+        rows.append((oid, ph, act, path, '', '',
+                     time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts)), 'live'))
+    try:
+        from database import get_db
+        conn = get_db()
+        c = conn.cursor()
+        # 批量插入（psycopg2 execute_values 不一定可用，用手工多值）
+        # [S1322] 占位符必须和字段数一致：8 个字段 -> 8 个 %s。
+        #   之前是 6 个占位符配 8 个字段（且 rows 只有 6 个值），整条链路一直写不进去。
+        vals = ','.join(['(%s,%s,%s,%s,%s,%s,%s,%s)'] * len(rows))
+        flat = []
+        for r in rows:
+            flat.extend(r)
+        # [S1367] 跨进程去重：重复记录静默跳过（依赖部分唯一索引 idx_ubl_uniq_s1367）
+        c.execute("""INSERT INTO user_behavior_log
+                     (openid, user_phone, action, path, method, ip, created_at, source)
+                     VALUES """ + vals + """
+                     ON CONFLICT (openid, date_trunc('second', created_at), action)
+                       WHERE openid <> '' AND created_at >= TIMESTAMP '2026-10-18 16:50:00'
+                     DO NOTHING""", tuple(flat))
+        conn.commit()
+        try:
+            conn.close()
+        except Exception:
+            pass
+        with _lock:
+            _stats['out'] += len(rows)
+        return len(rows)
+    except Exception as e:
+        _stats['err'] += 1
+        if _stats['err'] % 50 == 1:
+            logger.warning('[behavior_log] 写库失败: %s', str(e)[:160])
+        return 0
+
+
+def _worker():
+    while True:
+        try:
+            n = _flush_once()
+            if n == 0:
+                time.sleep(FLUSH_INTERVAL)
+        except Exception:
+            time.sleep(FLUSH_INTERVAL)
+
+
+def stats():
+    with _lock:
+        return dict(_stats), len(_queue)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# [S1294] 实时退款触发
+#   同一个 openid 在 5 分钟内请求数 >= 15 次 -> 立刻触发退款
+#   不再等定时任务（原来每 10 分钟一趟，中间的空窗期会漏掉快速投诉）
+#   设计：纯内存计数 O(1)，不查库；达阈值扔队列，后台线程消费；异常全吞。
+# ══════════════════════════════════════════════════════════════════════
+# [S1337] 每 6 次请求就排队判定一次（原来 15）：
+#   现在有 4 条 6 分规则，"6小时内看钱>=7" 这类 6-10 次就能达标，
+#   等 15 次太慢，用户可能早投诉了。判定本身在后台线程，不阻塞请求。
+_RT_THRESHOLD = 6           # 同一会话请求数阈值（达到就排队判定）
+_RT_WINDOW_SEC = 300        # 会话窗口 5 分钟
+_RT_COOLDOWN_SEC = 1800     # 同一 openid 触发冷却 30 分钟
+
+_rt_counter = {}
+_rt_lock = threading.Lock()
+_rt_queue = deque(maxlen=500)
+_rt_fired_at = {}
+_rt_stats = {'checked': 0, 'triggered': 0, 'dedup': 0, 'errors': 0}
+_rt_stop = threading.Event()
+
+
+def _rt_trigger_refund(openid):
+    """后台线程：查该 openid 最近取包且未退的订单 → 判定 → 退款"""
+    try:
+        from datetime import datetime as _dt, timedelta as _td
+        import behavior_scorer as _bs
+        import behavior_decision as _bd
+        db = _get_db()
+        try:
+            cur = db.cursor()
+            cur.execute("""
+                SELECT o.id, o.order_no, o.mp_openid, o.user_phone,
+                       o.retrieve_time, o.deposit_amount, o.payment_channel_id
+                FROM orders o
+                WHERE o.mp_openid = %s
+                  AND o.status = 3
+                  -- [S1337] 与定时任务对齐：7 天内的未退订单都算（晚段规则要到 7 天）
+                  AND o.retrieve_time >= NOW() - INTERVAL '7 days'
+                  AND (o.refund_status IS NULL
+                       OR o.refund_status NOT IN ('refunded','success','fee_refunded'))
+                  AND COALESCE(o.deposit_amount, 0) > 0
+                  AND o.payment_channel_id IS NOT NULL
+                ORDER BY o.retrieve_time DESC
+                LIMIT 10
+            """, (openid,))
+            orders = []
+            for r in cur.fetchall():
+                if isinstance(r, dict):
+                    orders.append(dict(r))
+                else:
+                    orders.append(dict(zip(
+                        ['id', 'order_no', 'mp_openid', 'user_phone',
+                         'retrieve_time', 'deposit_amount', 'payment_channel_id'], r)))
+            if not orders:
+                logger.info('[S1294] 实时: openid=%s 无可退订单', str(openid)[:10])
+                return
+            cfg = _bs.load_config(db)
+            # [S1295] 老板要求：命中一次 -> 退该用户【所有】未退订单
+            #   判定口径：用【最近一个订单】的行为特征（代表用户当前状态）
+            #   一旦判定高风险 -> 把 orders 里所有订单都退掉（不再 break）
+            _main = orders[0]
+            _t0 = _main.get('retrieve_time')
+            if isinstance(_t0, str):
+                try:
+                    _t0 = _dt.strptime(str(_t0)[:19], '%Y-%m-%d %H:%M:%S')
+                except Exception:
+                    _t0 = None
+            if not _t0:
+                logger.info('[S1295] 实时: openid=%s 最近订单无取包时间', str(openid)[:10])
+                return
+            # [S1337] 特征窗口对齐定时任务：取包~7天，晚段从取包+6小时起
+            _feat = _bs.features_from_log(db, openid, _t0, _t0 + _td(days=7),
+                                          late_from=_t0 + _td(hours=6))
+            if not _feat:
+                logger.info('[S1295] 实时: openid=%s 窗口内无行为', str(openid)[:10])
+                return
+            _res = _bs.judge(_feat, cfg['table'], cfg['threshold'])
+            if not _res.get('is_high_risk'):
+                logger.info('[S1295] 实时: openid=%s 得分%s 未达阈值', str(openid)[:10], _res.get('score'))
+                return
+            logger.info('[S1295] 实时命中 openid=%s 得分=%s max_taps=%s -> 退 %d 个订单',
+                        str(openid)[:10], _res.get('score'), _feat.get('max_taps'), len(orders))
+            _ok_n = 0
+            for o in orders:
+                order_dict = {
+                    'id': o['id'], 'order_no': o['order_no'],
+                    'mp_openid': o['mp_openid'] or openid,
+                    'user_phone': o['user_phone'],
+                    'deposit_amount': o['deposit_amount'],
+                    'payment_channel_id': o['payment_channel_id'],
+                }
+                rid, ok, msg = _bd.do_refund(db, order_dict, _res)
+                try:
+                    _bs.log_decision(db, order_dict, _feat, _res,
+                                     action=('auto_refund' if ok else 'refund_failed'),
+                                     dry_run=False, refund_id=rid, window_min=360)
+                    db.commit()
+                except Exception:
+                    try: db.rollback()
+                    except Exception: pass
+                logger.info('[S1295] 实时退款 order=%s 押金=%s ok=%s msg=%s',
+                            o.get('order_no'), o.get('deposit_amount'), ok, str(msg)[:60])
+                if ok:
+                    _ok_n += 1
+            if _ok_n:
+                _rt_stats['triggered'] += _ok_n
+            logger.info('[S1295] 实时批量完成 openid=%s 成功 %d / %d 单',
+                        str(openid)[:10], _ok_n, len(orders))
+        finally:
+            try: db.close()
+            except Exception: pass
+    except Exception as e:
+        _rt_stats['errors'] += 1
+        logger.warning('[S1294] 实时退款异常 openid=%s: %s', str(openid)[:10], e)
+
+
+def _rt_worker():
+    """后台线程：消费触发队列"""
+    while not _rt_stop.is_set():
+        try:
+            oid = _rt_queue.popleft()
+        except IndexError:
+            time.sleep(0.5)
+            continue
+        except Exception:
+            time.sleep(0.5)
+            continue
+        try:
+            _rt_trigger_refund(oid)
+        except Exception as e:
+            logger.warning('[S1294] worker 异常: %s', e)
+
+
+def _rt_check(openid):
+    """在 before_request 里调用：内存计数，达阈值扔队列（不查库、不阻塞）"""
+    try:
+        if not openid:
+            return
+        now = datetime.now()
+        with _rt_lock:
+            _rt_stats['checked'] += 1
+            rec = _rt_counter.get(openid)
+            if (not rec) or (now - rec['last']).total_seconds() > _RT_WINDOW_SEC:
+                _rt_counter[openid] = {'count': 1, 'first': now, 'last': now, 'fired': False}
+                if len(_rt_counter) > 5000:
+                    for k in [k for k, v in _rt_counter.items()
+                              if (now - v['last']).total_seconds() > _RT_WINDOW_SEC * 2][:2000]:
+                        _rt_counter.pop(k, None)
+                return
+            rec['count'] += 1
+            rec['last'] = now
+            if rec['count'] < _RT_THRESHOLD or rec.get('fired'):
+                return
+            last_fire = _rt_fired_at.get(openid)
+            if last_fire and (now - last_fire).total_seconds() < _RT_COOLDOWN_SEC:
+                _rt_stats['dedup'] += 1
+                rec['fired'] = True
+                return
+            rec['fired'] = True
+            _rt_fired_at[openid] = now
+            try:
+                _rt_queue.append(openid)
+            except Exception:
+                pass
+            logger.info('[S1294] 实时命中 openid=%s 会话请求数=%s -> 排队', str(openid)[:10], rec['count'])
+    except Exception:
+        _rt_stats['errors'] += 1
+
+
+def rt_stats():
+    with _rt_lock:
+        return dict(_rt_stats), len(_rt_queue), len(_rt_counter)
+
+
+def install(app):
+    """把埋点挂到 Flask app 上"""
+    global _started
+    try:
+        from flask import request as _rq
+
+        @app.before_request
+        def _beh_before():
+            try:
+                # 只处理白名单路径，尽早返回
+                p = _rq.path or ''
+                if not p.startswith('/api/'):
+                    return None
+                if not _match_action(p):
+                    return None
+                # [S1323] 只记【有 openid】的请求 —— 柜机设备轮询
+                #   (/api/active-orders/by-device、/api/cabinets/by-mainboard)
+                #   全都没有 openid，实测占了 99% 的埋点量（220 条里 218 条是设备），
+                #   每天约 1.5 万条垃圾数据，会把表撑大、拖慢按 openid 的查询。
+                #   用户侧请求（查余额/订单/提现…）都带 openid，不受影响。
+                _s1323_oid = (_rq.args.get('openid') or '').strip()
+                if not _s1323_oid:
+                    return None
+                # 记到 request 上下文，after_request 里写
+                _rq._beh_path = p
+                _rq._beh_openid = _s1323_oid[:64]
+                _rq._beh_t0 = time.time()
+                # [S1294] 实时计数（内存，不查库）
+                _rt_check(_rq._beh_openid)
+            except Exception:
+                pass
+            return None
+
+        @app.after_request
+        def _beh_after(resp):
+            try:
+                p = getattr(_rq, '_beh_path', None)
+                if not p:
+                    return resp
+                oid = getattr(_rq, '_beh_openid', '') or ''
+                # 从响应里尽量不改；detail 记状态码 + 耗时
+                t0 = getattr(_rq, '_beh_t0', 0)
+                cost = int((time.time() - t0) * 1000) if t0 else 0
+                record(p, openid=oid, detail='%s %dms' % (resp.status_code, cost))
+            except Exception:
+                pass
+            return resp
+
+        if not _started:
+            t = threading.Thread(target=_worker, daemon=True, name='behavior_log')
+            t.start()
+            _started = True
+            logger.info('[behavior_log] 埋点已启用（队列上限 %d，每 %ds 刷库）', MAX_QUEUE, FLUSH_INTERVAL)
+            # [S1294] 启动实时退款 worker
+            try:
+                _rt_t = threading.Thread(target=_rt_worker, daemon=True, name='rt_refund')
+                _rt_t.start()
+                logger.info('[S1294] 实时退款 worker 已启动（阈值 %d 次 / %d 秒）',
+                            _RT_THRESHOLD, _RT_WINDOW_SEC)
+            except Exception as _rte:
+                logger.warning('[S1294] 实时退款 worker 启动失败: %s', _rte)
+    except Exception as e:
+        logger.warning('[behavior_log] 挂载失败: %s', e)

@@ -1,0 +1,5 @@
+TASK=T-1788661500
+SID=S120
+DESC=getUserInfo提现规则改为返回完整规则(微信审核要求: 额度/次数/时间/到账), 不再读柜机旧文案
+FILES=routes/user.py
+MD5|routes/user.py|f53df3b9ed5c5c3494bab26e57a1e2e3

@@ -1,0 +1,5 @@
+TASK=T-1787532473
+SID=S56
+DESC=客服第6条文案改'下方微信小程序', 用户发11位手机号自动走提现未到账流程
+FILES=wecom-kf/app.py
+MD5|wecom-kf/app.py|MISSING

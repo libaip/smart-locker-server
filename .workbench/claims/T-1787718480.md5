@@ -1,0 +1,6 @@
+TASK=T-1787718480
+SID=S75
+DESC=企微客服小程序卡片缩略图media_id失效修复+自动续期: 重新上传thumb.png, renew_thumb.py定时每2天更新media_id并重启+同步旧机
+FILES=wecom-kf/app.py,wecom-kf/renew_thumb.py
+MD5|wecom-kf/app.py|MISSING
+MD5|wecom-kf/renew_thumb.py|MISSING

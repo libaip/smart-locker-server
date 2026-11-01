@@ -1,0 +1,6 @@
+TASK=T-1790225192
+SID=S322
+DESC=S649-20260924 新小程序(清域智 wx0be09d4de1417e01)订阅通知修复三处: ①helpers.send_wx_subscribe_message 只要 _aid 非0就走按账号发送路径(_send_subscribe_for_account 一行不改, _aid=0 老路径含公众号逐字节不变); ②helpers.get_access_token 缓存键从固定 wx_mp_access_token 改为按 appid 委托 get_access_token_for(_wx_mp_id(),_wx_mp_secret(),force_refresh); ③routes/admin_v2.py:41 _SENDABLE_MP_ACCOUNT_IDS 由 (9,) 改 (9,11) 保住老小程序 wx281a9540a6a5b64d(卓蓝时) 的订单关闭/自动提现通知; 根因=token缓存不带appid导致40003 invalid openid, 连带老路径不做字段重映射导致47003, 白名单致老用户被跳过; 离线断言8条(含改前世界复现+老小程序逐字节等价+反向可逆) -> 106/175备份 -> 同步175 -> HUP无感重载 -> 15分钟观察窗 -> 真发测试
+FILES=helpers.py,routes/admin_v2.py
+MD5|helpers.py|f1f43f73cfd157393b0dd60dc9a53c51
+MD5|routes/admin_v2.py|498cb53862dee54b4c8b24c2806e4b2a

@@ -757,6 +757,8 @@
             <p id="mpTipDesc" style="text-align:center;font-size:14px;color:#666;margin-bottom:10px">请在弹出的“即将打开小程序”里点【允许】；进入后再允许“订阅通知”，这样才能收到预付款退还 / 退款到账的微信提醒</p>
             <p id="mpRetryHint" style="display:none;text-align:center;font-size:13px;color:#e6a23c;margin-bottom:10px">没跳过去？再点一次【去小程序】就行（点几次都可以）</p>
             <div class="modal-btns">
+                <!-- [S1449] 开放标签容器：能用就走它（官方推荐，稳定），不能用则显示下面的兜底按钮 -->
+                <div id="mpLaunchWrap" style="display:none;width:100%"></div>
                 <button id="mpOpenBtn" class="modal-btn modal-btn-confirm" onclick="launchMp()">去小程序</button>
             </div>
             <div id="mpEscLine" style="display:none;text-align:center;margin-top:14px">
@@ -1091,7 +1093,7 @@
         fetch(API_BASE + '/api/store/init', {
             method: 'POST',
             headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({cabinet_id: parseInt(currentCabinetId), phone: phone, access_code: code, slot_size: selectedSize, openid: wxOpenid || '', unionid: wxUnionid || ''})
+            body: JSON.stringify({cabinet_id: parseInt(currentCabinetId), phone: phone, access_code: code, slot_size: selectedSize, openid: wxOpenid || '', unionid: wxUnionid || '', appid: mpAppId || ''})   /* [S1495] 补传 appid：让后端按 appid 精确判断身份，不靠 openid 前缀猜 */
         })
         .then(function(r) { return r.json(); })
         .then(function(d) {
@@ -1234,6 +1236,8 @@
             }
         } catch (e) {}
         if (el) { el.classList.add('show'); }
+        try { mpLaunchTagInit(); } catch (e) {}       /* [S1449] 首次弹窗时初始化开放标签 */
+        try { mpLaunchTagRebuild(); } catch (e) {}    /* [S1449] 每次弹窗重建（属性不可改） */
         mpPrefetchScheme();
         if (mpGiveupTimer) { clearTimeout(mpGiveupTimer); mpGiveupTimer = null; }   // [A1] 取消"25 秒自动放行"
         // [A1] 跳不过去就退回第 1 步（订单保留复用，不会多占柜门），不放行进支付页
@@ -2831,6 +2835,109 @@
               .catch(function () { w.style.display = 'flex'; oaSubDiag('prompt_show_nochk'); });
         } catch (e) { try { cb(); } catch (e2) {} }
     }
+    // ============================================================
+    // [S1449-20261019] wx-open-launch-weapp 开放标签（跳小程序主通道）
+    //   背景：原来只有 URL Scheme + weixin:// 兜底，Scheme 会过期/一次性、
+    //         weixin:// 又被微信限制，所以"有概率跳不过去"。
+    //   做法：开放标签可用 -> 用标签；标签报 error -> 回退 launchMp()（原 Scheme 逻辑）。
+    //   注意：开放标签的 appid/path 属性创建后不可修改，所以每次弹窗都重建一次。
+    // ============================================================
+    var mpLaunchTagOk = false;
+    var mpLaunchInited = false;
+
+    function mpLaunchTagInit() {
+        try {
+            if (mpLaunchInited) { return; }
+            mpLaunchInited = true;
+            if (!mpAppId) { console.log('[mp-launch] 无 mpAppId，跳过'); return; }
+            if (!/MicroMessenger/i.test(navigator.userAgent || '')) {
+                console.log('[mp-launch] 非微信环境，跳过');
+                return;
+            }
+            if (typeof wx === 'undefined' || !wx.config) {
+                console.log('[mp-launch] jweixin 未就绪，跳过');
+                return;
+            }
+            var u = location.href.split('#')[0];
+            fetch('/api/wx/jsapi-signature?url=' + encodeURIComponent(u))
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (!d || d.code !== 200 || !d.data) {
+                        console.log('[mp-launch] 签名失败，走 Scheme 兜底', d);
+                        return;
+                    }
+                    wx.config({
+                        debug: false,
+                        appId: d.data.appId,
+                        timestamp: d.data.timestamp,
+                        nonceStr: d.data.nonceStr,
+                        signature: d.data.signature,
+                        jsApiList: [],
+                        openTagList: ['wx-open-launch-weapp']
+                    });
+                    wx.ready(function() {
+                        mpLaunchTagOk = true;
+                        console.log('[mp-launch] config ok，开放标签可用');
+                        try { mpLaunchTagRebuild(); } catch (e) {}
+                    });
+                    wx.error(function(res) {
+                        console.log('[mp-launch] config 失败，走 Scheme 兜底',
+                                    (res && res.errMsg) || res);
+                    });
+                })
+                .catch(function(e) {
+                    console.log('[mp-launch] 取签名异常，走 Scheme 兜底', e);
+                });
+        } catch (e) {
+            console.log('[mp-launch] init 异常（不影响跳转）', e);
+        }
+    }
+
+    function mpLaunchTagRebuild() {
+        try {
+            var wrap = document.getElementById('mpLaunchWrap');
+            var btn = document.getElementById('mpOpenBtn');
+            if (!wrap) { return; }
+            wrap.innerHTML = '';
+            if (!mpLaunchTagOk) {
+                // 标签不可用 -> 只显示原按钮
+                wrap.style.display = 'none';
+                if (btn) { btn.style.display = ''; }
+                return;
+            }
+            var _path = 'pages/subscribe/subscribe?' + mpBuildQuery();
+            var tag = document.createElement('wx-open-launch-weapp');
+            tag.setAttribute('appid', mpAppId);
+            tag.setAttribute('path', _path);
+            tag.setAttribute('style', 'display:block;width:100%;height:auto;border:0;padding:0;margin:0;background:transparent;');
+            var tpl = document.createElement('script');
+            tpl.setAttribute('type', 'text/wxtag-template');
+            tpl.innerHTML = '<button style="width:100%;padding:12px 0;border:none;border-radius:8px;'
+                          + 'background:#07c160;color:#fff;font-size:16px;font-weight:500;'
+                          + 'cursor:pointer;">去小程序</button>';
+            tag.appendChild(tpl);
+            tag.addEventListener('launch', function(e) {
+                console.log('[mp-launch] 开放标签已触发跳转', (e && e.detail) || '');
+            });
+            tag.addEventListener('error', function(e) {
+                console.log('[mp-launch] 开放标签失败，回退 Scheme', (e && e.detail) || '');
+                try { launchMp(); } catch (_e) {}
+            });
+            wrap.appendChild(tag);
+            wrap.style.display = 'block';
+            if (btn) { btn.style.display = 'none'; }   // 有标签时藏掉兜底按钮
+            console.log('[mp-launch] 已挂载开放标签 appid=' + mpAppId + ' path=' + _path);
+        } catch (e) {
+            console.log('[mp-launch] 建标签异常，退回原按钮', e);
+            try {
+                var _w = document.getElementById('mpLaunchWrap');
+                var _b = document.getElementById('mpOpenBtn');
+                if (_w) { _w.style.display = 'none'; }
+                if (_b) { _b.style.display = ''; }
+            } catch (_e2) {}
+        }
+    }
+
     function oaSubscribeInit() {
         oaSubDiag('init');
         if (typeof wx === 'undefined' || !wx.config) { oaSubDiag('no_jweixin'); return; }
@@ -2868,7 +2975,7 @@
                     nonceStr: d.data.nonceStr,
                     signature: d.data.signature,
                     jsApiList: [],
-                    openTagList: ['wx-open-subscribe']
+                    openTagList: ['wx-open-subscribe', 'wx-open-launch-weapp']   /* [S1449] 加跳小程序开放标签 */
                 });
                 wx.ready(function() { oaSubDiag('config_ok'); });
                 wx.error(function(res) { oaSubHide('wx.config 失败'); oaSubDiag('config_err', (res && res.errMsg) || JSON.stringify(res).slice(0,150)); });
@@ -2885,6 +2992,9 @@
         // 备用状态: 不请求签名、不显示订阅按钮、不隐藏原按钮,
         // 页面行为与功能上线前完全一致。
         console.log('[oa-subscribe] 功能已关闭(备用状态)');
+        // [S1449] 订阅关闭时，这条 config 不会执行 -> 开放标签也拿不到 wx.config
+        //        这里单独初始化一次（只带 launch-weapp），保证跳小程序主通道可用
+        try { mpLaunchTagInit(); } catch (e) {}
     } else {
         oaSubDiag('boot', (document.getElementById('oaSubBtn') ? 'tag_in_dom' : 'tag_missing') + '|ready=' + document.readyState + '|ua=' + (navigator.userAgent || '').slice(-60));
         try { oaSubscribeInit(); } catch (e) { oaSubDiag('init_exc', (e && e.message) || String(e)); }

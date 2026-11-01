@@ -1,0 +1,5 @@
+TASK=T-1787322116
+SID=S22
+DESC=微信投诉页状态显示补全(退款失败标红)+加提现手动退款按钮
+FILES=static/admin-v2.html
+MD5|static/admin-v2.html|f4d1acf4e8cdffb5c6ab5c4792c0dca4

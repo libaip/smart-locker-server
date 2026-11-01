@@ -1,0 +1,5 @@
+TASK=T-1790258134
+SID=S325
+DESC=S654-20260924 pgbouncer idle 连接掉线排查(全程只读) + monitor_crash_guard.py 的 idle-in-transaction 处置改为【默认只告警】, kill 收进 system_settings.crash_guard_kill_idle_txn 显式开关
+FILES=monitor_crash_guard.py
+MD5|monitor_crash_guard.py|af62efb97b900ec26c360d6b551c991e

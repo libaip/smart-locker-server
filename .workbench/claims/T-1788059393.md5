@@ -1,0 +1,5 @@
+TASK=T-1788059393
+SID=S100
+DESC=问题3补充修复: run_withdrawal_batch_auto里4处退款失败仍恢复余额(白名单/队列审批/人工审批/后台审批部分失败)改为保持pending隐藏+wr置3, 存量73笔改pending; 不影响通过率未达标拒绝分支
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|3a9a1490b763e54dfb981b8857d80dd3

@@ -1,0 +1,5 @@
+TASK=T-1790757982
+SID=S332
+DESC=S806 微信商品名称改为储物柜预付款（PAY_GOODS_NAME）
+FILES=helpers.py
+MD5|helpers.py|89951525a0f2386c54bae1f9a8628be4

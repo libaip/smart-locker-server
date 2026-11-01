@@ -1,0 +1,6 @@
+TASK=T-1791266186
+SID=S346
+DESC=S826-20261006 微信支付如实申报(最小版): 统一下单 spbill_create_ip 改成用户真实 IP(nginx X-Real-IP) + scene_info 报最小门店 store_info.id; wxpay.unifiedorder 参数化(默认行为不变) + 开关 wx_report_real_ip; 附 8 项 IP 取值自测与零回归验证
+FILES=wxpay.py,helpers.py
+MD5|wxpay.py|a2ffaf6c07472e4747c333ae4c059b99
+MD5|helpers.py|f4ccb0b540b4af0ac69c9ccf62e80b6b

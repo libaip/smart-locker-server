@@ -1,0 +1,5 @@
+TASK=T-1788100721
+SID=S102
+DESC=订单退款与提现申请撞车修复: admin_order_refund联动待审核wr时, 订单从wr移除后补生成一条订单退款提现记录(金额=押金,approver=管理员-订单退款), 不再把wr金额扣成0; 存量539条amount=0记录修复
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|4f29306682399d66382e813b45531708

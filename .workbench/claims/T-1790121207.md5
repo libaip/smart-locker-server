@@ -1,0 +1,6 @@
+TASK=T-1790121207
+SID=S312
+DESC=S631-20260923 支付宝小程序订阅通知接线: 新增 helpers.notify_alipay_order 作为唯一接线点(闸门复用 order_notify_blocked 与 S525 严格互为反面/uid 只用 orders.alipay_pay_uid->alipay_mp_uid 绝不按手机号反查/template_id 传空按 biz 查库兜底/应急开关 alipay_subscribe_enabled 置最前/绝不抛异常), 在 /deposit/end-storage 通知段(结束订单 subscribe_general + 退款成功 subscribe_refund) 与 oa_notify_order_end 的 S525 拦截分支(一处覆盖离线取包 routes/offline.py x2 + 设备侧结束 routes/device.py) 各接一处; 微信单纯内存判断 0 条新增 SQL、调用序列与 SQL 轨迹逐字节不变; 离线断言 56/56 PASS
+FILES=helpers.py,routes/user.py
+MD5|helpers.py|4553f73b39399c06b74feebc94fa6e37
+MD5|routes/user.py|87d788c62878c2152166948d9fd7086c

@@ -1,0 +1,6 @@
+TASK=T-1790813595
+SID=S344
+DESC=S824-20261001 支付宝端【自助投诉】身份打通: /complaints 支持 alipay_uid(platform 分流 + 归属校验按 uid), complaints 表新增 platform/alipay_uid 列, 支付宝端提交带支付宝身份, 错误响应走 HTTP200 包装
+FILES=routes/user.py,routes/admin_v2.py
+MD5|routes/user.py|79a6a87156de85d8eca0b8e4a929823f
+MD5|routes/admin_v2.py|c55ee9c654f0695c6c146959909303c4

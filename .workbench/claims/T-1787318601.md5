@@ -1,0 +1,5 @@
+TASK=T-1787318601
+SID=S21
+DESC=在线订单: 选网点后设备下拉联动加载该网点设备
+FILES=static/admin-v2.html
+MD5|static/admin-v2.html|70f6c37490dc6948f3151d152196e906

@@ -1,0 +1,5 @@
+TASK=T-1790221226
+SID=S321
+DESC=S647-20260924 微信支付商品名(统一下单body)第三次改文案: 按老板要求把 helpers.py:962 常量 PAY_GOODS_NAME 从「小云伧存-寄存服务预付款(请确认订单结束后，余额在小程序【小云伧存】我的钱包提现)」改为「【小云伧存】寄存预付款」; 3 个引用点(:1020 第三方 unifiedorder / :1058 主 JSAPI·MWEB / :1436 get_mp_jsapi_params 默认参数 body)结构一字不动; 离线断言三条路径 body 逐字节==新文案且<=127; 备份 106/175 -> 同步 175 -> HUP 无感重载 -> 15分钟观察窗; 只对新下单生效
+FILES=helpers.py
+MD5|helpers.py|eb1f1acf284d7ebad2e88420cd5f3038

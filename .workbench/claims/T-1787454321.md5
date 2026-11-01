@@ -1,0 +1,6 @@
+TASK=T-1787454321
+SID=S42
+DESC=提现管理加网点/代理商筛选: 后端withdrawals接口支持location_id/agent_id过滤+前端加下拉框
+FILES=routes/admin_v2.py,static/admin-v2.html
+MD5|routes/admin_v2.py|8c269488ed255d4ddbfea90e45892e98
+MD5|static/admin-v2.html|0a8675cb30b0c67fd54a69e5b866bc75

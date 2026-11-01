@@ -1,0 +1,6 @@
+TASK=T-1788172641
+SID=S104
+DESC=三修复: A.user_withdraw金额<=0不生成0元wr B.get_user_orders余额隐藏订单也隐藏(wr=3被拒也藏) C.清理历史遗留wr status=0且bd=available(拦截提现)
+FILES=routes/user.py,routes/admin_v2.py
+MD5|routes/user.py|303babbf1c9bec955b28e3d30297ffec
+MD5|routes/admin_v2.py|8be6ec2b926db215cc469b083ffc702a

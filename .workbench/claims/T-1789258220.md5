@@ -1,0 +1,5 @@
+TASK=T-1789258220
+SID=S175
+DESC=修好H5跳小程序返回后到不了支付页(根因: 09-12 16:25跳转加固删掉了3秒自动进支付页的兜底; 本轮补: 跳转前存档到localStorage + 回来后读档直接进支付页, 覆盖pageshow/重新载入/隐藏过又可见三种情形 + 全程远程诊断上报)
+FILES=static/deposit.html
+MD5|static/deposit.html|3b357cf4d6572455c05a1f49d65c3d90

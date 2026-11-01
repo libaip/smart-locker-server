@@ -1,0 +1,5 @@
+TASK=T-1787919390
+SID=S89
+DESC=用户端订单列表去掉auto_hidden过滤(商户端比例隐藏误伤用户端, 22,736笔被误藏恢复显示)
+FILES=routes/user.py
+MD5|routes/user.py|9f311032b1a692dc05c929a4cce750c8

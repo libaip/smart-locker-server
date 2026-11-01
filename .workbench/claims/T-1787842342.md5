@@ -1,0 +1,5 @@
+TASK=T-1787842342
+SID=S84
+DESC=商户号保存后自动配置投诉通知URL: admin_channel_save保存成功即触发complaint_notify_check, 新增/编辑商户号即配好通知(保留30分钟轮询兜底)
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|8cdb995e3644e189d775768ff8bb528d

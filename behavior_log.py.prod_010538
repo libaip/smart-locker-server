@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+[S1120] 行为埋点模块 behavior_log.py
+
+作用：在 Flask 应用里挂 hook，把用户侧请求写入 user_behavior_log
+用法（在 app.py 里）：
+    import behavior_log
+    behavior_log.install(app)
+
+设计：
+  · 内存队列 + 后台线程批量写库（不阻塞请求）
+  · 只记录白名单接口
+  · 从 openid 解析 user_phone（带缓存）
+"""
+import atexit
+import logging
+import re
+import threading
+import time
+from collections import deque
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+MAX_QUEUE = 50000
+FLUSH_INTERVAL = 5.0      # 秒
+FLUSH_BATCH = 200         # 条
+
+ACTION_MAP = [
+    ('/api/user/balance', 'balance'),
+    ('/api/user/wallet/transactions', 'transactions'),
+    ('/api/user/wallet/withdrawals', 'withdrawals'),
+    ('/api/user/withdraw', 'withdraw'),
+    ('/api/user/orders', 'orders'),
+    ('/api/user/order-detail', 'order_detail'),
+    ('/api/user/help-refund', 'help_refund'),
+    ('/api/user/info', 'info'),
+    ('/api/user/subscribe-templates', 'subscribe'),
+    ('/api/retrieve', 'retrieve'),
+    ('/api/deposit', 'deposit'),
+    ('/api/cabinets', 'cabinets'),
+    ('/api/active-orders', 'active_orders'),
+    ('/api/complaints', 'complaints'),
+    ('/api/wx/login', 'login'),
+    ('/api/config/public', 'config'),
+]
+OID_RE = re.compile(r'[?&]openid=([A-Za-z0-9_\-]{20,})')
+
+_queue = deque()
+_lock = threading.Lock()
+_stop = threading.Event()
+_thread = None
+_phone_cache = {}
+_get_db = None
+_stats = {'queued': 0, 'written': 0, 'dropped': 0, 'errors': 0}
+
+
+def _action_of(path):
+    for frag, name in ACTION_MAP:
+        if path.startswith(frag):
+            return name
+    return None
+
+
+def _resolve_phone(db, openid):
+    """从 orders.mp_openid 反查手机号（带缓存）"""
+    if openid in _phone_cache:
+        return _phone_cache[openid]
+    try:
+        cur = db.cursor()
+        cur.execute("""SELECT user_phone AS p FROM orders
+                       WHERE mp_openid = %s AND COALESCE(user_phone,'') <> ''
+                       ORDER BY id DESC LIMIT 1""", (openid,))
+        r = cur.fetchone()
+        cur.close()
+        ph = None
+        if r:
+            ph = r.get('p') if isinstance(r, dict) else r[0]
+        _phone_cache[openid] = ph
+        if len(_phone_cache) > 20000:
+            _phone_cache.clear()
+        return ph
+    except Exception:
+        return None
+
+
+def _flush_loop():
+    """后台线程：定期批量写库"""
+    global _stats
+    while not _stop.is_set():
+        time.sleep(FLUSH_INTERVAL)
+        with _lock:
+            n = min(len(_queue), FLUSH_BATCH)
+            batch = [_queue.popleft() for _ in range(n)] if n else []
+        if not batch:
+            continue
+        db = None
+        try:
+            db = _get_db()
+            cur = db.cursor()
+            ph = ','.join(['(%s,%s,%s,%s,%s,%s,%s,%s)'] * len(batch))
+            flat = []
+            for b in batch:
+                flat.extend(b)
+            cur.execute("""INSERT INTO user_behavior_log
+                (openid, user_phone, action, path, method, ip, created_at, source)
+                VALUES """ + ph, flat)
+            db.commit()
+            cur.close()
+            _stats['written'] += len(batch)
+        except Exception as e:
+            _stats['errors'] += 1
+            if _stats['errors'] < 5:
+                logger.warning('[behavior_log] 写库失败: %s' % e)
+            try:
+                if db:
+                    db.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                if db:
+                    db.close()
+            except Exception:
+                pass
+
+
+def _before_request():
+    """记录用户侧请求"""
+    try:
+        from flask import request
+        path = request.path or ''
+        act = _action_of(path)
+        if not act:
+            return
+        oid = request.args.get('openid')
+        if not oid:
+            m = OID_RE.search(request.full_path or '')
+            oid = m.group(1) if m else None
+        if not oid:
+            return
+        ip = (request.headers.get('X-Forwarded-For', '') or request.remote_addr or '').split(',')[0].strip()
+        row = (oid, None, act, path, request.method, ip, datetime.now(), 'live')
+        with _lock:
+            if len(_queue) >= MAX_QUEUE:
+                _stats['dropped'] += 1
+                return
+            _queue.append(row)
+            _stats['queued'] += 1
+    except Exception:
+        pass
+
+
+def install(app):
+    """在 Flask app 上安装埋点"""
+    global _thread, _get_db
+    try:
+        from database import get_db as _g
+        _get_db = _g
+    except Exception as e:
+        logger.warning('[behavior_log] 无法导入 database: %s' % e)
+        return False
+    try:
+        # 建表（幂等）
+        db = _get_db()
+        cur = db.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS user_behavior_log (
+                id BIGSERIAL PRIMARY KEY,
+                openid TEXT, user_phone TEXT, action TEXT, path TEXT,
+                method TEXT, ip TEXT, status_code INTEGER,
+                created_at TIMESTAMP NOT NULL, source TEXT DEFAULT 'live'
+            )""")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ubl_openid_time ON user_behavior_log(openid, created_at)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ubl_created ON user_behavior_log(created_at DESC)")
+        db.commit()
+        cur.close(); db.close()
+    except Exception as e:
+        logger.warning('[behavior_log] 建表失败: %s' % e)
+    app.before_request(_before_request)
+    _thread = threading.Thread(target=_flush_loop, daemon=True)
+    _thread.start()
+    atexit.register(_shutdown)
+    logger.info('[behavior_log] 埋点已安装（队列上限 %d）' % MAX_QUEUE)
+    return True
+
+
+def _shutdown():
+    _stop.set()
+    try:
+        if _thread:
+            _thread.join(timeout=3)
+    except Exception:
+        pass
+
+
+def stats():
+    return dict(_stats, queue=len(_queue), cache=len(_phone_cache))

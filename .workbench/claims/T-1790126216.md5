@@ -1,0 +1,7 @@
+TASK=T-1790126216
+SID=S314
+DESC=S633-20260923 把支付宝订阅消息改成真能发出去: data 键名从微信字段名(amount1/time2/thing4/thing3)改回 keyword1..keywordN(依据 alipay.open.mini.message.template.batchquery 实测 keyword_desc: general=c142ac.. 账户余额,变动时间,温馨提示,温馨提醒 / refund=de68d9.. 寄存单号,退还时间,退还状态,退还金额); 收件人按形状分流 to_open_id(47位openid)/to_user_id(2088开头 16位); refund keyword1 补 order_no(寄存单号); 勘误 S631b 那句" 不要传 keyword1..keywordN "
+FILES=alipay.py,helpers.py,routes/user.py
+MD5|alipay.py|299adebcaba2472ac0cda2f3ffd44a5c
+MD5|helpers.py|35b3bb24a1f63a0bbf00f8eb26c1f9b3
+MD5|routes/user.py|28503b339d2f695d27dde5e9d083b243

@@ -1,0 +1,672 @@
+"""
+支付相关API - Blueprint
+包含：支付渠道管理、支付/退款回调
+"""
+import logging
+import re
+import json
+import random
+import string
+from datetime import datetime
+from wx_config import mp_openid_prefix, oa_openid_prefix   # [CFG-STEP2D] openid 前缀改成跟着当前生效账号走（缺省仍是 ooTcRx / oLhbm2）
+from wx_config import template_id as _wx_tpl   # [CFG-STEP2] 模板ID改从配置中心读，读不到自动用第三个参数的兜底值(原写死值)
+from flask import Blueprint, request
+from database import get_db
+from helpers import (json_response, require_auth, get_setting, is_mock_mode, logger, _get_device_protocol,
+                     get_wxpay, get_channel_wxpay, update_channel_stats, send_open_lock,
+                     upsert_user_balance_row)
+from wxpay import WxPay, ThirdPartyPay
+
+bp = Blueprint('payment', __name__)
+
+
+# ============================================
+# 支付渠道管理
+# ============================================
+
+@bp.route('/payment-channels', methods=['GET'])
+def list_payment_channels():
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM payment_channels ORDER BY id')
+        channels = [dict(ch) for ch in cursor.fetchall()]
+        conn.close()
+        return json_response(channels)
+    except Exception as e:
+        logger.error(f'[list_channels] {e}')
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/payment-channels', methods=['POST'])
+@require_auth
+def create_payment_channel():
+    try:
+        data = request.get_json()
+        name = data.get('name')
+        channel_type = data.get('channel_type', 'wechat')
+        mch_id = data.get('mch_id')
+        api_key = data.get('api_key')
+        app_id = data.get('app_id')
+        app_secret = data.get('app_secret')
+        cert_name = data.get('cert_name')
+        extra_config = data.get('extra_config')
+        weight = data.get('weight', 1)
+        daily_limit = data.get('daily_limit', 0)
+        is_active = data.get('is_active', 1)
+        if not name:
+            return json_response(message='渠道名称不能为空', code=400)
+        if channel_type == 'wechat' and not mch_id:
+            return json_response(message='微信渠道商户号不能为空', code=400)
+        if channel_type == 'third_party' and not mch_id:
+            return json_response(message='第三方平台AppID不能为空', code=400)
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('INSERT INTO payment_channels (name, channel_type, mch_id, api_key, app_id, app_secret, cert_name, extra_config, is_active, weight, daily_limit) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
+                       (name, channel_type, mch_id, api_key, app_id, app_secret, cert_name,
+                        json.dumps(extra_config) if isinstance(extra_config, dict) else extra_config,
+                        is_active, weight, daily_limit))
+        conn.commit()
+        channel_id = cursor.lastrowid
+        conn.close()
+        return json_response({'id': channel_id, 'message': '渠道创建成功'})
+    except Exception as e:
+        logger.error(f'[create_channel] {e}')
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/payment-channels/<int:channel_id>', methods=['PUT'])
+@require_auth
+def update_payment_channel(channel_id):
+    try:
+        data = request.get_json()
+        conn = get_db()
+        cursor = conn.cursor()
+        updates, params = [], []
+        for field in ['name', 'channel_type', 'mch_id', 'api_key', 'app_id', 'app_secret', 'cert_name', 'is_active', 'weight', 'daily_limit']:
+            if field in data:
+                if field == 'api_key' and not data[field]:
+                    continue
+                updates.append(f'{field} = %s')
+                params.append(data[field])
+        if 'extra_config' in data:
+            updates.append("extra_config = %s")
+            ec = data['extra_config']
+            params.append(json.dumps(ec) if isinstance(ec, dict) else ec)
+        if not updates:
+            conn.close()
+            return json_response(message='无更新内容', code=400)
+        params.append(channel_id)
+        cursor.execute(f"UPDATE payment_channels SET {', '.join(updates)} WHERE id = %s", params)
+        conn.commit()
+        conn.close()
+        return json_response({'message': '渠道更新成功'})
+    except Exception as e:
+        logger.error(f'[update_channel] {e}')
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/payment-channels/<int:channel_id>', methods=['DELETE'])
+@require_auth
+def delete_payment_channel(channel_id):
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM orders WHERE payment_channel_id = %s', (channel_id,))
+        if cursor.fetchone()[0] > 0:
+            conn.close()
+            return json_response(message=f'该渠道下有订单，无法删除，请禁用', code=400)
+        cursor.execute('DELETE FROM payment_channels WHERE id = %s', (channel_id,))
+        conn.commit()
+        conn.close()
+        return json_response({'message': '渠道删除成功'})
+    except Exception as e:
+        logger.error(f'[delete_channel] {e}')
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/payment-channels/<int:channel_id>/toggle', methods=['POST'])
+@require_auth
+def toggle_payment_channel(channel_id):
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT is_active FROM payment_channels WHERE id = %s', (channel_id,))
+        channel = cursor.fetchone()
+        if not channel:
+            conn.close()
+            return json_response(message='渠道不存在', code=404)
+        new_status = 0 if channel['is_active'] else 1
+        cursor.execute('UPDATE payment_channels SET is_active = %s WHERE id = %s', (new_status, channel_id))
+        conn.commit()
+        conn.close()
+        return json_response({'is_active': new_status, 'message': '渠道状态已更新'})
+    except Exception as e:
+        logger.error(f'[toggle_channel] {e}')
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/payment-channels/<int:channel_id>/reset-stats', methods=['POST'])
+@require_auth
+def reset_channel_stats(channel_id):
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('UPDATE payment_channels SET total_amount = 0, total_count = 0 WHERE id = %s', (channel_id,))
+        conn.commit()
+        conn.close()
+        return json_response({'message': '统计已重置'})
+    except Exception as e:
+        logger.error(f'[reset_channel_stats] {e}')
+        return json_response(message=str(e), code=500)
+
+
+# ============================================
+# 支付回调
+# ============================================
+
+@bp.route('/pay/notify', methods=['POST', 'GET'])
+def pay_notify():
+    """微信支付结果回调"""
+    try:
+        logger.info('[支付回调] 收到通知')
+        xml_data = request.get_data(as_text=True)
+        mock_mode = is_mock_mode()
+        if mock_mode:
+            return WxPay.build_pay_notify_response('SUCCESS', 'OK')
+
+        temp_result = WxPay.xml_to_dict(xml_data)
+        out_trade_no = temp_result.get('out_trade_no', '')
+        # 先查订单关联的商户号，用正确的密钥验签
+        notify_wxpay = None
+        if out_trade_no:
+            try:
+                conn = get_db()
+                cursor = conn.cursor()
+                cursor.execute('SELECT payment_channel_id FROM orders WHERE order_no = %s', (out_trade_no,))
+                order_row = cursor.fetchone()
+                if order_row and order_row['payment_channel_id']:
+                    cursor.execute('SELECT * FROM payment_channels WHERE id = %s', (order_row['payment_channel_id'],))
+                    ch = cursor.fetchone()
+                    if ch:
+                        wxpay_inst, ch_type = get_channel_wxpay(dict(ch))
+                        if wxpay_inst and ch_type == 'wechat':
+                            notify_wxpay = wxpay_inst
+                # 没找到渠道，选一个活跃的
+                _callback_channel_id = None
+                if not notify_wxpay:
+                    cursor.execute("SELECT * FROM payment_channels WHERE is_active=1 AND channel_type='wechat' ORDER BY id ASC LIMIT 1")
+                    active_ch = cursor.fetchone()
+                    if active_ch:
+                        notify_wxpay, _ = get_channel_wxpay(dict(active_ch))
+                        _callback_channel_id = active_ch['id']
+                elif order_row and order_row['payment_channel_id']:
+                    _callback_channel_id = order_row['payment_channel_id']
+                conn.close()
+            except Exception as e:
+                logger.error(f'[支付回调] 渠道查询异常: {e}')
+        if not notify_wxpay:
+            logger.error('[支付回调] 无可用活跃商户')
+            return 'fail', 500
+
+        result = notify_wxpay.parse_pay_notify(xml_data)
+        if result.get('return_code') != 'SUCCESS':
+            return notify_wxpay.build_pay_notify_response('FAIL', result.get('return_msg')), 400
+
+        out_trade_no = result.get('out_trade_no')
+        transaction_id = result.get('transaction_id')
+        trade_state = result.get('trade_state', result.get('result_code'))
+
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM orders WHERE order_no = %s FOR UPDATE', (out_trade_no,))
+        order = cursor.fetchone()
+        if not order:
+            conn.close()
+            return notify_wxpay.build_pay_notify_response('FAIL', '订单不存在'), 400
+        if order['status'] in [2, 3, 4]:
+            conn.close()
+            return notify_wxpay.build_pay_notify_response('SUCCESS', 'OK'), 200
+
+        # 订单已被超时取消，但微信实际已扣款：不复活订单、不占柜门，直接原路退款
+        if order['status'] == 5 and (trade_state == 'SUCCESS' or result.get('result_code') == 'SUCCESS'):
+            conn.commit()  # 释放 FOR UPDATE 行锁，避免和退款接口互相等待
+            try:
+                from helpers import do_real_refund
+                _refund_ok, _refund_id, _refund_msg = do_real_refund(
+                    order_id=order['id'],
+                    order_no=order['order_no'],
+                    amount=float(order['deposit_amount']) + float(order.get('per_use_price') or 0),
+                    payment_channel_id=order.get('payment_channel_id'))
+                if _refund_ok:
+                    cursor.execute("INSERT INTO payments (order_id, type, amount, transaction_id, refund_transaction_id, status, created_at) VALUES (%s, 2, %s, %s, %s, 1, CURRENT_TIMESTAMP)",
+                                   (order['id'], float(order['deposit_amount']) + float(order.get('per_use_price') or 0), order.get('transaction_id') or '', _refund_id))
+                    conn.commit()
+                    logger.warning(f"[pay_notify] 超时取消订单晚到支付，已原路退款 order={order['id']} refund_id={_refund_id}")
+                    conn.close()
+                    return notify_wxpay.build_pay_notify_response('SUCCESS', 'OK'), 200
+                logger.error(f"[pay_notify] 超时取消订单晚到支付，自动退款失败 order={order['id']} msg={_refund_msg}")
+                conn.close()
+                return 'fail', 500
+            except Exception as _re:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                logger.error(f"[pay_notify] 超时取消订单晚到支付，自动退款异常 order={order['id']} err={_re}")
+                conn.close()
+                return 'fail', 500
+
+        we_updated = False
+        if trade_state == 'SUCCESS' or result.get('result_code') == 'SUCCESS':
+            # 更新订单状态和支付渠道ID
+            if order.get('payment_channel_id') is None and '_callback_channel_id' in locals() and _callback_channel_id:
+                cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s, payment_channel_id = %s WHERE id = %s AND status = 1',
+                               (transaction_id, datetime.now(), _callback_channel_id, order['id']))
+            else:
+                cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s AND status = 1',
+                               (transaction_id, datetime.now(), order['id']))
+            we_updated = cursor.rowcount > 0
+            if we_updated and order['slot_id']:
+                cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
+            cursor.execute("SELECT id FROM payments WHERE order_id=%s AND type=1 AND transaction_id=%s LIMIT 1", (order['id'], transaction_id))
+            if not cursor.fetchone():
+                cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
+                               (order['id'], float(order['deposit_amount']) + float(order.get('per_use_price') or 0), transaction_id))
+            # 更新用户余额 - 统一用 mp_openid 查找
+            if we_updated:
+                try:
+                    _o_openid = order.get('openid', '') or ''
+                    _o_unionid = order.get('unionid', '') or ''
+                    _o_wechat_name = order.get('wechat_name', '') or ''
+                    _o_mp_openid = order.get('mp_openid', '') or _o_openid
+                    upsert_user_balance_row(cursor, phone=order['user_phone'], openid=_o_openid,
+                                            unionid=_o_unionid, mp_openid=_o_mp_openid,
+                                            wechat_name=_o_wechat_name,
+                                            total_deposited=order.get('deposit_amount') or 0,
+                                            user_id=order.get('user_id') or 0)
+                except Exception as e:
+                    logger.error(f'[支付回调更新余额失败] {e}')
+
+            # 记录开锁信息（在commit之前读取，避免DB锁）
+            _open_lock_info = None
+            try:
+                cursor.execute('''SELECT c.mainboard_device_id, c.mainboard_source, c.name as cabinet_name, l.name as location_name, cs.board_no, cs.lock_no 
+    FROM cabinets c LEFT JOIN locations l ON c.location_id = l.id LEFT JOIN cabinet_slots cs ON cs.id = %s WHERE c.id = %s''', (order['slot_id'], order['cabinet_id']))
+                cab_info = cursor.fetchone()
+                if cab_info and cab_info['mainboard_device_id']:
+                    _open_lock_info = {
+                        'device_id': str(cab_info['mainboard_device_id']),
+                        'board_no': cab_info['board_no'] or 1,
+                        'lock_no': cab_info['lock_no'] or (int(re.match(r'[A-Za-z]*(\d+)', str(order['compartment_number'] or '1')).group(1)) if order['compartment_number'] else 1),
+                        'protocol': cab_info['mainboard_source'] or _get_device_protocol(str(cab_info.get('mainboard_device_id',''))) or 'YBM',
+                        'order_id': order['order_no'],
+                        'cabinet_name': cab_info['cabinet_name'] or '',
+                        'location_name': cab_info['location_name'] or ''
+                    }
+            except Exception as e:
+                logger.error(f'[支付回调读取开锁信息失败] {e}')
+            _channel_id = order['payment_channel_id']
+            _deposit_amount = float(order['deposit_amount']) + float(order.get('per_use_price') or 0)
+            # 更新渠道统计（支付成功）
+            try:
+                if we_updated and _channel_id:
+                    update_channel_stats(_channel_id, _deposit_amount)
+            except Exception as _es:
+                logger.error(f'[pay_notify] update_channel_stats: {_es}')
+            conn.commit()
+        else:
+            if order['status'] == 1:
+                cursor.execute('UPDATE orders SET status = 5 WHERE id = %s', (order['id'],))
+                if order['slot_id']:
+                    cursor.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s', (order['slot_id'],))
+                    conn.commit()
+        # 先在DB提交前发送开门指令（先commit释放DB锁，再发开门指令）（WebSocket立即发出，独立DB连接不冲突）
+        if trade_state == 'SUCCESS' or result.get('result_code') == 'SUCCESS':
+            if we_updated and _open_lock_info:
+                # 查door_records：已有开门记录则跳过（防止与store_pay重复发送）
+                _dr_cur = conn.cursor()
+                _dr_cur.execute("SELECT id FROM door_records WHERE order_id=%s AND device_id=%s LIMIT 1", (_open_lock_info['order_id'], _open_lock_info['device_id']))
+                _dr_exists = _dr_cur.fetchone()
+                if not _dr_exists:
+                    try:
+                        send_open_lock(_open_lock_info['device_id'], _open_lock_info['board_no'],
+                                       _open_lock_info['lock_no'], _open_lock_info['protocol'],
+                                       _open_lock_info['order_id'])
+                    except Exception as e:
+                        logger.error(f'[支付回调开锁失败] {e}')
+                else:
+                    logger.info(f'[支付回调] door_records已有记录，跳过开门: order_id={_open_lock_info["order_id"]}')
+            if we_updated and _channel_id:
+                try:
+                    update_channel_stats(_channel_id, _deposit_amount)
+                except Exception as e:
+                    logger.error(f'[支付回调更新渠道统计失败] {e}')
+        conn.commit()
+        
+        # 发送寄存成功订阅消息
+        if we_updated and (trade_state == 'SUCCESS' or result.get('result_code') == 'SUCCESS'):
+            try:
+                openid = order.get('mp_openid') or ''
+                if not (openid and openid.startswith(mp_openid_prefix())):
+                    openid = order.get('openid') or ''
+                if not (openid and openid.startswith(mp_openid_prefix())):
+                    try:
+                        cur = conn.cursor()
+                        cur.execute("SELECT mp_openid, unionid FROM users WHERE phone = %s AND mp_openid IS NOT NULL AND mp_openid != '' AND mp_openid LIKE %s LIMIT 1", (order['user_phone'], mp_openid_prefix() + '%'))
+                        r = cur.fetchone()
+                        if r:
+                            openid = r['mp_openid'] or ''
+                            _pay_unionid = r['unionid'] or ''
+                    except:
+                        openid = ''
+                        _pay_unionid = ''
+                else:
+                    _pay_unionid = order.get('unionid') or ''
+                if openid and openid.startswith(mp_openid_prefix()):
+                    from helpers import send_wx_subscribe_message
+                    location_name = _open_lock_info.get('location_name', '智能寄存柜') if _open_lock_info else '智能寄存柜'
+                    cabinet_name = _open_lock_info.get('cabinet_name', '') if _open_lock_info else ''
+                    door_label = (cabinet_name + '-' if cabinet_name else '') + str(order['compartment_number']) + '号柜门'
+                    subscribe_data = {
+                        'thing1': {'value': location_name},
+                        'thing2': {'value': door_label},
+                        'amount3': {'value': str(order['deposit_amount']) + '元'},
+                        'time4': {'value': datetime.now().strftime('%Y-%m-%d %H:%M')},
+                        'character_string9': {'value': str(order.get('order_no') or order.get('orderNo') or '')}
+                    }
+                    # S119 2026-09-06: 启用寄存成功通知(新模板已加入小程序订阅授权列表)
+                    # [2026-09-14] 弹窗已不再请求该模板 -> 用户没有额度, 发送必然 43101(白打接口+刷日志) -> 默认关闭
+                    # 想恢复发送: 把下面这行改成 True 即可
+                    _SEND_STORAGE_SUCCESS_NOTIFY = False
+                    if _SEND_STORAGE_SUCCESS_NOTIFY:
+                        send_wx_subscribe_message(openid, _wx_tpl('subscribe_deposit', 'mp', 'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk'), subscribe_data, phone=order.get('user_phone'), page='pages/mine/mine', unionid=_pay_unionid)
+                # [S393-20260921] 公众号模板消息·寄存成功 —— 必须放在下面那个
+                #   `if openid and openid.startswith(mp_openid_prefix())` 【外面】：
+                #   公众号用户根本没有小程序 openid，放里面会被整段跳过
+                #   （2026-09-21 01:35 生产实例：用户付款成功却没收到寄存成功通知）。
+                try:
+                    from helpers import send_oa_template_message, oa_tplmsg_h5_url
+                    _tpl_site = ((_open_lock_info.get('location_name') if _open_lock_info else '') or '') or '智能寄存柜'
+                    # [S407-20260921] 不能用 _pay_unionid：它只在上面的小程序分支里被赋值，
+                    #   公众号用户走不到那里 -> NameError -> 通知静默失败（今天 07:03 生产实例）。
+                    _tpl_union = ''
+                    try:
+                        _tpl_union = _pay_unionid or ''
+                    except Exception:
+                        _tpl_union = order.get('unionid') or ''
+                    send_oa_template_message('oa_tplmsg_deposit_ok', {
+                        'thing8': _tpl_site,
+                        'character_string7': str(order.get('compartment_number') or ''),
+                        'amount9': str(order.get('deposit_amount')) + '元',
+                        'time1': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    }, openid=(order.get('openid') or ''), phone=(order.get('user_phone') or ''),
+                       unionid=_tpl_union, url=oa_tplmsg_h5_url())
+                except Exception as _tpl_e:
+                    logger.warning('[S393] 寄存成功模板消息失败: %s', _tpl_e)
+            except Exception as e:
+                logger.error(f'[支付回调发送订阅消息失败] {e}')
+        
+        conn.close()
+        return notify_wxpay.build_pay_notify_response('SUCCESS', 'OK'), 200
+    except Exception as e:
+        logger.error(f'[pay_notify] {e}')
+        return 'fail', 500
+
+
+@bp.route('/refund/notify', methods=['POST', 'GET'])
+def refund_notify():
+    """微信退款回调"""
+    try:
+        logger.info('[退款回调] 收到通知')
+        xml_data = request.get_data(as_text=True)
+        mock_mode = is_mock_mode()
+        if mock_mode:
+            return WxPay.build_pay_notify_response('SUCCESS', 'OK')
+        # 退款回调：尝试从XML获取订单号，查对应商户
+        wxpay = None
+        try:
+            _pre = WxPay.xml_to_dict(xml_data)
+            _out_refund_no = _pre.get('out_refund_no', '')
+            if _out_refund_no:
+                _rc = get_db().cursor()
+                # 退款单号含订单ID，尝试关联
+                _rc.execute("SELECT o.payment_channel_id FROM orders o WHERE o.order_no LIKE %s LIMIT 1", (_out_refund_no[:20] + '%',))
+                _rr = _rc.fetchone()
+                if _rr and _rr.get('payment_channel_id'):
+                    _rc.execute("SELECT * FROM payment_channels WHERE id=%s", (_rr['payment_channel_id'],))
+                    _ch = _rc.fetchone()
+                    if _ch:
+                        wxpay, _ = get_channel_wxpay(dict(_ch))
+                _rc.connection.close()
+        except:
+            pass
+        if not wxpay:
+            # fallback: 选一个活跃商户
+            try:
+                _ac = get_db().cursor()
+                _ac.execute("SELECT * FROM payment_channels WHERE is_active=1 AND channel_type='wechat' ORDER BY id ASC LIMIT 1")
+                _ach = _ac.fetchone()
+                if _ach:
+                    wxpay, _ = get_channel_wxpay(dict(_ach))
+                _ac.connection.close()
+            except:
+                pass
+        if not wxpay:
+            logger.error('[退款回调] 无可用活跃商户')
+            return 'fail', 500
+        result, success = wxpay.parse_refund_notify(xml_data)
+        if not success:
+            return wxpay.build_pay_notify_response('FAIL', '解析失败'), 400
+        return wxpay.build_pay_notify_response('SUCCESS', 'OK'), 200
+    except Exception as e:
+        logger.error(f'[refund_notify] {e}')
+        return 'fail', 500
+
+
+@bp.route('/pay/notify/alipay', methods=['POST', 'GET'])
+def alipay_pay_notify():
+    """[S255] 支付宝支付结果异步通知：先验签；验签失败则用主动查单核对（查单由我们发起，结果可信）"""
+    try:
+        params = dict(request.form) if request.form else dict(request.args)
+        out_trade_no = str(params.get('out_trade_no') or '')
+        # [S519] 订单桥接的另一半：付款人的支付宝 uid。
+        #   验签路径 -> 通知里的 buyer_id；查单路径 -> 查单结果里的 buyer_user_id（下面覆盖）
+        _buyer_uid = str(params.get('buyer_id') or params.get('buyer_user_id') or '').strip()
+        logger.info('[支付宝回调] 收到通知 out_trade_no=%s trade_status=%s total_amount=%s 有签名=%s',
+                    out_trade_no, params.get('trade_status'), params.get('total_amount'), bool(params.get('sign')))
+        if not out_trade_no:
+            return 'fail', 400
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM orders WHERE order_no = %s', (out_trade_no,))
+        order = cursor.fetchone()
+        if not order:
+            conn.close()
+            logger.error('[支付宝回调] 订单不存在: %s', out_trade_no)
+            return 'fail', 400
+        if order['status'] in (2, 3, 4):
+            conn.close()
+            return 'success'
+        ch = None
+        if order.get('payment_channel_id'):
+            cursor.execute('SELECT * FROM payment_channels WHERE id = %s', (order['payment_channel_id'],))
+            ch = cursor.fetchone()
+        if not ch:
+            cursor.execute("SELECT * FROM payment_channels WHERE channel_type='alipay' AND is_active=1 ORDER BY id ASC LIMIT 1")
+            ch = cursor.fetchone()
+        conn.close()
+        if not ch:
+            logger.error('[支付宝回调] 找不到可用的支付宝渠道')
+            return 'fail', 500
+        client, ch_type = get_channel_wxpay(dict(ch))
+        if client is None or ch_type != 'alipay':
+            logger.error('[支付宝回调] 支付宝渠道实例创建失败: id=%s', ch.get('id'))
+            return 'fail', 500
+        verified_by = ''
+        if params.get('sign') and client.verify_notify(params):
+            verified_by = 'sign'
+            if str(params.get('trade_status')) not in ('TRADE_SUCCESS', 'TRADE_FINISHED'):
+                logger.info('[支付宝回调] 验签通过但交易状态非成功: %s', params.get('trade_status'))
+                return 'success'
+        else:
+            q = client.query(out_trade_no=out_trade_no)
+            if str(q.get('code')) == '10000' and str(q.get('trade_status')) in ('TRADE_SUCCESS', 'TRADE_FINISHED'):
+                verified_by = 'query'
+                _buyer_uid = str(q.get('buyer_user_id') or q.get('buyer_id') or _buyer_uid or '').strip()
+                params = {'trade_no': q.get('trade_no'), 'total_amount': q.get('total_amount')}
+            else:
+                logger.warning('[支付宝回调] 验签失败且查单未确认: code=%s sub_code=%s', q.get('code'), q.get('sub_code'))
+                return 'fail', 400
+        try:
+            expect = float(order['deposit_amount'] or 0) + float(order.get('per_use_price') or 0)
+            got = float(params.get('total_amount') or 0)
+            if abs(expect - got) > 0.01:
+                logger.error('[支付宝回调] 金额不匹配 order=%s expect=%.2f got=%.2f', out_trade_no, expect, got)
+                return 'fail', 400
+        except Exception:
+            pass
+        trade_no = str(params.get('trade_no') or '')
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM orders WHERE order_no = %s FOR UPDATE', (out_trade_no,))
+        order = cursor.fetchone()
+        if not order:
+            conn.close()
+            return 'fail', 400
+        if order['status'] in (2, 3, 4):
+            conn.close()
+            return 'success'
+        amount = float(order['deposit_amount'] or 0) + float(order.get('per_use_price') or 0)
+        cursor.execute("UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s AND status = 1",
+                       (trade_no, datetime.now(), order['id']))
+        updated = cursor.rowcount > 0
+        if updated and order.get('slot_id'):
+            cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
+        if updated:
+            # [S255] 记账失败不能让回调失败：订单已置为已支付，用 SAVEPOINT 隔离，失败只告警
+            try:
+                # 注意：database.py 的连接是 autocommit，每条语句独立提交，所以记账失败不会影响上面的改单
+                cursor.execute("SELECT id FROM payments WHERE order_id=%s AND type=1 AND transaction_id=%s LIMIT 1",
+                               (order['id'], trade_no))
+                if not cursor.fetchone():
+                    cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
+                                   (order['id'], amount, trade_no))
+                    logger.info('[支付宝回调] 已记 payments: order=%s amount=%.2f', order['id'], amount)
+            except Exception as _pe:
+                logger.error('[支付宝回调] 记账失败(不影响订单已支付): order=%s err=%s', order['id'], _pe)
+            if order.get('payment_channel_id'):
+                try:
+                    update_channel_stats(order['payment_channel_id'], amount)
+                except Exception:
+                    pass
+        # [S519] 订单桥接：把付款人 uid 落到本单（只写支付宝专用列，不动 user_id/openid/mp_openid）
+        if updated and _buyer_uid:
+            try:
+                cursor.execute("""UPDATE orders SET alipay_pay_uid = %s
+                                  WHERE id = %s AND COALESCE(alipay_pay_uid, '') = ''""",
+                               (_buyer_uid, order['id']))
+                logger.info('[支付宝回调] 订单桥接: order=%s alipay_pay_uid=%s...'
+                            % (order['id'], _buyer_uid[:8]))
+            except Exception as _be:
+                logger.error('[支付宝回调] 落 alipay_pay_uid 失败(不影响订单已支付): order=%s err=%s'
+                             % (order['id'], _be))
+        conn.commit()
+        conn.close()
+        # [S334] 支付宝支付成功也要【开门】：原来这里只改单/记账，没有发开锁指令，
+        #   于是支付宝付完钱柜门不动（微信回调 pay_notify 里有这段，支付宝这条漏了）。
+        #   口径与微信回调一致：先 commit 释放 DB 锁，再查 door_records 去重后发指令。
+        if updated:
+            try:
+                _al_dev = ''
+                _al_info = None
+                _al_c = get_db()
+                _al_cur = _al_c.cursor()
+                _al_cur.execute('''SELECT c.mainboard_device_id, c.mainboard_source,
+                                          cs.board_no, cs.lock_no
+                                   FROM cabinets c LEFT JOIN cabinet_slots cs ON cs.id = %s
+                                   WHERE c.id = %s''', (order.get('slot_id'), order.get('cabinet_id')))
+                _al_info = _al_cur.fetchone()
+                _al_c.close()
+                if _al_info:
+                    _al_dev = str(_al_info.get('mainboard_device_id') or '')
+                if _al_dev:
+                    _dr_c = get_db()
+                    _dr_cur = _dr_c.cursor()
+                    _dr_cur.execute('SELECT id FROM door_records WHERE order_id=%s AND device_id=%s LIMIT 1',
+                                    (out_trade_no, _al_dev))
+                    _dr_exists = _dr_cur.fetchone()
+                    _dr_c.close()
+                    if _dr_exists:
+                        logger.info('[支付宝回调] door_records已有记录，跳过开门: order_id=%s', out_trade_no)
+                    else:
+                        send_open_lock(_al_dev, _al_info.get('board_no') or 1, _al_info.get('lock_no') or 1,
+                                       _al_info.get('mainboard_source') or None, out_trade_no,
+                                       slot_number=order.get('compartment_number'), skip_dedup=True)
+                        logger.info('[支付宝回调] 开门指令已发送 order=%s device=%s', out_trade_no, _al_dev)
+                else:
+                    logger.error('[支付宝回调] 未取到主板号，无法开门 order=%s slot=%s',
+                                 out_trade_no, order.get('slot_id'))
+            except Exception as _ale:
+                logger.error('[支付宝回调] 开锁失败: %s', _ale)
+        logger.info('[支付宝回调] 订单已置为已支付 order=%s trade_no=%s 校验方式=%s', out_trade_no, trade_no, verified_by)
+        return 'success'
+    except Exception as e:
+        logger.error('[支付宝回调] 异常: %s', e)
+        return 'fail', 500
+
+
+@bp.route('/pay/notify/third-party', methods=['POST', 'GET'])
+def third_party_pay_notify():
+    """第三方支付回调"""
+    try:
+        logger.info('[第三方支付回调] 收到通知')
+        if request.method == 'GET':
+            params = dict(request.args)
+        else:
+            params = dict(request.form) if request.form else (request.get_json(silent=True) or {})
+
+        out_trade_no = params.get('trade_order_id', params.get('out_trade_no', ''))
+        if not out_trade_no:
+            return 'fail', 400
+
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM orders WHERE order_no = %s', (out_trade_no,))
+        order = cursor.fetchone()
+        if not order or order['status'] in [2, 3, 4]:
+            conn.close()
+            return 'fail' if not order else 'success'
+
+        # 验签
+        if order['payment_channel_id']:
+            cursor.execute('SELECT * FROM payment_channels WHERE id = %s', (order['payment_channel_id'],))
+            channel = cursor.fetchone()
+            if channel:
+                tpp = ThirdPartyPay(appid=channel['mch_id'], appsecret=channel['api_key'], notify_url='')
+                if not tpp.verify_notify(params):
+                    conn.close()
+                    return 'fail', 400
+
+        if params.get('status') == 'OD' or params.get('return_code') == 'SUCCESS':
+            transaction_id = params.get('transaction_id', params.get('order_id', ''))
+            cursor.execute('UPDATE orders SET status = 2, transaction_id = %s, pay_time = %s WHERE id = %s AND status = 1',
+                           (transaction_id, datetime.now(), order['id']))
+            _tpp_updated = cursor.rowcount > 0
+            if _tpp_updated and order['slot_id']:
+                cursor.execute('UPDATE cabinet_slots SET status = 2 WHERE id = %s', (order['slot_id'],))
+            if _tpp_updated:
+                cursor.execute("SELECT id FROM payments WHERE order_id=%s AND type=1 AND transaction_id=%s LIMIT 1", (order['id'], transaction_id))
+                if not cursor.fetchone():
+                    cursor.execute('INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)',
+                                   (order['id'], float(order['deposit_amount']) + float(order.get('per_use_price') or 0), transaction_id))
+                if order['payment_channel_id']:
+                    update_channel_stats(order['payment_channel_id'], float(order['deposit_amount']) + float(order.get('per_use_price') or 0))
+            conn.commit()
+            conn.close()
+            return 'success'
+        conn.close()
+        return 'fail'
+    except Exception as e:
+        logger.error(f'[third_party_notify] {e}')
+        return 'fail', 500

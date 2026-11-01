@@ -46,13 +46,20 @@ def _wrap_pem(body, kind):
 
 class AlipayClient(object):
     def __init__(self, app_id, private_key, alipay_public_key='', gateway=PROD_GATEWAY,
-                 sign_type='RSA2', notify_url='', return_url='', timeout=10):
+                 sign_type='RSA2', notify_url='', return_url='', timeout=10,
+                 proxy=''):
         self.app_id = str(app_id or '').strip()
         self.gateway = (gateway or PROD_GATEWAY).strip()
         self.sign_type = sign_type or 'RSA2'
         self.notify_url = notify_url or ''
         self.return_url = return_url or ''
         self.timeout = timeout
+        # [S1299] 出口代理（http://IP:PORT 或 IP:PORT）；空=走本机出口
+        _px = str(proxy or '').strip()
+        if _px and '://' not in _px:
+            _px = 'http://' + _px
+        self.proxy = _px
+        self.proxies = ({'http': _px, 'https': _px} if _px else None)
         self._priv = self._load_private_key(private_key)
         self._pub = self._load_public_key(alipay_public_key) if alipay_public_key else None
 
@@ -156,7 +163,7 @@ class AlipayClient(object):
 
     def _post(self, method, biz_content, notify_url=None, return_url=None):
         p = self.build_params(method, biz_content, notify_url, return_url)
-        r = requests.post(self.gateway, data=p, timeout=self.timeout)
+        r = requests.post(self.gateway, data=p, timeout=self.timeout, proxies=self.proxies)
         raw = r.text
         try:
             body = json.loads(raw)
@@ -431,7 +438,7 @@ class AlipayClient(object):
         p['grant_type'] = grant_type
         p['code'] = code
         p['sign'] = self.sign(self._sign_content(p, exclude=('sign',)))
-        r = requests.post(self.gateway, data=p, timeout=self.timeout)
+        r = requests.post(self.gateway, data=p, timeout=self.timeout, proxies=self.proxies)
         raw = r.text
         try:
             body = json.loads(raw)
@@ -478,3 +485,69 @@ class AlipayClient(object):
             return False
         content = self._sign_content(params, exclude=('sign', 'sign_type'))
         return self.verify(content, sign)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# [S1299] 按渠道配置创建 AlipayClient（支持出口 IP 隔离）
+#   extra_config 支持：
+#     { "alipay_proxy": "43.128.35.30:3128" }   或复用
+#     { "egress_proxy": "43.128.35.30:3128" }
+#   白名单校验（与微信同口径）：system_settings.alipay_egress_proxy_mchids
+#     · 白名单为空 / mch_id 不在名单 -> 不使用代理（防止误配污染干净 IP）
+#   任何异常一律不带代理（行为与改造前一致，绝不影响支付）
+# ══════════════════════════════════════════════════════════════════════
+def alipay_proxy_for_channel(channel=None):
+    """返回该渠道的出口代理字符串（空=不走代理）"""
+    if not channel:
+        return ''
+    try:
+        import json as _json_s
+        _mch = str(channel.get('mch_id') or '').strip()
+        _p = ''
+        _ex = channel.get('extra_config')
+        if _ex:
+            _d = _json_s.loads(_ex) if isinstance(_ex, str) else (_ex or {})
+            _p = str(_d.get('alipay_proxy') or _d.get('egress_proxy') or '').strip()
+        if not _p:
+            return ''
+        # 白名单校验
+        try:
+            from helpers import get_setting
+            _raw = str(get_setting('alipay_egress_proxy_mchids', '') or '')
+            _wl = {x.strip() for x in _raw.replace('，', ',').split(',') if x.strip()}
+        except Exception:
+            _wl = set()
+        if not _wl or (_mch not in _wl):
+            return ''
+        return _p
+    except Exception:
+        return ''
+
+
+def alipay_notify_url_for_channel(channel=None, kind='pay'):
+    """[S1299] 该渠道的支付宝回调地址（支持独立域名）
+    extra_config 支持：
+      { "alipay_notify_url": "https://xxx/api/pay/notify/alipay" }
+      或分别用 { "alipay_pay_notify_url": ..., "alipay_refund_notify_url": ... }
+    """
+    if not channel:
+        return ''
+    try:
+        import json as _json_s
+        _ex = channel.get('extra_config')
+        if not _ex:
+            return ''
+        _d = _json_s.loads(_ex) if isinstance(_ex, str) else (_ex or {})
+        _k = 'alipay_refund_notify_url' if str(kind) == 'refund' else 'alipay_pay_notify_url'
+        _u = str(_d.get(_k) or _d.get('alipay_notify_url') or '').strip()
+        return _u
+    except Exception:
+        return ''
+
+
+def get_alipay_client(channel=None, **kwargs):
+    """[S1299] 工厂：按渠道配置创建带隔离的 AlipayClient"""
+    proxy = alipay_proxy_for_channel(channel)
+    return AlipayClient(proxy=proxy, **kwargs)
+
+

@@ -1,0 +1,5 @@
+TASK=T-1787412569
+SID=S37
+DESC=告警记录按最新离线时间倒序: device-status接口ORDER BY last_heartbeat DESC, 最新离线的排最上面
+FILES=routes/merchant.py
+MD5|routes/merchant.py|3e572596f53e61823a45d4cece01a601

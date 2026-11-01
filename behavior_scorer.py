@@ -24,6 +24,34 @@ logger = logging.getLogger(__name__)
 # 默认打分表（可被数据库配置覆盖）
 # ══════════════════════════════════════════════════════════
 DEFAULT_SCORE_TABLE = [
+    # [S1319] ** 核心规则（老板 10-17 拍板）：去重后"看钱"次数 >= 8 次
+    #   背景：旧的 "一次点15下" / "burst>=8" 用的都是【原始埋点条数】，
+    #         而前端一次页面加载会把 balance 连打 5-11 次（实测同秒最多 18 条、14 条重复），
+    #         所以旧规则实际在测"前端请求次数" —— 投诉组反而更低（0.89 倍，方向相反）。
+    #   口径：balance + withdrawals + transactions 三类"找钱"页面，
+    #         同一秒同一接口只算 1 次（去重）。
+    #   回测(近7天)：投诉组均值 11.68 vs 正常组 5.14（2.27 倍）；
+    #         >=8 命中 1,220 单/7天、命中组投诉率 0.82%（基线 0.48%，1.71 倍）；
+    #         124 单投诉里能提前拦住 20 单（16%），每天约 2.9 单；
+    #         命中未退订单 310 单/7天、押金 ¥5,817（每天约 44 单 ¥831）。
+    ('dedup_money_ge_8', 'dedupmoney', 8, 6),
+    # [S1331] 兜底：取包 6 小时后（6~24h）还在反复看钱 >= 10 次 也给 6 分。
+    #   数据显示这批人 72-88% 最终会自己退款，真实成本极低（约 ¥40/7天），
+    #   且 267 单里投诉 0 单 —— 纯粹是"减少用户等钱时间"的兜底，不会误伤投诉型用户。
+    ('dedup_money_late_ge_10', 'dedupmoney_late', 10, 6),
+    # [S1390] 看钱+余额 >= 20（原 B 方案）
+    ('money_plus_bal_ge_20', 'moneybal', 20, 6),
+    # [S1417] 老板 10-19 定的新方案：抓"11-20"和">=25"，避开 21-25 空档
+    #   实测 10-17~10-19（2,081 笔/26 投诉）：命中 478 笔、抓 7/26、
+    #   A真白退 193/¥3,575、B防投诉 5/¥116
+    ('mb_in_11_20', 'mb1120', 1, 6),
+    ('mb_ge_25', 'mbge25', 1, 6),
+    # [S1335] 晚段也判"一次点 15 下"：6 小时后才打开小程序、但一次狂点 >=15 下同样判焦急。
+    #   实测 #14(16下) / #22(34下) 就是被这条漏掉的；7 天影响约 132 单 ¥2,682。
+    ('single_session_late_ge_15', 'maxtaps_late', 15, 6),
+    # [S1383] 短时高频：30 秒内看钱 >= 6 次。抓"取包后十几秒连查好几次"的爆发型用户。
+    #   实测 10-09~10-19：抓 15/118 投诉、误伤 1,503 笔 ¥29,537（比"总计>=7"更省）。
+    ('burst_money_30s_ge_6', 'burstmoney', 6, 6),
     # (信号名, 类型, 阈值, 分值)
     ('requests_ge_40',    'req',  40,  3),
     ('requests_ge_20',    'req',  20,  1),
@@ -43,7 +71,7 @@ DEFAULT_WINDOW_MIN = 360       # 判定窗口：取包后 6 小时
 # ══════════════════════════════════════════════════════════
 # 特征提取
 # ══════════════════════════════════════════════════════════
-def extract_features(events, gap_seconds=1800):
+def extract_features(events, gap_seconds=1800, late_from=None):
     """
     从行为事件列表提取特征
 
@@ -55,6 +83,73 @@ def extract_features(events, gap_seconds=1800):
     if not events:
         return None
     evs = sorted(events, key=lambda x: x[0])
+    # [S1331] 晚段（如取包后 6~24 小时）单独算"看钱次数"：
+    #   早段（取包~+6h）继续算全部特征，语义完全不变；
+    #   晚段只用 dedup_money_late 这一条，避免总数被拉长窗口后虚高。
+    _late_evs = []
+    if late_from is not None:
+        _late_evs = [e for e in evs if e[0] >= late_from]
+        evs = [e for e in evs if e[0] < late_from]
+        # [S1334] 不能因为"早段没行为"就直接 return None ——
+        #   否则那些【只在取包 6 小时后才打开小程序】的用户会被整条丢掉，
+        #   而他们恰恰是"6~24小时兜底"规则要覆盖的人（实测 #14/#22 两笔被吞）。
+        #   早段空时把所有计数类特征按 0 处理，让晚段 dedup_money_late 仍能算出来。
+        if not evs:
+            _late_taps2 = 0
+            if _late_evs:
+                _ls2 = []
+                _c2 = [_late_evs[0]]
+                for _e2 in _late_evs[1:]:
+                    if (_e2[0] - _c2[-1][0]).total_seconds() > gap_seconds:
+                        _ls2.append(_c2); _c2 = [_e2]
+                    else:
+                        _c2.append(_e2)
+                _ls2.append(_c2)
+                _late_taps2 = max((len(_s2) for _s2 in _ls2), default=0)
+            _late_money_seen2 = set()
+            _late_money2 = 0
+            for _t3, _p3 in _late_evs:
+                _k3 = ''
+                if _p3.startswith('/api/user/balance'):
+                    _k3 = 'balance'
+                elif _p3.startswith('/api/user/wallet/withdrawals'):
+                    _k3 = 'wd'
+                elif _p3.startswith('/api/user/wallet/transactions'):
+                    _k3 = 'tx'
+                if not _k3:
+                    continue
+                _kk3 = (_t3.replace(microsecond=0), _k3)
+                if _kk3 in _late_money_seen2:
+                    continue
+                _late_money_seen2.add(_kk3)
+                _late_money2 += 1
+            _late_pages2 = set()
+            for _t4, _p4 in _late_evs:
+                if _p4.startswith('/api/user/balance'):
+                    _late_pages2.add('balance')
+                elif _p4.startswith('/api/user/wallet/withdrawals'):
+                    _late_pages2.add('wd')
+                elif _p4.startswith('/api/user/wallet/transactions'):
+                    _late_pages2.add('tx')
+                elif _p4.startswith('/api/user/orders'):
+                    _late_pages2.add('orders')
+                elif _p4.startswith('/api/user/info'):
+                    _late_pages2.add('info')
+            return {
+                'req': 0, 'sessions': 0, 'max_taps': 0, 'sum_taps': 0,
+                'max_taps_late': _late_taps2,
+                'max_money_30s': 0,
+                'dedup_money': 0, 'dedup_money_late': _late_money2, 'money_plus_bal': 0,
+                'mb_11_20': 0, 'mb_ge_25': 0,
+                'max_burst_10s': 0, 'burst_small': 0,
+                'avg_dur': 0, 'max_dur': 0, 'pages': len(_late_pages2),
+                'bal': sum(1 for _, p in _late_evs if p.startswith('/api/user/balance')),
+                'wd': any(p.startswith('/api/user/wallet/withdrawals') for _, p in _late_evs),
+                'tx': any(p.startswith('/api/user/wallet/transactions') for _, p in _late_evs),
+                'ord': sum(1 for _, p in _late_evs if p.startswith('/api/user/orders')),
+                'first_ts': _late_evs[0][0] if _late_evs else None,
+                'last_ts': _late_evs[-1][0] if _late_evs else None,
+            }
     # 会话切分
     sessions = []
     cur = [evs[0]]
@@ -93,9 +188,118 @@ def extract_features(events, gap_seconds=1800):
         else:
             pages.add('other')
 
+    # [S1319] 去重后的"看钱"次数：余额/提现记录/交易流水，
+    #   同一秒内同一接口只算 1 次 —— 因为前端一次页面加载会把 balance 连打 5-11 次，
+    #   按原始条数算会把"一次刷新"误算成十几次（实测同秒最多 18 条、其中 14 条重复）。
+    #   注意：evs 里第二项是【path】(/api/user/balance)，不是 action 名，必须按前缀匹配。
+    _money_seen = set()
+    _dedup_money = 0
+    for _t, _p in evs:
+        _kind = ''
+        if _p.startswith('/api/user/balance'):
+            _kind = 'balance'
+        elif _p.startswith('/api/user/wallet/withdrawals'):
+            _kind = 'wd'
+        elif _p.startswith('/api/user/wallet/transactions'):
+            _kind = 'tx'
+        if not _kind:
+            continue
+        _k = (_t.replace(microsecond=0), _kind)
+        if _k in _money_seen:
+            continue
+        _money_seen.add(_k)
+        _dedup_money += 1
+
+    # [S1383] 短时高频：任意 30 秒滑动窗口内，"看钱"动作最多出现几次。
+    #   用途：抓"取包后十几秒内连查好几次余额"的爆发型焦急用户
+    #   （这类人总额不高，用"总计>=N"抓不住，实测漏掉真实投诉案例）。
+    _money_ts = []
+    for _t5, _p5 in evs:
+        if (_p5.startswith('/api/user/balance')
+                or _p5.startswith('/api/user/wallet/withdrawals')
+                or _p5.startswith('/api/user/wallet/transactions')):
+            _money_ts.append(_t5)
+    _max_money_30s = 0
+    if _money_ts:
+        _money_ts.sort()
+        _j = 0
+        for _i in range(len(_money_ts)):
+            while (_money_ts[_i] - _money_ts[_j]).total_seconds() > 30:
+                _j += 1
+            if _i - _j + 1 > _max_money_30s:
+                _max_money_30s = _i - _j + 1
+
+    # [S1335] 晚段也要判"一次点 15 下"：
+    #   原来晚段只算 dedup_money_late，导致"6 小时后才打开小程序、但一次狂点几十下"的用户
+    #   完全抓不到（实测 #14 晚段一次点 16 下、#22 一次点 34 下，都漏了）。
+    #   这里对晚段单独做 30 分钟会话切分，算最大一次会话的操作数。
+    _late_taps = 0
+    if _late_evs:
+        _ls = []
+        _cur_s = [_late_evs[0]]
+        for _e in _late_evs[1:]:
+            if (_e[0] - _cur_s[-1][0]).total_seconds() > gap_seconds:
+                _ls.append(_cur_s); _cur_s = [_e]
+            else:
+                _cur_s.append(_e)
+        _ls.append(_cur_s)
+        _late_taps = max((len(_s) for _s in _ls), default=0)
+
+    # [S1331] 晚段"看钱"次数（同样按秒去重）
+    _late_money_seen = set()
+    _late_money = 0
+    for _t2, _p2 in _late_evs:
+        _k2 = ''
+        if _p2.startswith('/api/user/balance'):
+            _k2 = 'balance'
+        elif _p2.startswith('/api/user/wallet/withdrawals'):
+            _k2 = 'wd'
+        elif _p2.startswith('/api/user/wallet/transactions'):
+            _k2 = 'tx'
+        if not _k2:
+            continue
+        _kk = (_t2.replace(microsecond=0), _k2)
+        if _kk in _late_money_seen:
+            continue
+        _late_money_seen.add(_kk)
+        _late_money += 1
+
+    # [S1311] 10 秒滑动窗口内最大请求数（双指针，O(n)）
+    _burst = 0
+    _j = 0
+    _n1299 = len(evs)
+    for _i in range(_n1299):
+        while _j < _n1299 and (evs[_j][0] - evs[_i][0]).total_seconds() <= 10:
+            _j += 1
+        _c = _j - _i
+        if _c > _burst:
+            _burst = _c
+
     return {
         'req': len(evs),                          # 总请求数
         'sessions': len(sessions),                # 进入次数
+        # [S1272] 单次进入里的最大操作数（判断"打开一次、在里面狂点"）
+        'max_taps': max((len(s) for s in sessions), default=0),
+        # [S1272] 累计操作数
+        'sum_taps': sum(len(s) for s in sessions),
+        # [S1311] 10 秒滑动窗口内的最大请求数 —— "疯狂刷新找钱"特征
+        #   老板点名：10-17 订单 20261017084643660939 只点了 8 下（7.8 秒内完成），
+        #   因为旧规则要求"一次>=15下"拿不到分，只得了 2 分没触发。
+        #   但 8 次操作挤在 7.8 秒内，是典型的"反复刷新、找钱"焦急表现。
+        'dedup_money': _dedup_money,   # [S1319] 去重后"看钱"次数（核心信号）
+        'dedup_money_late': _late_money,   # [S1331] 取包6小时后那段"看钱"次数
+        'money_plus_bal': _dedup_money + bal,   # [S1390] 看钱+余额（组合信号）
+        # [S1417] 两个 0/1 派生特征，用来表达"11-20 区间"这种规则引擎做不到的区间判定
+        'mb_11_20': 1 if 11 <= (_dedup_money + bal) <= 20 else 0,
+        'mb_ge_25': 1 if (_dedup_money + bal) >= 25 else 0,
+        'max_taps_late': _late_taps,   # [S1335] 取包6小时后最大一次会话操作数
+        'max_money_30s': _max_money_30s,   # [S1383] 30秒窗口内最大看钱次数
+        'max_burst_10s': _burst,
+        # [S1312] 老板口径：只看"总次数少但摄得极快"的人（真正的焦急乱点）。
+        #   总次数 > 15 的交给 single_session_ge_15 抓，不重复计分。
+        #   回测(7天9247单)：burst>=8 单独用命中 4339 单(47%)、命中组投诉率 0.51%（区分度差）；
+        #   叠加"总次数<=15"后只留"总次数少+极快"这一窄口径。
+        'burst_small': (_burst if len(evs) <= 15 else 0),
         'avg_dur': sum(durations) / max(len(durations), 1),   # 平均停留(秒)
         'max_dur': max(durations) if durations else 0,
         'pages': len(pages),                      # 访问页面种类
@@ -116,6 +320,17 @@ def extract_features(events, gap_seconds=1800):
 TYPE_MAP = {
     'dur': 'avg_dur',       # 停留时长
     'maxdur': 'max_dur',
+    'maxtaps': 'max_taps',  # [S1272] 单次进入最大操作数
+    'burst10': 'max_burst_10s',  # [S1311] 10秒内最大请求数
+    'dedupmoney': 'dedup_money',  # [S1319] 去重后看钱次数
+    'dedupmoney_late': 'dedup_money_late',  # [S1331] 6小时后看钱次数
+    'moneybal': 'money_plus_bal',  # [S1390] 看钱+余额（组合）
+    'mb1120': 'mb_11_20',          # [S1417] 看钱+余额落在 11-20
+    'mbge25': 'mb_ge_25',          # [S1417] 看钱+余额 >= 25
+    'maxtaps_late': 'max_taps_late',  # [S1335] 6小时后最大一次操作数
+    'burstmoney': 'max_money_30s',  # [S1383] 30秒窗口内最大看钱次数
+    'burstsmall': 'burst_small',  # [S1312] 10秒内最大请求数（仅当总次数<=15）
+    'sumtaps': 'sum_taps',  # [S1272] 累计操作数
     'sess': 'sessions',
     'req': 'req',
     'bal': 'bal',
@@ -298,7 +513,7 @@ def log_decision(db, order, feat, result, action='record_only',
 # ══════════════════════════════════════════════════════════
 # 特征来源：从 user_behavior_log 表读（或 nginx 日志回填）
 # ══════════════════════════════════════════════════════════
-def features_from_log(db, openid, t_from, t_to):
+def features_from_log(db, openid, t_from, t_to, late_from=None):
     """从 user_behavior_log 表读行为并提取特征"""
     cur = db.cursor()
     try:
@@ -322,7 +537,7 @@ def features_from_log(db, openid, t_from, t_to):
                         continue
             if hasattr(ts, 'year') and path:
                 events.append((ts, path))
-        return extract_features(events)
+        return extract_features(events, late_from=late_from)
     except Exception as e:
         logger.warning('[behavior_scorer] 读行为日志失败: %s' % e)
         return None

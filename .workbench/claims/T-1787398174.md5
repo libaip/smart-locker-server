@@ -1,0 +1,6 @@
+TASK=T-1787398174
+SID=S35
+DESC=后台多问题修复: 在线订单设备下拉按网点过滤/机器列表网点代理商筛选生效/支付渠道加商户号筛选+昨天账单金额显示/刷新转圈/告警管理设备掉线上线记录/会员充值记录加时间商户单号手机号+默认当天
+FILES=routes/admin_v2.py,static/admin-v2.html
+MD5|routes/admin_v2.py|29ea1ddcac4b2ac7715371f2ddbd3287
+MD5|static/admin-v2.html|2a9a172bf2efdc4d07d8ece158a04e24

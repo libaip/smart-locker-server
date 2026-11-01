@@ -1,0 +1,5 @@
+TASK=T-1789125503
+SID=S139
+DESC=绑定页证书信任修复: 1.4.11切HTTPS后老设备绑定报网络错误, RegisterActivity加SSLSocketHelper.trustCustomCert, 编译1.4.14
+FILES=smart-locker-apk/app/src/main/java/com/smartlocker/screen/RegisterActivity.java
+MD5|smart-locker-apk/app/src/main/java/com/smartlocker/screen/RegisterActivity.java|ccb773e1895d866f644eb3cab0d420a0

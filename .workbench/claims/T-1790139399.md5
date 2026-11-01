@@ -1,0 +1,6 @@
+TASK=T-1790139399
+SID=S316
+DESC=S640-20260923 【紧急·生产退款失败】浮点截断修复: routes/admin_v2.py 4 处 int(x*100) 改 int(round(x*100)), 修复 20.06 元被截成 2005 分导致微信退款报「订单金额或退款金额与之前请求不一致」而 400; 只改 1122/1124/1125/1585 四处数字换算, 其余一字不改; 离线断言含改前世界复现 + 反向可逆; 同步 175 并 HUP
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|a6d8d1497b802198475fcff5e8490f87
+MD5|helpers.py|f40539692a9af107e5fb45a8d8888104

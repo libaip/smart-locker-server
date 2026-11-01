@@ -1,0 +1,5 @@
+TASK=T-1787715795
+SID=S74
+DESC=商家订单管理显示状态修正: 订单列表从status(2,4)改为(2,3), 显示进行中+已结束, 统计接口口径不动
+FILES=routes/merchant.py
+MD5|routes/merchant.py|4e6bac127f33e186c34d7384346e2ad8

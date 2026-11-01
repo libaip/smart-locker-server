@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>智能柜屏幕 UI 效果图 v2（1280x752 真实比例）</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#444; display:flex; justify-content:center; align-items:center; height:100vh; font-family:"Microsoft YaHei",sans-serif; }
+  /* 精确 1280x752, density 160 → 1px=1dip */
+  .screen { width:1280px; height:752px; background:#f0f9f8; position:relative; overflow:hidden; box-shadow:0 10px 40px rgba(0,0,0,.5); }
+  /* ===== 顶部栏 90 ===== */
+  .topbar { height:90px; background:#1565c0; color:#fff; display:flex; align-items:center; padding:0 20px; position:relative; }
+  .topbar .logo { width:42px; height:42px; background:#fff; border-radius:8px; margin-right:14px; }
+  .topbar .netname { font-size:24px; font-weight:bold; }
+  .topbar .mid { display:flex; align-items:center; margin-left:40px; }
+  .topbar .mid .icon { width:42px; height:42px; background:#fff; border-radius:8px; margin-right:10px; }
+  .topbar .mid .txt { font-size:24px; font-weight:bold; }
+  .topbar .mid2 { display:flex; align-items:center; margin-left:40px; }
+  .topbar .mid2 .icon { width:42px; height:42px; background:#fff; border-radius:8px; margin-right:10px; }
+  .topbar .mid2 .txt { font-size:24px; font-weight:bold; }
+  .topbar .right { position:absolute; right:20px; top:0; height:90px; display:flex; flex-direction:row; align-items:center; justify-content:flex-end; }
+  .topbar .right .signal { width:60px; height:40px; display:flex; align-items:center; gap:4px; margin-right:14px; }
+  .topbar .right .signal i { width:10px; background:#7ddc7d; display:block; }
+  .topbar .right .signal i:nth-child(1){height:10px;} .topbar .right .signal i:nth-child(2){height:16px;}
+  .topbar .right .signal i:nth-child(3){height:22px;} .topbar .right .signal i:nth-child(4){height:30px;}
+  .topbar .right .clock { font-size:30px; font-weight:bold; line-height:40px; }
+  /* ===== 主体: 内容框几乎占满 (高648, 顶8) ===== */
+  .main { padding:8px 30px 0 30px; }
+  .bluebox { background:#ecf5ff; border-radius:14px; padding:6px 30px 60px 30px; display:flex; gap:30px; height:648px; }
+  /* 左侧二维码白卡片 - 占满左半 */
+  .qr-card { width:470px; flex-shrink:0; background:#fff; border-radius:12px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; }
+  .qr-top { display:flex; align-items:center; gap:12px; }
+  .qr-top .wx { width:44px; height:44px; background:#2dc100; border-radius:8px; }
+  .qr-top .wx-title { font-size:24px; font-weight:bold; color:#212121; }
+  .qr-top .scan-title { font-size:30px; font-weight:bold; color:#212121; margin-left:14px; }
+  .qr-box { width:360px; height:360px; background:repeating-linear-gradient(45deg,#111 0 10px,#333 10px 20px); position:relative; border:4px solid #000; }
+  .qr-box .corner { position:absolute; width:80px; height:80px; border:10px solid #000; }
+  .qr-box .c1 { top:-4px; left:-4px; border-right:none; border-bottom:none; }
+  .qr-box .c2 { top:-4px; right:-4px; border-left:none; border-bottom:none; }
+  .qr-box .c3 { bottom:-4px; left:-4px; border-right:none; border-top:none; }
+  .qr-devid { font-size:26px; color:#212121; font-weight:bold; }
+  .qr-slogan { font-size:20px; color:#666; }
+  /* 右侧规则区 */
+  .right { flex:1; display:flex; flex-direction:column; }
+  /* 行1: 寄存规则 + 可用柜门 */
+  .row1 { display:flex; align-items:center; height:64px; margin-bottom:14px; flex-shrink:0; }
+  .row1 .rules-title { font-size:30px; font-weight:bold; color:#212121; }
+  .row1 .door-count { margin-left:auto; background:#f5f5f5; border-radius:22px; padding:9px 20px; font-size:22px; color:#666; }
+  .row1 .door-count b { color:#e74c3c; font-size:30px; font-weight:bold; }
+  /* 规则卡片 - 占满中间剩余 */
+  .rules-card { flex:1; background:#fafafa; border:1px solid #eee; border-radius:12px; padding:28px 32px; display:flex; flex-direction:column; justify-content:center; }
+  .rules-sub-title { font-size:46px; font-weight:bold; color:#2b7de9; text-align:center; margin-bottom:10px; }
+  .rule-item { display:flex; align-items:center; font-size:27px; font-weight:bold; color:#444; line-height:1.6; margin-top:12px; }
+  .rule-item .dot { width:16px; height:16px; background:#2b7de9; border-radius:50%; margin-right:12px; flex-shrink:0; }
+  /* 密码取包按钮 */
+  .pw-btn-area { display:flex; justify-content:center; margin-top:16px; flex-shrink:0; }
+  .pw-btn { width:520px; padding:36px 0; background:#1976d2; color:#fff; font-size:36px; font-weight:bold; text-align:center; border-radius:16px; }
+</style>
+</head>
+<body>
+<div class="screen">
+  <!-- 顶部栏 -->
+  <div class="topbar">
+    <div class="logo"></div>
+    <div class="netname">测试网点_修改测试</div>
+    <div class="mid"><div class="icon"></div><div class="txt">8:00~22:00</div></div>
+    <div class="mid2"><div class="icon"></div><div class="txt">4006981080</div></div>
+    <div class="right">
+      <div class="signal"><i></i><i></i><i></i><i></i></div>
+      <div class="clock">13:20:45</div>
+    </div>
+  </div>
+  <!-- 主体 -->
+  <div class="main">
+    <div class="bluebox">
+      <!-- 左: 二维码 -->
+      <div class="qr-card">
+        <div class="qr-top">
+          <div class="wx"></div>
+          <div class="wx-title">微信</div>
+          <div class="scan-title">扫码存/取包</div>
+        </div>
+        <div class="qr-box"><span class="corner c1"></span><span class="corner c2"></span><span class="corner c3"></span></div>
+        <div class="qr-devid">100100</div>
+        <div class="qr-slogan">轻松 · 安全 · 便捷</div>
+      </div>
+      <!-- 右: 规则 -->
+      <div class="right">
+        <div class="row1">
+          <div class="rules-title">寄存规则</div>
+          <div class="door-count">可用柜门 <b>44</b></div>
+        </div>
+        <div class="rules-card">
+          <div class="rules-sub-title">自助寄存</div>
+          <div class="rule-item"><span class="dot"></span>收费0.5元/天</div>
+          <div class="rule-item"><span class="dot"></span>预付费1元，封顶1元</div>
+          <div class="rule-item"><span class="dot"></span>存放时间截止到当日23:00，请提前取走物品</div>
+          <div class="rule-item"><span class="dot"></span>限时免费使用1天</div>
+          <div class="rule-item"><span class="dot"></span>请务必确认锁好柜门</div>
+        </div>
+        <div class="pw-btn-area">
+          <div class="pw-btn">密码取包</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

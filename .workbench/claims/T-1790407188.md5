@@ -1,0 +1,5 @@
+TASK=T-1790407188
+SID=S329
+DESC=S668-20260926 deposit.html 用户可见文案规范化: 3处押金→预付款 + 5处原路退回→退回至余额可随时提现(与系统实际行为一致)
+FILES=static/deposit.html
+MD5|static/deposit.html|e76f6a78ea6e28c6bf7fc03d5577e5bb

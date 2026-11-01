@@ -1,0 +1,5 @@
+TASK=T-1790258724
+SID=S326
+DESC=S657-20260924 微信商户告警按错误类型分流 + 真实下单失败被动落库/告警: ①_alert_mch_restricted 原来只看 err_code=NOAUTH 不分 err_code_des, 把'该产品权限未开通'(产品级)也当成'商户号被封'(账号级)报警 —— 生产实锤: system_settings['[S531]mch_restricted_alert'] 里 121/122/124 三个渠道最后一次告警的 desc 全是'商户号该产品权限未开通', 却发了标题'【寄存柜】微信商户号被封/收款受限'; 现按 err_code_des 三分类: 账号级(收款功能已被限制/暂无法支付)=原文案+去重+无其它渠道条件一字不改只加一行'失败产品'; 产品级(该产品权限未开通)=只记日志+落库, 一律不告警(消灭误导); 其它 NOAUTH=中性文案不写被封/不写产品未开通; 非 NOAUTH 行为逐字节不变; ②新增 _record_mch_last_error(): 在真实下单失败/成功处把 时间/产品(trade_type 映射)/分类/err_code/err_desc(截断)/来源 落 system_settings.mch_last_error_<渠道id>, 账号级立即告警、产品级只落库、ok 也落一笔(看最后成功时间); 不做 DDL、不写 payment_channels; 离线断言(假WxPay+假DB)含6类分类矩阵/账号级才告警/产品级0告警/JSON结构/无DDL/反向可逆; 按老板口径取消定时探针与后台展示
+FILES=helpers.py
+MD5|helpers.py|a273a9ac8451224c2f2fdc77acecc4f6

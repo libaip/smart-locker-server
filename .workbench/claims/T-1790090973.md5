@@ -1,0 +1,5 @@
+TASK=T-1790090973
+SID=S308
+DESC=S622b 修 /alipay/login 致命误判：alipay.system.oauth.token 成功响应无 code 字段，原判断把所有成功当失败
+FILES=routes/user.py
+MD5|routes/user.py|93bccd6e6939b2232bff3ba1074d4381

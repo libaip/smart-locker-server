@@ -1,0 +1,10 @@
+TASK=T-1787361793
+SID=S30
+DESC=柜门数量开关打通+UI优化: admin_v2推送show_slot_count+设备端控制可用柜门显示/隐藏+密码取包按钮下移/规则区调整, 重新编译1.4.12
+FILES=routes/admin_v2.py,smart-locker-apk/app/src/main/java/com/smartlocker/screen/MainActivity.java,smart-locker-apk/app/src/main/java/com/smartlocker/screen/service/LockerService.java,smart-locker-apk/app/src/main/java/com/smartlocker/screen/utils/PreferencesHelper.java,smart-locker-apk/app/src/main/res/layout/activity_main.xml,smart-locker-apk/app/src/main/res/layout/guize5.xml
+MD5|routes/admin_v2.py|7721a5e49143fc11e94b7baeb38566b3
+MD5|smart-locker-apk/app/src/main/java/com/smartlocker/screen/MainActivity.java|MISSING
+MD5|smart-locker-apk/app/src/main/java/com/smartlocker/screen/service/LockerService.java|MISSING
+MD5|smart-locker-apk/app/src/main/java/com/smartlocker/screen/utils/PreferencesHelper.java|MISSING
+MD5|smart-locker-apk/app/src/main/res/layout/activity_main.xml|MISSING
+MD5|smart-locker-apk/app/src/main/res/layout/guize5.xml|MISSING

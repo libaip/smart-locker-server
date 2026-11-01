@@ -1,0 +1,5 @@
+TASK=T-1787317376
+SID=S18
+DESC=后台转圈根治:轮询静默不参与转圈+转圈8秒硬上限
+FILES=static/admin-v2.html
+MD5|static/admin-v2.html|0c2da029bcd73ac32444ec04487bf5ad

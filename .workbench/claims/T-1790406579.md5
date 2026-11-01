@@ -1,0 +1,5 @@
+TASK=T-1790406579
+SID=S328
+DESC=S660-20260924 用户可见文案规范化: deposit.html 3处'押金'改'预付款' + 5处'原路退回'改'退至余额可随时提现'口径, 与系统实际行为(取件后进余额/提现才原路退)一致
+FILES=static/deposit.html
+MD5|static/deposit.html|e76f6a78ea6e28c6bf7fc03d5577e5bb

@@ -1,0 +1,9 @@
+TASK=T-1787300244
+SID=S12
+DESC=白名单三改:有效期+网点次数(默认3)+退款成功才拉白,含存量补期补次
+FILES=helpers.py,routes/user.py,routes/admin_v2.py,routes/admin.py,.workbench/TASKS.md
+MD5|helpers.py|36e28c89e3960d5e331867a6a9f51ffe
+MD5|routes/user.py|7e2b3232b8ef733e00f9f3e200ef22af
+MD5|routes/admin_v2.py|5b61cf96d07d3e2668a1554a2fa457ed
+MD5|routes/admin.py|e365e57dee142abe3c603fd8f978900c
+MD5|.workbench/TASKS.md|c4026518b17b21e4792e4009ff711853

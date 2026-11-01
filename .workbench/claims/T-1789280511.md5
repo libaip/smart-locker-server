@@ -1,0 +1,8 @@
+TASK=T-1789280511
+SID=S185
+DESC=第1步后半: 把微信账号配置中心真装进106后台(wx_config.py/wx_config_api.py 入项目 + app.py 注册蓝图并复用require_auth + admin-v2.html 加菜单/组件/样式 + static放页面文件); 只加不改, 不动业务逻辑, 不碰175
+FILES=app.py,static/admin-v2.html,wx_config.py,wx_config_api.py
+MD5|app.py|2eeba627038881b33f7ed4a7767912b4
+MD5|static/admin-v2.html|067009dc417a971f8eb769fbdd42cd52
+MD5|wx_config.py|MISSING
+MD5|wx_config_api.py|MISSING

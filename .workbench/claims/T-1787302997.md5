@@ -1,0 +1,7 @@
+TASK=T-1787302997
+SID=S14
+DESC=一键开门改方案B: merchant/admin open_all改逐门send_open_lock(带board/lock); send_open_all去重复推送
+FILES=routes/merchant.py,routes/admin.py,helpers.py
+MD5|routes/merchant.py|8027242b69cb9b981780fff9c0d2629e
+MD5|routes/admin.py|7ba8ff9a1184313b38471e8dcfb2051b
+MD5|helpers.py|546ba23a74c000fd54b68af9122e32c0

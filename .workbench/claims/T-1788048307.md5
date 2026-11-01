@@ -1,0 +1,5 @@
+TASK=T-1788048307
+SID=S98
+DESC=问题3修复: 提现退款失败一次即隐藏不再重试-自动提现rcnt>=3分支改为bd保持pending隐藏+wr置3拒绝, 用户端不提示后台手动处理, 不动logic_mark不影响商户订单数
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|003eb0ee10da64455a155934655af7b7

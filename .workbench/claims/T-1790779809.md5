@@ -1,0 +1,7 @@
+TASK=T-1790779809
+SID=S338
+DESC=S821-20260930 方案B第5批 支付宝提现: 原路退回(alipay.trade.refund, 非转账) + 按网点审批队列(与微信同一套) + 只按 alipay_uid 校验谁支付的谁才能提现(不用手机号); helpers 新增 quote/split/settle/restore 与运行期开关 alipay_withdraw_enabled; routes/user.py 支付宝分支做试算+行锁+冻结+入队(openid=alipay:<uid>); admin_v2 新增支付宝处理器与 auto/queue/manual 三个驱动点, 微信侧 4 处 SELECT 排除 alipay: 单, 后台三个审批入口加支付宝分支; 离线断言 84/84; 已上线 175(开关默认关)
+FILES=helpers.py,routes/user.py,routes/admin_v2.py
+MD5|helpers.py|c66b38c23467dcfbd3d14229a9e2bbb1
+MD5|routes/user.py|802aecba9e90595b297f89024af2c167
+MD5|routes/admin_v2.py|2075427fd0f2a045a65c8e56c50cd593

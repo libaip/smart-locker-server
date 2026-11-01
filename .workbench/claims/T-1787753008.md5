@@ -1,0 +1,9 @@
+TASK=T-1787753008
+SID=S79
+DESC=免押模式: 后台开关(商户号全封停时用户免押使用), 订单标记free_use不计入商家/后台业绩统计, H5+小程序自动跳过支付直接开门
+FILES=routes/user.py,routes/admin_v2.py,routes/merchant.py,static/admin-v2.html,static/deposit.html
+MD5|routes/user.py|d93ba2a57126359953da2dce36d8058d
+MD5|routes/admin_v2.py|7ab2c2dbdb4b54b9cf88506ea44414b3
+MD5|routes/merchant.py|8817a177516378d3287e68a065f26d1a
+MD5|static/admin-v2.html|cb2e7e347daf4dbf25dad0682667650a
+MD5|static/deposit.html|001867f82db7bf5688de051062f0604f

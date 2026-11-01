@@ -1,0 +1,7 @@
+TASK=T-1790227204
+SID=S323
+DESC=S651 订阅通知收件openid改为优先取订单记录的mp_openid(取不到才回退原手机号反查)
+FILES=helpers.py,routes/user.py,routes/offline.py
+MD5|helpers.py|1016fb4ac96bc1ec14fa929d1d4e1092
+MD5|routes/user.py|be05d3e7b8a11f1b0fada977d3d5d2f3
+MD5|routes/offline.py|1c84527919ade0c6ccae710d6702722c

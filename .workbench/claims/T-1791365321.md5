@@ -1,0 +1,5 @@
+TASK=T-1791365321
+SID=S349
+DESC=S830-20261007 换新微信小程序:新增后端配置脚本 scripts/switch_wx_mp.py(dry-run优先)+上线清单文档; 不改 manifest/不动生产数据
+FILES=scripts/switch_wx_mp.py docs/换新微信小程序上线清单_20261007.md
+MD5|scripts/switch_wx_mp.py docs/换新微信小程序上线清单_20261007.md|MISSING

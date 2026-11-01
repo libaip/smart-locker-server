@@ -1,0 +1,5 @@
+TASK=T-1788653985
+SID=S119
+DESC=启用寄存成功通知订阅(支付回调): 取消注释+换新模板ID aUc6gRRMUXKxy94Pd6kLWY3RkLdFw-ZguEjaskVnenc+字段改thing1/thing2/amount3/time4匹配模板
+FILES=routes/payment.py
+MD5|routes/payment.py|09c816490055a4251b55a31482742ae5

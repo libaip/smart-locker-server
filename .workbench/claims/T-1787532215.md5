@@ -1,0 +1,5 @@
+TASK=T-1787532215
+SID=S55
+DESC=客服菜单隐藏第7条(功能保留), 第6条回复加未到账提示语
+FILES=wecom-kf/app.py
+MD5|wecom-kf/app.py|MISSING

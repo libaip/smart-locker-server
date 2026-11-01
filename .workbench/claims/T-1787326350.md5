@@ -1,0 +1,5 @@
+TASK=T-1787326350
+SID=S25
+DESC=柜门查询去双通道: WS推送成功则不插poll命令, 避免设备重复执行/上报混乱
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|b4499dce413f26de1aa80e0f5a429b70

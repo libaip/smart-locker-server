@@ -1,0 +1,5 @@
+TASK=T-1790204021
+SID=S320
+DESC=S645-20260923 后台「未退款订单」弹窗两处死按钮修复(纯前端 static/admin-v2.html): ① 全选框 ck_all 与每行勾选框(新增)双向联动; ② 批量退款 br_btn 从死按钮改为可用: 收集已勾选行 -> 弹确认框(笔数+押金合计¥) -> 严格串行逐笔 POST /api/admin/complaint/retry-refund (body 只含 id 与该行 complaint_order_id, 不传金额) -> 按 r.ok/body.code 判成败 -> 汇总成功/失败清单并只给成功行做视觉标记 -> 执行期间按钮 disabled 防连点; 单行退款按钮行为一字不变; 不改后端
+FILES=static/admin-v2.html
+MD5|static/admin-v2.html|c724971c561b9c293172612a95a388ef

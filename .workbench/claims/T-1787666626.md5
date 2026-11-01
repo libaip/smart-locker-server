@@ -1,0 +1,6 @@
+TASK=T-1787666626
+SID=S66
+DESC=H5取包只允许中途取物: 隐藏取包结束按钮+retrieve/confirm的end分支拒绝, 结束订单统一走end-storage
+FILES=static/deposit.html,routes/user.py
+MD5|static/deposit.html|e9b8b9afbce5510894a83ae6af2497c0
+MD5|routes/user.py|0ac34fb11f6fc48d6ed50842dafec037

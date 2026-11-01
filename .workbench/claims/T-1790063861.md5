@@ -1,0 +1,5 @@
+TASK=T-1790063861
+SID=S302
+DESC=同步175生产 helpers.py 入仓(S574 支付商品名去掉客服电话)
+FILES=helpers.py
+MD5|helpers.py|7f581deab5c7f567a4c28affb348cf49

@@ -1,0 +1,5 @@
+TASK=T-1787891602
+SID=S86
+DESC=修复扫码进H5页面误报设备离线: store/init, retrieve, create-order 3处is_heartbeat_online改is_device_online(心跳过期查WS)
+FILES=routes/user.py
+MD5|routes/user.py|3c1d6314f9a0ca1fed16944f89193448

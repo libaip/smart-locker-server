@@ -1,0 +1,6 @@
+TASK=T-1787359945
+SID=S29
+DESC=后台远程重启设备: admin_v2加restart接口+设备端处理reboot命令+机器列表详情按钮改重启
+FILES=routes/admin_v2.py,static/admin-v2.html
+MD5|routes/admin_v2.py|25791824ae2539a9830190e4038a2e60
+MD5|static/admin-v2.html|c16ef2f845ede3af766c4ec9e6dcf164

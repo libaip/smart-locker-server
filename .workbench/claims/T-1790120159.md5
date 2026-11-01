@@ -1,0 +1,5 @@
+TASK=T-1790120159
+SID=S311
+DESC=S630-20260923 两个 reopen 写接口(/order/reopen 与 /order/<id>/reopen)加支付宝归属校验(与 S309 同口径: alipay_uid->users.id, 403 复用 _s309_alipay_403; 微信侧零新增SQL)
+FILES=routes/user.py
+MD5|routes/user.py|901b581eaed36fabfe139b1b03168366

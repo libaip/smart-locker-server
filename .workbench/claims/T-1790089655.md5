@@ -1,0 +1,8 @@
+TASK=T-1790089655
+SID=S306
+DESC=S618-20260922 支付宝小程序JSAPI支付服务端下单参数修复: alipay.trade_create 改传 buyer_open_id(优先,保留buyer_id兼容,两者都空则明确失败); helpers.get_alipay_mp_trade_params 补传 product_code=JSAPI_PAY 与 op_app_id=选中小程序通道appid(2021006199688688,缺则友好报错0网络0写库); _mp_pick_alipay_channel 优先返回小程序通道(113),避免选到120=H5的appid; 纯增量+锚点校验,离线断言41/41绿,微信链路关键字计数不变
+FILES=helpers.py,alipay.py,scripts/patch_s618_alipay_jsapi.py,scripts/verify_s618_offline.py
+MD5|helpers.py|1d7216bbb58711232a82c89844461a66
+MD5|alipay.py|299adebcaba2472ac0cda2f3ffd44a5c
+MD5|scripts/patch_s618_alipay_jsapi.py|6ed541ddf2f72fa638984e6fd6454b47
+MD5|scripts/verify_s618_offline.py|961d2f8e5c9fc762d0f42dae3b1468fe

@@ -1,0 +1,8 @@
+TASK=T-1789479727
+SID=S226
+DESC=修投诉/客服自动退款按单逐笔扣减提现单(不再整张标已通过)+后台首页未处理告警红点
+FILES=helpers.py,routes/user.py,routes/admin_v2.py,templates/admin-v2.html
+MD5|helpers.py|db5bd7b467832377745c1f863d2aaa3e
+MD5|routes/user.py|c872aa6d3900986e15ce0e1bb8583701
+MD5|routes/admin_v2.py|ce806567b766025d40c1575e0df695b0
+MD5|templates/admin-v2.html|4fc7fc18a9d4667621def2f472b8c8cc

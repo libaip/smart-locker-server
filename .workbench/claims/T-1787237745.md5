@@ -1,0 +1,6 @@
+TASK=T-1787237745
+SID=S8
+DESC=后台管理独立通道: 新增5002 gunicorn(2worker)+nginx分流/api/admin*到5002
+FILES=/etc/nginx/sites-enabled/locker-cqdyxl,/etc/systemd/system/smart-locker-admin.service
+MD5|/etc/nginx/sites-enabled/locker-cqdyxl|eb08dbd52ae7ed6db348fc7853daec29
+MD5|/etc/systemd/system/smart-locker-admin.service|MISSING

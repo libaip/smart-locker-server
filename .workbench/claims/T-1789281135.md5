@@ -1,0 +1,11 @@
+TASK=T-1789281135
+SID=S186
+DESC=第2步第1批: 20处写死的订阅消息模板ID改成从配置中心读(wx_config.template_id)+原值兜底; 并给 get_template/list_templates 加异常保护(生产库没建表也不报错)
+FILES=app.py,routes/admin.py,routes/admin_v2.py,routes/offline.py,routes/payment.py,routes/user.py,wx_config.py
+MD5|app.py|c7ebba261eb5cdc3c9c9e1d5fd57ee6d
+MD5|routes/admin.py|88bbfa2c940ef9edb3490be7e505aa17
+MD5|routes/admin_v2.py|dfe6495d9fec5095459db27793c2f422
+MD5|routes/offline.py|43061af5e0f2262c5c1a7cba89239975
+MD5|routes/payment.py|d4641b45861b9123deb87196048cf353
+MD5|routes/user.py|c2df36666bd61d111c34880214af1dab
+MD5|wx_config.py|74c297757982f73b906f442044302aa5

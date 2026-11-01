@@ -1,0 +1,5 @@
+TASK=T-1790257272
+SID=S324
+DESC=S655-20260924 【资金安全】后台「用户反馈-退款」接口补订单归属校验 + 清一个死条件: ①admin_feedback_refund 收管理员手选 order_id 后直接 do_real_refund, 从不校验该订单是否属于该反馈用户(反馈侧身份取自 wx_feedback.phone/openid), 前端/人工传错单号就会把押金退给不相干的人; 按 S642「投诉重试退款」同一套口径补归属校验: 反馈侧 11 位真手机号(^1\d{10}$)必须等于 orders.user_phone、反馈 openid 必须等于 orders.mp_openid 或 openid; 反馈侧没有任何可核对身份(手机号空/非真手机号即加密长串或邮箱、openid 空)一律拒绝; 拒绝=400+人话+logger.warning 记全字段(feedback_id/order_id/订单号/反馈手机号与openid/订单手机号与openid/原因); 原分支(缺订单id=400/订单不存在=404/已退款=400)与 do_real_refund 参数、成功后的写库与 handle_reply 更新逐字节不变; ②同文件 admin_feedback_user_orders 的 phone_openids 反查里删掉永远匹配不到的 unionid=%s 死条件(三个占位都喂 openid 值), 其余一行不动; 离线断言含改前世界复现+现实场景逐字节等价+反向可逆; 备份/三段md5/py_compile/HUP/15分钟观察窗
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|15da070ef633e8d35459fc8662adb3cb

@@ -1,0 +1,5 @@
+TASK=T-1790174609
+SID=S319
+DESC=S644-20260923 【P0 资金安全·全自动退款兜底】_auto_refund_complaint_order 手机号兜底删除 LIKE+ORDER BY id DESC LIMIT 1，改为「11位1开头真手机号 + user_phone 精确等值 + status IN(2,3) 且未退款 + 恰好1笔」否则拒绝转人工并把候选打 WARNING 日志（order_no/transaction_id 两条精确路径与「本地无单→微信 trade_state=REFUND→结案」分支一字不改）；admin_complaint_retry_refund 退款金额一律以解析出的订单押金为准，调用方传值只记日志（不一致打 WARNING）；离线断言含改前世界复现+反向可逆；同步 175 并 HUP
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|592a63c1985db19a26f23ea2c157a801

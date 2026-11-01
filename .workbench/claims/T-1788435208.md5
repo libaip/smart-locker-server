@@ -1,0 +1,5 @@
+TASK=T-1788435208
+SID=S114
+DESC=短信宝模板更新为服务通知版(去掉appName变量+文案改'服务通知'), 与后台报备模板一致
+FILES=config.py
+MD5|config.py|e8e013b7821c22840aaa82173c2f0a38

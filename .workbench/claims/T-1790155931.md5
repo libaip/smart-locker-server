@@ -1,0 +1,5 @@
+TASK=T-1790155931
+SID=S317
+DESC=S641-20260923 【紧急·第二个"元转分"截断】A: 下单/收款侧 helpers.py 3 处(972/1021/1055) int(x*100) 改 int(round(x*100))，使"用户实付==我们记录"(证据 order 137043: 押金20.24 被截成 2023 分、微信实收2023，我们记20.24)；B: do_real_refund 退款前先向微信【只读】order_query 取真实 total_fee 并 refund_fee=min(int(round(amount*100)), 真实total_fee)（仅 wechat 渠道；查单失败/字段缺失回落原算法；out_refund_no 生成规则不变；支付宝分支不动）；含离线断言(改前世界复现+反向可逆)与历史脏单只读统计(SQL+抽样查单)；同步175并HUP
+FILES=helpers.py
+MD5|helpers.py|7af339a800205d9cc2989db5d7c38d2f

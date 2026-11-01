@@ -1,0 +1,7 @@
+TASK=T-1790068497
+SID=S304
+DESC=订阅开关后台可视化(scene按场景1条/2条等)
+FILES=routes/user.py,routes/admin_v2.py,static/admin-v2.html
+MD5|routes/user.py|0bfeba7250af2da883da4ffe6595334f
+MD5|routes/admin_v2.py|d5d1efa929aa32de66ede0903d16d123
+MD5|static/admin-v2.html|fc3b489d609031ef09a807d28dbe5ae3

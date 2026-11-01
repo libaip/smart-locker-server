@@ -1,0 +1,5 @@
+TASK=T-1791336489
+SID=S348
+DESC=S828-20261007 微信门店申报补网点名称: build_wx_store_scene 的 store_info 由 {id} 改为 {id,name}; 名称为空或异常一律回落只报 id(零回归); 官方 name 规范 String(64) 截断; 地址按老板定稿不报
+FILES=helpers.py
+MD5|helpers.py|94fbb1d7ec793e20848f32e333d9ca01

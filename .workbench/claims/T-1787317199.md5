@@ -1,0 +1,5 @@
+TASK=T-1787317199
+SID=S16
+DESC=后台转圈修复:所有fetch加30秒超时(AbortController),超时自动关loading并提示
+FILES=static/admin-v2.html
+MD5|static/admin-v2.html|048b3137316ea7d6732f41e026a13678

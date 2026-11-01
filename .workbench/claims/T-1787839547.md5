@@ -1,0 +1,5 @@
+TASK=T-1787839547
+SID=S83
+DESC=投诉通知URL自动检查修复脚本: 每30分钟遍历启用商户号核对投诉通知回调URL, 未配/配错自动修复
+FILES=complaint_notify_check.py
+MD5|complaint_notify_check.py|811e00cc5410650d79dfa5b48d375e57

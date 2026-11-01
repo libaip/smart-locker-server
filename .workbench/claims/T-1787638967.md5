@@ -1,0 +1,5 @@
+TASK=T-1787638967
+SID=S62
+DESC=微信投诉回复改只发一条: 删除受理通知WECHAT_FIRST_REPLY发送, 退款成功发统一话术WECHAT_FINAL_REPLY(预付款已全额退款), 失败/无需退款保留原话术
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|2afd0d935dcaeed243299f263d4393c8

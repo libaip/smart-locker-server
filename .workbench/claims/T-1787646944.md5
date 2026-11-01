@@ -1,0 +1,7 @@
+TASK=T-1787646944
+SID=S63
+DESC=拉黑未结束订单投诉用户: blacklist加unionid字段, 自动拉黑(手机号+unionid), check_use_limits拦截, 批量拉黑历史188人
+FILES=routes/admin_v2.py,helpers.py,routes/user.py
+MD5|routes/admin_v2.py|ff79f8f2e4751562278b00853fc95d20
+MD5|helpers.py|311f533621525ce49d48a21494a5cd92
+MD5|routes/user.py|801b750c2c4f4d1c53f31739c731b1fa

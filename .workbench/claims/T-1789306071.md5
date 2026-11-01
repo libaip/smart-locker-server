@@ -1,0 +1,10 @@
+TASK=T-1789306071
+SID=S188
+DESC=第2步第3批: 服务端15处写死域名改为从配置中心读(读不到回落原值); 覆盖支付/退款回调、网页授权回调、二维码链接、小程序base、设备上报地址、关注自动回复链接
+FILES=helpers.py,routes/device.py,routes/oauth_test.py,routes/webhook.py,routes/admin.py,routes/admin_v2.py
+MD5|helpers.py|7c31cf7b52c0491cf87b0c1e8a180887
+MD5|routes/device.py|54867be79a8f7384a7f241f66bd51dd5
+MD5|routes/oauth_test.py|c9cf1b8e2ad126b907643c39217aee8b
+MD5|routes/webhook.py|92eaf839f487b92a63baad89ae00fa97
+MD5|routes/admin.py|35cc87c7512ab8ae37a8502e70dda7fb
+MD5|routes/admin_v2.py|78ef571ec4b656ca8ce3fdddc1c72517

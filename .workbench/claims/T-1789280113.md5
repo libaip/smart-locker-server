@@ -1,0 +1,5 @@
+TASK=T-1789280113
+SID=S183
+DESC=断网取件通知修复: 去掉两条旧小程序失效模板(结束通知/退款通知), 改为只发一条'押金退还'(借用现有且用户已授权过的模板 PtRJgP), routes/offline.py 两处
+FILES=routes/offline.py
+MD5|routes/offline.py|43061af5e0f2262c5c1a7cba89239975

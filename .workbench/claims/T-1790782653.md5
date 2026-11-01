@@ -1,0 +1,5 @@
+TASK=T-1790782653
+SID=S342
+DESC=S821k-20260930 支付宝提现通知: 提现申请提交成功后给用户发一条支付宝小程序订阅消息(复用现成 notify_alipay_order + subscribe_refund 模板, 关键词按支付宝真实模板 keyword1寄存单号/keyword2退还时间/keyword3退还状态/keyword4退还金额, 落地页 pages/withdraw-record/withdraw-record), 口径与微信侧一致(同一提现单只在提交时发一条, 完成不再发); 收件人由订单 alipay_pay_uid/alipay_mp_uid 取, 不用手机号; 任何异常只记日志不影响提现主流程; 真发测试返回 True
+FILES=routes/user.py
+MD5|routes/user.py|1a64edddd3f11b058c86376712e2d219

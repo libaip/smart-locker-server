@@ -1,0 +1,5 @@
+TASK=T-1787705769
+SID=S69
+DESC=修复累计投诉>=2次自动拉黑被嵌套在if内不执行: 移出if每次投诉都执行+手机号兜底
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|11f2afaf218a516145d17328b6567dc3

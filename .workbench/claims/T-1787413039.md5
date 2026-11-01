@@ -1,0 +1,5 @@
+TASK=T-1787413039
+SID=S38
+DESC=投诉验签404修复: 平台证书404(RESOURCE_NOT_EXISTS)时改用微信支付公钥(/v3/pay/public-key)验签
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|91bcc7e1fde3444dd31c0fd88802d5ba

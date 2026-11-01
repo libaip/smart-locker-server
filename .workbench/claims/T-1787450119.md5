@@ -1,0 +1,5 @@
+TASK=T-1787450119
+SID=S40
+DESC=新增第14节: 主备互换后的代码修改SOP(方案A: 旧机改代码+git, 新机部署运行)
+FILES=AGENTS.md
+MD5|AGENTS.md|dfac3edaa15f946a712c5fa7cfc64c84

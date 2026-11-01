@@ -1,0 +1,5 @@
+TASK=T-1790778934
+SID=S336
+DESC=S818 方案B第2批+第4批 支付宝余额接线(已上线验证): /user/balance 按 alipay_uid 改读独立的 alipay_balances(S818, 微信路径一字不动); 结束订单两条路按平台分流——取包结束 retrieve_confirm(S819) 与结束寄存 deposit_end_storage(S820) 均改为「订单带 alipay_mp_uid/alipay_pay_uid -> alipay_balance_add 记独立余额; 否则走原微信 upsert_user_balance_row + user_balance_details」; 生产175已md5验证 routes/user.py = fdba6c124134f99724130ccca01e2825
+FILES=routes/user.py
+MD5|routes/user.py|fdba6c124134f99724130ccca01e2825

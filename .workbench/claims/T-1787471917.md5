@@ -1,0 +1,5 @@
+TASK=T-1787471917
+SID=S46
+DESC=余额隐藏定时任务SQL参数化(INTERVAL %s改参数绑定,防注入/防拼接问题)
+FILES=app.py
+MD5|app.py|211dcce907650f83ca6bfed362104179

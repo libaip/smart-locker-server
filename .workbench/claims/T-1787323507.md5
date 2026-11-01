@@ -1,0 +1,5 @@
+TASK=T-1787323507
+SID=S24
+DESC=柜门查询修复: door_status_queries表解决8worker跨进程丢结果
+FILES=routes/admin_v2.py
+MD5|routes/admin_v2.py|d2980492936324f1b33d7a402e7c5b8c

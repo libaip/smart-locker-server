@@ -1,0 +1,10 @@
+TASK=T-1789281561
+SID=S187
+DESC=第2步第2批: appid/secret(共30处)改为从配置中心读(读不到回落config.py原值); 含支付appid/JSAPI签名/网页授权/小程序jscode2session/小程序scheme; app.py里一个别名import改为运行时取
+FILES=app.py,helpers.py,routes/admin.py,routes/admin_v2.py,routes/user.py,routes/webhook.py
+MD5|app.py|5d355c92e3bc12591ebdfca4ab565f53
+MD5|helpers.py|6b0fad218acf70569f3420c2ed640cdf
+MD5|routes/admin.py|5d18a96f771fb4a95332577a6dc63ab0
+MD5|routes/admin_v2.py|d9c96347c65a9147a2a32fbd65f27330
+MD5|routes/user.py|1673b88b6bd5e1d813a46fc64b842902
+MD5|routes/webhook.py|b68ea0e980a04c56f0974891febb4af6

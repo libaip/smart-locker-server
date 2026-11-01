@@ -1,0 +1,5 @@
+TASK=T-1787494386
+SID=S53
+DESC=客服卡片小程序路径加.html后缀: MP_WALLET_PATH=pages/mine/mine.html
+FILES=wecom-kf/app.py
+MD5|wecom-kf/app.py|MISSING

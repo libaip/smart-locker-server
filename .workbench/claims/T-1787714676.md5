@@ -1,0 +1,6 @@
+TASK=T-1787714676
+SID=S73
+DESC=微信投诉表格微信交易号列改为商家: 后端返回商户名称(pc.name按订单渠道+c.mch_id双匹配), 前端表头改商家
+FILES=routes/admin_v2.py,static/admin-v2.html
+MD5|routes/admin_v2.py|91f925c574e68385e6313cf6213e11d3
+MD5|static/admin-v2.html|cc2748df32fc54fbfaadda961d756445

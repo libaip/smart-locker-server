@@ -1,0 +1,26 @@
+{
+  "phone_multi_unionid": {
+    "count": 60
+  },
+  "unionid_multi_phone": {
+    "count": 0
+  },
+  "phone_duplicate_union_wallet": {
+    "count": 0
+  },
+  "orphan_order_user_id": {
+    "count": 44689
+  },
+  "orphan_balance_user_id": {
+    "count": 27131
+  },
+  "orphan_phone_openid_user_id": {
+    "count": 28226
+  },
+  "half_identity_users_mp_empty": {
+    "count": 275
+  },
+  "cross_phone_order_identity": {
+    "count": 429
+  }
+}

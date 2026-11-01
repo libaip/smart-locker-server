@@ -1,0 +1,6 @@
+TASK=T-1787234566
+SID=S3
+DESC=提现列表显示退款单号(refund_id): /admin/withdrawals接口带出o.refund_id + 前端两处提现表格加列
+FILES=routes/admin_v2.py,static/admin-v2.html
+MD5|routes/admin_v2.py|433106e7b025ad1cb82d3df8d7007cfb
+MD5|static/admin-v2.html|d7daca3c6f87ca11a6bf82926ba8cfa3

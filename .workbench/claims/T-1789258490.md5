@@ -1,0 +1,5 @@
+TASK=T-1789258490
+SID=S176
+DESC=撤掉存包页里临时加的远程诊断上报(mpDiag)，只保留修复本体(存档/读档/三种返回情形兜底); bug已由老板确认修好
+FILES=static/deposit.html
+MD5|static/deposit.html|43d90b24060fb16d97102a7683bc32b8

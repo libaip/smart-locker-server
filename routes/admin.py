@@ -824,13 +824,41 @@ def get_cabinet_by_mainboard(mainboard_id):
                 logger.warning('[S777] 取报价失败(用固定值): %s', _e777)
             _dep_txt = _fmt_amt(_dep)
             _dep_line = '预付费{}元，封顶{}元'.format(_dep_txt, _dep_txt)
-            _fee_lines = [
-                '收费{}元/天'.format(_fmt_amt(_fd)),
-                _dep_line,
+            # [FIX-20261102] 每天收费为 0 时不再显示"收费X元/天"（某些网点不收费，屏幕上不该出现）
+            # [FIX-20261102c] 支持隐藏"预付费X元，封顶X元"：
+            #   配置 wx_config_items.apk_screen_hide_deposit_line = {"49": 1} 或 "all"
+            _hide_dep_line = False
+            try:
+                from wx_config import get_config as _gc_hide
+                import json as _json_hide
+                _hide_cfg = (_gc_hide('apk_screen_hide_deposit_line', '') or '').strip()
+                if _hide_cfg:
+                    if _hide_cfg.lower() == 'all':
+                        _hide_dep_line = True
+                    else:
+                        _hide_obj = _json_hide.loads(_hide_cfg)
+                        if isinstance(_hide_obj, dict):
+                            _hide_ids = list(_hide_obj.keys())
+                        elif isinstance(_hide_obj, list):
+                            _hide_ids = _hide_obj
+                        else:
+                            _hide_ids = []
+                        _hide_dep_line = str(result.get('location_id')) in set(str(x) for x in _hide_ids)
+            except Exception as _e_hide:
+                logger.warning('[FIX-20261102c] 读隐藏配置失败(按不隐藏处理): %s', _e_hide)
+            _fee_lines = []
+            if _fd > 0:
+                _fee_lines.append('收费{}元/天'.format(_fmt_amt(_fd)))
+            if not _hide_dep_line:
+                _fee_lines.append(_dep_line)
+            _fee_lines += [
                 '存放时间截止到当日23:00，请提前取走物品',
                 '限时免费使用{}天'.format(_fdays),
                 '请务必确认锁好柜门',
             ]
+            # [FIX-20261102b] 自定义规则里已经有"存放时间"那句时，系统不再重复追加
+            if _fee_rules_txt and ('存放时间' in _fee_rules_txt):
+                _fee_lines = [ln for ln in _fee_lines if '存放时间' not in ln]
             if _fee_rules_txt:
                 _fee_rules_txt += '\n'
             result['usage_rules'] = _fee_rules_txt + '\n'.join(_fee_lines)
@@ -845,6 +873,9 @@ def get_cabinet_by_mainboard(mainboard_id):
                 '寄存期间可随时凭密码取包',
                 '请务必确认锁好柜门',
             ]
+            # [FIX-20261102b] 同上：已有"存放时间"句子则不重复追加
+            if _fee_rules_txt and ('存放时间' in _fee_rules_txt):
+                _fee_lines2 = [ln for ln in _fee_lines2 if '存放时间' not in ln]
             if _fee_rules_txt:
                 _fee_rules_txt += '\n'
             result['usage_rules'] = _fee_rules_txt + '\n'.join(_fee_lines2)

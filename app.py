@@ -492,6 +492,13 @@ def admin_v2(subpath=None):
 def admin_v2_debug():
     return send_from_directory('static', 'admin-v2-debug.html')
 
+# [S1661] 超时费补退独立页面（客服后台用）
+@app.route('/admin-overdue-refund')
+def admin_overdue_refund_page():
+    """超时费补退页面 - 用户打电话来扣款有疑问时用"""
+    return send_from_directory('static', 'admin-overdue-refund.html')
+
+
 @app.route('/profile')
 def profile():
     # [S983-20261014] 改成"读取+注入客服电话"再返回（原来直接 send_from_directory）

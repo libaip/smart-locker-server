@@ -11696,3 +11696,227 @@ def admin_feedback_refund():
 if os.path.isdir('/tmp'):
     _trade_bill_sync_thread = threading.Thread(target=_trade_bill_sync_scheduler, daemon=True)
     _trade_bill_sync_thread.start()
+
+
+# ============================================================
+# [S1661-20261102] 超时费补退（客服后台用）
+#   场景：用户打电话说被扣了 1 元，客服在后台输入手机号 → 查到 → 一键补退
+#   防多退：
+#     ① 差额 = 微信实收 - 微信实退（refund_query 权威数据）
+#     ② 补退过就打标记，再点会拒绝
+#     ③ 差额 <= 0 一律拒绝
+# ============================================================
+
+_S1661_TAG = '超时费补退'
+
+
+def _s1661_actual(cur, order_row):
+    """返回 (实收元, 实退元)。优先用微信 refund_query，失败回落流水。"""
+    dep = float(order_row.get('deposit_amount') or 0)
+    paid = dep
+    refunded = 0.0
+    try:
+        from helpers import get_channel_wxpay
+        cid = order_row.get('payment_channel_id')
+        if cid:
+            cur.execute('SELECT * FROM payment_channels WHERE id=%s', (cid,))
+            ch = cur.fetchone()
+            if ch:
+                ch = dict(ch)
+                payer, ctype = get_channel_wxpay(ch)
+                if payer and ctype == 'wechat':
+                    q = payer.refund_query(out_trade_no=order_row.get('order_no'))
+                    if isinstance(q, dict) and q.get('return_code') == 'SUCCESS':
+                        if q.get('total_fee'):
+                            paid = float(q['total_fee']) / 100.0
+                        n = int(q.get('refund_count') or 0)
+                        s = 0.0
+                        for i in range(n):
+                            f = q.get('refund_fee_%d' % i)
+                            st = str(q.get('refund_status_%d' % i) or '')
+                            if f and st == 'SUCCESS':
+                                s += float(f) / 100.0
+                        refunded = round(s, 2)
+                        logger.info('[S1661] refund_query order=%s total_fee=%.2f refunded=%.2f (%d笔)',
+                                    order_row.get('order_no'), paid, refunded, n)
+                        return paid, refunded
+    except Exception as e:
+        logger.warning('[S1661] refund_query 失败(回落本地流水): %s', e)
+
+    # 兜底：本地流水
+    cur.execute("""SELECT COALESCE(SUM(amount),0) AS s FROM withdrawal_records
+                   WHERE order_id=%s AND status=2""", (order_row.get('id'),))
+    r = cur.fetchone()
+    refunded = round(float((r or {}).get('s') or 0), 2)
+    return paid, refunded
+
+
+def _s1661_done(cur, oid):
+    """检查是否已补退过"""
+    cur.execute("""SELECT id FROM user_balance_details
+                   WHERE order_id=%s AND COALESCE(remark,'') LIKE %s LIMIT 1""",
+                (oid, '%' + _S1661_TAG + '%'))
+    return cur.fetchone() is not None
+
+
+@bp.route('/admin/overdue/query', methods=['GET'])
+@require_auth
+def admin_overdue_query():
+    """查某手机号/订单号有没有被扣超时费"""
+    try:
+        phone = (request.args.get('phone') or '').strip()
+        order_no = (request.args.get('order_no') or '').strip()
+        if not phone and not order_no:
+            return json_response(message='请传 phone 或 order_no', code=400)
+        conn = get_db(); c = conn.cursor()
+        sql = """SELECT o.id, o.order_no, o.user_phone, o.deposit_amount, o.refund_amount,
+                        o.refund_status, o.status, o.payment_channel_id,
+                        o.retrieve_time::text AS rt,
+                        CASE WHEN o.retrieve_time IS NOT NULL
+                             THEN ROUND(EXTRACT(EPOCH FROM (o.retrieve_time - o.store_time))/60)
+                             ELSE NULL END AS mins,
+                        c.location_id AS lid, l.name AS lname
+                 FROM orders o
+                 JOIN cabinets c ON o.cabinet_id = c.id
+                 LEFT JOIN locations l ON c.location_id = l.id
+                 WHERE 1=1"""
+        p = []
+        if phone:
+            sql += " AND o.user_phone = %s"; p.append(phone)
+        if order_no:
+            sql += " AND o.order_no = %s"; p.append(order_no)
+        sql += " ORDER BY o.retrieve_time DESC NULLS LAST LIMIT 30"
+        c.execute(sql, tuple(p))
+        rows = [dict(r) for r in c.fetchall()]
+
+        out = []
+        for r in rows:
+            paid, refunded = _s1661_actual(c, r)
+            gap = round(paid - refunded, 2)
+            out.append({
+                'order_id': r['id'],
+                'order_no': r['order_no'],
+                'phone': r['user_phone'],
+                'location': r['lname'] or '',
+                'location_id': r['lid'],
+                'minutes': r['mins'],
+                'deposit': round(float(r['deposit_amount'] or 0), 2),
+                'paid': paid,
+                'refunded': refunded,
+                'gap': gap,
+                'can_refund': gap > 0.01,
+                'already_done': _s1661_done(c, r['id']),
+                'refund_status': r['refund_status'] or '',
+                'status': r['status'],
+            })
+        conn.close()
+        return json_response(data={'rows': out, 'count': len(out)})
+    except Exception as e:
+        logger.error('[S1661] query 失败: %s', e)
+        return json_response(message=str(e), code=500)
+
+
+@bp.route('/admin/overdue/refund', methods=['POST'])
+@require_auth
+def admin_overdue_refund():
+    """补退差额。mode=balance（加余额）/ wx（原路退）"""
+    try:
+        d = request.get_json(silent=True) or {}
+        oid = d.get('order_id')
+        mode = (d.get('mode') or 'balance').strip()
+        apply_it = bool(d.get('apply'))
+        if not oid:
+            return json_response(message='缺 order_id', code=400)
+
+        conn = get_db(); c = conn.cursor()
+        c.execute('SELECT * FROM orders WHERE id=%s', (oid,))
+        orow = c.fetchone()
+        if not orow:
+            conn.close()
+            return json_response(message='订单不存在', code=400)
+        orow = dict(orow)
+
+        paid, refunded = _s1661_actual(c, orow)
+        gap = round(paid - refunded, 2)
+        logger.info('[S1661] 补退请求 order=%s paid=%.2f refunded=%.2f gap=%.2f mode=%s apply=%s',
+                    orow.get('order_no'), paid, refunded, gap, mode, apply_it)
+
+        if gap <= 0.01:
+            conn.close()
+            return json_response(message='没有可补退的差额（已退 %.2f / 实收 %.2f）' % (refunded, paid))
+        if _s1661_done(c, oid):
+            conn.close()
+            return json_response(message='这单已经补退过，不重复退')
+
+        amt = round(min(gap, 1.0), 2)   # 只补超时费，上限 1 元
+
+        if not apply_it:
+            conn.close()
+            return json_response(data={'dry_run': True, 'amount': amt,
+                                       'gap': gap, 'paid': paid, 'refunded': refunded},
+                                 message='预览：将补退 %.2f 元' % amt)
+
+        if mode == 'wx':
+            # 原路退回微信
+            from helpers import get_channel_wxpay
+            cid = orow.get('payment_channel_id')
+            c.execute('SELECT * FROM payment_channels WHERE id=%s', (cid,))
+            ch = c.fetchone()
+            if not ch:
+                conn.close()
+                return json_response(message='渠道不存在，无法原路退', code=400)
+            payer, ctype = get_channel_wxpay(dict(ch))
+            if not payer or ctype != 'wechat':
+                conn.close()
+                return json_response(message='该订单不是微信单，无法原路退', code=400)
+            rid = 'S1661OF%s%d' % (datetime.now().strftime('%m%d%H%M%S'), oid)
+            r = payer.refund(out_trade_no=orow.get('order_no'),
+                             total_fee=int(round(paid * 100)),
+                             refund_fee=int(round(amt * 100)),
+                             out_refund_no=rid)
+            if isinstance(r, dict) and r.get('return_code') == 'SUCCESS' and r.get('result_code') == 'SUCCESS':
+                new_refunded = round(refunded + amt, 2)
+                c.execute("""UPDATE orders SET refund_amount=%s, refund_id=%s,
+                                                refund_status='refunded', refund_time=NOW(), refund_mark=1
+                             WHERE id=%s""", (new_refunded, r.get('refund_id') or rid, oid))
+                c.execute("""UPDATE user_balance_details SET amount=%s WHERE order_id=%s""",
+                          (new_refunded, oid))
+                conn.commit(); conn.close()
+                logger.info('[S1661] 原路退成功 order=%s amt=%.2f refund_id=%s', orow.get('order_no'), amt, r.get('refund_id'))
+                return json_response(data={'amount': amt, 'refund_id': r.get('refund_id') or rid},
+                                     message='已原路退回微信 %.2f 元，1-3 分钟到账' % amt)
+            else:
+                msg = (r or {}).get('err_code_des') or (r or {}).get('return_msg') or '未知错误'
+                conn.close()
+                logger.warning('[S1661] 原路退失败 order=%s err=%s', orow.get('order_no'), msg)
+                return json_response(message='微信退款失败：%s' % msg, code=400)
+
+        # mode == 'balance'：补到余额
+        phone = orow.get('user_phone')
+        # 先看这单有没有余额明细行（有就加金额，没就插）
+        c.execute('SELECT id, amount FROM user_balance_details WHERE order_id=%s', (oid,))
+        bl = c.fetchone()
+        if bl:
+            c.execute('UPDATE user_balance_details SET amount = %s WHERE order_id=%s',
+                      (round(float(bl['amount'] or 0) + amt, 2), oid))
+            logger.info('[S1661] 余额明细追加 order=%s +%.2f（原 %s）', oid, amt, bl['amount'])
+        else:
+            c.execute("""INSERT INTO user_balance_details
+                         (user_phone, order_id, amount, status, remark, source_time)
+                         VALUES (%s, %s, %s, 'available', %s, NOW())""",
+                      (phone, oid, amt, _S1661_TAG + '-客服后台'))
+        # 加余额
+        c.execute('UPDATE user_balances SET balance = COALESCE(balance,0) + %s WHERE phone = %s', (amt, phone))
+        if c.rowcount == 0:
+            c.execute("""INSERT INTO user_balances
+                         (phone, openid, unionid, mp_openid, balance, total_deposited)
+                         VALUES (%s, %s, %s, %s, %s, 0)""",
+                      (phone, orow.get('openid') or '', orow.get('unionid') or '',
+                       orow.get('mp_openid') or '', amt))
+        conn.commit(); conn.close()
+        logger.info('[S1661] 补到余额成功 order=%s phone=%s amt=%.2f', oid, phone, amt)
+        return json_response(data={'amount': amt}, message='已补退 %.2f 元到用户余额' % amt)
+    except Exception as e:
+        logger.error('[S1661] refund 失败: %s', e)
+        import traceback; traceback.print_exc()
+        return json_response(message=str(e), code=500)

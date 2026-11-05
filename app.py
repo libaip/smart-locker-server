@@ -774,6 +774,93 @@ def _wechat_guide_response():
     return _resp
 
 
+# ============================================================
+# [S1692-20261105] 扫码无 openid -> 跳小程序（替代公众号 OAuth）
+#   开关：system_settings.service_mp_jump_enabled（默认 '0' = 关闭，
+#        关闭时调用方走原来的公众号 OAuth，行为一字不变）
+#   失败自动回落：拿不到 scheme 就返回 None，调用方回落原逻辑
+# ============================================================
+def _s1692_mp_jump_html(device='', cabinet_id=''):
+    """返回跳小程序的 HTML 响应；不可用/失败返回 None"""
+    try:
+        from database import get_db as _gdb1692
+        _c = _gdb1692()
+        _cur = _c.cursor()
+        _cur.execute("SELECT setting_value FROM system_settings WHERE setting_key=%s",
+                     ('service_mp_jump_enabled',))
+        _row = _cur.fetchone()
+        _c.close()
+        _v = ''
+        if _row:
+            _v = str(_row.get('setting_value') if hasattr(_row, 'get') else _row[0] or '').strip().lower()
+        if _v not in ('1', 'true', 'on', 'yes'):
+            return None            # 开关关闭 -> 调用方走原逻辑
+    except Exception as _e:
+        logger.warning('[S1692] 读开关失败(按关闭处理): %s', _e)
+        return None
+
+    # 生成 scheme
+    _scheme = ''
+    try:
+        import json as _j1692, urllib.request as _u1692
+        from wx_config import mp_appid as _mpid1692
+        _appid = _mpid1692() or ''
+        if not _appid:
+            logger.warning('[S1692] mp_appid 为空，回落原逻辑')
+            return None
+        from helpers import get_access_token as _gat1692
+        _at = _gat1692()
+        if not _at:
+            logger.warning('[S1692] access_token 获取失败，回落原逻辑')
+            return None
+        _path = 'pages/subscribe/subscribe'
+        _query = ''
+        if device:
+            _query = 'device=' + str(device)
+        _jw = {'path': _path, 'env_version': 'release'}
+        if _query:
+            _jw['query'] = _query
+        _body = _j1692.dumps({'jump_wxa': _jw, 'is_expire': True,
+                              'expire_type': 1, 'expire_interval': 30})
+        _req = _u1692.Request(
+            'https://api.weixin.qq.com/wxa/generatescheme?access_token=' + _at,
+            data=_body.encode(), headers={'Content-Type': 'application/json'})
+        _resp = _j1692.loads(_u1692.urlopen(_req, timeout=8).read())
+        if _resp.get('errcode') == 0:
+            _scheme = _resp.get('openlink') or _resp.get('scheme') or ''
+        if not _scheme:
+            logger.warning('[S1692] generatescheme 失败: %s', str(_resp)[:200])
+            return None
+        logger.info('[S1692] 扫码无openid -> 跳小程序 device=%s appid=%s scheme=%s',
+                    device or '-', _appid, _scheme)
+    except Exception as _e:
+        logger.warning('[S1692] 生成 scheme 异常(回落原逻辑): %s', _e)
+        return None
+
+    _html = """<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=0">
+<title>正在打开小程序</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;background:#f5f6f8;color:#1f2329;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}
+.box{background:#fff;border-radius:16px;padding:36px 24px 32px;max-width:420px;width:100%;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,.06)}
+.ico{width:64px;height:64px;margin:0 auto 20px;border-radius:50%;background:#e8f3ff;display:flex;align-items:center;justify-content:center;font-size:32px}
+h1{font-size:19px;font-weight:600;margin-bottom:14px}
+.main{font-size:15px;line-height:1.7;color:#4e5969}
+.btn{display:block;margin-top:22px;background:#1677ff;color:#fff;text-decoration:none;padding:14px;border-radius:10px;font-size:16px;font-weight:600}
+.big{font-size:48px}</style></head><body>
+<div class="box"><div class="ico big">📦</div>
+<h1>正在打开小程序</h1>
+<div class="main">如果没有自动跳转，请点击下面的按钮</div>
+<a class="btn" id="go" href="__SCHEME__">打开小程序存包</a></div>
+<script>
+var S="__SCHEME__";
+setTimeout(function(){try{window.location.href=S;}catch(e){}},300);
+document.getElementById('go').onclick=function(e){e.preventDefault();try{window.location.href=S;}catch(err){}};
+</script></body></html>"""
+    _html = _html.replace('__SCHEME__', _scheme)
+    from flask import Response as _Resp
+    return _Resp(_html, mimetype='text/html')
+
+
 @app.route('/store', strict_slashes=False)
 def store_page():
     """存包页面 - 服务端渲染柜子信息"""
@@ -823,6 +910,15 @@ def store_page():
         logger.info('[S768] entry_mode=wechat 非微信UA→静态提示页 device=%s', device)
         return _wechat_guide_response()
     if not openid and 'MicroMessenger' in request.headers.get('User-Agent', ''):
+        # [S1692] 优先走「跳小程序」（需 service_mp_jump_enabled=1，默认关）；
+        #   关闭/失败时回落原来的公众号 OAuth，行为一字不变。
+        try:
+            _r1692 = _s1692_mp_jump_html(device=request.args.get('device', ''),
+                                          cabinet_id=request.args.get('cabinet_id', ''))
+            if _r1692 is not None:
+                return _r1692
+        except Exception as _e1692:
+            logger.warning('[S1692] 跳小程序异常(回落OAuth): %s', _e1692)
         import urllib.parse
         current_url = request.url.replace('http://', 'https://')
         return redirect(f'/api/wx/oauth?redirect_uri={urllib.parse.quote(current_url)}')
@@ -1432,6 +1528,15 @@ def locker_page():
         return "缺少设备编号", 400
     openid = request.args.get('openid', '')
     if not openid and 'MicroMessenger' in request.headers.get('User-Agent', ''):
+        # [S1692] 优先走「跳小程序」（需 service_mp_jump_enabled=1，默认关）；
+        #   关闭/失败时回落原来的公众号 OAuth，行为一字不变。
+        try:
+            _r1692 = _s1692_mp_jump_html(device=request.args.get('device', ''),
+                                          cabinet_id=request.args.get('cabinet_id', ''))
+            if _r1692 is not None:
+                return _r1692
+        except Exception as _e1692:
+            logger.warning('[S1692] 跳小程序异常(回落OAuth): %s', _e1692)
         import urllib.parse
         current_url = request.url.replace('http://', 'https://')
         return redirect(f'/api/wx/oauth?redirect_uri={urllib.parse.quote(current_url)}')

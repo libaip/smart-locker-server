@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>小程序码长按识别测试</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:16px;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",Arial,sans-serif;background:#f5f6f8;color:#222;font-size:15px;line-height:1.6}
+.card{background:#fff;border-radius:12px;padding:16px;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,.06);text-align:center}
+h1{font-size:18px;margin:4px 0 10px;text-align:left}
+h2{font-size:16px;margin:0 0 2px}
+.sub{font-size:13px;color:#888;margin:2px 0 12px}
+img{width:230px;height:230px;display:block;margin:0 auto;border-radius:8px}
+.tip{background:#fff8e6;border-left:4px solid #ffb300;padding:12px;border-radius:8px;font-size:13px;color:#6b5200;margin-bottom:14px}
+.id{font-family:Menlo,Consolas,monospace;font-size:11px;color:#888;word-break:break-all;margin-top:8px}
+</style>
+</head>
+<body>
+
+<div class="card" style="text-align:left">
+  <h1>小程序码 · 长按识别测试</h1>
+  <p class="sub">在微信里打开本页，<b>长按下面任意一张小程序码</b>，选「识别图中二维码」，看能不能进对应的小程序。</p>
+</div>
+
+<div class="tip">
+  <b>怎么测：</b>手指<b>按住图片不放</b>（约 1 秒）→ 弹出菜单 → 点「<b>识别图中二维码</b>」→ 看结果。<br>
+  ⚠️ 如果长按后<b>没有</b>「识别图中二维码」这个选项，请告诉我（那是微信没把这张图当二维码）。
+</div>
+
+<div class="card">
+  <h2>① 杜郎科技</h2>
+  <p class="sub">wx011ca20460ffea64（你说跳不过的那个）</p>
+  <img src="/static/s773_mp_dujiang.png" alt="杜郎科技小程序码">
+  <div class="id">/static/s773_mp_dujiang.png</div>
+</div>
+
+<div class="card">
+  <h2>② 卓奔储物</h2>
+  <p class="sub">wxbb50aeccc21af2ff（你说能跳的那个，做对照）</p>
+  <img src="/static/s773_mp_zhuoben.png" alt="卓奔储物小程序码">
+  <div class="id">/static/s773_mp_zhuoben.png</div>
+</div>
+
+<div class="tip">
+  测完告诉我：<b>①能不能长按识别？②识别后进的去吗？</b>两个各说一句就行。
+</div>
+
+</body>
+</html>

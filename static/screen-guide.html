@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="format-detection" content="telephone=no">
+<title>请扫屏幕上的二维码</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif;
+     background:#f2f4f7;color:#1f2329;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:22px}
+.card{background:#fff;border-radius:16px;padding:26px 20px 22px;max-width:430px;width:100%;
+      box-shadow:0 4px 20px rgba(0,0,0,.07);text-align:center}
+.icon{width:76px;height:76px;margin:0 auto 16px;border-radius:50%;background:#E8F3FF;
+      display:flex;align-items:center;justify-content:center;font-size:38px}
+h1{font-size:21px;line-height:1.45;font-weight:700;margin-bottom:10px}
+.sub{font-size:14px;color:#8a9099;line-height:1.6;margin-bottom:20px}
+.steps{text-align:left;background:#f7f8fa;border-radius:12px;padding:14px 14px 6px;margin-bottom:16px}
+.step{display:flex;align-items:flex-start;margin-bottom:12px;font-size:15px;line-height:1.5}
+.num{flex:0 0 22px;height:22px;border-radius:50%;background:#1677FF;color:#fff;font-size:13px;
+     display:flex;align-items:center;justify-content:center;margin-right:10px;margin-top:1px;font-weight:600}
+.tip{font-size:13px;color:#a0a6ad;line-height:1.6;border-top:1px solid #f0f1f3;padding-top:14px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">📱</div>
+  <h1>请扫描柜机<span style="color:#1677FF">屏幕上</span>的二维码使用</h1>
+  <p class="sub">这张贴纸上的二维码已停用<br>请使用柜机屏幕上显示的二维码</p>
+  <div class="steps">
+    <div class="step"><div class="num">1</div><div>看柜机屏幕，找到屏幕上的二维码</div></div>
+    <div class="step"><div class="num">2</div><div>用微信或支付宝扫一扫，扫描屏幕上的二维码</div></div>
+    <div class="step"><div class="num">3</div><div>按页面提示完成存包 / 取包</div></div>
+  </div>
+  <div class="tip">如果屏幕上没有二维码或扫描后无法使用，<br>请联系现场工作人员协助</div>
+</div>
+</body>
+</html>

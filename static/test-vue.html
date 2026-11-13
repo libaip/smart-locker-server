@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8">
+<link rel="stylesheet" href="/static/js/iview.min.css">
+</head>
+<body>
+<div id="app">
+  <Card><p slot="title">Test</p><Button type="primary" @click="msg">Click</Button></Card>
+</div>
+<script src="/static/js/vue.min.js"></script>
+<script src="/static/js/iview.min.js"></script>
+<script>
+new Vue({el:"#app",methods:{msg:function(){iview.Message.success("OK")}}});
+</script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+.page { background: #f7f8fa; min-height: 100vh; }
+.nav-bar { display: flex; align-items: center; justify-content: space-between; padding: 24rpx 24rpx 20rpx; background: #fff; }
+.nav-back { padding: 10rpx; }
+.nav-arrow { font-size: 48rpx; color: #323233; }
+.nav-title { font-size: 34rpx; font-weight: 500; color: #323233; }
+.nav-placeholder { width: 48rpx; }
+
+.tabs { display: flex; background: #fff; border-bottom: 1rpx solid #ebedf0; }
+.tab { flex: 1; text-align: center; padding: 20rpx 0; font-size: 28rpx; color: #646566; position: relative; }
+.tab-active { color: #323233; font-weight: 500; }
+.tab-active::after { content: ''; position: absolute; bottom: 0; left: 30%; right: 30%; height: 4rpx; background: #07c160; border-radius: 2rpx; }
+
+.empty { text-align: center; padding: 120rpx 0; color: #969799; font-size: 28rpx; }
+
+.card-list { padding: 20rpx 24rpx; }
+.tx-card { background: #fff; border-radius: 16rpx; padding: 28rpx 28rpx 20rpx; margin-bottom: 20rpx; }
+.tx-row { display: flex; align-items: flex-start; margin-bottom: 16rpx; font-size: 28rpx; flex-wrap: wrap; }
+.tx-label { color: #323233; flex-shrink: 0; }
+.tx-value { color: #323233; }
+.tx-amount { color: #323233; font-size: 28rpx; }
+
+.tx-tip-right { width: 100%; margin-top: 8rpx; }
+.tx-tip-text { color: #ff976a; font-size: 24rpx; }

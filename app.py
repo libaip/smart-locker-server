@@ -1,0 +1,2412 @@
+"""
+智能寄存柜系统 v2 - 模块化版本
+主入口：注册所有Blueprints + 静态文件 + WebSocket + 全局异常处理
+"""
+import os
+import logging
+import sys
+import json
+logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+
+from werkzeug.middleware.proxy_fix import ProxyFix
+from wx_config import (mp_appid as _wx_mp_id, mp_secret as _wx_mp_secret,
+                     oa_appid as _wx_oa_id, oa_secret as _wx_oa_secret)   # [CFG-STEP2B] 账号凭据改从配置中心读，读不到自动用 config.py 原值
+from wx_config import template_id as _wx_tpl   # [CFG-STEP2] 模板ID改从配置中心读，读不到自动用第三个参数的兜底值(原写死值)
+from flask import Flask, send_from_directory, redirect, request, jsonify
+from flask_socketio import SocketIO
+
+from config import SECRET_KEY, DATABASE, DEBUG, HOST, PORT
+import config
+from database import init_db
+from helpers import logger, connected_devices, json_response, merchant_health_scheduler
+
+
+# ============================================
+# 创建Flask应用
+# ============================================
+app = Flask(__name__, static_folder='static', static_url_path='/static')
+
+
+@app.route('/h5/merchant/<path:subpath>')
+def h5_merchant(subpath):
+    return send_from_directory('static', 'merchant.html')
+
+@app.route('/h5/merchant/open-logs')
+def h5_merchant_devices():
+    return send_from_directory('static', 'merchant-devices.html')
+
+@app.route('/h5/merchant/open-logs')
+def h5_merchant_open_logs():
+    return send_from_directory('static', 'open-logs.html')
+
+@app.route('/h5/store')
+def h5_store_page():
+    device = request.args.get("device", "")
+    from flask import render_template
+    return render_template('store.html', mode='store', device=device)
+
+
+app.secret_key = SECRET_KEY
+app.config['DATABASE'] = DATABASE
+app.config['DEBUG'] = DEBUG
+
+# ============================================
+# WebSocket
+# ============================================
+socketio = SocketIO(app, cors_allowed_origins='*', async_mode='gevent')
+# V2 admin API
+try:
+    from routes.admin_v2 import bp as admin_v2_bp
+    app.register_blueprint(admin_v2_bp, url_prefix='/api')
+    logger.info('[注册] admin_v2 blueprint 加载成功')
+except Exception as e:
+    pass
+
+# ========= 连接池泄漏防护：每次请求结束自动回收数据库连接 =========
+@app.teardown_appcontext
+def _auto_close_db_conns(exc):
+    try:
+        from database import close_all_request_conns
+        close_all_request_conns()
+    except Exception:
+        pass
+
+# ============================================
+# 注册所有Blueprints（逐个try-except,一个失败不影响其他）
+# ============================================
+blueprints = []
+
+# 导入Blueprints
+try:
+    from routes.user import bp as user_bp
+    blueprints.append((user_bp, '/api'))
+    logger.info('[注册] user blueprint 加载成功')
+except Exception as e:
+    logger.error(f'[注册] 加载user blueprint失败: {e}')
+
+try:
+    from routes.admin import bp as admin_bp
+    blueprints.append((admin_bp, '/api'))
+    logger.info('[注册] admin blueprint 加载成功')
+except Exception as e:
+    logger.error(f'[注册] 加载admin blueprint失败: {e}')
+
+try:
+    from routes.merchant import bp as merchant_bp
+    blueprints.append((merchant_bp, '/api'))
+    logger.info('[注册] merchant blueprint 加载成功')
+except Exception as e:
+    logger.error(f'[注册] 加载merchant blueprint失败: {e}')
+
+try:
+    from routes.payment import bp as payment_bp
+    blueprints.append((payment_bp, '/api'))
+    logger.info('[注册] payment blueprint 加载成功')
+except Exception as e:
+    logger.error(f'[注册] 加载payment blueprint失败: {e}')
+
+try:
+    from routes.stats import bp as stats_bp
+    blueprints.append((stats_bp, '/api'))
+    logger.info('[注册] stats blueprint 加载成功')
+except Exception as e:
+    logger.error(f'[注册] 加载stats blueprint失败: {e}')
+
+try:
+    from routes.offline import bp as offline_bp
+    blueprints.append((offline_bp, '/api'))
+    logger.info('[注册] offline blueprint 加载成功')
+except Exception as e:
+    logger.error(f'[注册] 加载offline blueprint失败: {e}')
+
+try:
+    from routes.webhook import bp as webhook_bp
+    blueprints.append((webhook_bp, '/api'))
+    logger.info('[注册] webhook blueprint 加载成功')
+
+except Exception as e:
+    logger.error(f'[注册] 加载webhook blueprint失败: {e}')
+
+try:
+    from routes.device import bp as device_bp
+    blueprints.append((device_bp, '/api'))
+    logger.info('[注册] device blueprint 加载成功')
+except Exception as e:
+    logger.error(f'[注册] 加载device blueprint失败: {e}')
+
+try:
+    from routes.oauth_test import bp as oauth_test_bp
+    blueprints.append((oauth_test_bp, '/api'))
+    logger.info('[oauth_test] blueprint loaded (backup gzh verify)')
+except Exception as e:
+    logger.error(f'[oauth_test] load fail: {e}')
+
+# 注册所有Blueprint
+from routes.refund_fee import bp as refund_fee_bp
+blueprints.append((refund_fee_bp, "/api"))
+
+for bp, prefix in blueprints:
+    try:
+        app.register_blueprint(bp, url_prefix=prefix)
+        logger.info(f'[注册] 蓝图 {bp.name} 注册成功 (prefix={prefix})')
+    except Exception as e:
+        logger.error(f'[注册] 注册蓝图 {bp.name} 失败: {e}')
+
+
+# ============================================
+# [T-1789258762] 微信账号配置中心（小程序/公众号 热切换，像切商户号一样）
+#   只加不改：整段包在 try 里，任何异常都不会影响主程序启动
+#   接口：/api/wx-config/*  鉴权直接复用后台的 require_auth（Bearer/session）
+#   注意：这里不建表（读不到表会自动回落 config.py 的兜底值，业务不受影响），
+#        建表属于上线前的受控步骤，见 wx_config.init_db() / check_schema()
+# ============================================
+try:
+    import wx_config as _wxcfg
+    import wx_config_api as _wxcfg_api
+    from database import get_db as _wxcfg_get_db
+    from helpers import require_auth as _wxcfg_require_auth
+    _wxcfg.bind(_wxcfg_get_db)
+    _wxcfg_api.use_auth_decorator(_wxcfg_require_auth)
+    app.register_blueprint(_wxcfg_api.bp)
+    logger.info('[注册] wx_config 配置中心已注册: /api/wx-config/* （%d 条路由）'
+                % len([r for r in app.url_map.iter_rules() if str(r).startswith('/api/wx-config')]))
+except Exception as _wxcfg_e:
+    logger.error(f'[注册] wx_config 配置中心注册失败（不影响主程序）: {_wxcfg_e}')
+
+# ============================================
+
+# 兼容微信支付投诉回调路径（商户1747572495配置的URL前缀不同）
+@app.route('/api/admin_v2/wechat-complaint/notify', methods=['POST'])
+def wechat_complaint_notify_alias():
+    from routes.admin_v2 import wechat_complaint_notify
+    return wechat_complaint_notify()
+
+# 注册WebSocket事件处理器
+# ============================================
+try:
+    from routes.websocket import register_websocket_handlers
+    register_websocket_handlers(socketio)
+    logger.info('[注册] WebSocket处理器注册成功')
+except Exception as e:
+    logger.error(f'[注册] WebSocket处理器注册失败: {e}')
+
+try:
+    from ws_middleware import fix_websocket
+    fix_websocket(app)
+    logger.info("[注册] WebSocket中间件注册成功")
+    logger.info('[注册] 原始WebSocket /ws/ 端点注册成功')
+except Exception as e:
+    logger.error(f'[注册] 原始WebSocket注册失败: {e}')
+
+# ============================================
+# 初始化数据库
+# ============================================
+try:
+    init_db()
+    logger.info('[启动] 数据库初始化完成')
+except Exception as e:
+    logger.error(f'[启动] 数据库初始化失败: {e}')
+
+# ============================================
+# 后台定时任务：清理超时未付款订单（每60秒）
+# ============================================
+def _cleanup_expired_orders():
+    import threading, fcntl
+    from database import get_db
+    # 跨进程互斥锁：gunicorn 8个worker都会跑此线程，同一时刻只允许一个worker清理，
+    # 杜绝并发竞态（修复"支付中的订单被另一worker误取消+晚到支付回调自动退款"）
+    LOCK_FILE = "/tmp/cleanup_expired_orders.lock"
+    while True:
+        db = None
+        lock_fd = None
+        try:
+            threading.Event().wait(60)
+            lock_fd = open(LOCK_FILE, "w")
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                lock_fd.close()
+                lock_fd = None
+                continue
+            db = get_db()
+            cur = db.cursor()
+            cur.execute("SELECT o.id, o.slot_id, o.order_no, o.payment_channel_id, o.deposit_amount FROM orders o WHERE o.status IN (0,1) AND o.store_time < NOW() - INTERVAL '3 minutes'")
+            expired = cur.fetchall()
+            released = 0
+            cleaned = 0
+            kept_paid = 0
+            for order in expired:
+                oid = order['id']
+                # 修复1：清理前先查微信支付状态，已付款的订单绝不能取消（防止"付了钱被超时清理+晚到回调自动退款"白嫖）
+                paid = False
+                query_failed = False
+                if order.get('payment_channel_id'):
+                    try:
+                        from helpers import get_channel_wxpay as _gchw
+                        conn2 = get_db()
+                        cur2 = conn2.cursor()
+                        cur2.execute('SELECT * FROM payment_channels WHERE id = %s', (order['payment_channel_id'],))
+                        ch_row = cur2.fetchone()
+                        conn2.close()
+                        if ch_row:
+                            wxpay_inst, ch_type = _gchw(dict(ch_row))
+                            if wxpay_inst and ch_type == 'wechat':
+                                qr = wxpay_inst.order_query(out_trade_no=order['order_no'])
+                                if qr and qr.get('trade_state') == 'SUCCESS':
+                                    paid = True
+                                    txn_id = qr.get('transaction_id', '') or ''
+                                    # 已支付：更新订单为使用中，补记支付流水，不清理
+                                    cur.execute("UPDATE orders SET status = 2, transaction_id = COALESCE(NULLIF(%s, ''), transaction_id), pay_time = NOW() WHERE id = %s AND status IN (0,1)",
+                                                (txn_id, oid))
+                                    if cur.rowcount > 0:
+                                        cur.execute("SELECT 1 FROM payments WHERE order_id = %s AND type = 1 AND transaction_id = %s LIMIT 1", (oid, txn_id))
+                                        if not cur.fetchone():
+                                            cur.execute("INSERT INTO payments (order_id, type, amount, transaction_id, status) VALUES (%s, 1, %s, %s, 1)",
+                                                         (oid, order.get('deposit_amount') or 0, txn_id))
+                    except Exception as _e:
+                        query_failed = True
+                        logger.error(f'[超时清理] 查支付状态异常 order={oid}: {_e}')
+                if paid:
+                    kept_paid += 1
+                    continue
+                if query_failed:
+                    # 查询失败无法确认：保守保留，下轮再查，避免误杀已付款订单
+                    logger.warning(f'[超时清理] 查支付状态失败，暂不清理 order={oid}')
+                    continue
+                # 明确未支付（或无渠道）：抢占式取消（条件更新，只让一个worker生效），成功才释放柜格
+                cur.execute('UPDATE orders SET status = 5 WHERE id = %s AND status IN (0,1)', (oid,))
+                if cur.rowcount == 0:
+                    continue  # 已被其他worker/流程处理，跳过
+                if order['slot_id']:
+                    cur.execute('UPDATE cabinet_slots SET status = 1 WHERE id = %s AND status = 2', (order['slot_id'],))
+                    if cur.rowcount > 0:
+                        released += 1
+                cleaned += 1
+            if expired:
+                db.commit()
+                logger.info(f'[超时清理] 清理{cleaned}笔未付款订单,释放{released}个柜格, 已付款保留{kept_paid}笔')
+        except Exception as e:
+            logger.error(f'[超时清理] 异常: {e}')
+        finally:
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    lock_fd.close()
+                except Exception:
+                    pass
+
+import threading
+t = threading.Thread(target=_cleanup_expired_orders, daemon=True)
+t.start()
+logger.info('[启动] 超时订单清理任务已启动(每60秒,threading)')
+
+# ============================================
+# 自动巡逻：修复"幽灵占用"柜门（每10分钟）
+# 柜门 status=2(使用中) 但没有 status=2 的活跃订单 => 退款/异常路径漏释放，自动释放
+# ============================================
+def _patrol_ghost_slots():
+    import threading as _th
+    from database import get_db
+    while True:
+        _th.Event().wait(600)
+        db = None
+        try:
+            db = get_db()
+            cur = db.cursor()
+            cur.execute("""
+                UPDATE cabinet_slots cs SET status=1
+                WHERE cs.status = 2
+                  AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.slot_id = cs.id AND o.status IN (1, 2))
+                RETURNING cs.id, cs.cabinet_id, cs.slot_number
+            """)
+            fixed = cur.fetchall()
+            if fixed:
+                db.commit()
+                logger.info(f'[幽灵柜门巡逻] 自动释放 {len(fixed)} 个幽灵占用柜门: {[f["id"] for f in fixed]}')
+            else:
+                db.commit()
+        except Exception as e:
+            logger.error(f'[幽灵柜门巡逻] 异常: {e}')
+        finally:
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+
+t_patrol = threading.Thread(target=_patrol_ghost_slots, daemon=True)
+t_patrol.start()
+logger.info('[启动] 幽灵柜门巡逻任务已启动(每600秒,threading)')
+
+# ============================================
+# 全局异常处理
+# ============================================
+
+# [FIX-20260912] 区分"HTTP 语义错误(405/404/400)"与"真服务器异常"所必需
+from werkzeug.exceptions import HTTPException  # noqa: E402
+
+@app.errorhandler(404)
+def not_found(e):
+    """404页面"""
+    path = request.path
+    logger.warning(f'[404] 未找到资源: {path}')
+    return json_response(message='请求的资源不存在', code=404)
+
+
+@app.errorhandler(500)
+def server_error(e):
+    """500服务器错误"""
+    logger.error(f'[500] 服务器内部错误: {e}')
+    return json_response(message='服务器内部错误', code=500)
+
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """通用异常捕获
+
+    [FIX-20260912] HTTPException(405/404/400 等) 必须原样返回它自己的状态码, 绝不能一律当 500。
+      起因: 外网扫描器大量探测 POST / 、POST /admin、/?rest_route=... 这些不存在的路由,
+      Flask 本应正确返回 405 Method Not Allowed, 但原来的写法把它转成 500 并打完整 traceback:
+        (1) 污染日志 (2) 让 "5xx 告警" 彻底失去意义 —— 2026-09-11 全天 46 个 5xx 里 39 个是扫描器造的,
+        还因此推了一条"175 smart-locker 最近1分钟 5xx=23"的误报告警。
+      4xx 只记一行 warning(不打 traceback); 只有非 HTTPException 的真异常才 error + traceback。
+    """
+    if isinstance(e, HTTPException):
+        code = e.code or 500
+        if 400 <= code < 500:
+            logger.warning(f'[{code}] {request.method} {request.path}')
+        else:
+            logger.error(f'[{code}] {request.method} {request.path}: {e}')
+        return json_response(message=e.description or '请求无效', code=code)
+    logger.error(f'[异常] 未捕获异常: {e}', exc_info=True)
+    return json_response(message='服务器异常', code=500)
+
+
+# ============================================
+# 静态文件/页面路由
+@app.route("/favicon.ico")
+def favicon():
+    return "", 204
+
+
+# ============================================================================
+# [S983-20261014] 公共配置（免登录）—— 小程序/H5 启动时拉取
+#   老板要求：客服电话不写死，后台随时改。以后要加别的公共配置也放这里。
+#   配置项：system_settings.service_phone（缺省 400-698-1080，与改动前一致）
+# ============================================================================
+def _s983_service_phone():
+    """取客服电话（读不到一律回落 400-698-1080，绝不因配置问题影响页面）"""
+    try:
+        from helpers import get_setting
+        v = str(get_setting('service_phone', '400-698-1080') or '').strip()
+        return v or '400-698-1080'
+    except Exception as _e:
+        logger.warning('[S983] 取 service_phone 失败(用默认): %s', _e)
+        return '400-698-1080'
+
+
+def _s983_inject(html):
+    """把 HTML 里的客服电话占位符换成后台配置值。
+
+    占位符（注意是单层大括号，不会跟 Vue 的 {{ }} 冲突）：
+      {service_phone}      → 显示用，如 400-698-1080
+      {service_phone_tel}  → 纯数字，tel: 链接用，如 4006981080
+    任何异常原样返回，绝不因替换失败弄坏页面。
+    """
+    try:
+        _p = _s983_service_phone()
+        _t = ''.join(_c for _c in _p if _c.isdigit())
+        return html.replace('{service_phone_tel}', _t).replace('{service_phone}', _p)
+    except Exception as _e:
+        logger.warning('[S983] 注入客服电话失败(原样返回): %s', _e)
+        return html
+
+
+@app.route('/api/config/public', methods=['GET'])
+def api_public_config():
+    """[S983] 公共配置（免登录）。小程序 / H5 启动时拉一次。"""
+    _p = _s983_service_phone()
+    return jsonify({'code': 200, 'data': {
+        'service_phone': _p,
+        'service_phone_tel': ''.join(_c for _c in _p if _c.isdigit()),
+    }})
+
+
+@app.route('/api/health', methods=['GET'])
+def api_health():
+    conn = None
+    try:
+        from database import get_db
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute('SELECT 1')
+        if cur.fetchone():
+            return jsonify({'status': 'ok', 'db': 'ok'})
+        return jsonify({'status': 'error', 'db': 'error'}), 503
+    except Exception as e:
+        logger.error('[health] %s', e)
+        return jsonify({'status': 'error', 'db': str(e)}), 503
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+# ============================================
+
+@app.route('/')
+def index():
+    """首页"""
+    resp = send_from_directory('static', 'deposit.html')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
+
+
+@app.route('/admin')
+def admin():
+    """管理后台"""
+    return send_from_directory('static', 'admin-v2.html')
+
+
+@app.route('/admin-v2')
+@app.route('/admin-v2/')
+@app.route('/admin-v2/<path:subpath>')
+def admin_v2(subpath=None):
+    resp = send_from_directory('static', 'admin-v2.html')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
+
+
+
+@app.route('/admin-v2-debug')
+def admin_v2_debug():
+    return send_from_directory('static', 'admin-v2-debug.html')
+
+# [S1661] 超时费补退独立页面（客服后台用）
+@app.route('/admin-overdue-refund')
+def admin_overdue_refund_page():
+    """超时费补退页面 - 用户打电话来扣款有疑问时用"""
+    return send_from_directory('static', 'admin-overdue-refund.html')
+
+
+@app.route('/profile')
+def profile():
+    # [S983-20261014] 改成"读取+注入客服电话"再返回（原来直接 send_from_directory）
+    try:
+        _p983 = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'profile.html')
+        with open(_p983, 'r', encoding='utf-8') as _f983:
+            return _s983_inject(_f983.read())
+    except Exception as _e983:
+        logger.warning('[S983] profile.html 注入失败, 回落静态返回: %s', _e983)
+        return send_from_directory('static', 'profile.html')
+
+
+
+@app.route('/static/deposit.html')
+def deposit_html_redirect():
+    if request.args.get('page') == 'profile':
+        qs = request.query_string.decode() if request.query_string else ''
+        return redirect('/static/h5/index.html' + ('?' + qs if qs else ''))
+    return send_from_directory('static', 'deposit.html')
+@app.route('/user-center')
+def user_center():
+    # [S983-20261014] 同上：注入客服电话
+    try:
+        _p983b = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'user-h5.html')
+        with open(_p983b, 'r', encoding='utf-8') as _f983b:
+            return _s983_inject(_f983b.read())
+    except Exception as _e983b:
+        logger.warning('[S983] user-h5.html 注入失败, 回落静态返回: %s', _e983b)
+        return send_from_directory('static', 'user-h5.html')
+
+
+@app.route('/merchant')
+def merchant():
+    """商户端"""
+    return send_from_directory('static', 'merchant.html')
+
+
+@app.route('/screen')
+def screen():
+    """柜体屏幕端 - 带缓存解决方案"""
+    import time
+    from flask import redirect, request as _req
+    if not _req.args.get('sc_t'):
+        return redirect('/screen?sc_t=' + str(int(__import__('time').time())))
+    tpl_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'screen.html')
+    try:
+        with open(tpl_path, 'r', encoding='utf-8') as f:
+            html = f.read()
+        from flask import make_response as _mr
+        resp = _mr(html)
+        resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+        resp.headers['ETag'] = ''
+        return resp
+    except:
+        return '页面加载失败', 500
+
+
+def _oa_force_follow_qr(cabinet_id='', device=''):
+    """[FIX-20260912e] 生成/缓存某台柜机的公众号【带参二维码】。
+    用途: 强制关注引导页上显示这张码, 用户长按识别关注后,
+    微信会把场景值(qrscene_xxx)带在关注事件里 -> 我们就能回一条
+    带着这台柜机参数的"点此继续存包"消息, 把用户接回正确的存包页。"""
+    scene = ('c' + str(cabinet_id)) if cabinet_id else (('d' + str(device)) if device else '')
+    if not scene:
+        return ''
+    try:
+        import json as _json, urllib.request as _u, urllib.parse as _up, psycopg2
+        import config as _c
+        _key = 'oa_qr_scene_' + scene[:40]
+        _conn = psycopg2.connect(_c.DATABASE_URL, connect_timeout=5)
+        _cur = _conn.cursor()
+        _cur.execute("SELECT setting_value FROM system_settings WHERE setting_key=%s", (_key,))
+        _row = _cur.fetchone()
+        if _row and _row[0]:
+            _conn.close()
+            return _row[0]
+        _tok = _json.loads(_u.urlopen('https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s' % (_wx_oa_id(), _wx_oa_secret()), timeout=8).read().decode()).get('access_token', '')
+        if not _tok:
+            _conn.close(); return ''
+        _body = _json.dumps({'action_name': 'QR_LIMIT_STR_SCENE', 'action_info': {'scene': {'scene_str': scene}}}).encode()
+        _req = _u.Request('https://api.weixin.qq.com/cgi-bin/qrcode/create?access_token=' + _tok, data=_body, headers={'Content-Type': 'application/json'})
+        _r = _json.loads(_u.urlopen(_req, timeout=10).read().decode())
+        _ticket = _r.get('ticket', '')
+        if not _ticket:
+            logger.warning('[force_follow_qr] 生成失败: %s', _r)
+            _conn.close(); return ''
+        _url = 'https://mp.weixin.qq.com/cgi-bin/showqrcode?ticket=' + _up.quote(_ticket)
+        _cur.execute("INSERT INTO system_settings (setting_key, setting_value, description) VALUES (%s,%s,'强制关注带参二维码') ON CONFLICT (setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value", (_key, _url))
+        _conn.commit(); _conn.close()
+        logger.info('[force_follow_qr] 已生成带参二维码 scene=%s', scene)
+        return _url
+    except Exception as _e:
+        logger.warning('[force_follow_qr] %s', _e)
+        return ''
+
+
+
+
+# [S389 2026-09-21] 模式②(oa) 关注引导二维码 —— **永远跟着【当前启用的公众号】走**。
+#   老板点出的毛病：库里预存的码只存了图片 URL，没记属于哪个公众号，
+#     换启用账号后死码不跟着变，用户扫了还是关注老号 -> 必须人工重配。
+#   改后规则：
+#     1) 预存码旁边多记一条 oa_qr_scene_<scene>__appid（这码是哪个 appid 生成的）；
+#     2) 读的时候 appid 与当前启用的不一致 -> 用当前启用的公众号**重新生成并覆盖**；
+#     3) 用**永久带参码**(QR_LIMIT_STR_SCENE + scene_str=<scene>)，
+#        这样关注事件带得回 scene（柜机号），关注后回的消息才能把用户接回正确的柜机；
+#        （改前没预存的柜机走临时码 scene_id=1，关注后丢柜机号）
+#     4) 进程内缓存 30 分钟；任何异常 -> 返回 ''，绝不挡住存包流程。
+def _oa_follow_qr_readonly(cabinet_id='', device=''):
+    import time          # 本函数定义在 app.py 顶部 `import time` 之前，必须局部 import
+    scene = ('c' + str(cabinet_id)) if cabinet_id else (('d' + str(device)) if device else '')
+    # [S389] 当前启用的公众号：整条链路的唯一依据
+    try:
+        _appid = _wx_oa_id() or ''
+    except Exception:
+        _appid = ''
+    _key = ('oa_qr_scene_' + scene[:40]) if scene else ''
+    _akey = (_key + '__appid') if _key else ''
+
+    # ---- 1) 读预存码：只有当它属于【当前启用的公众号】才直接用 ----
+    if _key:
+        try:
+            import psycopg2
+            import config as _c
+            _conn = psycopg2.connect(_c.DATABASE_URL, connect_timeout=5)
+            _cur = _conn.cursor()
+            _cur.execute("SELECT setting_key, setting_value FROM system_settings WHERE setting_key IN (%s,%s)", (_key, _akey))
+            _rows = {}
+            for _r in _cur.fetchall():
+                _rows[_r[0]] = _r[1]
+            _conn.close()
+            _url_cached = _rows.get(_key) or ''
+            _acct_cached = _rows.get(_akey) or ''
+            if _url_cached and _appid and _acct_cached == _appid:
+                return _url_cached
+            if _url_cached:
+                logger.info('[oa_follow_qr] 预存码不属于当前启用公众号(码=%s / 现=%s), 重新生成 scene=%s',
+                            (_acct_cached or '无标记')[:10], _appid[:10], scene)
+        except Exception as _e:
+            logger.warning('[oa_follow_qr_readonly] 读缓存失败: %s', _e)
+
+    # ---- 2) 进程内缓存：键里带上 appid，换号后自然不命中 ----
+    _ck_scene = (scene or '__oa_account__') + '|' + _appid
+    _ck = getattr(_oa_follow_qr_readonly, '_cache', None)
+    if _ck is None:
+        _ck = {}
+        _oa_follow_qr_readonly._cache = _ck
+    _hit = _ck.get(_ck_scene)
+    if _hit and (time.time() - _hit[0]) < 1800:
+        return _hit[1]
+
+    # ---- 3) 用当前启用的公众号生成【永久带参码】 ----
+    try:
+        import urllib.request as _u, urllib.parse as _up, json as _json
+        # [S413-20260921] 收敛：走 helpers 里那个稳定版(stable_token) + 带缓存的获取函数，
+        #   避免这里每次生成关注码都刷一个新 token 把其他进程的顶失效。
+        _tok = ''
+        try:
+            from helpers import get_oa_access_token as _goat413
+            _tok = _goat413() or ''
+        except Exception:
+            _tok = ''
+        if not _tok:
+            _tok = _json.loads(_u.urlopen(
+                'https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s'
+                % (_appid, _wx_oa_secret()), timeout=8).read().decode()).get('access_token', '')
+        if not _tok:
+            return ''
+        if scene:
+            _body = _json.dumps({'action_name': 'QR_LIMIT_STR_SCENE',
+                                 'action_info': {'scene': {'scene_str': scene}}}).encode()
+        else:
+            _body = _json.dumps({'action_name': 'QR_SCENE',
+                                 'action_info': {'scene': {'scene_id': 1}},
+                                 'expire_seconds': 604800}).encode()
+        _req = _u.Request('https://api.weixin.qq.com/cgi-bin/qrcode/create?access_token=' + _tok,
+                          data=_body, headers={'Content-Type': 'application/json'})
+        _r = _json.loads(_u.urlopen(_req, timeout=10).read().decode())
+        _ticket = _r.get('ticket', '')
+        if not _ticket:
+            logger.warning('[oa_follow_qr] 生成关注二维码失败: %s', _r)
+            return ''
+        _url = 'https://mp.weixin.qq.com/cgi-bin/showqrcode?ticket=' + _up.quote(_ticket)
+        _ck[_ck_scene] = (time.time(), _url)
+
+        # ---- 4) 落库：码 + 它属于哪个 appid（下次直接命中；换号后自动重生成） ----
+        if _key and _appid:
+            try:
+                import psycopg2
+                import config as _c
+                _wconn = psycopg2.connect(_c.DATABASE_URL, connect_timeout=5)
+                _wcur = _wconn.cursor()
+                _wcur.execute("INSERT INTO system_settings (setting_key, setting_value, description) VALUES (%s,%s,%s) "
+                              "ON CONFLICT (setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value, description=EXCLUDED.description",
+                              (_key, _url, '关注引导二维码(永久带参, appid=%s)' % _appid))
+                _wcur.execute("INSERT INTO system_settings (setting_key, setting_value, description) VALUES (%s,%s,%s) "
+                              "ON CONFLICT (setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value, description=EXCLUDED.description",
+                              (_akey, _appid, '上面那条关注码属于哪个公众号(换号后自动重生成)'))
+                _wconn.commit()
+                _wconn.close()
+                logger.info('[oa_follow_qr] 已生成并落库 永久带参关注码 scene=%s appid=%s', scene, _appid[:10])
+            except Exception as _we:
+                logger.warning('[oa_follow_qr] 落库失败(不影响本次使用): %s', _we)
+        else:
+            logger.info('[oa_follow_qr] 已生成关注码(无scene不落库) appid=%s', _appid[:10])
+        return _url
+    except Exception as _e:
+        logger.warning('[oa_follow_qr_readonly] %s', _e)
+        return ''
+
+
+
+
+# [S347 2026-09-20] 入口模式④(纯支付宝)：微信里扫码 → 纯静态提示页。
+#   约束：不查库、不依赖微信 JS-SDK、不依赖公众号授权；静态文件读不到就用内置字符串兜底。
+_ALIPAY_GUIDE_FALLBACK = (
+    '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">'
+    '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    '<title>请用支付宝扫码使用</title></head>'
+    '<body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,\'PingFang SC\',Arial,sans-serif;'
+    'background:#f5f6f8;color:#1f2329"><div style="max-width:560px;margin:0 auto;padding:56px 22px;text-align:center">'
+    '<h1 style="font-size:22px;line-height:1.5;margin:0 0 12px">请用支付宝扫码使用</h1>'
+    '<p style="font-size:15px;color:#646a73;line-height:1.8;margin:0">'
+    '当前入口暂不支持微信扫码，请打开支付宝 App 扫描柜机上的二维码。</p>'
+    '<p style="font-size:13px;color:#9aa0a6;line-height:1.8;margin:24px 0 0">'
+    '已存包需要取件？请访问 /retrieve 用手机号 + 取包码取包</p>'
+    '</div></body></html>')
+
+
+# [S768-20260930] 入口模式⑤(纯微信)：非微信浏览器扫码 → 纯静态提示页。
+#   与④(纯支付宝)完全对称：不查库、不用 JS-SDK、不做授权；静态文件读不到就用内置串兜底。
+_WECHAT_GUIDE_FALLBACK = (
+    '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">'
+    '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    '<title>请用微信扫码使用</title></head>'
+    '<body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,\'PingFang SC\',Arial,sans-serif;'
+    'background:#f5f6f8;color:#1f2329"><div style="max-width:560px;margin:0 auto;padding:56px 22px;text-align:center">'
+    '<h1 style="font-size:22px;line-height:1.5;margin:0 0 12px">请用微信扫码使用</h1>'
+    '<p style="font-size:15px;color:#646a73;line-height:1.8;margin:0">'
+    '当前入口暂不支持支付宝扫码，请打开微信 App 扫描柜机上的二维码。</p>'
+    '<p style="font-size:13px;color:#9aa0a6;line-height:1.8;margin:24px 0 0">'
+    '已存包需要取件？请访问 /retrieve 用手机号 + 取包码取包</p>'
+    '</div></body></html>')
+
+
+def _alipay_guide_response():
+    """[S347] 模式④的静态提示页（纯静态串，不查库、不用 JS-SDK、不做授权）"""
+    try:
+        _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'alipay-guide.html')
+        with open(_p, 'r', encoding='utf-8') as _f:
+            _html = _f.read()
+    except Exception:
+        _html = _ALIPAY_GUIDE_FALLBACK
+    from flask import make_response as _mr
+    _resp = _mr(_html)
+    _resp.headers['Cache-Control'] = 'no-store'
+    return _resp
+
+
+def _wechat_guide_response():
+    """[S768] 模式⑤的静态提示页（与④对称：纯静态串，不查库、不用 JS-SDK、不做授权）"""
+    try:
+        _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'wechat-guide.html')
+        with open(_p, 'r', encoding='utf-8') as _f:
+            _html = _f.read()
+    except Exception:
+        _html = _WECHAT_GUIDE_FALLBACK
+    from flask import make_response as _mr
+    _resp = _mr(_html)
+    _resp.headers['Cache-Control'] = 'no-store'
+    return _resp
+
+
+# ============================================================
+# [S1692-20261105] 扫码无 openid -> 跳小程序（替代公众号 OAuth）
+#   开关：system_settings.service_mp_jump_enabled（默认 '0' = 关闭，
+#        关闭时调用方走原来的公众号 OAuth，行为一字不变）
+#   失败自动回落：拿不到 scheme 就返回 None，调用方回落原逻辑
+# ============================================================
+def _s1692_mp_jump_html(device='', cabinet_id=''):
+    """返回跳小程序的 HTML 响应；不可用/失败返回 None"""
+    try:
+        from database import get_db as _gdb1692
+        _c = _gdb1692()
+        _cur = _c.cursor()
+        _cur.execute("SELECT setting_value FROM system_settings WHERE setting_key=%s",
+                     ('service_mp_jump_enabled',))
+        _row = _cur.fetchone()
+        _c.close()
+        _v = ''
+        if _row:
+            _v = str(_row.get('setting_value') if hasattr(_row, 'get') else _row[0] or '').strip().lower()
+        if _v not in ('1', 'true', 'on', 'yes'):
+            return None            # 开关关闭 -> 调用方走原逻辑
+    except Exception as _e:
+        logger.warning('[S1692] 读开关失败(按关闭处理): %s', _e)
+        return None
+
+    # 生成 scheme
+    _scheme = ''
+    try:
+        import json as _j1692, urllib.request as _u1692
+        from wx_config import mp_appid as _mpid1692
+        _appid = _mpid1692() or ''
+        if not _appid:
+            logger.warning('[S1692] mp_appid 为空，回落原逻辑')
+            return None
+        from helpers import get_access_token as _gat1692
+        _at = _gat1692()
+        if not _at:
+            logger.warning('[S1692] access_token 获取失败，回落原逻辑')
+            return None
+        _path = 'pages/subscribe/subscribe'
+        _query = ''
+        if device:
+            _query = 'device=' + str(device)
+        _jw = {'path': _path, 'env_version': 'release'}
+        if _query:
+            _jw['query'] = _query
+        _body = _j1692.dumps({'jump_wxa': _jw, 'is_expire': True,
+                              'expire_type': 1, 'expire_interval': 30})
+        _req = _u1692.Request(
+            'https://api.weixin.qq.com/wxa/generatescheme?access_token=' + _at,
+            data=_body.encode(), headers={'Content-Type': 'application/json'})
+        _resp = _j1692.loads(_u1692.urlopen(_req, timeout=8).read())
+        if _resp.get('errcode') == 0:
+            _scheme = _resp.get('openlink') or _resp.get('scheme') or ''
+        if not _scheme:
+            logger.warning('[S1692] generatescheme 失败: %s', str(_resp)[:200])
+            return None
+        logger.info('[S1692] 扫码无openid -> 跳小程序 device=%s appid=%s scheme=%s',
+                    device or '-', _appid, _scheme)
+    except Exception as _e:
+        logger.warning('[S1692] 生成 scheme 异常(回落原逻辑): %s', _e)
+        return None
+
+    _html = """<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=0">
+<title>正在打开小程序</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;background:#f5f6f8;color:#1f2329;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}
+.box{background:#fff;border-radius:16px;padding:36px 24px 32px;max-width:420px;width:100%;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,.06)}
+.ico{width:64px;height:64px;margin:0 auto 20px;border-radius:50%;background:#e8f3ff;display:flex;align-items:center;justify-content:center;font-size:32px}
+h1{font-size:19px;font-weight:600;margin-bottom:14px}
+.main{font-size:15px;line-height:1.7;color:#4e5969}
+.btn{display:block;margin-top:22px;background:#1677ff;color:#fff;text-decoration:none;padding:14px;border-radius:10px;font-size:16px;font-weight:600}
+.big{font-size:48px}</style></head><body>
+<div class="box"><div class="ico big">📦</div>
+<h1>正在打开小程序</h1>
+<div class="main">如果没有自动跳转，请点击下面的按钮</div>
+<a class="btn" id="go" href="__SCHEME__">打开小程序存包</a></div>
+<script>
+var S="__SCHEME__";
+setTimeout(function(){try{window.location.href=S;}catch(e){}},300);
+document.getElementById('go').onclick=function(e){e.preventDefault();try{window.location.href=S;}catch(err){}};
+</script></body></html>"""
+    _html = _html.replace('__SCHEME__', _scheme)
+    from flask import Response as _Resp
+    return _Resp(_html, mimetype='text/html')
+
+
+# ============================================================
+# [OLD-ENTRY] 老贴纸入口提示（供老小程序读取，服务端可控，无需再发版）
+#   配置：system_settings.old_mp_notice =
+#     {"enabled": 1, "title": "系统已升级", "content": "请扫描柜机屏幕上的二维码",
+#      "jump_appid": "wxf5107ab7b2ca5fc1", "jump_path": "pages/deposit/deposit", "jump_text": "立即前往"}
+#   enabled=1 → 老小程序显示提示页/弹窗；enabled=0 → 什么都不做（原样）
+# ============================================================
+@app.route('/api/old-entry-notice', methods=['GET'])
+def old_entry_notice():
+    """[OLD-ENTRY] 老小程序入口提示（自动跟随域名切换状态）
+
+    判定（mode 默认 auto）：
+      当前 system_settings.qr_base_url 的主机
+        · 仍是老主机（locker.cqdyxl.com） → enabled=0（老小程序照常使用）
+        · 已换到新主机（如 mp.a8t5g6.top） → enabled=1（老小程序显示"系统已升级"）
+    mode 可强制：force_on / force_off
+    """
+    _out = {
+        'enabled': 0,
+        'mode': 'auto',
+        'title': '系统已升级',
+        'content': '请扫描柜机屏幕上的二维码',
+        'steps': ['看向柜机屏幕', '用微信扫一扫屏幕上的二维码', '按提示完成存包/取包'],
+        'jump_appid': '',
+        'jump_path': '',
+        'jump_text': '',
+    }
+    _OLD_HOSTS = ('locker.cqdyxl.com',)
+    try:
+        from helpers import get_setting as _gs_oe
+        import json as _j_oe
+        import urllib.parse as _up_oe
+        # 1) 读自定义配置（可选）
+        _raw = str(_gs_oe('old_mp_notice', '') or '').strip()
+        if _raw:
+            try:
+                _d = _j_oe.loads(_raw)
+                if isinstance(_d, dict):
+                    for _k in list(_out.keys()):
+                        if _k in _d:
+                            _out[_k] = _d[_k]
+            except Exception:
+                pass
+        _mode = str(_out.get('mode') or 'auto').strip().lower()
+        _out['mode'] = _mode
+        # 2) 取当前二维码域名，判断是否已切换
+        _qr = str(_gs_oe('qr_base_url', '') or '').strip()
+        try:
+            _host_now = (_up_oe.urlparse(_qr).hostname or '').lower()
+        except Exception:
+            _host_now = ''
+        try:
+            from helpers import new_domain_switched as _nds_oe
+            _switched = bool(_nds_oe())
+        except Exception:
+            _switched = False
+        if _mode == 'force_on':
+            _enabled = 1
+        elif _mode == 'force_off':
+            _enabled = 0
+        else:
+            _enabled = 1 if _switched else 0
+        _out['enabled'] = _enabled
+        _out['_host_now'] = _host_now
+    except Exception as _e:
+        try:
+            logger.warning('[OLD-ENTRY] 计算提示状态失败: %s', _e)
+        except Exception:
+            pass
+    return json_response(_out)
+
+
+@app.route('/api/qr-log', methods=['GET'])
+def qr_log():
+    """[QR-LOG] 设备上报二维码配置拉取结果（诊断用）"""
+    try:
+        _dev = request.args.get('device', '') or ''
+        _st = request.args.get('status', '') or ''
+        _dt = (request.args.get('detail', '') or '')[:200]
+        logger.warning('[QR-LOG] device=%s status=%s detail=%s', _dev, _st, _dt)
+        # 落库便于统计
+        try:
+            from database import get_db as _gdb_qr
+            _c = _gdb_qr()
+            _c.execute("""CREATE TABLE IF NOT EXISTS qr_fetch_log (
+                id serial PRIMARY KEY, device_id text, status text, detail text,
+                created_at timestamp DEFAULT now())""")
+            _c.execute("INSERT INTO qr_fetch_log (device_id, status, detail) VALUES (%s,%s,%s)",
+                       (_dev, _st, _dt))
+            _c.commit()
+            _c.close()
+        except Exception:
+            pass
+        return json_response({'ok': True})
+    except Exception as _e:
+        return json_response(message=str(_e), code=500)
+
+
+@app.route('/api/qr-config', methods=['GET'])
+def qr_config():
+    """[QR-CFG] 屏幕二维码前缀下发（APK 拉这个再本地生成二维码）
+
+    优先级：system_settings.qr_base_url > 兜底老域名
+    返回值：{"code":200,"data":{"prefix":"https://locker.cqdyxl.com/static/deposit.html"}}
+    """
+    _def = 'https://locker.cqdyxl.com/static/deposit.html'
+    _prefix = ''
+    try:
+        from helpers import get_setting as _gs_qc
+        _prefix = str(_gs_qc('qr_base_url', '') or '').strip()
+    except Exception as _e:
+        try:
+            logger.warning('[QR-CFG] 读前缀失败: %s', _e)
+        except Exception:
+            pass
+    if not _prefix:
+        _prefix = _def
+    # 兼容：只给域名时补默认路径
+    if '/static/' not in _prefix and '/store' not in _prefix:
+        _prefix = _prefix.rstrip('/') + '/static/deposit.html'
+    return json_response({'prefix': _prefix.rstrip('/')})
+
+
+@app.route('/api/wxacode/<mainboard_id>', methods=['GET'])
+def wxa_code_image(mainboard_id):
+    """[WXACODE] 服务端动态生成小程序码（无需微信「二维码规则」）"""
+    import os as _os_wa
+    import json as _j_wa
+    import urllib.request as _ur_wa
+    from flask import send_file as _sf_wa, request as _rq_wa
+
+    _mb = ''.join(ch for ch in str(mainboard_id) if ch.isalnum())
+    if not _mb:
+        return json_response(message='缺少设备号', code=400)
+
+    _dir = _os_wa.path.join(_os_wa.path.dirname(_os_wa.path.abspath(__file__)), 'static', 'wxacode')
+    _os_wa.makedirs(_dir, exist_ok=True)
+    _fp = _os_wa.path.join(_dir, _mb + '.png')
+    _force = str(_rq_wa.args.get('force', '') or '') in ('1', 'true', 'yes')
+
+    if _os_wa.path.exists(_fp) and not _force:
+        return _sf_wa(_fp, max_age=300)
+
+    try:
+        _tok_url = ('https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential'
+                    '&appid=' + _wx_mp_id() + '&secret=' + _wx_mp_secret())
+        with _ur_wa.urlopen(_tok_url, timeout=15) as _r:
+            _td = _j_wa.loads(_r.read().decode())
+        _token = _td.get('access_token')
+        if not _token:
+            return json_response(message='获取token失败: ' + str(_td)[:200], code=500)
+
+        _payload = _j_wa.dumps({
+            'scene': 'device=' + _mb,
+            'page': 'pages/deposit/deposit',
+            'width': 430,
+            'check_path': False,
+            'env_version': 'release',
+        }, ensure_ascii=False).encode('utf-8')
+        _req = _ur_wa.Request('https://api.weixin.qq.com/wxa/getwxacodeunlimit?access_token=' + _token,
+                              data=_payload, headers={'Content-Type': 'application/json'})
+        with _ur_wa.urlopen(_req, timeout=25) as _r:
+            _body = _r.read()
+        if _body[:1] == b'{':
+            logger.warning('[WXACODE] 失败 device=%s %s', _mb, _body[:200])
+            return json_response(message='生成失败: ' + _body.decode('utf-8', 'ignore')[:200], code=500)
+        with open(_fp, 'wb') as _f:
+            _f.write(_body)
+        logger.info('[WXACODE] 生成 device=%s size=%s', _mb, len(_body))
+        return _sf_wa(_fp, max_age=300)
+    except Exception as _e:
+        logger.error('[WXACODE] 异常 device=%s %s', _mb, _e)
+        return json_response(message=str(_e), code=500)
+
+
+@app.route('/store', strict_slashes=False)
+def store_page():
+    """存包页面 - 服务端渲染柜子信息"""
+    # [OLD-STICKER] 老贴纸域名入口：仅当"已切到新二维码域名"时才提示维护页
+    try:
+        _old_h = (request.host or '').split(':')[0].lower()
+        _OLD_HOSTS = {'locker.cqdyxl.com'}
+        if _old_h in _OLD_HOSTS:
+            from helpers import get_setting as _gs_old
+            _old_mode = str(_gs_old('old_sticker_mode', 'auto') or 'auto').strip().lower()
+            try:
+                from helpers import new_domain_switched as _nds_old
+                _old_switched = bool(_nds_old())
+            except Exception:
+                _old_switched = False
+            if _old_mode == 'redirect':
+                return redirect('https://kelaiwei.top' + request.full_path, code=302)
+            if _old_mode == 'maintenance' or (_old_mode == 'auto' and _old_switched):
+                try:
+                    _old_p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'maintenance.html')
+                    with open(_old_p, 'r', encoding='utf-8') as _old_f:
+                        _old_html = _old_f.read()
+                    from flask import make_response as _old_mr
+                    _old_r = _old_mr(_old_html)
+                    _old_r.headers['Cache-Control'] = 'no-store, must-revalidate'
+                    logger.info('[OLD-STICKER] 老域名入口 → 维护页 host=%s switched=%s', _old_h, _old_switched)
+                    return _old_r
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    _v = request.args.get('v', '')
+    if not _v:
+        import urllib.parse as _up
+        _qs = dict(request.args)
+        _qs['v'] = str(int(__import__('time').time()))
+        return redirect('/store?' + _up.urlencode(_qs), code=302)
+    device = request.args.get('device', '')
+    openid = request.args.get('openid', '')
+    # [S347 2026-09-20] 入口模式全局总开关（wx_config_items.entry_mode）
+    #   安全口径：读不到配置 / 任何异常 / 值非法 → 一律回落 'mp'（= 现状）；
+    #   并且只有 'oa' / 'alipay' 会走新分支，其余取值（mp / h5 / 未知）全部走下面原有的老逻辑。
+    try:
+        from entry_mode import get_entry_mode as _get_entry_mode
+        _entry_mode = _get_entry_mode()
+    except Exception:
+        _entry_mode = 'mp'
+    # [S774-20261001] 方向二：独立开关「允许支付宝扫码使用」(wx_config_items.alipay_entry_enabled)。
+    #   与 entry_mode 正交：任意入口模式下都能单独关掉支付宝。
+    #   红线：读不到配置 / 任何异常 / 值非法 → 一律当"允许"（= 现状），绝不因配置问题把用户挡外面。
+    try:
+        from wx_config import get_config as _gc774
+        _raw774 = str(_gc774('alipay_entry_enabled', '1')).strip().lower()
+        _alipay_entry_ok = _raw774 not in ('0', 'false', 'no', 'off')
+    except Exception:
+        _alipay_entry_ok = True
+    if (not _alipay_entry_ok) and 'MicroMessenger' not in request.headers.get('User-Agent', ''):
+        logger.info('[S774] 支付宝入口已禁用 → 提示页 device=%s', device)
+        return _wechat_guide_response()
+    # [S392-20260921] 没有柜机号、也没有 cabinet_id（例如从公众号菜单「存包」直接进来）：
+    #   下面查柜体那段有个写死的兜底 `WHERE c.id=8`，而 8 号柜并不存在 ->
+    #   用户填完手机号点"下一步"才报"暂无可用柜格"（2026-09-21 01:29 生产实例）。
+    #   纯公众号模式下直接请他扫柜机上的二维码（re-scan.html 会自动调起微信扫码）。
+    if _entry_mode == 'oa' and not device and not (request.args.get('cabinet_id') or ''):
+        logger.info('[S392] oa 模式无柜机号，引导扫码 device=%r cabinet_id=%r', device, request.args.get('cabinet_id'))
+        return redirect('/static/re-scan.html?from=menu', code=302)
+    # [S347-模式④] 微信里扫 → 纯静态提示页「请用支付宝扫码使用」（不查库、不用 JS-SDK）
+    #   非微信 UA（支付宝/浏览器）保持原有行为不变，走下面的 H5 页面
+    if _entry_mode == 'alipay' and 'MicroMessenger' in request.headers.get('User-Agent', ''):
+        logger.info('[S347] entry_mode=alipay 微信UA→静态提示页 device=%s', device)
+        return _alipay_guide_response()
+    # [S768-20260930] 模式⑤(纯微信)：非微信浏览器（支付宝/普通浏览器）→ 提示页「请用微信扫码使用」。
+    #   与④严格互为反面：④拦微信放行其它，⑤拦其它放行微信。
+    if _entry_mode == 'wechat' and 'MicroMessenger' not in request.headers.get('User-Agent', ''):
+        logger.info('[S768] entry_mode=wechat 非微信UA→静态提示页 device=%s', device)
+        return _wechat_guide_response()
+    if not openid and 'MicroMessenger' in request.headers.get('User-Agent', ''):
+        # [S1692] 优先走「跳小程序」（需 service_mp_jump_enabled=1，默认关）；
+        #   关闭/失败时回落原来的公众号 OAuth，行为一字不变。
+        try:
+            _r1692 = _s1692_mp_jump_html(device=request.args.get('device', ''),
+                                          cabinet_id=request.args.get('cabinet_id', ''))
+            if _r1692 is not None:
+                return _r1692
+        except Exception as _e1692:
+            logger.warning('[S1692] 跳小程序异常(回落OAuth): %s', _e1692)
+        import urllib.parse
+        current_url = request.url.replace('http://', 'https://')
+        return redirect(f'/api/wx/oauth?redirect_uri={urllib.parse.quote(current_url)}')
+    _ver = str(int(__import__('time').time()))
+    
+    # 服务端查询柜子信息,直接渲染到页面
+    _ssr = {"site_name":"","site_addr":"","deposit_amount":0,"charge_mode":"deposit","allow_h5_to_mp":0,"force_follow_mp":0,"force_follow_qr":"","mp_appid":"","mp_path":"","is_online":True}
+    _cabinet_id = request.args.get('cabinet_id', '')
+    try:
+        import sqlite3 as _sq
+        conn = _sq.connect(DATABASE)
+        conn.row_factory = _sq.Row
+        c = conn.cursor()
+        if device:
+            c.execute("SELECT c.id,c.name,c.deposit_amount,c.charge_mode,c.per_use_price,c.mainboard_device_id,c.last_heartbeat,l.name as loc_name,l.address as loc_addr,l.allow_h5_to_mp,l.force_follow_mp FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.mainboard_device_id=?", (device,))
+        elif _cabinet_id:
+            c.execute("SELECT c.id,c.name,c.deposit_amount,c.charge_mode,c.per_use_price,c.mainboard_device_id,c.last_heartbeat,l.name as loc_name,l.address as loc_addr,l.allow_h5_to_mp,l.force_follow_mp FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.id=?", (_cabinet_id,))
+        else:
+            c.execute("SELECT c.id,c.name,c.deposit_amount,c.charge_mode,c.per_use_price,c.mainboard_device_id,c.last_heartbeat,l.name as loc_name,l.address as loc_addr,l.allow_h5_to_mp,l.force_follow_mp FROM cabinets c LEFT JOIN locations l ON c.location_id=l.id WHERE c.id=8")
+        row = c.fetchone()
+        if row:
+            _ssr["site_name"] = row["loc_name"] or row["name"] or ""
+            _ssr["site_addr"] = row["loc_addr"] or ""
+            # [S838c-20261009] H5(/store) 也走"进页面报一次价"：
+            #   让用户在 H5 页面上看到的随机金额 = 实际支付金额（原来注入的是柜机固定值，
+            #   开了随机之后会出现"页面显示20、实付20.93"）。
+            #   取不到报价(无身份/异常/非随机柜机) -> 原样用柜机固定值，行为与改动前一致。
+            _ssr["deposit_amount"] = row["deposit_amount"] or 0
+            try:
+                from helpers import get_or_make_deposit_quote as _gmq838
+                _q838 = _gmq838(row["id"])
+                if _q838 is not None:
+                    _ssr["deposit_amount"] = _q838
+            except Exception as _e838:
+                pass
+            _ssr["charge_mode"] = row["charge_mode"] or "deposit"
+            _ssr["per_use_price"] = row["per_use_price"] or 0
+            _ssr["allow_h5_to_mp"] = row["allow_h5_to_mp"] or 0
+            try:
+                _ssr["force_follow_mp"] = row["force_follow_mp"] or 0
+            except Exception:
+                _ssr["force_follow_mp"] = 0
+            if _ssr.get("force_follow_mp"):
+                try:
+                    _ssr["force_follow_qr"] = _oa_force_follow_qr(_cabinet_id or row["id"], device)
+                except Exception:
+                    _ssr["force_follow_qr"] = ""
+            # [CFG-STEP2E] 不管这个网点开不开"允许H5跳小程序"，都把当前小程序的 appid
+            #   注入给页面。以前只在 allow_h5_to_mp=1 时注入，页面拿不到就退回页面上写死的
+            #   旧 appid —— 换小程序之后会把用户送到旧小程序里去。
+            _ssr["mp_appid"] = _wx_mp_id()
+            if row["allow_h5_to_mp"]:
+                _ssr["mp_path"] = "pages/subscribe/subscribe"
+#            # 每次有人扫码加载存包页面就刷新心跳
+#            try:
+#                _up = conn.cursor()
+# _up.execute("UPDATE cabinets SET last_heartbeat=NOW() WHERE id=?", (row["id"],))
+            # 计算设备在线状态
+            if row.get("last_heartbeat"):
+                try:
+                    from datetime import datetime
+                    hb = datetime.strptime(str(row["last_heartbeat"])[:19], "%Y-%m-%d %H:%M:%S")
+                    _ssr["is_online"] = (datetime.now() - hb).total_seconds() < 120
+                except:
+                    _ssr["is_online"] = False
+            else:
+                _ssr["is_online"] = False
+            # SSR时显示第一个可用格子
+            if _cabinet_id:
+                try:
+                    c2 = conn.cursor()
+                    c2.execute("SELECT slot_label FROM cabinet_slots WHERE cabinet_id=? AND status=1 AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.slot_id = cabinet_slots.id AND o2.status = 2) ORDER BY slot_number LIMIT 1", (_cabinet_id,))
+                    r2 = c2.fetchone()
+                    if r2:
+                        _ssr["door_number"] = str(r2["slot_label"])
+                except:
+                    pass
+            if not _cabinet_id and row["id"]:
+                _cabinet_id = str(row["id"])
+        conn.close()
+    except Exception as e:
+        import logging; logging.getLogger(__name__).error(f'store SSR error: {e}')
+    # [S347-模式② STEP1] entry_mode=oa（纯公众号）：强制"留在 H5 网页"，不进小程序。
+    #   只改 SSR 注入值、不写库；注意跳转的真正闸门还有 routes 侧 3 个读取点
+    #   （routes/user.py:1548、routes/admin.py:671 / :827），STEP2 一并按模式收口。
+    # [S350-模式② STEP2] 补齐"强制关注"与"关注遮罩前缀"：
+    #   · allow_h5_to_mp / mp_path 归零 → 页面走 goToStep2Direct()，留在 H5 网页
+    #   · force_follow_mp=1            → 页面弹关注遮罩（老板要的"强制关注"）
+    #   · force_follow_qr              → 只读取号：优先读库里人工配好的带参码，
+    #                                    没有就用当前生效公众号生成临时码（**不写库**）
+    #   · oa_openid_prefix             → 遮罩不再写死旧号前缀 oLhbm2
+    #   · oa_forced / oa_no_skip       → oa 下不渲染"暂不关注，继续存包"（L2 硬拦截）
+    #   注意：只在 entry_mode == 'oa' 时进入；mp / h5 / 非法值一个字节都不变。
+    if _entry_mode == 'oa':
+        _ssr["allow_h5_to_mp"] = 0
+        _ssr["mp_path"] = ""
+        _ssr["force_follow_mp"] = 1
+        try:
+            if not _ssr.get("force_follow_qr"):
+                _ssr["force_follow_qr"] = _oa_follow_qr_readonly(_cabinet_id or '', device)
+        except Exception:
+            _ssr["force_follow_qr"] = ""
+        try:
+            from wx_config import oa_openid_prefix as _oa_pfx
+            _ssr["oa_openid_prefix"] = _oa_pfx() or ''
+        except Exception:
+            _ssr["oa_openid_prefix"] = ''
+        _ssr["oa_forced"] = 1
+        _ssr["oa_no_skip"] = 1
+    
+    import json as _json
+    _ssr_json = _json.dumps(_ssr, ensure_ascii=False)
+    
+    try:
+        from helpers import get_setting as _get_setting
+        _oa_sub_on = str(_get_setting('oa_subscribe_enabled', 'false')).lower() in ('true', '1', 'yes')
+    except Exception:
+        _oa_sub_on = False
+    tpl_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'deposit.html')
+    try:
+        with open(tpl_path, 'r', encoding='utf-8') as f:
+            html = f.read().replace("{device}", device).replace("{openid}", openid).replace("{_ver}", _ver).replace("{ssr_cabinet}", _ssr_json).replace("{cabinet_id}", _cabinet_id).replace("{deposit_amount}", str(int(_ssr["deposit_amount"]) if _ssr["deposit_amount"] and _ssr["deposit_amount"] == int(_ssr["deposit_amount"]) else _ssr["deposit_amount"]))
+        html = html.replace("{oa_sub_on}", ("true" if _oa_sub_on else "false"))
+        # [S983-20261014] 客服电话也从后台配置注入（占位符 {service_phone} / {service_phone_tel}）
+        html = _s983_inject(html)
+        # [S350-模式②] 关注遮罩注入点。mp/h5/非法值下分别是 当前前缀 / '' / 0 / 0，
+        #   替换结果与改动前逐字节相同（已用 md5 比对法自证）。
+        try:
+            from wx_config import oa_openid_prefix as _oa_pfx2
+            _oa_pfx_val = _oa_pfx2() or 'oLhbm2'
+        except Exception:
+            _oa_pfx_val = 'oLhbm2'
+        html = html.replace("{oa_prefix}", _oa_pfx_val)
+        html = html.replace("{oa_follow_qr}", str(_ssr.get("force_follow_qr") or ""))
+        html = html.replace("{oa_forced}", "1" if _entry_mode == 'oa' else "0")
+        html = html.replace("{oa_no_skip}", "1" if _entry_mode == 'oa' else "0")
+        # [A1-b 2026-09-14] 跳小程序最多点几次（点够了还进不去就放行网页支付），后台设置 mp_jump_max_retry
+        try:
+            _mp_try_limit = int(str(_get_setting('mp_jump_max_retry', '3') or '3').strip() or '3')
+        except Exception:
+            _mp_try_limit = 3
+        if _mp_try_limit < 1:
+            _mp_try_limit = 1
+        if _mp_try_limit > 10:
+            _mp_try_limit = 10
+        html = html.replace("{mp_retry_limit}", str(_mp_try_limit))
+        from flask import make_response as _mr
+        resp = _mr(html)
+        resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+        return resp
+    except:
+        return "页面加载失败", 500
+
+
+@app.route('/mpjump-test')
+def mpjump_test_page():
+    """[S1450-20261019] 开放标签独立测试页（纯净版，不读网点配置）
+
+    用途：单独验证 wx-open-launch-weapp 在"当前生效的公众号+小程序"下能不能跳。
+    页面上并排给出两条通道（开放标签 / URL Scheme），哪条通了立刻看得出来。
+    不需要 allow_h5_to_mp，也不走存包流程，打开就能点。
+    """
+    try:
+        from wx_config import mp_appid as _mpid, oa_appid as _oaid
+        _mp = _mpid() or ''
+        _oa = _oaid() or ''
+    except Exception:
+        _mp = ''
+        _oa = ''
+    _html = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>开放标签测试</title>
+<script src="https://res2.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f6f8;color:#222;padding:14px;font-size:14px}
+.card{background:#fff;border-radius:10px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+h2{font-size:16px;margin-bottom:10px;color:#111}
+.row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #eee;font-size:13px}
+.row:last-child{border-bottom:0}
+.row b{color:#07c160;font-weight:600}
+code{background:#f2f3f5;padding:1px 5px;border-radius:4px;font-size:12px;word-break:break-all}
+.btn{display:block;width:100%;padding:12px;border:0;border-radius:8px;font-size:15px;font-weight:600;margin-top:10px;cursor:pointer}
+.btn-a{background:#07c160;color:#fff}
+.btn-b{background:#576b95;color:#fff}
+.btn-c{background:#eee;color:#333}
+#launchWrap{margin-top:10px}
+#log{margin-top:12px;background:#1e1e1e;color:#9ef;padding:10px;border-radius:8px;font-size:12px;line-height:1.7;max-height:320px;overflow:auto;font-family:Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all}
+.ok{color:#07c160;font-weight:700}
+.err{color:#fa5151;font-weight:700}
+.warn{color:#ffc300;font-weight:700}
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h2>① 环境信息</h2>
+  <div class="row"><span>公众号 appid</span><b>__OA__</b></div>
+  <div class="row"><span>小程序 appid</span><b>__MP__</b></div>
+  <div class="row"><span>是否微信内</span><b id="inWx">检测中…</b></div>
+  <div class="row"><span>当前 URL</span><span><code id="curUrl"></code></span></div>
+</div>
+
+<div class="card">
+  <h2>② 开放标签通道（官方推荐）</h2>
+  <button class="btn btn-a" id="btnInit">初始化 wx.config（点这个）</button>
+  <div id="launchWrap"></div>
+  <div style="margin-top:8px;font-size:12px;color:#888">说明：绿色按钮出现 = 标签可用，点它应该直接弹出"即将打开小程序"</div>
+</div>
+
+<div class="card">
+  <h2>③ 跳【订阅页】测完整流程</h2>
+  <div style="margin-bottom:8px;font-size:13px;color:#666">
+    真实业务跳的是 <code>pages/subscribe/subscribe</code>（带 g/h/j/code/phone/order_id 参数），
+    进去会弹"订阅消息"。订阅完点微信左上角返回，回到本页看日志有没有认到"已进入"。
+  </div>
+  <input id="inpPhone" type="tel" maxlength="11" placeholder="输入手机号（测试用，可不填）"
+         style="width:100%;padding:11px;border:1px solid #ddd;border-radius:8px;font-size:15px;margin-bottom:8px">
+  <input id="inpCode" type="text" maxlength="12" placeholder="取件码（可不填）"
+         style="width:100%;padding:11px;border:1px solid #ddd;border-radius:8px;font-size:15px;margin-bottom:8px">
+  <button class="btn btn-a" id="btnSubPage">① 开放标签跳订阅页</button>
+  <button class="btn btn-b" id="btnSubScheme" style="margin-top:8px">② URL Scheme 跳订阅页</button>
+  <div id="subWrap" style="margin-top:10px"></div>
+</div>
+
+<div class="card">
+  <h2>④ URL Scheme 通道（对照组）</h2>
+  <button class="btn btn-b" id="btnScheme">用 URL Scheme 跳转</button>
+  <div style="margin-top:8px;font-size:12px;color:#888">说明：这条是现在线上用的方式，用来对比成功率</div>
+</div>
+
+<div class="card">
+  <h2>⑤ 日志</h2>
+  <div id="log"></div>
+  <button class="btn btn-c" id="btnClear">清空日志</button>
+</div>
+
+<script>
+var OA_APPID = "__OA__";
+var MP_APPID = "__MP__";
+var MP_PATH = "pages/index/index";
+var MP_SUB_PATH = "pages/subscribe/subscribe";   /* [S1451] 真实业务页 */
+var _jumpAt = 0;
+
+function log(msg, cls) {
+  var el = document.getElementById('log');
+  var t = new Date().toTimeString().slice(0, 8);
+  var span = document.createElement('div');
+  span.innerHTML = '<span style="color:#666">[' + t + ']</span> '
+                 + (cls ? '<span class="' + cls + '">' : '<span>')
+                 + String(msg).replace(/</g, '&lt;') + '</span>';
+  el.appendChild(span);
+  el.scrollTop = el.scrollHeight;
+}
+
+document.getElementById('curUrl').textContent = location.href.split('#')[0];
+var _inWx = /MicroMessenger/i.test(navigator.userAgent || '');
+document.getElementById('inWx').innerHTML = _inWx
+    ? '<span class="ok">是</span>' : '<span class="err">否（开放标签只在微信内有效）</span>';
+log('页面加载完成，微信内=' + _inWx);
+log('jweixin: ' + (typeof wx === 'undefined' ? '未加载' : ('已加载 v' + (wx.version || '?'))));
+
+document.getElementById('btnClear').onclick = function () {
+  document.getElementById('log').innerHTML = '';
+};
+
+document.getElementById('btnInit').onclick = function () {
+  var u = location.href.split('#')[0];
+  log('开始取签名… url=' + u);
+  fetch('/api/wx/jsapi-signature?url=' + encodeURIComponent(u))
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d || d.code !== 200 || !d.data) {
+        log('签名失败: ' + JSON.stringify(d), 'err');
+        return;
+      }
+      log('签名 OK：appId=' + d.data.appId + ' nonceStr=' + String(d.data.nonceStr).slice(0, 8) + '…', 'ok');
+      if (d.data.appId !== OA_APPID) {
+        log('注意：签名 appId 与页面注入的公众号 appid 不一致！页面=' + OA_APPID, 'warn');
+      }
+      if (typeof wx === 'undefined' || !wx.config) {
+        log('jweixin 未就绪，无法 config', 'err');
+        return;
+      }
+      wx.config({
+        debug: false,
+        appId: d.data.appId,
+        timestamp: d.data.timestamp,
+        nonceStr: d.data.nonceStr,
+        signature: d.data.signature,
+        jsApiList: [],
+        openTagList: ['wx-open-launch-weapp']
+      });
+      wx.ready(function () {
+        log('wx.config 成功（ready）', 'ok');
+        buildLaunchTag();
+      });
+      wx.error(function (res) {
+        log('wx.config 失败: ' + ((res && res.errMsg) || JSON.stringify(res)), 'err');
+      });
+    })
+    .catch(function (e) {
+      log('取签名异常: ' + ((e && e.message) || e), 'err');
+    });
+};
+
+function buildLaunchTag() {
+  var wrap = document.getElementById('launchWrap');
+  wrap.innerHTML = '';
+  try {
+    var tag = document.createElement('wx-open-launch-weapp');
+    tag.setAttribute('appid', MP_APPID);
+    tag.setAttribute('path', MP_PATH);
+    tag.setAttribute('style', 'display:block;width:100%;');
+    var tpl = document.createElement('script');
+    tpl.setAttribute('type', 'text/wxtag-template');
+    tpl.innerHTML = '<button style="width:100%;padding:12px;border:none;border-radius:8px;'
+                  + 'background:#07c160;color:#fff;font-size:15px;font-weight:600;">'
+                  + '点我跳小程序（开放标签）</button>';
+    tag.appendChild(tpl);
+    tag.addEventListener('launch', function (e) {
+      log('★ 开放标签触发跳转成功！detail=' + JSON.stringify((e && e.detail) || {}), 'ok');
+    });
+    tag.addEventListener('error', function (e) {
+      log('★ 开放标签失败：' + JSON.stringify((e && e.detail) || {}), 'err');
+    });
+    wrap.appendChild(tag);
+    log('开放标签已挂载 appid=' + MP_APPID + ' path=' + MP_PATH, 'ok');
+  } catch (e) {
+    log('创建标签异常: ' + ((e && e.message) || e), 'err');
+  }
+}
+
+document.addEventListener('WeixinOpenTagsError', function (e) {
+  log('WeixinOpenTagsError: ' + JSON.stringify((e && e.detail) || {}), 'err');
+});
+
+/* [S1451] 构造订阅页参数（跟 deposit.html 的 mpBuildQuery 同一套字段） */
+function buildSubQuery() {
+  var ph = ((document.getElementById('inpPhone') || {}).value || '').trim();
+  var cd = ((document.getElementById('inpCode') || {}).value || '').trim();
+  var g = ph.substring(0, 3), h = ph.substring(3, 7), j = ph.substring(7);
+  return 'g=' + g + '&h=' + h + '&j=' + j
+       + '&code=' + encodeURIComponent(cd)
+       + '&phone=' + encodeURIComponent(ph)
+       + '&order_id=' + encodeURIComponent('TEST_' + Date.now())
+       + '&gzh_openid=' + encodeURIComponent('');
+}
+
+/* 跳转后开"等返回"监听：页面从 hidden 变回 visible 就说明用户回来了 */
+function watchReturn(tag) {
+  _jumpAt = Date.now();
+  try {
+    var sawHidden = false, ticks = 0;
+    var iv = setInterval(function () {
+      ticks++;
+      if (ticks > 240) { clearInterval(iv); return; }
+      var st = document.visibilityState || (document.hidden ? 'hidden' : 'visible');
+      if (st === 'hidden') { sawHidden = true; return; }
+      if (st === 'visible' && sawHidden) {
+        clearInterval(iv);
+        var sec = Math.round((Date.now() - _jumpAt) / 1000);
+        log('★ 检测到已返回本页（离开 ' + sec + ' 秒）tag=' + tag, 'ok');
+        log('★ 真实业务里这一刻 H5 会问 /api/user/mp-entered 拿 entered=true 才放行', 'warn');
+      }
+    }, 1000);
+    log('已开启"等返回"监听 tag=' + tag, 'warn');
+  } catch (e) {}
+}
+
+document.getElementById('btnSubPage').onclick = function () {
+  if (typeof wx === 'undefined' || !wx.config) { log('jweixin 未就绪', 'err'); return; }
+  var wrap = document.getElementById('subWrap');
+  wrap.innerHTML = '';
+  var q = buildSubQuery();
+  log('准备挂"订阅页"开放标签：' + MP_SUB_PATH + '?' + q);
+  try {
+    var tag = document.createElement('wx-open-launch-weapp');
+    tag.setAttribute('appid', MP_APPID);
+    tag.setAttribute('path', MP_SUB_PATH + '?' + q);
+    tag.setAttribute('style', 'display:block;width:100%;');
+    var tpl = document.createElement('script');
+    tpl.setAttribute('type', 'text/wxtag-template');
+    tpl.innerHTML = '<button style="width:100%;padding:12px;border:none;border-radius:8px;'
+                  + 'background:#07c160;color:#fff;font-size:15px;font-weight:600;">'
+                  + '点我去订阅页（会弹订阅）</button>';
+    tag.appendChild(tpl);
+    tag.addEventListener('launch', function (e) {
+      log('★ 订阅页跳转已触发！', 'ok');
+      watchReturn('opentag-sub');
+    });
+    tag.addEventListener('error', function (e) {
+      log('★ 订阅页标签失败：' + JSON.stringify((e && e.detail) || {}), 'err');
+    });
+    wrap.appendChild(tag);
+    log('订阅页标签已挂载，点下面绿按钮', 'ok');
+  } catch (e) {
+    log('建标签异常: ' + ((e && e.message) || e), 'err');
+  }
+};
+
+document.getElementById('btnSubScheme').onclick = function () {
+  var q = buildSubQuery();
+  log('请求订阅页 URL Scheme：' + MP_SUB_PATH + '?' + q);
+  fetch('/api/wx/generate-scheme', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: MP_SUB_PATH, query: q })
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      var inner = (d && d.data && d.data.data) ? d.data : d;
+      if (inner && inner.code === 200 && inner.data && inner.data.scheme) {
+        log('拿到 Scheme: ' + String(inner.data.scheme).slice(0, 60) + '…', 'ok');
+        watchReturn('scheme-sub');
+        log('即将跳转…', 'warn');
+        location.href = inner.data.scheme;
+      } else {
+        log('没拿到 Scheme: ' + JSON.stringify(d).slice(0, 200), 'err');
+      }
+    })
+    .catch(function (e) {
+      log('Scheme 接口异常: ' + ((e && e.message) || e), 'err');
+    });
+};
+
+document.getElementById('btnScheme').onclick = function () {
+  log('请求 URL Scheme…');
+  fetch('/api/wx/generate-scheme', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: MP_PATH, query: '' })
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      var inner = (d && d.data && d.data.data) ? d.data : d;
+      if (inner && inner.code === 200 && inner.data && inner.data.scheme) {
+        log('拿到 Scheme: ' + String(inner.data.scheme).slice(0, 60) + '…', 'ok');
+        try { watchReturn('scheme-home'); } catch (e) {}
+        log('即将跳转…');
+        location.href = inner.data.scheme;
+      } else {
+        log('没拿到 Scheme: ' + JSON.stringify(d).slice(0, 200), 'err');
+      }
+    })
+    .catch(function (e) {
+      log('Scheme 接口异常: ' + ((e && e.message) || e), 'err');
+    });
+};
+</script>
+</body>
+</html>"""
+    _html = _html.replace('__OA__', _oa).replace('__MP__', _mp)
+    from flask import make_response as _mr
+    _r = _mr(_html)
+    _r.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    _r.headers['Pragma'] = 'no-cache'
+    _r.headers['Expires'] = '0'
+    return _r
+
+
+@app.route('/retrieve')
+def retrieve_page():
+    """取包页面"""
+    # [OLD-STICKER] 老贴纸域名入口：仅当"已切到新二维码域名"时才提示维护页
+    try:
+        _old_h = (request.host or '').split(':')[0].lower()
+        _OLD_HOSTS = {'locker.cqdyxl.com'}
+        if _old_h in _OLD_HOSTS:
+            from helpers import get_setting as _gs_old
+            _old_mode = str(_gs_old('old_sticker_mode', 'auto') or 'auto').strip().lower()
+            _old_qr = str(_gs_old('qr_base_url', '') or '')
+            _old_switched = bool(_old_qr) and ('locker.cqdyxl.com' not in _old_qr)
+            if _old_mode == 'redirect':
+                return redirect('https://kelaiwei.top' + request.full_path, code=302)
+            if _old_mode == 'maintenance' or (_old_mode == 'auto' and _old_switched):
+                try:
+                    _old_p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'maintenance.html')
+                    with open(_old_p, 'r', encoding='utf-8') as _old_f:
+                        _old_html = _old_f.read()
+                    from flask import make_response as _old_mr
+                    _old_r = _old_mr(_old_html)
+                    _old_r.headers['Cache-Control'] = 'no-store, must-revalidate'
+                    logger.info('[OLD-STICKER] 老域名入口 → 维护页 host=%s switched=%s', _old_h, _old_switched)
+                    return _old_r
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    device = request.args.get('device', '')
+    cabinet_id = ''
+    if device:
+        import sqlite3 as _sq
+        _db = _sq.connect(DATABASE)
+        _db.row_factory = _sq.Row
+        _cur = _db.cursor()
+        _cur.execute('SELECT id FROM cabinets WHERE mainboard_device_id=?', (device,))
+        _row = _cur.fetchone()
+        _db.close()
+        if _row:
+            cabinet_id = str(_row['id'])
+    return """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>取包</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f5;min-height:100vh;color:#333}
+.page{padding:20px}.header{text-align:center;font-size:20px;font-weight:700;padding:16px 0;background:#fff;border-bottom:1px solid #eee}
+.form-group{margin:24px 0}.form-group label{display:block;font-size:16px;color:#666;margin-bottom:8px}
+.form-group input{width:100%;height:52px;border:1px solid #ddd;border-radius:8px;padding:0 16px;font-size:18px;outline:none}
+.form-group input:focus{border-color:#4caf50}
+.btn-submit{width:100%;height:52px;background:#4caf50;color:#fff;font-size:18px;font-weight:700;border:none;border-radius:8px;margin-top:36px;cursor:pointer}
+.result{text-align:center;padding:40px 20px;display:none}
+.result-icon{width:64px;height:64px;background:#4caf50;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:36px;margin-bottom:20px}
+.result-title{font-size:24px;font-weight:700;margin-bottom:16px}
+.result-info{font-size:18px;color:#666;margin-bottom:8px}
+</style>
+</head>
+<body>
+<div class="page" id="inputPage">
+<div class="header">取包</div>
+<div class="form-group"><label>手机号</label><input type="tel" id="phone" maxlength="11" placeholder="请输入存包时的手机号"></div>
+<div class="form-group"><label>取包密码</label><input type="tel" id="pwd" maxlength="4" placeholder="请输入4位取包密码"></div>
+<button class="btn-submit" onclick="doRetrieve()">取包</button>
+</div>
+<div class="result" id="resultPage">
+<div class="result-icon">&#10003;</div>
+<div class="result-title">取包成功</div>
+<div class="result-info" id="resultSlot"></div>
+</div>
+<script>
+var cabinetId='""" + cabinet_id + """';
+function doRetrieve(){
+  var phone=document.getElementById('phone').value.trim();
+  var pwd=document.getElementById('pwd').value.trim();
+  if(!phone||!pwd){alert('请输入手机号和密码');return;}
+  fetch('/api/retrieve/verify',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cabinet_id:parseInt(cabinetId),phone:phone,access_code:pwd})
+  }).then(function(r){return r.json();}).then(function(d){
+    if(d.code==200){
+      fetch('/api/retrieve/confirm',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({order_id:d.data.order_id,action:'end'})
+      });
+      document.getElementById('inputPage').style.display='none';
+      document.getElementById('resultPage').style.display='block';
+      document.getElementById('resultSlot').textContent='柜门号：'+(d.data.compartment_number||'--')+'号';
+    }else{alert(d.message||'取包失败');}
+  }).catch(function(e){alert('网络错误');});
+}
+</script>
+</body>
+</html>"""
+
+@app.route('/scan')
+def scan_qr():
+    device = request.args.get('device', '')
+    if not device:
+        return jsonify({'code': 400, 'message': 'missing device'}), 400
+    try:
+        import sqlite3
+        db = sqlite3.connect(DATABASE)
+        db.row_factory = sqlite3.Row
+        cur = db.cursor()
+        cur.execute('SELECT * FROM cabinets WHERE mainboard_device_id=?', (device,))
+        cabinet = cur.fetchone()
+        db.close()
+        if not cabinet:
+            return jsonify({'code': 404, 'message': 'device not found'}), 404
+        store = cabinet['name'] or ''
+        # 检查设备在线状态（统一按 last_heartbeat 120 秒判断）
+        from helpers import is_heartbeat_online
+        is_online = is_heartbeat_online(cabinet['last_heartbeat'])
+        if not is_online:
+            return '<!DOCTYPE html><html><head><meta charset=UTF-8><meta name=viewport content="width=device-width,initial-scale=1.0"><title>设备离线</title><style>body{font-family:sans-serif;margin:0;padding:0;background:#f0f2f5;min-height:100vh;display:flex;align-items:center;justify-content:center}.card{background:#fff;border-radius:12px;padding:40px 30px;max-width:360px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.1)}.icon{font-size:64px;margin-bottom:16px}.card h2{color:#f56c6c;margin-bottom:8px;font-size:20px}.card p{color:#999;font-size:14px;margin-top:8px;line-height:1.6}</style></head><body><div class=card><div class=icon>📡</div><h2>设备未在线</h2><p>该寄存柜当前处于离线状态<br>暂时无法使用,请稍后再试</p></div></body></html>', 200
+        html = '<!DOCTYPE html><html><head><meta charset=UTF-8><meta name=viewport content=width=device-width,initial-scale=1.0><title>智能寄存柜</title><style>body{font-family:sans-serif;margin:0;padding:20px;background:#f0f2f5;text-align:center}.card{background:#fff;border-radius:12px;padding:30px;max-width:400px;margin:40px auto;box-shadow:0 4px 20px rgba(0,0,0,0.1)}h2{color:#333;margin-bottom:10px}p{color:#666;font-size:14px}.btn{display:inline-block;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:14px 40px;border-radius:8px;text-decoration:none;font-size:16px;margin-top:20px}.info{margin:15px 0;color:#999;font-size:13px}</style></head><body><div class=card><h2>智能寄存柜</h2>'
+        # Build full page with store + retrieve buttons
+        html = '''<!DOCTYPE html><html><head><meta charset=UTF-8><meta name=viewport content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no"><title>智能寄存柜</title><style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:-apple-system,sans-serif;background:#f0f2f5;min-height:100vh}
+    .header{background:linear-gradient(135deg,#1A73E8,#0d47a1);color:#fff;padding:24px 20px;text-align:center}
+    .header h1{font-size:22px;margin-bottom:4px}
+    .header .sub{font-size:13px;opacity:0.8}
+    .info{background:#fff;margin:12px;border-radius:12px;padding:16px}
+    .info-row{display:flex;align-items:center;padding:8px 0;font-size:14px;color:#333;border-bottom:1px solid #f0f0f0}
+    .info-row:last-child{border:none}
+    .info-row .label{color:#999;width:80px;flex-shrink:0}
+    .status{display:flex;gap:12px;margin:12px}
+    .status-card{flex:1;background:#fff;border-radius:12px;padding:16px;text-align:center}
+    .status-card .num{font-size:36px;font-weight:bold;color:#1A73E8}
+    .status-card .num.green{color:#34A853}
+    .status-card .txt{font-size:13px;color:#999;margin-top:4px}
+    .actions{margin:16px 12px;display:flex;gap:12px}
+    .actions a{flex:1;display:block;padding:18px;border-radius:12px;text-align:center;color:#fff;font-size:20px;font-weight:bold;text-decoration:none}
+    .btn-store{background:linear-gradient(135deg,#1A73E8,#0d47a1)}
+    .btn-retrieve{background:linear-gradient(135deg,#34A853,#1b5e20)}
+    .footer{text-align:center;padding:20px;font-size:12px;color:#bbb}
+    </style></head><body>
+    <div class="header"><h1>''' + store + '''</h1><div class="sub">智能寄存柜 · 安全便捷</div></div>
+    <div class="info">
+    <div class="info-row"><span class="label">设备号</span><span>''' + device + '''</span></div>
+    <div class="info-row"><span class="label">网点</span><span>''' + store + '''</span></div>
+    </div>
+    <div class="actions">
+    <a class="btn-store" href="/store?device=''' + device + '''">存 物</a>
+    <a class="btn-retrieve" href="/retrieve?device=''' + device + '''">取 物</a>
+    </div>
+    <div class="footer">locker.cqdyxl.com</div>
+    </body></html>'''
+        return html
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
+@app.route('/locker')
+def locker_page():
+    """柜机交互页面 - 重定向到/store新版SPA"""
+    device = request.args.get('device', '')
+    if not device:
+        return "缺少设备编号", 400
+    openid = request.args.get('openid', '')
+    if not openid and 'MicroMessenger' in request.headers.get('User-Agent', ''):
+        # [S1692] 优先走「跳小程序」（需 service_mp_jump_enabled=1，默认关）；
+        #   关闭/失败时回落原来的公众号 OAuth，行为一字不变。
+        try:
+            _r1692 = _s1692_mp_jump_html(device=request.args.get('device', ''),
+                                          cabinet_id=request.args.get('cabinet_id', ''))
+            if _r1692 is not None:
+                return _r1692
+        except Exception as _e1692:
+            logger.warning('[S1692] 跳小程序异常(回落OAuth): %s', _e1692)
+        import urllib.parse
+        current_url = request.url.replace('http://', 'https://')
+        return redirect(f'/api/wx/oauth?redirect_uri={urllib.parse.quote(current_url)}')
+    # 新版SPA包含首页+存包+取包,直接跳转
+    import time
+    return redirect(f"/store?device={device}&openid={openid}&_t={int(time.time())}")
+@app.route('/static/<path:filename>')
+def static_files(filename):
+    """静态文件"""
+    return send_from_directory('static', filename)
+
+
+@app.route('/templates/<path:filename>')
+def template_files(filename):
+    """模板文件"""
+    return send_from_directory('templates', filename)
+
+
+# ============================================
+# WSGI入口 (gunicorn 用)
+# ============================================
+# gunicorn 启动: gunicorn -k gevent -w 1 -b 127.0.0.1:5001 app:app
+
+# ============================================
+# 主启动
+# ============================================
+
+# 注册竞品兼容API（新增）
+
+    logger.error(f'[注册] admin_v2失败: {e}')
+
+from routes.register_apis import register_new_api_blueprints
+register_new_api_blueprints(app)
+
+# WebSocket 已由独立的 ws_proxy.py 负责（5004 端口），不再启动遗留的 5002 ws_server
+
+logger.info('[注册] 竞品兼容API注册成功')
+
+
+
+# ---------- 微信JS-SDK签名API ----------
+# [S371] 公众号那条图文卡片里「存包」的落地入口：带 10 分钟时效。
+#   有效  -> 302 到 /store?device=xxx
+#   过期或签名不对 -> 返回"请重新扫柜机二维码"的页面（该页会调起摄像头）
+_RESCAN_FALLBACK = (
+    '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">'
+    '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    '<title>链接已过期</title></head><body style="margin:0;font-family:-apple-system,'
+    'BlinkMacSystemFont,\'PingFang SC\',Arial,sans-serif;background:#f5f6f8;color:#1f2329">'
+    '<div style="max-width:420px;margin:0 auto;padding:56px 22px;text-align:center">'
+    '<h1 style="font-size:20px">链接已过期</h1>'
+    '<p style="font-size:14px;color:#646a73;line-height:1.8">'
+    '这条存包链接只在 10 分钟内有效。<br>请用微信「扫一扫」扫描柜机屏幕上的二维码继续存包。</p>'
+    '</div></body></html>')
+
+
+@app.route('/go', methods=['GET'])
+def go_with_expiry():
+    """[S371] 带时效的存包入口（10 分钟）。过期/签名不符 -> 提示重新扫柜机码。"""
+    import hmac as _hmac
+    import hashlib as _hl
+    import time as _t
+    from flask import make_response as _mr
+    try:
+        from config import SECRET_KEY as _SK
+    except Exception:
+        _SK = 'smart-locker-secret-key-2024'
+
+    _d = (request.args.get('d') or '').strip()
+    _ts = (request.args.get('t') or '').strip()
+    _s = (request.args.get('s') or '').strip()
+    _ok = False
+    try:
+        # [S391] 原来要求 _d 非空；但"没扫带参二维码就关注"的用户场景值是空的，
+        #   卡片链接 d= 空 -> 一发出来就被判过期。改成允许空 d（签名照样要过）。
+        if _ts.isdigit() and _s:
+            _want = _hmac.new(_SK.encode(), ('%s|%s' % (_d, _ts)).encode(), _hl.sha256).hexdigest()[:16]
+            # [S393] 原来 600 秒；卡片一直躺在对话框里，用户过一会儿再点就过期了 -> 放宽到 7 天
+        _ok = _hmac.compare_digest(_want, _s) and (0 <= int(_t.time()) - int(_ts) <= 604800)
+    except Exception:
+        _ok = False
+
+    if _ok:
+        # [S371-c] 修 NameError：app.py 没有 _wx_h5b 这个别名，这里就地取
+        try:
+            from wx_config import h5_base as _h5b
+            _base = (_h5b() or '').rstrip('/')
+        except Exception:
+            _base = ''
+        if not _base:
+            _base = 'https://locker.cqdyxl.com'
+        if not _d:
+            # [S391] 没有柜机号：直接给"扫柜机码"页（会自动调起微信扫码），而不是死路
+            return redirect('%s/static/re-scan.html?from=noscene' % _base, code=302)
+        if _d.startswith('c') and _d[1:].isdigit():
+            return redirect('%s/store?cabinet_id=%s&v=%d' % (_base, _d[1:], int(_t.time())), code=302)
+        return redirect('%s/store?device=%s&v=%d' % (_base, _d, int(_t.time())), code=302)
+
+    logger.info('[S371] /go 过期或签名不符 d=%s t=%s s=%s', _d, _ts, _s[:6])
+    try:
+        _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 're-scan.html')
+        with open(_p, 'r', encoding='utf-8') as _f:
+            _html = _f.read()
+    except Exception:
+        _html = _RESCAN_FALLBACK
+    _resp = _mr(_html)
+    _resp.headers['Cache-Control'] = 'no-store'
+    return _resp
+
+
+# [S373] 公众号图文卡片的配图（动态生成，带中文）
+@app.route('/img/card-banner.png', methods=['GET'])
+def card_banner_img():
+    from flask import Response as _Resp
+    try:
+        from cardimg import banner as _banner
+        _site = request.args.get('s', '')
+        _data = _banner(site=_site)
+        _r = _Resp(_data, mimetype='image/jpeg')
+    except Exception as _e:
+        logger.error('[S373] 生成卡片大图失败: %s', _e)
+        return redirect('/static/locker-avatar.jpg', code=302)
+    _r.headers['Cache-Control'] = 'public, max-age=86400'
+    return _r
+
+
+@app.route('/img/card-icon.png', methods=['GET'])
+def card_icon_img():
+    from flask import Response as _Resp
+    try:
+        from cardimg import icon as _icon
+        _ch = (request.args.get('c') or '存')[:1]
+        _data = _icon(_ch)
+        _r = _Resp(_data, mimetype='image/png')
+    except Exception as _e:
+        logger.error('[S373] 生成卡片图标失败: %s', _e)
+        return redirect('/static/locker-avatar.jpg', code=302)
+    _r.headers['Cache-Control'] = 'public, max-age=86400'
+    return _r
+
+
+@app.route('/api/wx/jsapi-signature', methods=['GET'])
+def wx_jsapi_signature():
+    """为H5页面提供微信JS-SDK签名,用于wx-open-launch-weapp / wx-open-subscribe 开放标签
+
+    [S1447-20261019] 修"有概率失败"：
+      旧实现把 access_token / jsapi_ticket 缓存在 app 对象上，gunicorn 多 worker 下
+      各存一份、各自去微信取 token；微信 access_token 全局唯一，后取的顶掉先取的，
+      被顶掉的 worker 换 jsapi_ticket 必失败 -> 同一页面"有时能签名有时不能"。
+      现改为：
+        · access_token 复用 helpers.get_access_token_for()（缓存落 system_settings，
+          多 worker 共享；用 stable_token 接口不会互相顶掉）
+        · jsapi_ticket 落 system_settings（键 wx_jsapi_ticket_<appid>）共享
+        · 公众号凭据缺失时返回 hint=oa_account_inactive，便于区分"没配账号"和"微信报错"
+      对外返回结构（code/data.appId|timestamp|nonceStr|signature）保持不变。
+    """
+    try:
+        url = request.args.get('url', '')
+        if not url:
+            return jsonify({'code': -1, 'msg': '缺少url参数'})
+
+        import hashlib as _hl, time as _tm, json as _js
+
+        _oa_id = (_wx_oa_id() or '').strip()
+        _oa_sec = (_wx_oa_secret() or '').strip()
+        if not _oa_id or not _oa_sec:
+            logger.warning('[S1447] jsapi-signature 缺公众号凭据 appid=%r secret=%s',
+                           _oa_id, '有' if _oa_sec else '无')
+            return jsonify({'code': -1,
+                            'msg': '公众号未启用（appid/secret 为空），请先在后台启用公众号账号',
+                            'hint': 'oa_account_inactive'})
+
+        # ── access_token：复用带 DB 缓存、跨 worker 共享的实现 ──
+        try:
+            from helpers import get_access_token_for as _get_tok_for
+            access_token = _get_tok_for(_oa_id, _oa_sec)
+        except Exception as _e0:
+            logger.error('[S1447] get_access_token_for 调用异常: %s', _e0)
+            access_token = None
+        if not access_token:
+            logger.error('[S1447] jsapi-signature 取 access_token 失败 appid=%s', _oa_id)
+            return jsonify({'code': -1, 'msg': '获取access_token失败（appid=%s）' % _oa_id,
+                            'hint': 'access_token_failed'})
+
+        # ── jsapi_ticket：落库共享，避免每个 worker 各取一次 ──
+        _tk_key = 'wx_jsapi_ticket_' + _oa_id
+        jsapi_ticket = ''
+        _conn = None
+        try:
+            from database import get_db as _sig_db
+            _conn = _sig_db()
+            _c = _conn.cursor()
+            _c.execute("SELECT setting_value FROM system_settings WHERE setting_key = %s", (_tk_key,))
+            _r = _c.fetchone()
+            if _r and _r.get('setting_value'):
+                try:
+                    _d = _js.loads(_r['setting_value'])
+                    if _tm.time() < float(_d.get('expires_at') or 0) - 600:
+                        jsapi_ticket = _d.get('ticket') or ''
+                except Exception:
+                    jsapi_ticket = ''
+        except Exception as _e1:
+            logger.warning('[S1447] 读 jsapi_ticket 缓存失败（继续走微信取）: %s', _e1)
+        finally:
+            try:
+                if _conn:
+                    _conn.close()
+            except Exception:
+                pass
+
+        if not jsapi_ticket:
+            import urllib.request as _ur
+            ticket_url = ('https://api.weixin.qq.com/cgi-bin/ticket/getticket'
+                          '?access_token=%s&type=jsapi' % access_token)
+            with _ur.urlopen(ticket_url, timeout=10) as _resp:
+                ticket_json = _js.loads(_resp.read().decode())
+            jsapi_ticket = ticket_json.get('ticket', '')
+            if not jsapi_ticket:
+                logger.error('[S1447] 取 jsapi_ticket 失败 appid=%s resp=%s', _oa_id, ticket_json)
+                return jsonify({'code': -1, 'msg': '获取jsapi_ticket失败: ' + str(ticket_json),
+                                'hint': 'jsapi_ticket_failed'})
+            # 落库共享（ticket 有效期 7200s，留 600s 余量）
+            try:
+                _conn2 = _sig_db()
+                _c2 = _conn2.cursor()
+                _c2.execute(
+                    "INSERT INTO system_settings (setting_key, setting_value) VALUES (%s, %s) "
+                    "ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value",
+                    (_tk_key, _js.dumps({'ticket': jsapi_ticket,
+                                         'expires_at': _tm.time() + 7200})))
+                _conn2.commit()
+                _conn2.close()
+            except Exception as _e2:
+                logger.warning('[S1447] 写 jsapi_ticket 缓存失败（不影响本次签名）: %s', _e2)
+
+        # ── 生成签名 ──
+        nonce_str = _hl.md5(str(_tm.time()).encode()).hexdigest()[:16]
+        timestamp = str(int(_tm.time()))
+        sign_str = ('jsapi_ticket=%s&noncestr=%s&timestamp=%s&url=%s'
+                    % (jsapi_ticket, nonce_str, timestamp, url))
+        signature = _hl.sha1(sign_str.encode()).hexdigest()
+
+        return jsonify({
+            'code': 200,
+            'data': {
+                'appId': _oa_id,
+                'timestamp': timestamp,
+                'nonceStr': nonce_str,
+                'signature': signature
+            }
+        })
+    except Exception as e:
+        logger.error('[S1447] jsapi-signature 异常: %s', e)
+        return jsonify({'code': -1, 'msg': str(e), 'hint': 'exception'})
+
+@app.route('/api/wx/generate-scheme', methods=['POST'])
+def wx_generate_scheme():
+    try:
+        import json as _json, urllib.request as _urllib, time as _time, logging as _logging
+        from wx_config import mp_appid as _wx_mp_id, mp_secret as _wx_mp_secret
+        _appid, _secret = _wx_mp_id(), _wx_mp_secret()
+        try:
+            _raw = request.get_json(force=True, silent=True) or {}
+        except:
+            _raw = {}
+        path = _raw.get('path', '/pages/deposit/deposit')
+        if path.startswith(chr(47)):
+            path = path[1:]
+        query = _raw.get('query', '')
+
+        _at = get_access_token()
+        if not _at:
+            return jsonify({'code': -1, 'msg': 'token failed'})
+
+        if '%s' in path and not query:
+            query = path.split('%s', 1)[1]
+            path = path.split('%s', 1)[0]
+        _jw = {'path': path, 'env_version': 'release'}
+        if query:
+            _jw['query'] = query
+        _bd = _json.dumps({'jump_wxa': _jw, 'is_expire': True, 'expire_type': 1, 'expire_interval': 30})
+
+        _su = 'https://api.weixin.qq.com/wxa/generatescheme?access_token=' + _at
+        _req = _urllib.Request(_su, data=_bd.encode(), headers={'Content-Type': 'application/json'})
+        _sr = _urllib.urlopen(_req, timeout=5)
+        _sj = _json.loads(_sr.read())
+
+        if _sj.get('errcode') == 0 and (_sj.get('scheme') or _sj.get('openlink')):
+            return jsonify({'code': 200, 'data': {'scheme': _sj.get('scheme') or _sj.get('openlink', '')}})
+        return jsonify({'code': -1, 'msg': str(_sj)})
+    except Exception as e:
+        _logging.getLogger().error('[scheme] ' + str(e))
+        return jsonify({'code': -1, 'msg': str(e)}), 500
+
+@app.route('/api/app/version', methods=['GET'])
+@app.route('/api/app/version', methods=['GET'])
+def api_app_version():
+    try:
+        from database import get_db
+        db = get_db()
+        cur = db.cursor()
+        cur.execute("SELECT version_name, version_code, download_url FROM apk_version ORDER BY version_code DESC LIMIT 1")
+        row = cur.fetchone()
+        db.close()
+        if row:
+            return jsonify({'data': {'version_code': row['version_code'], 'version_name': row['version_name'], 'download_url': row['download_url']}})
+    except Exception:
+        pass
+    from config import LATEST_VERSION_CODE, LATEST_VERSION_NAME, APK_DOWNLOAD_URL
+    return jsonify({'data': {'version_code': LATEST_VERSION_CODE, 'version_name': LATEST_VERSION_NAME, 'download_url': APK_DOWNLOAD_URL}})
+
+
+
+
+@app.route('/api/order/<int:order_id>/store/end', methods=['POST'])
+def store_end_app(order_id):
+    import sys as _sys, traceback
+    _sys.path.insert(0, "/home/ubuntu/smart-locker")
+    try:
+        from database import get_db
+        data = request.get_json(force=True) or {}
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
+        row = c.fetchone()
+        if not row:
+            conn.close()
+            return jsonify({"code": -1, "msg": "order not found"})
+        order_dict = dict(row)
+        if order_dict.get("status") != 2:
+            conn.close()
+            return jsonify({"code": -1, "msg": "order status invalid"})
+        slot_id = order_dict.get("slot_id")
+        if slot_id:
+            c.execute("UPDATE cabinet_slots SET status=1 WHERE id=?", (slot_id,))
+        c.execute("UPDATE orders SET status=3, retrieve_time=CURRENT_TIMESTAMP WHERE id=?", (order_id,))
+        conn.commit()
+        conn.close()
+        return jsonify({"code": 0, "msg": "success", "data": {"order_id": order_id}})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"code": -1, "msg": "end order failed: " + str(e)})
+
+@app.route('/api/order/<int:order_id>/minimal', methods=['GET'])
+def get_order_minimal(order_id):
+    """Return minimal order info for mini program display"""
+    import sqlite3
+    try:
+        conn = sqlite3.connect("/home/ubuntu/smart-locker/locker.db")
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("SELECT o.user_phone, o.access_code FROM orders o WHERE o.id=%s", (order_id,))
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            return jsonify({"code": 200, "data": {"phone": row["user_phone"], "code": row["access_code"]}})
+        return jsonify({"code": 404, "message": "order not found"})
+    except Exception as e:
+        return jsonify({"code": 500, "message": str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+@app.route("/push-update", methods=["POST"])
+def push_update():
+    """推送更新到指定设备"""
+    import json
+    try:
+        data = request.get_json(force=True) or {}
+        device_id = data.get("device_id", "")
+        if not device_id:
+            return jsonify({"code": -1, "msg": "缺少device_id"})
+        from database import get_db
+        from helpers import is_device_online, supersede_force_update_cmds
+        db = get_db()
+        try:
+            cur = db.cursor()
+            cur.execute("SELECT version_name, version_code, download_url, COALESCE(file_md5, '') as file_md5 FROM apk_version ORDER BY version_code DESC LIMIT 1")
+            apk = cur.fetchone()
+            if not apk:
+                return jsonify({"code": -1, "msg": "未找到APK版本信息"})
+            cur.execute('SELECT id, app_version_code, last_heartbeat FROM cabinets WHERE mainboard_device_id=%s', (device_id,))
+            cab = cur.fetchone()
+            if not cab:
+                return jsonify({"code": -1, "msg": "设备不存在"})
+            if not is_device_online(device_id, cab.get('last_heartbeat')):
+                return jsonify({"code": -1, "msg": "设备离线，无法更新"})
+            if cab.get('app_version_code') is not None and int(cab['app_version_code']) >= int(apk['version_code']):
+                return jsonify({"code": -1, "msg": "设备已是最新版本，无需更新"})
+            cur.execute("SELECT id FROM pending_lock_cmds WHERE device_id=%s AND (delivered=0 OR status='pending') AND strpos(command,'force_update')>0 AND created_at > NOW() - INTERVAL '10 minutes' LIMIT 1", (device_id,))
+            if cur.fetchone():
+                return jsonify({"code": -1, "msg": "该设备已有待执行的更新指令"})
+            supersede_force_update_cmds(cur, device_id)
+            cmd_obj = {"type": "force_update", "device_id": device_id, "download_url": apk['download_url'], "version_name": apk['version_name'], "version_code": apk['version_code'], "force": True, "file_md5": apk['file_md5']}
+            cur.execute("INSERT INTO pending_lock_cmds (device_id, cabinet_id, command, status) VALUES (%s,%s,%s,'pending')",
+                        (device_id, cab['id'], json.dumps(cmd_obj)))
+            db.commit()
+            logger.info(f"[Push] force_update queued via pending_lock_cmds for {device_id} v{apk['version_name']}")
+            return jsonify({"code": 200, "msg": "QUEUED"})
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"[Push] error: {e}")
+        return jsonify({"code": -1, "msg": str(e)})
+
+def app_version():
+    import sqlite3
+    try:
+        db = sqlite3.connect(DATABASE)
+        db.row_factory = sqlite3.Row
+        cur = db.execute("SELECT * FROM apk_version ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        db.close()
+        if row:
+            return jsonify({
+                'code': 200,
+                'data': {
+                    'version_code': row['version_code'],
+                    'version_name': row['version_name'],
+                    'download_url': row['download_url'],
+                    'update_desc': row['update_desc'] or ''
+                }
+            })
+        else:
+            return jsonify({'code': -1, 'msg': 'no version'})
+    except Exception as e:
+        return jsonify({'code': -1, 'msg': str(e)})
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
+
+# ============================================
+# 定时任务：余额超时隐藏（每小时执行）
+# ============================================
+def _balance_hide_scheduler():
+    import time
+    while True:
+        time.sleep(3600)  # 每小时执行一次
+        try:
+            from database import get_db
+            conn = get_db()
+            c = conn.cursor()
+            c.execute("SELECT id, balance_hide_days FROM locations WHERE balance_hide_enabled = 1 AND balance_hide_days > 0")
+            locations = c.fetchall()
+            total_hidden = 0
+            for loc in locations:
+                days = loc['balance_hide_days']
+                c.execute(
+                    "UPDATE user_balance_details SET status = 'pending' "
+                    "WHERE status = 'available' "
+                    "AND order_id IN ("
+                    "  SELECT o.id FROM orders o"
+                    "  JOIN cabinets cab ON o.cabinet_id = cab.id"
+                    "  WHERE cab.location_id = %s"
+                    ") AND source_time < NOW() - make_interval(days => %s)",
+                    (loc['id'], days)
+                )
+                hidden = c.rowcount
+                if hidden > 0:
+                    total_hidden += hidden
+                    logger.info('[余额隐藏] Location %s: 隐藏 %s 条超 %s 天余额明细' % (loc['id'], hidden, days))
+            conn.commit()
+            conn.close()
+            if total_hidden > 0:
+                logger.info('[余额隐藏] 本次共隐藏 %d 条余额明细' % total_hidden)
+        except Exception as e:
+            logger.error('[余额隐藏] 异常: %s' % e)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+_balance_hide_thread = threading.Thread(target=_balance_hide_scheduler, daemon=True)
+_balance_hide_thread.start()
+logger.info('[启动] 余额超时隐藏任务已启动(每小时)')
+
+# ============================================
+# 定时任务：自动清柜（每分钟检查，连接PostgreSQL）
+# ============================================
+def _auto_clear_cabinet_scheduler():
+    import time
+    while True:
+        time.sleep(60)
+        conn = None
+        try:
+            import psycopg2
+            import psycopg2.extras
+            from datetime import datetime, timedelta
+            from config import DATABASE_URL
+            from helpers import refund_deposit_to_balance, send_wx_subscribe_message
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+            c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            now = datetime.now()
+            today_str = now.strftime("%Y-%m-%d")
+
+            c.execute("SELECT id, clear_box_time, clear_box_cycle, last_clear_date FROM locations WHERE enable_clear_box = 1 AND clear_box_time IS NOT NULL")
+            locations = c.fetchall()
+
+            for loc in locations:
+                loc_id = loc["id"]
+                clear_time = loc["clear_box_time"] or "03:00"
+                cycle = loc["clear_box_cycle"] or 1
+                last_clear = str(loc["last_clear_date"] or "")
+
+                # 【修复1】时间窗口：只在 clear_time ~ clear_time+1小时 内执行
+                try:
+                    clear_h, clear_m = map(int, clear_time.split(":"))
+                except:
+                    clear_h, clear_m = 3, 0
+                clear_start = now.replace(hour=clear_h, minute=clear_m, second=0, microsecond=0)
+                clear_end = clear_start + timedelta(hours=1)
+                if not (clear_start <= now < clear_end):
+                    continue
+
+                # 【修复5】用数据库字段代替内存变量
+                if last_clear == today_str:
+                    continue
+                if last_clear:
+                    try:
+                        last_dt = datetime.strptime(last_clear, "%Y-%m-%d").date()
+                        today_dt = now.date()
+                        if (today_dt - last_dt).days < cycle:
+                            continue
+                    except:
+                        pass
+
+                # 【修复4】每个location独立try/except
+                try:
+                    cutoff_time = now - timedelta(days=cycle)
+
+                    lock_key = 2026080700 + int(loc_id)
+                    c.execute("SELECT pg_try_advisory_xact_lock(%s) AS acquired", (lock_key,))
+                    if not c.fetchone()['acquired']:
+                        continue
+
+                    c.execute("""
+                        SELECT o.id, o.slot_id, o.user_phone, o.deposit_amount, o.openid, o.unionid, o.mp_openid, o.wechat_name, o.refund_status, o.refund_amount
+                        FROM orders o
+                        JOIN cabinets c ON o.cabinet_id = c.id
+                        WHERE c.location_id = %s AND o.status = 2 AND o.store_time < %s
+                    """, (loc_id, cutoff_time))
+                    active_orders = c.fetchall()
+
+                    total_ended = 0
+                    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+
+                    for o in active_orders:
+                        deposit_amount = float(o["deposit_amount"] or 0)
+                        c.execute("""UPDATE orders SET status=3, refund_mark=1, refund_amount=0, refund_status='none',
+                                     refund_time=NULL, logical_mark='end', retrieve_time=%s, pickup_time=%s, updated_at=%s WHERE id=%s""",
+                                  (now_str, now_str, now_str, o["id"]))
+
+                        if o["slot_id"]:
+                            c.execute("UPDATE cabinet_slots SET status=1 WHERE id=%s", (o["slot_id"],))
+
+                        refunded = False
+                        mp_openid = ''
+                        already_credited = False
+                        if deposit_amount > 0 and o["user_phone"]:
+                            refunded, mp_openid, already_credited = refund_deposit_to_balance(c, o)
+
+                        if refunded and not already_credited:
+                            try:
+                                # [FIX-20260912] 这里原来用的是【旧小程序】的模板ID
+                                #   5OZIN-PdIT48ovySMI0qeiqED-cXxGvxQcgz6DEh79A 和旧模板的字段名
+                                #   (amount6/time4/thing7/thing2)。换小程序后该模板在新小程序里不存在,
+                                #   微信一直返回 40037 invalid template_id(24小时31次), 消息永远发不出去。
+                                #   已按其它调用点的正确写法改为"预付款退还"模板 PtRJgP(字段 amount1/time2/thing4/thing3,
+                                #   文案与原来完全一致)。
+                                sub_data = {
+                                    "amount1": {"value": "¥{:.2f}".format(deposit_amount)},
+                                    "time2": {"value": now_str},
+                                    "thing4": {"value": "已退还至小程序用户钱包"},
+                                    "thing3": {"value": "请自行点击此通知消息跳转\u201c我的钱包\u201d提现"}
+                                }
+                                send_wx_subscribe_message(mp_openid or "", _wx_tpl('subscribe_general', 'mp', "PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA"), sub_data, phone=o["user_phone"], page="pages/withdraw/withdraw", order_id=o["id"])  # [S525]
+                            except Exception as e:
+                                logger.error('[自动清柜] 发送通知失败')
+
+                        total_ended += 1
+
+                    conn.commit()
+
+                    # 【修复2】commit成功后才更新数据库标记
+                    c.execute("UPDATE locations SET last_clear_date=%s WHERE id=%s", (today_str, loc_id))
+                    conn.commit()
+
+                    if total_ended > 0:
+                        logger.info("[自动清柜] Location %s: 结束 %s 个订单(周期=%s天,截止时间=%s)" % (loc_id, total_ended, cycle, cutoff_time))
+
+                except Exception as e:
+                    logger.error("[自动清柜] Location %s 处理异常: %s" % (loc_id, e))
+                    try:
+                        conn.rollback()
+                    except:
+                        pass
+
+            # 【修复3】正常关闭连接
+            conn.close()
+            conn = None
+        except Exception as e:
+            logger.error("[自动清柜] 异常: %s" % e)
+        finally:
+            if conn:
+                conn.close()
+
+_auto_clear_thread = threading.Thread(target=_auto_clear_cabinet_scheduler, daemon=True)
+_auto_clear_thread.start()
+logger.info("[启动] 自动清柜任务已启动(每分钟检查,PostgreSQL连接)")
+
+
+# Start merchant health scheduler
+logger.info('[启动] 自动清柜任务已启动(每分钟检查)')
+
+
+# Start merchant health scheduler
+threading.Thread(target=merchant_health_scheduler, daemon=True).start()
+
+# ============================================
+# [S1053-20261015] 用户行为埋点（精确到每个用户，永久保留）
+#   只记关键动作（查余额/查订单/提现/取件...），内存队列批量刷库，不拖慢请求
+# ============================================
+try:
+    import behavior_log
+    behavior_log.install(app)
+except Exception as _e:
+    logger.warning('[behavior_log] 埋点安装失败（不影响主流程）: %s', _e)
+logger.info('[启动] 商户号健康巡检任务已启动(每30分钟)')
+
+
+if __name__ == '__main__':
+    print("=" * 50)
+    print("智能寄存柜系统 v2 已启动")
+    print(f"访问地址: http://localhost:{PORT}")
+
+@app.route('/fFBR3J2qOh.txt')
+def merchant_verify():
+    return send_from_directory('static', 'fFBR3J2qOh.txt')

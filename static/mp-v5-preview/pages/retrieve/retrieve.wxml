@@ -1,0 +1,159 @@
+<!-- pages/retrieve/retrieve.wxml - 取物页面 -->
+<view class="container">
+  <!-- 验证步骤 -->
+  <view class="verify-section" wx:if="{{currentStep === 'verify'}}">
+    <view class="verify-header">
+      <view class="verify-icon">
+        <text>🔓</text>
+      </view>
+      <text class="verify-title">取物验证</text>
+      <text class="verify-desc">请输入您的手机号和取物码</text>
+    </view>
+
+    <view class="verify-form card">
+      <view class="input-wrapper">
+        <text class="input-label">手机号</text>
+        <input 
+          class="input-field" 
+          type="number" 
+          maxlength="11" 
+          placeholder="请输入手机号" 
+          bindinput="onPhoneInput"
+          value="{{phone}}"
+        />
+      </view>
+      
+      <view class="input-wrapper">
+        <text class="input-label">取物码</text>
+        <input 
+          class="input-field" 
+          type="number" 
+          maxlength="4" 
+          placeholder="请输入4位取物码" 
+          bindinput="onCodeInput"
+          value="{{code}}"
+        />
+      </view>
+
+      <button 
+        class="btn-primary" 
+        bindtap="onVerify"
+        disabled="{{!canVerify}}"
+      >
+        <text>验证取物</text>
+      </button>
+    </view>
+  </view>
+
+  <!-- 操作步骤 -->
+  <view class="action-section" wx:if="{{currentStep === 'action'}}">
+    <view class="success-header">
+      <view class="success-icon">
+        <text>✓</text>
+      </view>
+      <text class="success-title">验证成功</text>
+    </view>
+
+    <view class="order-detail card">
+      <view class="detail-row">
+        <text class="detail-label">柜格位置</text>
+        <text class="detail-value">{{orderInfo.cabinet_name || '--'}}</text>
+      </view>
+      <view class="detail-row">
+        <text class="detail-label">柜格号</text>
+        <text class="detail-value text-purple">{{orderInfo.slot_no || '--'}}</text>
+      </view>
+      <view class="detail-row">
+        <text class="detail-label">物品尺寸</text>
+        <text class="detail-value">{{orderInfo.slot_size_name || '--'}}</text>
+      </view>
+      <view class="detail-row">
+        <text class="detail-label">存入时间</text>
+        <text class="detail-value">{{orderInfo.deposit_time || '--'}}</text>
+      </view>
+      <view class="detail-row">
+        <text class="detail-label">手机号</text>
+        <text class="detail-value">{{maskedPhone}}</text>
+      </view>
+    </view>
+
+    <view class="action-buttons">
+      <button class="btn-primary" bindtap="onOpenDoor">
+        <text>开门取物</text>
+      </button>
+      
+      <view class="action-choice">
+        <view class="choice-item" bindtap="onContinueStorage">
+          <view class="choice-icon continue">
+            <text>↻</text>
+          </view>
+          <view class="choice-text">
+            <text class="choice-title">继续寄存</text>
+            <text class="choice-desc">物品暂不取出</text>
+          </view>
+        </view>
+        
+        <view class="choice-item" bindtap="onEndStorage">
+          <view class="choice-icon end">
+            <text>✓</text>
+          </view>
+          <view class="choice-text">
+            <text class="choice-title">取物结束</text>
+            <text class="choice-desc">退还保证金</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 投诉按钮 -->
+      <view class="action-bottom">
+        <view class="complaint-btn" bindtap="onComplaint">
+          <text class="complaint-icon">📝</text>
+          <text class="complaint-text">遇到问题？点击投诉</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 开门中状态 -->
+  <view class="loading-section" wx:if="{{currentStep === 'loading'}}">
+    <view class="loading-icon">
+      <view class="loading-ring"></view>
+      <view class="loading-ring ring-2"></view>
+      <view class="loading-icon-inner">
+        <text>🔓</text>
+      </view>
+    </view>
+    <text class="loading-text">正在开门...</text>
+  </view>
+
+  <!-- 结果页面 -->
+  <view class="result-section" wx:if="{{currentStep === 'result'}}">
+    <!-- 继续寄存成功 -->
+    <view wx:if="{{resultType === 'continue'}}">
+      <view class="result-icon success">
+        <text>✓</text>
+      </view>
+      <text class="result-title">继续寄存成功</text>
+      <text class="result-desc">您可以稍后再来取物</text>
+    </view>
+
+    <!-- 取物结束 -->
+    <view wx:if="{{resultType === 'end'}}">
+      <view class="result-icon success">
+        <text>✓</text>
+      </view>
+      <text class="result-title">取物成功</text>
+      <view class="refund-info card" wx:if="{{refundAmount > 0}}">
+        <view class="refund-row">
+          <text class="refund-label">已退还保证金</text>
+          <text class="refund-value">¥{{refundAmount}}</text>
+        </view>
+      </view>
+      <text class="result-desc">感谢使用智能寄存柜</text>
+    </view>
+
+    <button class="btn-primary" bindtap="onBackHome" style="margin-top: 60rpx;">
+      <text>返回首页</text>
+    </button>
+  </view>
+</view>

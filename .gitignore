@@ -1,0 +1,77 @@
+# [S1737-20261113] 175 生产仓库忽略清单
+# 目标：只提交源码，不提交备份/日志/二进制
+
+# ===== 备份目录（全部排除）=====
+backup/
+backups/
+db_backups/
+bak_*/
+backup_*/
+nginx-conf-backups/
+.workbench/
+*.bak
+*.bak_*
+*.bak.*
+*.sql
+*.sql.gz
+*.tar.gz
+*.tgz
+*.zip
+
+# ===== 日志/报表 =====
+logs/
+reports/
+*.log
+nohup.out
+
+# ===== 二进制/大文件 =====
+static/*.apk
+static/*.exe
+static/apk/
+static/fonts/
+static/smart-locker.apk.*
+static/locker.apk.*
+*.apk
+*.apk.*
+*.ttc
+*.ttf
+*.otf
+*.woff
+*.woff2
+
+# ===== 证书（含私钥，绝不进 git）=====
+cert/
+
+# ===== Python 缓存 =====
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# ===== 数据库文件 =====
+*.db
+*.sqlite
+*.sqlite3
+
+# ===== 编辑器/系统 =====
+*.swp
+*.swo
+.DS_Store
+.idea/
+.vscode/
+*.orig
+
+# ===== 上传的静态资源 =====
+static/uploads/
+
+# ===== [S1737-fix] 各种 .bak 变体（.py.s866bak.20261020_162826 这类）=====
+*bak*
+*_bak*
+*.orig
+*.rej
+*.disabled
+*.old
+*.prev
+*.backup
+*~

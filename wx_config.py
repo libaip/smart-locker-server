@@ -1,0 +1,1248 @@
+# -*- coding: utf-8 -*-
+"""
+微信账号配置中心（本地开发版）
+=========================================================
+目标：把「小程序 / 公众号 / 域名 / 消息模板」从代码里搬进数据库，
+      做到像切换支付商户号一样：一键切换、实时生效、不重启、不发版；
+      账号被封时能立刻切到备用号。
+
+设计照抄 payment_channels 的成功经验：
+  1) 配置在库里，业务每次「实时读」→ 改完立刻生效
+  2) 同类账号同一时刻只有一个 is_active=1（当前生效），其余是待命备用
+  3) auto_disabled = 连续失败自动停用 + 自动切备用（= 支付渠道的 auto_disabled）
+  4) 读库失败 / 库为空 → 回落 DEFAULTS（= config.py 现值），保证业务永远不炸
+  5) 驱动无关：本地 SQLite 测试，生产 PostgreSQL 复用同一套代码
+
+本地怎么用：
+    import wx_config as C
+    C.bind(lambda: sqlite3.connect('demo.db'))   # 生产改成 C.bind(helpers.get_db)
+    C.init_db()
+    cred = C.resolve('mp')       # {'appid':..,'secret':..,'source':'db'|'default'}
+    C.get_config('h5_base')
+    C.get_template('subscribe_deposit', 'mp')
+    C.record_result('mp', ok=False, detail='errcode 43004')   # 连 3 次失败自动切备用
+"""
+
+import json
+import time
+import urllib.parse
+import urllib.request
+from contextlib import contextmanager
+from datetime import datetime
+
+# ============================================================
+# 兜底配置（= config.py 现值）。数据库读不到时业务照常跑，绝不因为配置中心炸掉
+# ============================================================
+DEFAULTS = {
+    'mp': {
+        # [S959-20261013] 兜底不再放【别的主体】的 appid。
+        #   读不到配置库时宁可返回空（失败即停），也绝不拿旧主体的 appid 去请求微信——
+        #   否则会暴露「新主体的商户号 与 旧主体 有关联」。
+        'name': '(兜底已停用)',
+        'appid': '',
+        'openid_prefix': 'ooTcRx',
+        'secret': '',
+        'token': 'smartlocker2024',
+        'aes_key': '',
+        'subject': '重庆科莱维科技有限公司',
+    },
+    'oa': {
+        # [S416-20260921] 原来是【老公众号·智能寄存柜】(wxd85204d0ec930d46) 的凭据。
+        #   它是"配置库读不到时的兜底"，留着老 appid = 哪天读不到库就静默拿老号去授权/发消息，
+        #   而老号的 appid 跟现在在用的商户没有绑定 -> 支付/通知必炸（2026-09-21 同类故障实测）。
+        #   改成当前在用的公众号【重庆卓蓝时】，与 wx_accounts.id=10 / config.py 一致。
+        # [S959-20261013] 同上：兜底 appid 置空（原来是重庆卓蓝时，别的主体）
+        'name': '(兜底已停用)',
+        'appid': '',
+        'openid_prefix': 'octN92',
+        'secret': '',
+        'token': 'smartlocker2024',
+        'aes_key': '',
+        'subject': '重庆卓蓝时科技有限公司',
+    },
+    'config': {
+        'h5_base': 'https://locker.cqdyxl.com',
+        'h5_backup_domains': '',
+        'oauth_path': '/api/wx/oauth',
+        'pay_notify_url': 'https://locker.cqdyxl.com/api/pay/notify',
+        'refund_notify_url': 'https://locker.cqdyxl.com/api/refund/notify',
+        'complaint_notify_url': 'https://locker.cqdyxl.com/api/admin_v2/wechat-complaint/notify',
+        'mp_entry_path': 'pages/subscribe/subscribe',
+        'mp_home_path': 'pages/index/index',
+        'mp_mine_path': 'pages/mine/mine',
+        'entry_mode': 'h5',
+        'oa_subscribe_enabled': 'false',
+    },
+}
+
+CACHE_TTL = 5            # [TTL5] 生效账号缓存 5 秒：后台切换后 5 秒内全实例生效（原 300 秒）
+CONFIG_CACHE_TTL = 30    # 配置项缓存秒数。生产走 pgbouncer 连接池，热路径不要每次请求都查库；
+                         # 改配置会主动清缓存，所以人工改动是立刻生效的
+FAIL_THRESHOLD = 3       # 连续失败几次 → 自动停用并切备用
+ACCT_TYPES = ('mp', 'oa')     # mp=小程序(订阅消息)  oa=公众号(模板消息)
+CHANNELS = ('mp', 'oa')       # 模板通道：mp=订阅通知  oa=模板消息
+ID_TABLES = ('wx_accounts', 'wx_templates', 'wx_switch_log')   # 这三张表有自增 id
+
+# 模板业务码 → 人话（给后台页面用）
+BIZ_LABELS = {
+    'subscribe_deposit': '小程序·寄存成功订阅',
+    'subscribe_refund': '小程序·退款成功订阅',
+    'subscribe_general': '小程序·预付款退还订阅',
+    'oa_deposit_ok': '公众号·存储柜寄存成功通知',
+    'oa_deposit_end': '公众号·寄存结束通知',
+    'oa_refund_ok': '公众号·退款成功通知',
+    'oa_withdraw_ok': '公众号·提现成功通知',
+}
+
+# ============================================================
+# 数据库绑定（SQLite / PostgreSQL 都能跑）
+# ============================================================
+_FACTORY = None
+_CACHE = {}          # acct_type -> (时间戳, 账号dict|None)
+_CONFIG_CACHE = {'ts': 0, 'vals': None}
+_TPL_CACHE = {}      # biz|channel|default -> (时间戳, 模板ID)
+
+
+def bind(factory):
+    """绑定取连接的函数。本地: lambda: sqlite3.connect('demo.db')；生产: helpers.get_db"""
+    global _FACTORY
+    _FACTORY = factory
+    clear_cache()
+
+
+def _conn_kind(conn):
+    """判断底层是 PostgreSQL 还是 SQLite。
+
+    注意：本项目 database.py 不是直接用 psycopg2，而是包了一层 _PGConn/_PGCursor
+    （类名 _PGConn、模块名 database），所以不能只看 type(conn).__module__。
+    """
+    cls = type(conn)
+    mod = (getattr(cls, '__module__', '') or '')
+    name = (getattr(cls, '__name__', '') or '')
+    if 'psycopg' in mod or name in ('_PGConn', '_PGConnWrapper'):
+        return 'pg'
+    inner = getattr(conn, '_conn', None)          # 项目自包装的连接：里面才是 psycopg2 连接
+    if inner is not None and 'psycopg' in (getattr(type(inner), '__module__', '') or ''):
+        return 'pg'
+    return 'sqlite'
+
+
+@contextmanager
+def _conn():
+    if _FACTORY is None:
+        raise RuntimeError('wx_config 未绑定数据库：请先调用 wx_config.bind(取连接函数)')
+    conn = _FACTORY()
+    kind = _conn_kind(conn)
+    try:
+        yield conn, kind
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _sql(sql, kind):
+    """本地用 ? 占位，生产 psycopg2 用 %s —— 同一套 SQL 两边通用"""
+    return sql.replace('?', '%s') if kind == 'pg' else sql
+
+
+def _fetch_dicts(cur):
+    """把结果集读成 list[dict]，兼容三种情况：
+       · sqlite3 / 原生 psycopg2：tuple 行 + 有 description
+       · 本项目 database.py 的 _PGCursor：**dict 行、没有 description**（第 0 步冒烟踩到的坑）
+       · 其它：tuple 行但没 description（拿不到列名，只能按 _0/_1 编号返回）
+    """
+    desc = getattr(cur, 'description', None)
+    try:
+        raw = cur.fetchall()
+    except Exception:
+        return []
+    out = []
+    for r in raw or []:
+        if isinstance(r, dict):
+            out.append({k: r[k] for k in r.keys()})
+        elif desc is not None:
+            out.append(dict(zip([d[0] for d in desc], r)))
+        elif hasattr(r, 'keys'):
+            out.append({k: r[k] for k in r.keys()})
+        else:
+            out.append({'_%d' % i: v for i, v in enumerate(r)})
+    return out
+
+
+def _rows(conn, kind, sql, params=()):
+    """统一取行：不依赖 row_factory / description，返回 list[dict]"""
+    cur = conn.cursor()
+    cur.execute(_sql(sql, kind), params)
+    return _fetch_dicts(cur)
+
+
+def _row(conn, kind, sql, params=()):
+    r = _rows(conn, kind, sql, params)
+    return r[0] if r else None
+
+
+def _exec(conn, kind, sql, params=()):
+    cur = conn.cursor()
+    cur.execute(_sql(sql, kind), params)
+    return cur
+
+
+def _insert(conn, kind, sql, params=()):
+    """插入并返回新 id：SQLite 用 lastrowid，PostgreSQL 用 RETURNING"""
+    cur = conn.cursor()
+    if kind == 'pg':
+        cur.execute(_sql(sql, kind) + ' RETURNING id', params)
+        r = cur.fetchone()
+        if r is None:
+            return None
+        if isinstance(r, dict):
+            return r.get('id')
+        try:
+            return r['id']
+        except Exception:
+            return r[0]
+    cur.execute(_sql(sql, kind), params)
+    return getattr(cur, 'lastrowid', None)
+
+
+def _now():
+    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+
+def clear_cache(acct_type=None):
+    global _CONFIG_CACHE
+    _CONFIG_CACHE = {'ts': 0, 'vals': None}
+    _TPL_CACHE.clear()
+    if acct_type:
+        _CACHE.pop(acct_type, None)
+    else:
+        _CACHE.clear()
+
+
+# ============================================================
+# 建表
+# ============================================================
+_ACCOUNT_COLS = [
+    'acct_type', 'name', 'appid', 'secret', 'token', 'aes_key', 'subject',
+    'openid_prefix',
+    'mch_relation', 'is_active', 'priority', 'auto_disabled', 'fail_count',
+    'health_status', 'health_detail', 'last_check_at', 'last_used_at',
+    'note', 'created_at', 'updated_at',
+]
+
+
+def ddl(kind):
+    pk = 'SERIAL PRIMARY KEY' if kind == 'pg' else 'INTEGER PRIMARY KEY AUTOINCREMENT'
+    return [
+        """CREATE TABLE IF NOT EXISTS wx_accounts (
+            id %s,
+            acct_type VARCHAR(8) NOT NULL,
+            name VARCHAR(64) NOT NULL,
+            appid VARCHAR(64) NOT NULL,
+            secret VARCHAR(128) DEFAULT '',
+            token VARCHAR(64) DEFAULT '',
+            aes_key VARCHAR(64) DEFAULT '',
+            subject VARCHAR(128) DEFAULT '',
+            openid_prefix VARCHAR(16) DEFAULT '',
+            mch_relation VARCHAR(16) DEFAULT 'none',
+            is_active INTEGER DEFAULT 0,
+            priority INTEGER DEFAULT 100,
+            auto_disabled INTEGER DEFAULT 0,
+            fail_count INTEGER DEFAULT 0,
+            health_status VARCHAR(16) DEFAULT 'unknown',
+            health_detail VARCHAR(255) DEFAULT '',
+            last_check_at VARCHAR(32) DEFAULT '',
+            last_used_at VARCHAR(32) DEFAULT '',
+            note VARCHAR(255) DEFAULT '',
+            created_at VARCHAR(32) DEFAULT '',
+            updated_at VARCHAR(32) DEFAULT ''
+        )""" % pk,
+        """CREATE TABLE IF NOT EXISTS wx_templates (
+            id %s,
+            biz VARCHAR(48) NOT NULL,
+            channel VARCHAR(8) NOT NULL,
+            account_id INTEGER DEFAULT 0,
+            template_id VARCHAR(96) NOT NULL,
+            page VARCHAR(128) DEFAULT '',
+            fields TEXT DEFAULT '{}',
+            is_active INTEGER DEFAULT 1,
+            note VARCHAR(255) DEFAULT '',
+            updated_at VARCHAR(32) DEFAULT '',
+            UNIQUE (biz, channel, account_id)
+        )""" % pk,
+        """CREATE TABLE IF NOT EXISTS wx_config_items (
+            cfg_key VARCHAR(64) PRIMARY KEY,
+            cfg_value TEXT DEFAULT '',
+            group_name VARCHAR(32) DEFAULT '',
+            note VARCHAR(255) DEFAULT '',
+            updated_at VARCHAR(32) DEFAULT ''
+        )""",
+        """CREATE TABLE IF NOT EXISTS wx_switch_log (
+            id %s,
+            acct_type VARCHAR(8),
+            from_name VARCHAR(64),
+            to_name VARCHAR(64),
+            reason VARCHAR(255),
+            operator VARCHAR(32),
+            created_at VARCHAR(32)
+        )""" % pk,
+        """CREATE INDEX IF NOT EXISTS idx_wx_accounts_type ON wx_accounts (acct_type, is_active)""",
+    ]
+
+
+def init_db(verbose=False):
+    """建表（幂等，可重复调用）"""
+    with _conn() as (conn, kind):
+        for st in ddl(kind):
+            try:
+                _exec(conn, kind, st)
+            except Exception as e:
+                if verbose:
+                    print('  [ddl] %s -> %s' % (type(e).__name__, e))
+                # 已存在/索引重名之类的，忽略（SQLite 老版本不支持 IF NOT EXISTS 索引才会走到这里）
+                continue
+    # [CFG-STEP2D] 老库补列（幂等）：openid_prefix。新库由建表语句直接带上。
+    with _conn() as (conn, kind):
+        try:
+            _exec(conn, kind, "ALTER TABLE wx_accounts ADD COLUMN openid_prefix VARCHAR(16) DEFAULT ''")
+        except Exception:
+            pass          # 已经有了 / 老版本不支持 IF NOT EXISTS，都当"已存在"
+    clear_cache()
+    return True
+
+
+# ============================================================
+# 账号池
+# ============================================================
+def list_accounts(acct_type=None):
+    sql = 'SELECT * FROM wx_accounts'
+    params = ()
+    if acct_type:
+        sql += ' WHERE acct_type=?'
+        params = (acct_type,)
+    sql += ' ORDER BY acct_type, priority, id'
+    with _conn() as (conn, kind):
+        return _rows(conn, kind, sql, params)
+
+
+def get_account(account_id):
+    with _conn() as (conn, kind):
+        return _row(conn, kind, 'SELECT * FROM wx_accounts WHERE id=?', (account_id,))
+
+
+def create_account(acct_type, name, appid, secret='', **kw):
+    if acct_type not in ACCT_TYPES:
+        raise ValueError('acct_type 只能是 %s' % (ACCT_TYPES,))
+    # [S760-20260928] 新增账号时如果传进来的是打码值，存空串并告警（宁可写空，也不要写假密钥）
+    if _is_masked_value(secret):
+        try:
+            logger.warning('[S760] create_account 收到打码的 secret，按空值处理 appid=%s', appid)
+        except Exception:
+            pass
+        secret = ''
+    # [S848-20261009] ★ 同一 appid 不允许重复登记（从源头杜绝"两条一模一样"）。
+    #   背景：2026-10-08 个体1 的 appid(wx28bfa4f045978872) 被登记了两次
+    #         （id=19 与 id=20，openid_prefix/secret/is_active 配置都一样）。
+    #   真实危害：resolve_by_appid() 和 account_id_by_openid() 在"同一 appid/前缀有多条"时
+    #         【返回哪条是不确定的】-> 把生效号切到 A 条后，模板查询却命中了没配模板的 B 条
+    #         -> get_template() 回落到 account_id=0 的通用模板（别的 appid 的模板）
+    #         -> 订阅消息几乎全挂（2026-10-09 15:05 实测复现，差一步上线）。
+    #   所以这里直接拦住：appid 已存在就抛错，让调用方改用 update_account / switch_to。
+    appid = (appid or '').strip()
+    if appid:
+        _dup_found = None
+        try:
+            with _conn() as (conn, kind):
+                _dup_rows = _rows(conn, kind,
+                                  'SELECT id, name, is_active FROM wx_accounts '
+                                  'WHERE appid=? AND acct_type=?', (appid, acct_type))
+            if _dup_rows:
+                _dup_found = _dup_rows[0]
+        except Exception as _de:
+            logger.warning('[S848] appid 重复校验执行失败(放行，不影响新增): %s', _de)
+        if _dup_found:
+            raise ValueError(
+                'appid %s 已登记过（账号 id=%s「%s」, is_active=%s）—— 不允许重复新增。'
+                ' 要改配置请用 update_account/switch_to，不要新建账号。'
+                % (appid, _dup_found.get('id'), _dup_found.get('name'), _dup_found.get('is_active')))
+
+    data = {
+        'acct_type': acct_type, 'name': name, 'appid': appid, 'secret': secret,
+        'token': kw.get('token', ''), 'aes_key': kw.get('aes_key', ''),
+        'subject': kw.get('subject', ''), 'mch_relation': kw.get('mch_relation', 'none'),
+        'openid_prefix': kw.get('openid_prefix', ''),
+        'is_active': 1 if kw.get('is_active') else 0,
+        'priority': int(kw.get('priority', 100)),
+        'auto_disabled': 0, 'fail_count': 0,
+        'health_status': 'unknown', 'health_detail': '',
+        'last_check_at': '', 'last_used_at': '',
+        'note': kw.get('note', ''),
+        'created_at': _now(), 'updated_at': _now(),
+    }
+    with _conn() as (conn, kind):
+        cols = ', '.join(_ACCOUNT_COLS)
+        ph = ', '.join(['?'] * len(_ACCOUNT_COLS))
+        new_id = _insert(conn, kind,
+                         'INSERT INTO wx_accounts (%s) VALUES (%s)' % (cols, ph),
+                         tuple(data[c] for c in _ACCOUNT_COLS))
+        if data['is_active']:
+            _exec(conn, kind, 'UPDATE wx_accounts SET is_active=0 WHERE acct_type=? AND id<>?',
+                  (acct_type, new_id))
+    clear_cache(acct_type)
+    return new_id
+
+
+def _is_masked_value(v):
+    """[S760-20260928] 判断是不是【打码显示值】（后台界面回传的那种）。
+
+    后台快照 mask() 产出形如 '805e8c…****'；这种值绝不能写回库，
+    否则真密钥被覆盖 -> 公众号 OAuth / 小程序登录直接 500（2026-09-28 连踩两次）。
+    """
+    s = '' if v is None else str(v)
+    return ('\u2026' in s) or ('****' in s)
+
+
+def update_account(account_id, **kw):
+    allowed = {'name', 'appid', 'secret', 'token', 'aes_key', 'subject',
+               'mch_relation', 'priority', 'note', 'openid_prefix'}
+    if 'is_active' in kw:                 # 生效开关走 set_active，保证"同类只有一个生效"
+        set_active(account_id, bool(kw.pop('is_active')))
+    sets, params = [], []
+    for k, v in kw.items():
+        if k not in allowed:
+            continue
+        # [S760-20260928] 密钥类字段遇到"打码值"一律跳过：后台把 mask() 的结果回传时，
+        #   不能拿它覆盖库里的真密钥（否则公众号/小程序立刻 500）。
+        if k in ('secret', 'token', 'aes_key') and _is_masked_value(v):
+            try:
+                logger.warning('[S760] 忽略被打码的 %s（不覆盖库里的真值）', k)
+            except Exception:
+                pass
+            continue
+        sets.append('%s=?' % k)
+        params.append(v)
+    if not sets:
+        return False
+    sets.append('updated_at=?')
+    params.append(_now())
+    params.append(account_id)
+    with _conn() as (conn, kind):
+        _exec(conn, kind, 'UPDATE wx_accounts SET %s WHERE id=?' % ', '.join(sets), tuple(params))
+    clear_cache()
+    return True
+
+
+def delete_account(account_id):
+    """删除账号。当前生效的不给删，防止手滑把线上唯一的号删了"""
+    row = get_account(account_id)
+    if not row:
+        return False, '账号不存在'
+    if row.get('is_active'):
+        return False, '该账号当前生效中，请先切到别的账号再删除'
+    with _conn() as (conn, kind):
+        _exec(conn, kind, 'DELETE FROM wx_accounts WHERE id=?', (account_id,))
+    clear_cache(row.get('acct_type'))
+    return True, '已删除'
+
+
+# ============================================================
+# [GUARD-20260913] 账号"能不能真的用"的判定（防呆）
+#   为什么要有这个：备用位现在是占位符(REPLACE_ME_*)且密钥是空的，
+#   一旦被切为生效，微信那边一律报无效 appid —— 授权/登录/支付/通知全挂。
+#   实测踩过：自动降级会挑这个假账号顶上来，等于"从坏直接变成全坏"。
+# ============================================================
+PLACEHOLDER_MARKERS = ('REPLACE_ME', 'CHANGE_ME', 'PLACEHOLDER', 'TODO', 'XXX', '待填')
+
+
+def check_usable(row):
+    """账号能不能真的用：编号和密钥都要有，编号不能还是占位符。返回 (能不能用, 原因)"""
+    if not row:
+        return False, '账号不存在'
+    appid = str(row.get('appid') or '').strip()
+    secret = str(row.get('secret') or '').strip()
+    if not appid:
+        return False, '编号(appid)是空的'
+    if any(m in appid.upper() for m in PLACEHOLDER_MARKERS):
+        return False, '编号还是占位符 %s，请先填真实编号' % appid
+    if not secret:
+        return False, '密钥(secret)是空的，请先填真实密钥'
+    return True, ''
+
+
+def set_active(account_id, active=True, probe_first=True, prober=None):
+    """启用/停用一个账号（启用时会自动把同类其它账号停掉，保证只有一个生效）"""
+    row = get_account(account_id)
+    if not row:
+        return False, '账号不存在'
+    if active:
+        _ok, _why = check_usable(row)
+        if not _ok:
+            return False, '不能启用「%s」：%s' % (row.get('name') or account_id, _why)
+        # [GUARD3-20260913] 启用 = 成为当前生效号，同样先探活
+        if probe_first:
+            _pr = probe(account_id, prober=prober)
+            if not _pr.get('ok'):
+                return False, ('不能启用「%s」：探活没过（%s）'
+                               % (row.get('name') or account_id,
+                                  _pr.get('detail') or _pr.get('reason') or ''))
+    at = row['acct_type']
+    with _conn() as (conn, kind):
+        if active:
+            _exec(conn, kind, 'UPDATE wx_accounts SET is_active=0 WHERE acct_type=?', (at,))
+            _exec(conn, kind, 'UPDATE wx_accounts SET is_active=1, auto_disabled=0, fail_count=0, updated_at=? WHERE id=?',
+                  (_now(), account_id))
+        else:
+            _exec(conn, kind, 'UPDATE wx_accounts SET is_active=0, updated_at=? WHERE id=?', (_now(), account_id))
+    clear_cache(at)
+    return True, ('已启用' if active else '已停用')
+
+
+def switch_to(acct_type, account_id, operator='local-demo', reason='手动切换',
+              probe_first=True, prober=None):
+    """一键切换：目标账号设为生效，同类其它账号全部停用，并写切换日志"""
+    if acct_type not in ACCT_TYPES:
+        return False, 'acct_type 只能是 %s' % (ACCT_TYPES,)
+    row = get_account(account_id)
+    if not row:
+        return False, '账号不存在'
+    if row['acct_type'] != acct_type:
+        return False, '账号类型不匹配'
+    _ok, _why = check_usable(row)
+    if not _ok:
+        return False, '不能切换「%s」：%s（请先把编号/密钥填成真实值）' % (row.get('name') or account_id, _why)
+    # [GUARD3-20260913] 切换前先探活：拿新号的编号+密钥真连一次微信。
+    #   不这么做的话，编号填错的号一切过去就是全线不通（授权/登录/支付/通知全挂）。
+    #   探活不过 -> 拒绝切换；想过 -> 用 probe_first=False（或后台传 skip_probe）。
+    if probe_first:
+        _pr = probe(account_id, prober=prober)
+        if not _pr.get('ok'):
+            return False, ('不能切换「%s」：探活没过（%s）。'
+                           '先在后台点一下探活看清楚，把编号/密钥改对再切。'
+                           % (row.get('name') or account_id,
+                              _pr.get('detail') or _pr.get('reason') or ''))
+    old = get_effective_account(acct_type, use_cache=False)
+    with _conn() as (conn, kind):
+        _exec(conn, kind, 'UPDATE wx_accounts SET is_active=0 WHERE acct_type=?', (acct_type,))
+        _exec(conn, kind, """UPDATE wx_accounts
+                             SET is_active=1, auto_disabled=0, fail_count=0,
+                                 health_status='unknown', health_detail='', updated_at=?
+                             WHERE id=?""", (_now(), account_id))
+        _log_switch(conn, kind, acct_type,
+                    old['name'] if old else '', row['name'], reason, operator)
+    clear_cache(acct_type)
+    _warn = []
+    if row.get('auto_disabled'):
+        _warn.append('这个号之前被自动停用过，确认问题已修复再切')
+    if (row.get('mch_relation') or '') != 'ok':
+        _warn.append('这个号还没绑定商户号(mch_relation=%s)，支付可能失败' % (row.get('mch_relation') or 'none'))
+    if (row.get('health_status') or '') != 'ok':
+        _warn.append('还没探活通过，建议立刻点一下探活确认')
+    _msg = '已切换到 %s' % row['name']
+    if _warn:
+        _msg += '（提醒：' + '；'.join(_warn) + '）'
+    return True, _msg
+
+
+def _log_switch(conn, kind, acct_type, from_name, to_name, reason, operator):
+    _exec(conn, kind, """INSERT INTO wx_switch_log (acct_type, from_name, to_name, reason, operator, created_at)
+                         VALUES (?,?,?,?,?,?)""",
+          (acct_type, from_name or '', to_name or '', (reason or '')[:255], operator or '', _now()))
+
+
+def get_log(limit=50):
+    with _conn() as (conn, kind):
+        return _rows(conn, kind, 'SELECT * FROM wx_switch_log ORDER BY id DESC LIMIT ?', (int(limit),))
+
+
+def log_switch(acct_type, from_name, to_name, reason='', operator='manual'):
+    with _conn() as (conn, kind):
+        _log_switch(conn, kind, acct_type, from_name, to_name, reason, operator)
+
+
+# ============================================================
+# 生效账号 + 凭据解析（业务唯一入口）
+# ============================================================
+def get_effective_account(acct_type, use_cache=True):
+    """当前生效账号。同一类只有一个，按 priority 小的优先"""
+    now = time.time()
+    if use_cache:
+        hit = _CACHE.get(acct_type)
+        if hit and now - hit[0] < CACHE_TTL:
+            return hit[1]
+    row = None
+    try:
+        with _conn() as (conn, kind):
+            row = _row(conn, kind, """SELECT * FROM wx_accounts
+                                      WHERE acct_type=? AND is_active=1 AND COALESCE(auto_disabled,0)=0
+                                      ORDER BY priority, id LIMIT 1""", (acct_type,))
+    except Exception:
+        row = None
+    _CACHE[acct_type] = (now, row)
+    return row
+
+
+def resolve(acct_type):
+    """业务取凭据：库里没有就回落 DEFAULTS。永远不抛异常"""
+    row = get_effective_account(acct_type)
+    if row and row.get('appid'):
+        return {
+            'appid': row['appid'], 'secret': row.get('secret') or '',
+            'token': row.get('token') or '', 'aes_key': row.get('aes_key') or '',
+            'name': row.get('name') or '', 'account_id': row['id'],
+            'subject': row.get('subject') or '', 'source': 'db',
+            'mch_relation': row.get('mch_relation') or 'none',
+        }
+    d = dict(DEFAULTS.get(acct_type) or {})
+    d.update({'account_id': 0, 'source': 'default'})
+    return d
+
+
+def resolve_by_appid(appid):
+    """[S278] 按 appid 精确取凭据 —— 多个小程序并存时用
+
+    与 resolve() 的区别：
+      resolve()           取"当前生效的那一个"（受 is_active / priority 影响）
+      resolve_by_appid()  按调用方给的 appid 精确匹配，不受 is_active 影响
+
+    场景：老小程序与新小程序（异主体）同时在线，各自的 js_code
+          必须用它自己的 appid+secret 去换 openid，混用必然失败。
+
+    ⚠️ 找不到时返回 None，【不静默回落】—— 回落会用错密钥，
+       调用方必须显式处理（返回明确错误），否则会误导排查。
+    """
+    appid = (appid or '').strip()
+    if not appid:
+        return None
+    row = None
+    try:
+        with _conn() as (conn, kind):
+            row = _row(conn, kind,
+                       "SELECT * FROM wx_accounts WHERE appid=? LIMIT 1", (appid,))
+    except Exception:
+        row = None
+    if not row or not row.get('appid'):
+        return None
+    return {
+        'appid': row.get('appid') or '',
+        'secret': row.get('secret') or '',
+        'token': row.get('token') or '',
+        'aes_key': row.get('aes_key') or '',
+        'name': row.get('name') or '',
+        'account_id': row.get('id') or 0,
+        'subject': row.get('subject') or '',
+        'source': 'db-by-appid',
+        'mch_relation': row.get('mch_relation') or 'none',
+    }
+
+
+def account_id_by_openid(openid, acct_type='mp'):
+    """[S307] 按 openid 前缀反查账号 id —— 判断"这个用户属于哪个小程序"
+
+    找不到返回 0（调用方按原逻辑处理，行为与改造前一致）。
+    """
+    openid = (openid or '').strip()
+    if not openid:
+        return 0
+    try:
+        with _conn() as (conn, kind):
+            rows = _rows(conn, kind,
+                         "SELECT id, openid_prefix FROM wx_accounts "
+                         "WHERE acct_type=? AND COALESCE(openid_prefix,'') <> ''",
+                         (acct_type,))
+    except Exception:
+        return 0
+    for r in rows:
+        p = (r.get('openid_prefix') or '').strip()
+        if p and openid.startswith(p):
+            return r.get('id') or 0
+    return 0
+
+
+# ============================================================
+# [S342] 「写死模板ID -> biz」兜底映射表（只在查库为空时生效）
+#   干嘛用的：业务代码里大量形如
+#       _wx_tpl('subscribe_general', 'mp', 'PtRJgPDDeP_sXcpMpn_...')
+#   的调用，第三个参数是"读不到配置库时的兜底值"。一旦 wx_templates 读不到 /
+#   通用那条被停用或删掉，传进发送函数的就正是这些写死的旧 ID；而这些旧 ID
+#   并不在 wx_templates 里，biz_by_template_id() 查库必然为空 ->
+#   helpers._send_subscribe_for_account() 反查不到 biz，就换不到该小程序的专属
+#   模板 -> 拿旧模板 ID 发给新小程序用户 -> 微信 40037，用户收不到通知。
+#   放在这里（而不是逐个调用方）是为了让所有调用方一起受益；且**只**在查库
+#   为空/读不到时作为回退，库里有值时行为一字不变。
+#   !! 这里只映射【小程序 mp】的 biz。公众号那套（oa_sub_deposit / oa_sub_general
+#      / oa_sub_refund）在 helpers.py 的 _OA_SUB_TPL 里，语义不同，切勿混用。
+# ============================================================
+_TPL_ID_BIZ_FALLBACK = {
+    'PtRJgPDDeP_sXcpMpn_ttqJKiY-C65fe1SL7iNOEQGA': 'subscribe_general',   # 预付款退还/账户余额（旧写死值）
+    'ax-O5Qa05IWt7bbhRVk9Pb9A_SbXfIMfbhm0Hoh4gYc': 'subscribe_general',   # 账户余额（当前库内通用值）
+    'lJpnAUiEKj8FutThHqXZzehBUsXP0DJC6dCtE6x2T_c': 'subscribe_refund',    # 退款成功
+    'Q3Fts5C64Zcz81EZk0t7KUTcGtVA-Itt0alm1YWtxMk': 'subscribe_deposit',   # 寄存成功
+    'ReaKJobHOusye1cCDzOPJ0HB3rZrwQadplL-Qf0js3M': 'subscribe_general',   # 新小程序·账户余额
+    'sKHQzRCcaxWWn9Qx54gx28GmaE2rMGG6PRPnIGJLuxU': 'subscribe_refund',    # 新小程序·退款成功
+}
+
+
+def biz_by_template_id(template_id):
+    """[S307] 按模板 ID 反查业务名（biz），用于"给新账号换同业务的专属模板" """
+    template_id = (template_id or '').strip()
+    if not template_id:
+        return ''
+    try:
+        with _conn() as (conn, kind):
+            row = _row(conn, kind, "SELECT biz FROM wx_templates WHERE template_id=? LIMIT 1",
+                       (template_id,))
+        _biz = (row or {}).get('biz') or ''
+    except Exception:
+        _biz = ''
+    if _biz:
+        return _biz
+    # [S342] 查库为空 / 读不到 -> 回退写死ID映射表（见上方 _TPL_ID_BIZ_FALLBACK 说明）
+    return _TPL_ID_BIZ_FALLBACK.get(template_id, '')
+
+
+def resolve_all():
+    return {t: resolve(t) for t in ACCT_TYPES}
+
+
+# ---- 给业务用的"无引号"取值函数 -------------------------------------------------
+# 为什么要单独做这四个：业务代码里很多地方是 f-string，形如 f'...appid={WX_APP_ID}&...'
+# 如果替换成 appid('oa')（带引号）就会把 f-string 的引号搞乱（实测踩过：app.py 语法错误）。
+# 这四个包装函数调用时**不带任何引号**，可以安全地塞进任何引号环境里。
+def openid_prefix(acct_type='mp'):
+    """[CFG-STEP2D] 当前生效账号的 openid 前缀。
+
+    干嘛用的：微信的 openid 是"跟着某一个号"的（同一个人在小程序A和小程序B里的
+    openid 完全不同），代码要靠前缀判断"这个 openid 是不是当前这个号下面的"。
+    以前前缀写死在代码里 -> 换号就得改代码；现在挪到 wx_accounts.openid_prefix。
+
+    读不到（库没连上/字段空/老库没这列）就回落 DEFAULTS，也就是**现在写死的值**，
+    保证行为与改造前完全一致。
+    """
+    row = get_effective_account(acct_type)
+    p = str((row or {}).get('openid_prefix') or '').strip()
+    if p:
+        return p
+    return str((DEFAULTS.get(acct_type) or {}).get('openid_prefix') or '')
+
+
+def mp_openid_prefix():
+    """当前小程序的 openid 前缀（缺省 ooTcRx）"""
+    return openid_prefix('mp')
+
+
+def oa_openid_prefix():
+    """当前公众号的 openid 前缀（缺省 oLhbm2）"""
+    return openid_prefix('oa')
+
+
+def mp_appid():
+    return resolve('mp').get('appid') or ''
+
+
+def mp_secret():
+    return resolve('mp').get('secret') or ''
+
+
+def oa_appid():
+    return resolve('oa').get('appid') or ''
+
+
+def oa_secret():
+    return resolve('oa').get('secret') or ''
+
+
+def touch_used(acct_type):
+    """记录一次使用（便于后台看"最后使用时间"）"""
+    row = get_effective_account(acct_type)
+    if not row:
+        return
+    try:
+        with _conn() as (conn, kind):
+            _exec(conn, kind, 'UPDATE wx_accounts SET last_used_at=? WHERE id=?', (_now(), row['id']))
+    except Exception:
+        pass
+
+
+# ============================================================
+# 健康 / 自动降级（= 支付渠道的 auto_disabled）
+# ============================================================
+def mark_health(account_id, ok, detail=''):
+    """回报某账号一次调用结果。连续失败达阈值 → 自动停用；只有"当前生效"的号被停用时才切备用。
+
+    三条规矩（都是从演示里点出来的坑）：
+      1) 已经 auto_disabled 的号再失败，只更新体检信息，不重复触发降级、不抢生效位
+      2) 备用号失败被停用时，绝不动"当前生效"的账号
+      3) 失败过的号后来探活成功 → 解除停用标记，可以重新当备用（但不会自己去抢生效位）
+    """
+    out = {'account_id': account_id, 'ok': bool(ok), 'switched': False}
+    row = get_account(account_id)
+    if not row:
+        out['error'] = '账号不存在'
+        return out
+    at = row['acct_type']
+    was_active = bool(row.get('is_active'))
+    already = bool(row.get('auto_disabled'))
+    detail = str(detail)[:250]
+    with _conn() as (conn, kind):
+        if ok:
+            _exec(conn, kind, """UPDATE wx_accounts
+                                 SET fail_count=0, health_status='ok', health_detail=?,
+                                     last_check_at=?, auto_disabled=0, updated_at=?
+                                 WHERE id=?""", (detail, _now(), _now(), account_id))
+            out['health'] = 'ok'
+            if already:
+                out['recovered'] = True
+        else:
+            if already:
+                _exec(conn, kind, """UPDATE wx_accounts
+                                     SET health_status='fail', health_detail=?, last_check_at=?
+                                     WHERE id=?""", (detail, _now(), account_id))
+                out['note'] = 'already_auto_disabled'
+            else:
+                fc = int(row.get('fail_count') or 0) + 1
+                _exec(conn, kind, """UPDATE wx_accounts
+                                     SET fail_count=?, health_status='fail', health_detail=?, last_check_at=?
+                                     WHERE id=?""", (fc, detail, _now(), account_id))
+                out['fail_count'] = fc
+                if fc >= FAIL_THRESHOLD:
+                    _exec(conn, kind, """UPDATE wx_accounts
+                                         SET auto_disabled=1, is_active=0, updated_at=?
+                                         WHERE id=?""", (_now(), account_id))
+                    out['auto_disabled'] = True
+                    if not was_active:
+                        # 挂掉的是备用号：当前生效的号不受任何影响
+                        _log_switch(conn, kind, at, row['name'], '',
+                                    '备用号自动停用（当前生效账号不受影响）: %s' % detail, 'auto')
+                        out['note'] = 'standby_disabled'
+                    else:
+                        # [GUARD-20260913] 只能切到"探活通过"的账号。
+                        # 实测教训：备用位是占位符/空密钥时，自动降级不是保命，
+                        # 而是从坏直接变成全坏，所以宁可不切。
+                        nxt = _row(conn, kind, """SELECT * FROM wx_accounts
+                                                  WHERE acct_type=? AND id<>? AND COALESCE(auto_disabled,0)=0
+                                                    AND COALESCE(health_status,'')='ok'
+                                                  ORDER BY is_active DESC, priority, id LIMIT 1""",
+                                   (at, account_id))
+                        _nxt_ok = False
+                        if nxt:
+                            _nxt_ok, _nxt_why = check_usable(nxt)
+                            if not _nxt_ok:
+                                out['note'] = 'standby_not_usable'
+                                out['standby_reason'] = _nxt_why
+                        if nxt and _nxt_ok:
+                            _exec(conn, kind, """UPDATE wx_accounts
+                                                 SET is_active=1, auto_disabled=0, fail_count=0,
+                                                     health_status='unknown', health_detail='', updated_at=?
+                                                 WHERE id=?""", (_now(), nxt['id']))
+                            _log_switch(conn, kind, at, row['name'], nxt['name'],
+                                        '自动降级(%d次失败): %s' % (fc, detail), 'auto')
+                            out.update({'switched': True, 'to': nxt['name'], 'to_id': nxt['id']})
+                        else:
+                            _log_switch(conn, kind, at, row['name'], '',
+                                        '自动停用但无可用的备用账号(备用必须探活通过): %s' % detail, 'auto')
+                            out['reason'] = 'no_standby'
+                            out['fallback'] = 'config.py 里原本的账号'
+    clear_cache(at)
+    return out
+
+
+def record_result(acct_type, ok, detail=''):
+    """业务调用后回报结果：内部记在"当前生效"账号上，失败自动降级"""
+    row = get_effective_account(acct_type, use_cache=False)
+    if not row:
+        return {'acct_type': acct_type, 'ok': bool(ok), 'reason': 'no_active_account'}
+    return mark_health(row['id'], ok, detail)
+
+
+def default_prober(account, timeout=8):
+    """真探活：取 access_token。能取到 = 密钥有效、账号没被完全封。
+    注意：被限制的号（比如只能收不能发）取 token 仍可能成功，这只是第一道体检。"""
+    url = ('https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s'
+           % (urllib.parse.quote(account.get('appid') or ''), urllib.parse.quote(account.get('secret') or '')))
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            d = json.loads(r.read().decode('utf-8'))
+    except Exception as e:
+        return False, '网络异常: %s' % e
+    if d.get('access_token'):
+        return True, 'access_token 正常'
+    return False, 'errcode=%s errmsg=%s' % (d.get('errcode'), d.get('errmsg'))
+
+
+def probe(account_id, prober=None):
+    """探测一个账号：探活 + 更新健康状态（失败会走自动降级逻辑）"""
+    row = get_account(account_id)
+    if not row:
+        return {'ok': False, 'detail': '账号不存在'}
+    # [GUARD-20260913] 编号/密钥还没配好的账号（比如占位符备用位）直接跳过：
+    # 不然"没配好"会被记成"体检失败"，连点几次还可能把号弄成自动停用
+    _ok, _why = check_usable(row)
+    if not _ok:
+        return {'ok': False, 'skipped': True, 'account_id': account_id,
+                'name': row.get('name') or '', 'detail': '账号还没配好（%s），跳过探活' % _why,
+                'health': row.get('health_status') or 'unknown'}
+    fn = prober or default_prober
+    try:
+        ok, detail = fn(row)
+    except Exception as e:
+        ok, detail = False, '探测异常: %s' % e
+    res = mark_health(account_id, ok, detail)
+    res.update({'detail': detail, 'name': row['name']})
+    return res
+
+
+# ============================================================
+# 可切换配置项（域名等）
+# ============================================================
+def all_config(use_cache=True):
+    """合并「默认值 + 库里覆盖」的配置。加 30 秒缓存，避免热路径反复查库（生产走 pgbouncer 连接池）"""
+    global _CONFIG_CACHE
+    now = time.time()
+    if use_cache and _CONFIG_CACHE['vals'] is not None and now - _CONFIG_CACHE['ts'] < CONFIG_CACHE_TTL:
+        return dict(_CONFIG_CACHE['vals'])
+    vals = dict(DEFAULTS.get('config') or {})
+    try:
+        with _conn() as (conn, kind):
+            for r in _rows(conn, kind, 'SELECT cfg_key, cfg_value FROM wx_config_items'):
+                vals[r['cfg_key']] = r['cfg_value']
+    except Exception:
+        pass
+    _CONFIG_CACHE = {'ts': now, 'vals': dict(vals)}
+    return vals
+
+
+def get_config(key=None, default=None):
+    vals = all_config()
+    if key is None:
+        return vals
+    return vals.get(key, default)
+
+
+def list_config_items():
+    """带分组/备注的配置项（后台页面用）"""
+    db = {}
+    try:
+        with _conn() as (conn, kind):
+            for r in _rows(conn, kind, 'SELECT * FROM wx_config_items'):
+                db[r['cfg_key']] = r
+    except Exception:
+        pass
+    out = []
+    for k, v in (DEFAULTS.get('config') or {}).items():
+        row = db.get(k, {})
+        out.append({'cfg_key': k, 'cfg_value': row.get('cfg_value', v),
+                    'default_value': v, 'group_name': row.get('group_name', ''),
+                    'note': row.get('note', ''), 'from_db': bool(row),
+                    'updated_at': row.get('updated_at', '')})
+    for k, row in db.items():
+        if k not in (DEFAULTS.get('config') or {}):
+            out.append({'cfg_key': k, 'cfg_value': row.get('cfg_value', ''),
+                        'default_value': '', 'group_name': row.get('group_name', ''),
+                        'note': row.get('note', ''), 'from_db': True,
+                        'updated_at': row.get('updated_at', '')})
+    return sorted(out, key=lambda x: x['cfg_key'])
+
+
+def set_config(key, value, group_name='', note=''):
+    with _conn() as (conn, kind):
+        _exec(conn, kind, """INSERT INTO wx_config_items (cfg_key, cfg_value, group_name, note, updated_at)
+                             VALUES (?,?,?,?,?)
+                             ON CONFLICT(cfg_key) DO UPDATE SET
+                                 cfg_value=excluded.cfg_value,
+                                 group_name=excluded.group_name,
+                                 note=excluded.note,
+                                 updated_at=excluded.updated_at""",
+              (key, value, group_name, note, _now()))
+    clear_cache()          # 配置改完立刻生效（清掉 30 秒缓存）
+    return True
+
+
+def check_schema():
+    """上线前自检：4 张表在不在、自增 id 有没有序列。
+
+    为什么要查这个：本项目的 database.py 会用 _PGCursor 把 SQL 里的 "AUTOINCREMENT"
+    直接删掉。如果建表时被判断成了 SQLite 语法（历史坑），PG 里就会建出
+    「id integer PRIMARY KEY 但没有序列」的表 —— 建表不报错，插数据才炸。
+    """
+    out = {'kind': None, 'tables': {}, 'warnings': [], 'ok': True}
+    all_tables = ('wx_accounts', 'wx_templates', 'wx_config_items', 'wx_switch_log')
+    try:
+        with _conn() as (conn, kind):
+            out['kind'] = kind
+            for t in all_tables:
+                if kind == 'pg':
+                    ex = _row(conn, kind, "SELECT 1 AS ok FROM information_schema.tables "
+                                          "WHERE table_schema='public' AND table_name=?", (t,))
+                    info = {'exists': bool(ex), 'auto_id': True, 'checked': t in ID_TABLES}
+                    if ex and t in ID_TABLES:
+                        cd = _row(conn, kind, "SELECT column_default AS d FROM information_schema.columns "
+                                              "WHERE table_name=? AND column_name='id'", (t,))
+                        has = bool(cd and cd.get('d') and 'nextval' in str(cd['d']))
+                        info['auto_id'] = has
+                        if not has:
+                            out['ok'] = False
+                            out['warnings'].append(
+                                '%s.id 没有自增序列（多半是用 SQLite 语法建出来的）：'
+                                '建表不报错但插数据会失败，需要 DROP 后重建' % t)
+                else:
+                    ex = _row(conn, kind, "SELECT 1 AS ok FROM sqlite_master "
+                                          "WHERE type='table' AND name=?", (t,))
+                    info = {'exists': bool(ex), 'auto_id': bool(ex), 'checked': t in ID_TABLES}
+                info['exists'] = bool(info['exists'])
+                out['tables'][t] = info
+                if not info['exists']:
+                    out['ok'] = False
+                    out['warnings'].append('%s 不存在（需要 init_db 建表）' % t)
+    except Exception as e:
+        out['ok'] = False
+        out['warnings'].append('自检失败: %s' % e)
+    return out
+
+
+def drop_tables():
+    """删掉配置中心的 4 张表（只在自检发现表建错、需要重建时用；不影响其它表）"""
+    with _conn() as (conn, kind):
+        for t in ('wx_switch_log', 'wx_templates', 'wx_config_items', 'wx_accounts'):
+            _exec(conn, kind, 'DROP TABLE IF EXISTS %s' % t)
+    clear_cache()
+    return True
+
+
+def h5_url(path='', base=None):
+    """拼 H5 地址：换域名时只改配置，不用改代码"""
+    b = (base or get_config('h5_base') or '').rstrip('/')
+    if not path:
+        return b
+    return b + ('' if path.startswith('/') else '/') + path
+
+
+# ---- 给业务用的"无引号"域名函数（f-string 里要用，不能带引号） --------------------
+def h5_base():
+    return (get_config('h5_base') or (DEFAULTS.get('config') or {}).get('h5_base') or '').rstrip('/')
+
+
+def h5_store():
+    return h5_base() + '/store'
+
+
+def oauth_callback():
+    p = get_config('oauth_path') or '/api/wx/oauth'
+    return h5_base() + ('' if str(p).startswith('/') else '/') + str(p)
+
+
+def ws_base():
+    """把 https 换成 ws（柜机/页面用的 WebSocket 地址）"""
+    return h5_base().replace('https://', 'ws://').replace('http://', 'ws://')
+
+
+def pay_notify_url():
+    return get_config('pay_notify_url') or (h5_base() + '/api/pay/notify')
+
+
+def refund_notify_url():
+    return get_config('refund_notify_url') or (h5_base() + '/api/refund/notify')
+
+
+# ============================================================
+# 模板（订阅消息 / 模板消息）
+# ============================================================
+def list_templates(channel=None, active_only=False):
+    """列出模板。数据库读不到（比如生产库还没建表）时返回空列表，绝不抛异常。"""
+    sql = 'SELECT * FROM wx_templates'
+    where, params = [], []
+    if channel:
+        where.append('channel=?')
+        params.append(channel)
+    if active_only:
+        where.append('is_active=1')
+    if where:
+        sql += ' WHERE ' + ' AND '.join(where)
+    sql += ' ORDER BY channel, biz, account_id'
+    try:
+        with _conn() as (conn, kind):
+            rows = _rows(conn, kind, sql, tuple(params))
+    except Exception:
+        return []
+    for r in rows:
+        r['biz_label'] = BIZ_LABELS.get(r['biz'], r['biz'])
+    return rows
+
+
+def get_template(biz, channel=None, account_id=None):
+    """取模板：优先账号专属，其次通用（account_id=0）。读不到返回 None，绝不抛异常。"""
+    try:
+        with _conn() as (conn, kind):
+            rows = _rows(conn, kind, 'SELECT * FROM wx_templates WHERE biz=? AND is_active=1', (biz,))
+    except Exception:
+        return None
+    if not rows:
+        return None
+    if channel:
+        rows = [r for r in rows if r['channel'] == channel] or rows
+    if account_id:
+        hit = [r for r in rows if r.get('account_id') == account_id]
+        if hit:
+            return hit[0]
+    gen = [r for r in rows if not r.get('account_id')]
+    return gen[0] if gen else rows[0]
+
+
+TPL_CACHE_TTL = 30      # 模板ID缓存秒数（业务每发一条消息都要取，避免每次都查库）
+
+
+def template_id(biz, channel='mp', default=''):
+    """【第2步·业务统一入口】取模板 ID。
+
+    库里配了就用库里的；库是空的 / 读不到 / 出错 → **返回 default**（= 代码里原来的写死值）。
+    这条兜底是关键：生产库还没建表时，行为与改造前完全一致，绝不会把通知打断。
+    """
+    now = time.time()
+    key = '%s|%s|%s' % (biz, channel, default)
+    hit = _TPL_CACHE.get(key)
+    if hit and now - hit[0] < TPL_CACHE_TTL:
+        return hit[1]
+    val = default
+    try:
+        t = get_template(biz, channel)
+        if t and t.get('template_id'):
+            val = t['template_id']
+    except Exception:
+        val = default
+    _TPL_CACHE[key] = (now, val)
+    return val
+
+
+def get_templates_map(channel, account_id=None):
+    """一次性取一个通道的全部模板，业务批量用"""
+    out = {}
+    for r in list_templates(channel=channel, active_only=True):
+        if account_id and r.get('account_id') and r['account_id'] != account_id:
+            continue
+        prev = out.get(r['biz'])
+        if prev is None or (r.get('account_id') and not prev.get('account_id')):
+            out[r['biz']] = r
+    return out
+
+
+def set_template(biz, channel, template_id, page='', fields=None, account_id=0, note=''):
+    if channel not in CHANNELS:
+        raise ValueError('channel 只能是 %s' % (CHANNELS,))
+    fj = json.dumps(fields or {}, ensure_ascii=False)
+    with _conn() as (conn, kind):
+        _exec(conn, kind, """INSERT INTO wx_templates (biz, channel, account_id, template_id, page, fields, is_active, note, updated_at)
+                             VALUES (?,?,?,?,?,?,1,?,?)
+                             ON CONFLICT(biz, channel, account_id) DO UPDATE SET
+                                 template_id=excluded.template_id,
+                                 page=excluded.page,
+                                 fields=excluded.fields,
+                                 is_active=1,
+                                 note=excluded.note,
+                                 updated_at=excluded.updated_at""",
+              (biz, channel, int(account_id or 0), template_id, page, fj, note, _now()))
+    _TPL_CACHE.clear()      # 改完模板立刻生效
+    return True
+
+
+def disable_template(biz, channel, account_id=0):
+    with _conn() as (conn, kind):
+        _exec(conn, kind, 'UPDATE wx_templates SET is_active=0, updated_at=? WHERE biz=? AND channel=? AND account_id=?',
+              (_now(), biz, channel, int(account_id or 0)))
+    _TPL_CACHE.clear()
+    return True
+
+
+# ============================================================================
+# [S1007-20261015] 订阅消息【字段映射】—— 后台可配 + 自动生成
+#   背景：每次换小程序，微信模板的字段名会变（thing3/thing4/amount2/time5 之类），
+#         以前要在 helpers._SUBSCRIBE_FIELD_MAP 里硬编码，(账号id, biz) 一条条加，
+#         忘了加就全量 47003（2026-10-15 早上踩过）。
+#   现在：映射存 wx_templates.field_map（JSON），后台点"自动同步"就能生成。
+# ============================================================================
+
+def set_template_field_map(biz, channel, field_map, account_id=0):
+    """[S1007] 单独写某条模板的字段映射（不动 template_id / fields 等其他列）。
+
+    field_map: {代码字段名: 微信模板真实字段名}，如 {"thing4": "thing5"}
+               传空 dict 或 None = 清空该映射（等于回到硬编码表兜底）
+    只 UPDATE 已存在的行；行不存在则报错由调用方处理（避免误插空 template_id）。
+    """
+    import json as _json
+    if channel not in CHANNELS:
+        raise ValueError('channel 只能是 %s' % (CHANNELS,))
+    fj = _json.dumps(field_map or {}, ensure_ascii=False)
+    with _conn() as (conn, kind):
+        _exec(conn, kind,
+              'UPDATE wx_templates SET field_map=?, updated_at=? WHERE biz=? AND channel=? AND account_id=?',
+              (fj, _now(), biz, channel, int(account_id or 0)))
+    _TPL_CACHE.clear()
+    return fj
+
+
+def get_template_field_map(biz, channel=None, account_id=None):
+    """[S1007] 取字段映射。优先账号专属，其次通用(account_id=0)；读不到返回 {}。
+
+    绝不抛异常 —— 读失败一律返回 {}，让调用方回落硬编码表。
+    """
+    import json as _json
+    row = get_template(biz, channel=channel, account_id=account_id)
+    if not row:
+        return {}
+    try:
+        raw = row.get('field_map') or ''
+        if not raw.strip():
+            return {}
+        m = _json.loads(raw)
+        return m if isinstance(m, dict) else {}
+    except Exception:
+        return {}
+
+
+def list_account_templates(account_id):
+    """[S1007] 列出一个账号的全部模板（含 field_map），后台同步界面用。"""
+    out = []
+    try:
+        with _conn() as (conn, kind):
+            rows = _rows(conn, kind,
+                         'SELECT * FROM wx_templates WHERE account_id=? ORDER BY biz',
+                         (int(account_id or 0),))
+        for r in rows or []:
+            out.append(dict(r))
+    except Exception:
+        return []
+    return out
+
+
+# ============================================================
+# 后台页面用的一键快照
+# ============================================================
+def mask(s, keep=6):
+    s = s or ''
+    if len(s) <= keep:
+        return '*'
+    return s[:keep] + '…' + '*' * 4
+
+
+def snapshot(reveal=False):
+    accts = list_accounts()
+    # [GUARD-20260913] 顺便告诉后台"这个号能不能真的用"，前端就能把按钮灰掉
+    accts = [dict(a, usable=check_usable(a)[0], usable_reason=check_usable(a)[1]) for a in accts]
+    if not reveal:
+        accts = [dict(a, secret=mask(a.get('secret'))) for a in accts]
+    return {
+        'effective': {t: resolve(t) for t in ACCT_TYPES},
+        'accounts': accts,
+        'config': list_config_items(),
+        'templates': list_templates(),
+        'log': get_log(30),
+        'fail_threshold': FAIL_THRESHOLD,
+        'cache_ttl': CACHE_TTL,
+    }

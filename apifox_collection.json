@@ -1,0 +1,686 @@
+{
+  "name": "智能寄存柜API测试",
+  "description": "完整API端点测试 - 包含管理后台/设备端/用户端",
+  "version": "1.0.0",
+  "items": [
+    {
+      "name": "Admin Login",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/admin/login",
+        "body": {
+          "mode": "json",
+          "raw": "{\"username\": \"admin\", \"password\": \"admin123\"}"
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 200, \"data\": {\"id\": 1, \"role\": \"super_admin\", \"token\": \"cd6792125dffbafeeb498dd486fd23dd\", \"username\": \"admin\"}, \"message\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/admin/dashboard",
+        "body": {
+          "mode": "json",
+          "raw": ""
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 200, \"data\": {\"deviceCount\": 11, \"locationCount\": 3, \"memberBalance\": \"0.00\", \"memberPending\": \"0.00\", \"memberRecharge\": \"0.00\", \"memberWithdrawn\": \"0.00\", \"onlineCount\": 0, \"onlineIncome\": \"1400.00\", \"orderAmount\": \"2060.00\", \"orderCount\": 103, \"orderProfit\": \"2060.00\", \"refundAmount\": \"0.00\", \"storageIncome\": \"1140.00\", \"todayAmount\": \"0.00\", \"todayOrders\": 0, \"totalIncome\": \"1400.00\", \"userCount\": 0, \"withdrawn\": \"0.00\"}, \"message\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Device List",
+      "request": {
+        "method": "GET",
+        "url": "https://cqdyxl.com/api/admin/devices",
+        "body": {
+          "mode": "json",
+          "raw": ""
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 200, \"data\": {\"list\": [{\"app_version\": \"\", \"app_version_code\": 0, \"business_hours\": null, \"business_status\": \"active\", \"cabinet_code\": \"1234\", \"charge_mode\": \"deposit\", \"created_at\": \"2026-06-17 15:08:06\", \"customer_phone\": null, \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 14, \"is_online\": false, \"last_heartbeat\": \"2026-06-17 15:08:06\", \"location_id\": null, \"location_name\": null, \"mainboard_device_id\": \"1234\", \"mainboard_source\": \"YBM\", \"name\": \"柜机-1234\", \"status\": 1, \"total_slots\": 12}, {\"app_version\": \"\", \"app_version_code\": 0, \"business_hours\": null, \"business_status\": \"active\", \"cabinet_code\": \"test123\", \"charge_mode\": \"deposit\", \"created_at\": \"2026-06-17 13:59:08\", \"customer_phone\": null, \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 13, \"is_online\": false, \"last_heartbeat\": \"2026-06-17 13:59:08\", \"location_id\": null, \"location_name\": null, \"mainboard_device_id\": \"test123\", \"mainboard_source\": \"YBM\", \"name\": \"柜机-test123\", \"status\": 1, \"total_slots\": 12}, {\"app_version\": \"\", \"app_version_code\": 0, \"business_hours\": null, \"business_status\": \"active\", \"cabinet_code\": \"test002\", \"charge_mode\": \"deposit\", \"created_at\": \"2026-06-16 22:59:42\", \"customer_phone\": null, \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 11, \"is_online\": false, \"last_heartbeat\": \"2026-06-16 22:59:42\", \"location_id\": null, \"location_name\": null, \"mainboard_device_id\": \"test002\", \"mainboard_source\": \"WT\", \"name\": \"柜机-test002\", \"status\": 1, \"total_slots\": 12}, {\"app_version\": \"\", \"app_version_code\": 0, \"business_hours\": null, \"business_status\": \"active\", \"cabinet_code\": \"test001\", \"charge_mode\": \"deposit\", \"created_at\": \"2026-06-16 22:59:14\", \"customer_phone\": null, \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 10, \"is_online\": false, \"last_heartbeat\": \"2026-06-16 22:59:14\", \"location_id\": null, \"location_name\": null, \"mainboard_device_id\": \"test001\", \"mainboard_source\": \"YBM\", \"name\": \"柜机-test001\", \"status\": 1, \"total_slots\": 12}, {\"app_version\": \"\", \"app_version_code\": 0, \"business_hours\": null, \"business_status\": \"active\", \"cabinet_code\": \"TEST001\", \"charge_mode\": \"deposit\", \"created_at\": \"2026-06-16 14:16:02\", \"customer_phone\": null, \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 9, \"is_online\": false, \"last_heartbeat\": \"2026-06-16 14:16:02\", \"location_id\": null, \"location_name\": null, \"mainboard_device_id\": \"TEST001\", \"mainboard_source\": \"YBM\", \"name\": \"柜机-TEST001\", \"status\": 1, \"total_slots\": 12}, {\"app_version\": \"1.1.2\", \"app_version_code\": 112, \"business_hours\": \"8:00~22:00\", \"business_status\": 1, \"cabinet_code\": \"CAB005\", \"charge_mode\": \"deposit\", \"created_at\": \"2026-06-14 14:45:50\", \"customer_phone\": \"4006981080\", \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 8, \"is_online\": false, \"last_heartbeat\": \"2026-06-17 21:01:15\", \"location_id\": 4, \"location_name\": \"测试网点\", \"mainboard_device_id\": \"123456\", \"mainboard_source\": \"YBM\", \"name\": \"智能寄存柜\", \"status\": 1, \"total_slots\": 52}, {\"app_version\": \"\", \"app_version_code\": 0, \"business_hours\": null, \"business_status\": 1, \"cabinet_code\": \"CAB002\", \"charge_mode\": \"deposit\", \"created_at\": \"2026-06-14 14:38:19\", \"customer_phone\": null, \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 5, \"is_online\": false, \"last_heartbeat\": null, \"location_id\": 4, \"location_name\": \"测试网点\", \"mainboard_device_id\": \"\", \"mainboard_source\": \"\", \"name\": \"\", \"status\": 1, \"total_slots\": 24}, {\"app_version\": \"\", \"app_version_code\": 0, \"business_hours\": null, \"business_status\": 1, \"cabinet_code\": \"CAB001\", \"charge_mode\": \"deposit\", \"created_at\": \"2026-06-14 14:37:35\", \"customer_phone\": null, \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 4, \"is_online\": false, \"last_heartbeat\": null, \"location_id\": 3, \"location_name\": \"亿航驾校\", \"mainboard_device_id\": \"\", \"mainboard_source\": \"\", \"name\": \"\", \"status\": 1, \"total_slots\": 0}, {\"app_version\": \"\", \"app_version_code\": 0, \"business_hours\": null, \"business_status\": 1, \"cabinet_code\": \"c001\", \"charge_mode\": \"deposit\", \"created_at\": \"2026-06-13 12:38:56\", \"customer_phone\": null, \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 3, \"is_online\": false, \"last_heartbeat\": null, \"location_id\": 3, \"location_name\": \"亿航驾校\", \"mainboard_device_id\": \"\", \"mainboard_source\": \"\", \"name\": \"a\", \"status\": 1, \"total_slots\": 12}, {\"app_version\": \"\", \"app_version_code\": 0, \"business_hours\": null, \"business_status\": 1, \"cabinet_code\": \"1\", \"charge_mode\": \"deposit\", \"created_at\": \"2026-06-12 05:28:37\", \"customer_phone\": null, \"deposit_amount\": 20.0, \"group_id\": 1, \"id\": 2, \"is_online\": false, \"last_heartbeat\": null, \"location_id\": 4, \"location_name\": \"测试网点\", \"mainboard_device_id\": \"\", \"mainboard_source\": \"\", \"name\": \"1\", \"status\": 1, \"total_slots\": 44}, {\"app_version\": \"\", \"app_version_code\": 0, \"business_hours\": null, \"business_status\": 1, \"cabinet_code\": \"C001\", \"charge_mode\": \"deposit\", \"created_at\": \"2026-06-11 08:46:23\", \"customer_phone\": null, \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 1, \"is_online\": false, \"last_heartbeat\": null, \"location_id\": 1, \"location_name\": null, \"mainboard_device_id\": \"\", \"mainboard_source\": \"\", \"name\": \"1号柜\", \"status\": 1, \"total_slots\": 12}], \"total\": 11}, \"message\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Slot List",
+      "request": {
+        "method": "GET",
+        "url": "https://cqdyxl.com/api/admin/slots",
+        "body": {
+          "mode": "json",
+          "raw": ""
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 200, \"data\": {\"list\": [{\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 1, \"display_number\": null, \"id\": 1, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 1, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 1, \"display_number\": null, \"id\": 2, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 2, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 1, \"display_number\": null, \"id\": 3, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 3, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 1, \"display_number\": null, \"id\": 4, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 4, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 1, \"display_number\": null, \"id\": 5, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 5, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 1, \"display_number\": null, \"id\": 6, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 6, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 1, \"display_number\": null, \"id\": 7, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 7, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 1, \"display_number\": null, \"id\": 8, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 8, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 1, \"display_number\": null, \"id\": 9, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 9, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 1, \"display_number\": null, \"id\": 10, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 10, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 1, \"display_number\": null, \"id\": 11, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 11, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 1, \"display_number\": null, \"id\": 12, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 12, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": null, \"id\": 13, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 1, \"slot_size\": \"S\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": null, \"id\": 14, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 2, \"slot_size\": \"S\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": null, \"id\": 15, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 3, \"slot_size\": \"S\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": null, \"id\": 16, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 4, \"slot_size\": \"S\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": null, \"id\": 17, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 5, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": null, \"id\": 18, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 6, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": null, \"id\": 19, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 7, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": null, \"id\": 20, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 8, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": null, \"id\": 21, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 9, \"slot_size\": \"L\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": null, \"id\": 22, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 10, \"slot_size\": \"L\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": null, \"id\": 23, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 11, \"slot_size\": \"L\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": null, \"id\": 24, \"lock_no\": 1, \"mainboard_id\": null, \"slot_number\": 12, \"slot_size\": \"L\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 1, \"id\": 25, \"lock_no\": 1, \"mainboard_id\": 1, \"slot_number\": 13, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 2, \"id\": 26, \"lock_no\": 1, \"mainboard_id\": 1, \"slot_number\": 14, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 3, \"id\": 27, \"lock_no\": 1, \"mainboard_id\": 1, \"slot_number\": 15, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 4, \"id\": 28, \"lock_no\": 1, \"mainboard_id\": 1, \"slot_number\": 16, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 5, \"id\": 29, \"lock_no\": 1, \"mainboard_id\": 1, \"slot_number\": 17, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 6, \"id\": 30, \"lock_no\": 1, \"mainboard_id\": 1, \"slot_number\": 18, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 7, \"id\": 31, \"lock_no\": 1, \"mainboard_id\": 1, \"slot_number\": 19, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 8, \"id\": 32, \"lock_no\": 1, \"mainboard_id\": 1, \"slot_number\": 20, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 9, \"id\": 33, \"lock_no\": 1, \"mainboard_id\": 1, \"slot_number\": 21, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 10, \"id\": 34, \"lock_no\": 1, \"mainboard_id\": 1, \"slot_number\": 22, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 11, \"id\": 35, \"lock_no\": 1, \"mainboard_id\": 1, \"slot_number\": 23, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 12, \"id\": 36, \"lock_no\": 1, \"mainboard_id\": 1, \"slot_number\": 24, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 13, \"id\": 37, \"lock_no\": 1, \"mainboard_id\": 1, \"slot_number\": 25, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 14, \"id\": 38, \"lock_no\": 1, \"mainboard_id\": 1, \"slot_number\": 26, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 15, \"id\": 39, \"lock_no\": 1, \"mainboard_id\": 1, \"slot_number\": 27, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 16, \"id\": 40, \"lock_no\": 1, \"mainboard_id\": 1, \"slot_number\": 28, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 17, \"id\": 41, \"lock_no\": 1, \"mainboard_id\": 2, \"slot_number\": 29, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 18, \"id\": 42, \"lock_no\": 1, \"mainboard_id\": 2, \"slot_number\": 30, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 19, \"id\": 43, \"lock_no\": 1, \"mainboard_id\": 2, \"slot_number\": 31, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 20, \"id\": 44, \"lock_no\": 1, \"mainboard_id\": 2, \"slot_number\": 32, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 21, \"id\": 45, \"lock_no\": 1, \"mainboard_id\": 2, \"slot_number\": 33, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 22, \"id\": 46, \"lock_no\": 1, \"mainboard_id\": 2, \"slot_number\": 34, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 23, \"id\": 47, \"lock_no\": 1, \"mainboard_id\": 2, \"slot_number\": 35, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 24, \"id\": 48, \"lock_no\": 1, \"mainboard_id\": 2, \"slot_number\": 36, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 25, \"id\": 49, \"lock_no\": 1, \"mainboard_id\": 2, \"slot_number\": 37, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 26, \"id\": 50, \"lock_no\": 1, \"mainboard_id\": 2, \"slot_number\": 38, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 27, \"id\": 51, \"lock_no\": 1, \"mainboard_id\": 2, \"slot_number\": 39, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 28, \"id\": 52, \"lock_no\": 1, \"mainboard_id\": 2, \"slot_number\": 40, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 29, \"id\": 53, \"lock_no\": 1, \"mainboard_id\": 2, \"slot_number\": 41, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 30, \"id\": 54, \"lock_no\": 1, \"mainboard_id\": 2, \"slot_number\": 42, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 31, \"id\": 55, \"lock_no\": 1, \"mainboard_id\": 2, \"slot_number\": 43, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"1\", \"cabinet_id\": 2, \"display_number\": 32, \"id\": 56, \"lock_no\": 1, \"mainboard_id\": 2, \"slot_number\": 44, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"c001\", \"cabinet_id\": 3, \"display_number\": 1, \"id\": 57, \"lock_no\": 1, \"mainboard_id\": 3, \"slot_number\": 1, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"c001\", \"cabinet_id\": 3, \"display_number\": 2, \"id\": 58, \"lock_no\": 1, \"mainboard_id\": 3, \"slot_number\": 2, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"c001\", \"cabinet_id\": 3, \"display_number\": 3, \"id\": 59, \"lock_no\": 1, \"mainboard_id\": 3, \"slot_number\": 3, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"c001\", \"cabinet_id\": 3, \"display_number\": 4, \"id\": 60, \"lock_no\": 1, \"mainboard_id\": 3, \"slot_number\": 4, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"c001\", \"cabinet_id\": 3, \"display_number\": 5, \"id\": 61, \"lock_no\": 1, \"mainboard_id\": 3, \"slot_number\": 5, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"c001\", \"cabinet_id\": 3, \"display_number\": 6, \"id\": 62, \"lock_no\": 1, \"mainboard_id\": 3, \"slot_number\": 6, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"c001\", \"cabinet_id\": 3, \"display_number\": 7, \"id\": 63, \"lock_no\": 1, \"mainboard_id\": 3, \"slot_number\": 7, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"c001\", \"cabinet_id\": 3, \"display_number\": 8, \"id\": 64, \"lock_no\": 1, \"mainboard_id\": 3, \"slot_number\": 8, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"c001\", \"cabinet_id\": 3, \"display_number\": 9, \"id\": 65, \"lock_no\": 1, \"mainboard_id\": 3, \"slot_number\": 9, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"c001\", \"cabinet_id\": 3, \"display_number\": 10, \"id\": 66, \"lock_no\": 1, \"mainboard_id\": 3, \"slot_number\": 10, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"c001\", \"cabinet_id\": 3, \"display_number\": 11, \"id\": 67, \"lock_no\": 1, \"mainboard_id\": 3, \"slot_number\": 11, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"c001\", \"cabinet_id\": 3, \"display_number\": 12, \"id\": 68, \"lock_no\": 1, \"mainboard_id\": 3, \"slot_number\": 12, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 1, \"id\": 69, \"lock_no\": 1, \"mainboard_id\": 4, \"slot_number\": 1, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 2, \"id\": 70, \"lock_no\": 1, \"mainboard_id\": 4, \"slot_number\": 2, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 3, \"id\": 71, \"lock_no\": 1, \"mainboard_id\": 4, \"slot_number\": 3, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 4, \"id\": 72, \"lock_no\": 1, \"mainboard_id\": 4, \"slot_number\": 4, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 5, \"id\": 73, \"lock_no\": 1, \"mainboard_id\": 4, \"slot_number\": 5, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 6, \"id\": 74, \"lock_no\": 1, \"mainboard_id\": 4, \"slot_number\": 6, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 7, \"id\": 75, \"lock_no\": 1, \"mainboard_id\": 4, \"slot_number\": 7, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 8, \"id\": 76, \"lock_no\": 1, \"mainboard_id\": 4, \"slot_number\": 8, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 9, \"id\": 77, \"lock_no\": 1, \"mainboard_id\": 4, \"slot_number\": 9, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 10, \"id\": 78, \"lock_no\": 1, \"mainboard_id\": 4, \"slot_number\": 10, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 11, \"id\": 79, \"lock_no\": 1, \"mainboard_id\": 4, \"slot_number\": 11, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 12, \"id\": 80, \"lock_no\": 1, \"mainboard_id\": 4, \"slot_number\": 12, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 13, \"id\": 81, \"lock_no\": 1, \"mainboard_id\": 5, \"slot_number\": 13, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 14, \"id\": 82, \"lock_no\": 1, \"mainboard_id\": 5, \"slot_number\": 14, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 15, \"id\": 83, \"lock_no\": 1, \"mainboard_id\": 5, \"slot_number\": 15, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 16, \"id\": 84, \"lock_no\": 1, \"mainboard_id\": 5, \"slot_number\": 16, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 17, \"id\": 85, \"lock_no\": 1, \"mainboard_id\": 5, \"slot_number\": 17, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 18, \"id\": 86, \"lock_no\": 1, \"mainboard_id\": 5, \"slot_number\": 18, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 19, \"id\": 87, \"lock_no\": 1, \"mainboard_id\": 5, \"slot_number\": 19, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 20, \"id\": 88, \"lock_no\": 1, \"mainboard_id\": 5, \"slot_number\": 20, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 21, \"id\": 89, \"lock_no\": 1, \"mainboard_id\": 5, \"slot_number\": 21, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 22, \"id\": 90, \"lock_no\": 1, \"mainboard_id\": 5, \"slot_number\": 22, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 23, \"id\": 91, \"lock_no\": 1, \"mainboard_id\": 5, \"slot_number\": 23, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB002\", \"cabinet_id\": 5, \"display_number\": 24, \"id\": 92, \"lock_no\": 1, \"mainboard_id\": 5, \"slot_number\": 24, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 1, \"id\": 93, \"lock_no\": 1, \"mainboard_id\": 6, \"slot_number\": 1, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 2, \"id\": 94, \"lock_no\": 1, \"mainboard_id\": 6, \"slot_number\": 2, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 3, \"id\": 95, \"lock_no\": 1, \"mainboard_id\": 6, \"slot_number\": 3, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 4, \"id\": 96, \"lock_no\": 1, \"mainboard_id\": 6, \"slot_number\": 4, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 5, \"id\": 97, \"lock_no\": 1, \"mainboard_id\": 6, \"slot_number\": 5, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 6, \"id\": 98, \"lock_no\": 1, \"mainboard_id\": 6, \"slot_number\": 6, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 7, \"id\": 99, \"lock_no\": 1, \"mainboard_id\": 6, \"slot_number\": 7, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 8, \"id\": 100, \"lock_no\": 1, \"mainboard_id\": 6, \"slot_number\": 8, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 9, \"id\": 101, \"lock_no\": 1, \"mainboard_id\": 6, \"slot_number\": 9, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 10, \"id\": 102, \"lock_no\": 1, \"mainboard_id\": 6, \"slot_number\": 10, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 11, \"id\": 103, \"lock_no\": 1, \"mainboard_id\": 6, \"slot_number\": 11, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 12, \"id\": 104, \"lock_no\": 1, \"mainboard_id\": 6, \"slot_number\": 12, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 13, \"id\": 105, \"lock_no\": 1, \"mainboard_id\": 6, \"slot_number\": 13, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 14, \"id\": 106, \"lock_no\": 1, \"mainboard_id\": 6, \"slot_number\": 14, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 15, \"id\": 107, \"lock_no\": 1, \"mainboard_id\": 6, \"slot_number\": 15, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 16, \"id\": 108, \"lock_no\": 1, \"mainboard_id\": 6, \"slot_number\": 16, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 17, \"id\": 145, \"lock_no\": 1, \"mainboard_id\": 10, \"slot_number\": 17, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 18, \"id\": 146, \"lock_no\": 1, \"mainboard_id\": 10, \"slot_number\": 18, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 19, \"id\": 147, \"lock_no\": 1, \"mainboard_id\": 10, \"slot_number\": 19, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 20, \"id\": 148, \"lock_no\": 1, \"mainboard_id\": 10, \"slot_number\": 20, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 21, \"id\": 149, \"lock_no\": 1, \"mainboard_id\": 10, \"slot_number\": 21, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 22, \"id\": 150, \"lock_no\": 1, \"mainboard_id\": 10, \"slot_number\": 22, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 23, \"id\": 151, \"lock_no\": 1, \"mainboard_id\": 10, \"slot_number\": 23, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 24, \"id\": 152, \"lock_no\": 1, \"mainboard_id\": 10, \"slot_number\": 24, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 25, \"id\": 153, \"lock_no\": 1, \"mainboard_id\": 10, \"slot_number\": 25, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 26, \"id\": 154, \"lock_no\": 1, \"mainboard_id\": 10, \"slot_number\": 26, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 27, \"id\": 155, \"lock_no\": 1, \"mainboard_id\": 10, \"slot_number\": 27, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 28, \"id\": 156, \"lock_no\": 1, \"mainboard_id\": 10, \"slot_number\": 28, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 29, \"id\": 157, \"lock_no\": 1, \"mainboard_id\": 11, \"slot_number\": 29, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 30, \"id\": 158, \"lock_no\": 1, \"mainboard_id\": 11, \"slot_number\": 30, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 31, \"id\": 159, \"lock_no\": 1, \"mainboard_id\": 11, \"slot_number\": 31, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 32, \"id\": 160, \"lock_no\": 1, \"mainboard_id\": 11, \"slot_number\": 32, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 33, \"id\": 161, \"lock_no\": 1, \"mainboard_id\": 11, \"slot_number\": 33, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 34, \"id\": 162, \"lock_no\": 1, \"mainboard_id\": 11, \"slot_number\": 34, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 35, \"id\": 163, \"lock_no\": 1, \"mainboard_id\": 11, \"slot_number\": 35, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 36, \"id\": 164, \"lock_no\": 1, \"mainboard_id\": 11, \"slot_number\": 36, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 37, \"id\": 165, \"lock_no\": 1, \"mainboard_id\": 11, \"slot_number\": 37, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 38, \"id\": 166, \"lock_no\": 1, \"mainboard_id\": 11, \"slot_number\": 38, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 39, \"id\": 167, \"lock_no\": 1, \"mainboard_id\": 11, \"slot_number\": 39, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 40, \"id\": 168, \"lock_no\": 1, \"mainboard_id\": 11, \"slot_number\": 40, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 41, \"id\": 169, \"lock_no\": 1, \"mainboard_id\": 12, \"slot_number\": 41, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 42, \"id\": 170, \"lock_no\": 1, \"mainboard_id\": 12, \"slot_number\": 42, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 43, \"id\": 171, \"lock_no\": 1, \"mainboard_id\": 12, \"slot_number\": 43, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 44, \"id\": 172, \"lock_no\": 1, \"mainboard_id\": 12, \"slot_number\": 44, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 45, \"id\": 173, \"lock_no\": 1, \"mainboard_id\": 12, \"slot_number\": 45, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 46, \"id\": 174, \"lock_no\": 1, \"mainboard_id\": 12, \"slot_number\": 46, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 47, \"id\": 175, \"lock_no\": 1, \"mainboard_id\": 12, \"slot_number\": 47, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 48, \"id\": 176, \"lock_no\": 1, \"mainboard_id\": 12, \"slot_number\": 48, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 49, \"id\": 177, \"lock_no\": 1, \"mainboard_id\": 12, \"slot_number\": 49, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 50, \"id\": 178, \"lock_no\": 1, \"mainboard_id\": 12, \"slot_number\": 50, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 51, \"id\": 179, \"lock_no\": 1, \"mainboard_id\": 12, \"slot_number\": 51, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"display_number\": 52, \"id\": 180, \"lock_no\": 1, \"mainboard_id\": 12, \"slot_number\": 52, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 9, \"display_number\": null, \"id\": 181, \"lock_no\": 1, \"mainboard_id\": 13, \"slot_number\": 1, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 9, \"display_number\": null, \"id\": 182, \"lock_no\": 2, \"mainboard_id\": 13, \"slot_number\": 2, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 9, \"display_number\": null, \"id\": 183, \"lock_no\": 3, \"mainboard_id\": 13, \"slot_number\": 3, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 9, \"display_number\": null, \"id\": 184, \"lock_no\": 4, \"mainboard_id\": 13, \"slot_number\": 4, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 9, \"display_number\": null, \"id\": 185, \"lock_no\": 5, \"mainboard_id\": 13, \"slot_number\": 5, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 9, \"display_number\": null, \"id\": 186, \"lock_no\": 6, \"mainboard_id\": 13, \"slot_number\": 6, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 9, \"display_number\": null, \"id\": 187, \"lock_no\": 7, \"mainboard_id\": 13, \"slot_number\": 7, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 9, \"display_number\": null, \"id\": 188, \"lock_no\": 8, \"mainboard_id\": 13, \"slot_number\": 8, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 9, \"display_number\": null, \"id\": 189, \"lock_no\": 9, \"mainboard_id\": 13, \"slot_number\": 9, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 9, \"display_number\": null, \"id\": 190, \"lock_no\": 10, \"mainboard_id\": 13, \"slot_number\": 10, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 9, \"display_number\": null, \"id\": 191, \"lock_no\": 11, \"mainboard_id\": 13, \"slot_number\": 11, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 9, \"display_number\": null, \"id\": 192, \"lock_no\": 12, \"mainboard_id\": 13, \"slot_number\": 12, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 10, \"display_number\": null, \"id\": 193, \"lock_no\": 1, \"mainboard_id\": 14, \"slot_number\": 1, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 10, \"display_number\": null, \"id\": 194, \"lock_no\": 2, \"mainboard_id\": 14, \"slot_number\": 2, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 10, \"display_number\": null, \"id\": 195, \"lock_no\": 3, \"mainboard_id\": 14, \"slot_number\": 3, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 10, \"display_number\": null, \"id\": 196, \"lock_no\": 4, \"mainboard_id\": 14, \"slot_number\": 4, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 10, \"display_number\": null, \"id\": 197, \"lock_no\": 5, \"mainboard_id\": 14, \"slot_number\": 5, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 10, \"display_number\": null, \"id\": 198, \"lock_no\": 6, \"mainboard_id\": 14, \"slot_number\": 6, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 10, \"display_number\": null, \"id\": 199, \"lock_no\": 7, \"mainboard_id\": 14, \"slot_number\": 7, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 10, \"display_number\": null, \"id\": 200, \"lock_no\": 8, \"mainboard_id\": 14, \"slot_number\": 8, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 10, \"display_number\": null, \"id\": 201, \"lock_no\": 9, \"mainboard_id\": 14, \"slot_number\": 9, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 10, \"display_number\": null, \"id\": 202, \"lock_no\": 10, \"mainboard_id\": 14, \"slot_number\": 10, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 10, \"display_number\": null, \"id\": 203, \"lock_no\": 11, \"mainboard_id\": 14, \"slot_number\": 11, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 10, \"display_number\": null, \"id\": 204, \"lock_no\": 12, \"mainboard_id\": 14, \"slot_number\": 12, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 11, \"display_number\": null, \"id\": 205, \"lock_no\": 1, \"mainboard_id\": 15, \"slot_number\": 1, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 11, \"display_number\": null, \"id\": 206, \"lock_no\": 2, \"mainboard_id\": 15, \"slot_number\": 2, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 11, \"display_number\": null, \"id\": 207, \"lock_no\": 3, \"mainboard_id\": 15, \"slot_number\": 3, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 11, \"display_number\": null, \"id\": 208, \"lock_no\": 4, \"mainboard_id\": 15, \"slot_number\": 4, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 11, \"display_number\": null, \"id\": 209, \"lock_no\": 5, \"mainboard_id\": 15, \"slot_number\": 5, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 11, \"display_number\": null, \"id\": 210, \"lock_no\": 6, \"mainboard_id\": 15, \"slot_number\": 6, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 11, \"display_number\": null, \"id\": 211, \"lock_no\": 7, \"mainboard_id\": 15, \"slot_number\": 7, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 11, \"display_number\": null, \"id\": 212, \"lock_no\": 8, \"mainboard_id\": 15, \"slot_number\": 8, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 11, \"display_number\": null, \"id\": 213, \"lock_no\": 9, \"mainboard_id\": 15, \"slot_number\": 9, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 11, \"display_number\": null, \"id\": 214, \"lock_no\": 10, \"mainboard_id\": 15, \"slot_number\": 10, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 11, \"display_number\": null, \"id\": 215, \"lock_no\": 11, \"mainboard_id\": 15, \"slot_number\": 11, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 11, \"display_number\": null, \"id\": 216, \"lock_no\": 12, \"mainboard_id\": 15, \"slot_number\": 12, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 13, \"display_number\": null, \"id\": 229, \"lock_no\": 1, \"mainboard_id\": 17, \"slot_number\": 1, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 13, \"display_number\": null, \"id\": 230, \"lock_no\": 2, \"mainboard_id\": 17, \"slot_number\": 2, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 13, \"display_number\": null, \"id\": 231, \"lock_no\": 3, \"mainboard_id\": 17, \"slot_number\": 3, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 13, \"display_number\": null, \"id\": 232, \"lock_no\": 4, \"mainboard_id\": 17, \"slot_number\": 4, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 13, \"display_number\": null, \"id\": 233, \"lock_no\": 5, \"mainboard_id\": 17, \"slot_number\": 5, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 13, \"display_number\": null, \"id\": 234, \"lock_no\": 6, \"mainboard_id\": 17, \"slot_number\": 6, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 13, \"display_number\": null, \"id\": 235, \"lock_no\": 7, \"mainboard_id\": 17, \"slot_number\": 7, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 13, \"display_number\": null, \"id\": 236, \"lock_no\": 8, \"mainboard_id\": 17, \"slot_number\": 8, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 13, \"display_number\": null, \"id\": 237, \"lock_no\": 9, \"mainboard_id\": 17, \"slot_number\": 9, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 13, \"display_number\": null, \"id\": 238, \"lock_no\": 10, \"mainboard_id\": 17, \"slot_number\": 10, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 13, \"display_number\": null, \"id\": 239, \"lock_no\": 11, \"mainboard_id\": 17, \"slot_number\": 11, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 13, \"display_number\": null, \"id\": 240, \"lock_no\": 12, \"mainboard_id\": 17, \"slot_number\": 12, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 14, \"display_number\": null, \"id\": 241, \"lock_no\": 1, \"mainboard_id\": 18, \"slot_number\": 1, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 14, \"display_number\": null, \"id\": 242, \"lock_no\": 2, \"mainboard_id\": 18, \"slot_number\": 2, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 14, \"display_number\": null, \"id\": 243, \"lock_no\": 3, \"mainboard_id\": 18, \"slot_number\": 3, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 14, \"display_number\": null, \"id\": 244, \"lock_no\": 4, \"mainboard_id\": 18, \"slot_number\": 4, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 14, \"display_number\": null, \"id\": 245, \"lock_no\": 5, \"mainboard_id\": 18, \"slot_number\": 5, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 14, \"display_number\": null, \"id\": 246, \"lock_no\": 6, \"mainboard_id\": 18, \"slot_number\": 6, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 14, \"display_number\": null, \"id\": 247, \"lock_no\": 7, \"mainboard_id\": 18, \"slot_number\": 7, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 14, \"display_number\": null, \"id\": 248, \"lock_no\": 8, \"mainboard_id\": 18, \"slot_number\": 8, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 14, \"display_number\": null, \"id\": 249, \"lock_no\": 9, \"mainboard_id\": 18, \"slot_number\": 9, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 14, \"display_number\": null, \"id\": 250, \"lock_no\": 10, \"mainboard_id\": 18, \"slot_number\": 10, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 14, \"display_number\": null, \"id\": 251, \"lock_no\": 11, \"mainboard_id\": 18, \"slot_number\": 11, \"slot_size\": \"M\", \"status\": 1}, {\"board_no\": 1, \"cabinet_code\": null, \"cabinet_id\": 14, \"display_number\": null, \"id\": 252, \"lock_no\": 12, \"mainboard_id\": 18, \"slot_number\": 12, \"slot_size\": \"M\", \"status\": 1}]}, \"message\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Order List",
+      "request": {
+        "method": "GET",
+        "url": "https://cqdyxl.com/api/admin/orders?page=1&limit=5",
+        "body": {
+          "mode": "json",
+          "raw": ""
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 200, \"data\": {\"list\": [{\"access_code\": \"1234\", \"admin_remark\": null, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"cabinet_name\": \"\", \"compartment_number\": 7, \"created_at\": \"2026-06-16 12:04:56\", \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 103, \"logic_hide\": null, \"logic_mark\": null, \"logical_mark\": \"N\", \"note\": null, \"order_no\": \"ORD202606162004569636\", \"pay_time\": \"2026-06-16 20:05:03.530114\", \"payment_channel_id\": null, \"refund_amount\": 0.0, \"refund_id\": null, \"refund_mark\": 0, \"refund_status\": \"none\", \"refund_time\": null, \"retrieve_time\": null, \"slot_id\": 99, \"slot_size\": \"M\", \"status\": 2, \"status_text\": \"已取物\", \"store_time\": \"2026-06-16 20:04:56.466052\", \"transaction_id\": \"4200003197202606160258458376\", \"user_phone\": \"13667618419\"}, {\"access_code\": \"1234\", \"admin_remark\": null, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"cabinet_name\": \"\", \"compartment_number\": 5, \"created_at\": \"2026-06-16 12:04:55\", \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 102, \"logic_hide\": null, \"logic_mark\": null, \"logical_mark\": \"N\", \"note\": null, \"order_no\": \"ORD202606162004559659\", \"pay_time\": null, \"payment_channel_id\": null, \"refund_amount\": 0.0, \"refund_id\": null, \"refund_mark\": 0, \"refund_status\": \"none\", \"refund_time\": null, \"retrieve_time\": null, \"slot_id\": 97, \"slot_size\": \"M\", \"status\": 1, \"status_text\": \"使用中\", \"store_time\": \"2026-06-16 20:04:55.338262\", \"transaction_id\": null, \"user_phone\": \"13667618419\"}, {\"access_code\": \"1234\", \"admin_remark\": null, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"cabinet_name\": \"\", \"compartment_number\": 2, \"created_at\": \"2026-06-16 09:21:45\", \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 101, \"logic_hide\": null, \"logic_mark\": null, \"logical_mark\": \"N\", \"note\": null, \"order_no\": \"ORD202606161721459202\", \"pay_time\": \"2026-06-16 17:21:57.531342\", \"payment_channel_id\": null, \"refund_amount\": 0.0, \"refund_id\": null, \"refund_mark\": 0, \"refund_status\": \"none\", \"refund_time\": null, \"retrieve_time\": null, \"slot_id\": 94, \"slot_size\": \"M\", \"status\": 2, \"status_text\": \"已取物\", \"store_time\": \"2026-06-16 17:21:45.755758\", \"transaction_id\": \"4200003211202606161176191397\", \"user_phone\": \"13667618419\"}, {\"access_code\": \"1234\", \"admin_remark\": null, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"cabinet_name\": \"\", \"compartment_number\": 1, \"created_at\": \"2026-06-16 09:19:06\", \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 100, \"logic_hide\": null, \"logic_mark\": null, \"logical_mark\": \"N\", \"note\": null, \"order_no\": \"ORD202606161719067025\", \"pay_time\": null, \"payment_channel_id\": null, \"refund_amount\": 0.0, \"refund_id\": null, \"refund_mark\": 0, \"refund_status\": \"none\", \"refund_time\": null, \"retrieve_time\": null, \"slot_id\": 93, \"slot_size\": \"M\", \"status\": 1, \"status_text\": \"使用中\", \"store_time\": \"2026-06-16 17:19:06.341849\", \"transaction_id\": null, \"user_phone\": \"13667618419\"}, {\"access_code\": \"1234\", \"admin_remark\": null, \"cabinet_code\": \"CAB005\", \"cabinet_id\": 8, \"cabinet_name\": \"\", \"compartment_number\": 6, \"created_at\": \"2026-06-16 08:56:58\", \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 99, \"logic_hide\": null, \"logic_mark\": null, \"logical_mark\": \"N\", \"note\": null, \"order_no\": \"ORD202606161656585099\", \"pay_time\": null, \"payment_channel_id\": null, \"refund_amount\": 0.0, \"refund_id\": null, \"refund_mark\": 0, \"refund_status\": \"none\", \"refund_time\": null, \"retrieve_time\": null, \"slot_id\": 98, \"slot_size\": \"M\", \"status\": 1, \"status_text\": \"使用中\", \"store_time\": \"2026-06-16 16:56:58.158106\", \"transaction_id\": null, \"user_phone\": \"13667618419\"}], \"total\": 103}, \"message\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Daily Trend",
+      "request": {
+        "method": "GET",
+        "url": "https://cqdyxl.com/api/admin/daily-trend",
+        "body": {
+          "mode": "json",
+          "raw": ""
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 200, \"data\": [{\"amount\": 300.0, \"count\": 15, \"date\": \"2026-06-12\"}, {\"amount\": 940.0, \"count\": 47, \"date\": \"2026-06-13\"}, {\"amount\": 0.0, \"count\": 0, \"date\": \"2026-06-14\"}, {\"amount\": 320.0, \"count\": 16, \"date\": \"2026-06-15\"}, {\"amount\": 480.0, \"count\": 24, \"date\": \"2026-06-16\"}, {\"amount\": 0.0, \"count\": 0, \"date\": \"2026-06-17\"}, {\"amount\": 0.0, \"count\": 0, \"date\": \"2026-06-18\"}], \"message\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Locations",
+      "request": {
+        "method": "GET",
+        "url": "https://cqdyxl.com/api/admin/locations",
+        "body": {
+          "mode": "json",
+          "raw": ""
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 200, \"data\": {\"list\": [{\"address\": \"测试地址\", \"anti_test_auto_refund\": 1, \"anti_test_minutes\": 30, \"auto_approve_day\": 1, \"auto_approve_rate\": 80.0, \"auto_approve_time\": \"12:00\", \"cabinet_count\": 3, \"click_free_count\": 3, \"contact_phone\": \"\", \"created_at\": \"2026-06-12 05:12:41\", \"duplicate_filter_days\": 7, \"duplicate_filter_enabled\": 0, \"duplicate_filter_limit\": 3, \"hide_ratio\": 0, \"id\": 4, \"latitude\": null, \"longitude\": null, \"merchant_id\": 1, \"merchant_name\": \"王昊\", \"name\": \"测试网点\", \"refund_approve_end_min\": 300, \"refund_approve_rate\": 80.0, \"refund_approve_start_min\": 60, \"show_refunding_status\": 1, \"status\": 1, \"whitelist_phones\": \"\", \"withdraw_enabled\": 1}, {\"address\": \"\", \"anti_test_auto_refund\": 1, \"anti_test_minutes\": 30, \"auto_approve_day\": 1, \"auto_approve_rate\": 80.0, \"auto_approve_time\": \"12:00\", \"cabinet_count\": 2, \"click_free_count\": 3, \"contact_phone\": \"\", \"created_at\": \"2026-06-12 05:11:34\", \"duplicate_filter_days\": 7, \"duplicate_filter_enabled\": 0, \"duplicate_filter_limit\": 3, \"hide_ratio\": 0, \"id\": 3, \"latitude\": null, \"longitude\": null, \"merchant_id\": 1, \"merchant_name\": \"王昊\", \"name\": \"亿航驾校\", \"refund_approve_end_min\": 300, \"refund_approve_rate\": 80.0, \"refund_approve_start_min\": 60, \"show_refunding_status\": 1, \"status\": 1, \"whitelist_phones\": \"\", \"withdraw_enabled\": 1}, {\"address\": \"\", \"anti_test_auto_refund\": 1, \"anti_test_minutes\": 30, \"auto_approve_day\": 1, \"auto_approve_rate\": 80.0, \"auto_approve_time\": \"12:00\", \"cabinet_count\": 0, \"click_free_count\": 3, \"contact_phone\": \"\", \"created_at\": \"2026-06-12 05:11:03\", \"duplicate_filter_days\": 7, \"duplicate_filter_enabled\": 0, \"duplicate_filter_limit\": 3, \"hide_ratio\": 0, \"id\": 2, \"latitude\": null, \"longitude\": null, \"merchant_id\": 1, \"merchant_name\": \"王昊\", \"name\": \"亿航驾校\", \"refund_approve_end_min\": 300, \"refund_approve_rate\": 80.0, \"refund_approve_start_min\": 60, \"show_refunding_status\": 1, \"status\": 1, \"whitelist_phones\": \"\", \"withdraw_enabled\": 1}], \"total\": 3}, \"message\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Members",
+      "request": {
+        "method": "GET",
+        "url": "https://cqdyxl.com/api/admin/members",
+        "body": {
+          "mode": "json",
+          "raw": ""
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 200, \"data\": {\"list\": [], \"total\": 0}, \"message\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Old Cabinet List",
+      "request": {
+        "method": "GET",
+        "url": "https://cqdyxl.com/api/cabinets",
+        "body": {
+          "mode": "json",
+          "raw": ""
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 200, \"data\": [{\"app_version\": \"1.1.2\", \"app_version_code\": 112, \"business_hours\": \"8:00~22:00\", \"business_status\": 1, \"cabinet_code\": \"CAB005\", \"charge_mode\": \"deposit\", \"created_at\": \"2026-06-14 14:45:50\", \"customer_phone\": \"4006981080\", \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 8, \"last_heartbeat\": \"2026-06-17 21:01:15\", \"location_id\": 4, \"location_name\": \"测试网点\", \"mainboard_device_id\": \"123456\", \"mainboard_source\": \"YBM\", \"name\": \"智能寄存柜\", \"status\": 1, \"total_slots\": 52}, {\"app_version\": \"\", \"app_version_code\": 0, \"business_hours\": null, \"business_status\": 1, \"cabinet_code\": \"CAB002\", \"charge_mode\": \"deposit\", \"created_at\": \"2026-06-14 14:38:19\", \"customer_phone\": null, \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 5, \"last_heartbeat\": null, \"location_id\": 4, \"location_name\": \"测试网点\", \"mainboard_device_id\": \"\", \"mainboard_source\": \"\", \"name\": \"\", \"status\": 1, \"total_slots\": 24}, {\"app_version\": \"\", \"app_version_code\": 0, \"business_hours\": null, \"business_status\": 1, \"cabinet_code\": \"CAB001\", \"charge_mode\": \"deposit\", \"created_at\": \"2026-06-14 14:37:35\", \"customer_phone\": null, \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 4, \"last_heartbeat\": null, \"location_id\": 3, \"location_name\": \"亿航驾校\", \"mainboard_device_id\": \"\", \"mainboard_source\": \"\", \"name\": \"\", \"status\": 1, \"total_slots\": 0}, {\"app_version\": \"\", \"app_version_code\": 0, \"business_hours\": null, \"business_status\": 1, \"cabinet_code\": \"c001\", \"charge_mode\": \"deposit\", \"created_at\": \"2026-06-13 12:38:56\", \"customer_phone\": null, \"deposit_amount\": 20.0, \"group_id\": null, \"id\": 3, \"last_heartbeat\": null, \"location_id\": 3, \"location_name\": \"亿航驾校\", \"mainboard_device_id\": \"\", \"mainboard_source\": \"\", \"name\": \"a\", \"status\": 1, \"total_slots\": 12}, {\"app_version\": \"\", \"app_version_code\": 0, \"business_hours\": null, \"business_status\": 1, \"cabinet_code\": \"1\", \"charge_mode\": \"deposit\", \"created_at\": \"2026-06-12 05:28:37\", \"customer_phone\": null, \"deposit_amount\": 20.0, \"group_id\": 1, \"id\": 2, \"last_heartbeat\": null, \"location_id\": 4, \"location_name\": \"测试网点\", \"mainboard_device_id\": \"\", \"mainboard_source\": \"\", \"name\": \"1\", \"status\": 1, \"total_slots\": 44}], \"message\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Old Single Open",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/cabinets/8/slots/93/open",
+        "body": {
+          "mode": "json",
+          "raw": ""
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 200, \"data\": null, \"message\": \"1号柜门开锁指令已发送\"}"
+        }
+      ]
+    },
+    {
+      "name": "V2 Open All",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/admin/slots/open-all",
+        "body": {
+          "mode": "json",
+          "raw": "{\"cabinet_id\": 8}"
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 200, \"data\": null, \"message\": \"已发送全开指令\"}"
+        }
+      ]
+    },
+    {
+      "name": "V2 Order Open Lock",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/admin/order/open-lock",
+        "body": {
+          "mode": "json",
+          "raw": "{\"order_id\": 103}"
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 200, \"data\": null, \"message\": \"开柜指令已发送\"}"
+        }
+      ]
+    },
+    {
+      "name": "Order Detail",
+      "request": {
+        "method": "GET",
+        "url": "https://cqdyxl.com/api/admin/order/detail?order_id=103",
+        "body": {
+          "mode": "json",
+          "raw": ""
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 500,
+          "body": "{\"code\": 500, \"data\": null, \"message\": \"no such column: o.location_id\"}"
+        }
+      ]
+    },
+    {
+      "name": "APK Register",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/device/register",
+        "body": {
+          "mode": "json",
+          "raw": "{\"device_id\": \"123456\"}"
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 200, \"data\": {\"baud_rate\": 9600, \"board_count\": 4, \"board_start\": 1, \"business_hours\": \"8:00~22:00\", \"cabinet_id\": 8, \"customer_phone\": \"4006981080\", \"device_id\": \"123456\", \"protocol\": \"YBM\", \"serial_port\": \"ttyS4\", \"server_url\": \"https://cqdyxl.com\", \"status\": \"registered\", \"store_name\": \"智能寄存柜\", \"websocket_url\": \"wss://cqdyxl.com/ws/\"}, \"message\": \"设备已注册\"}"
+        }
+      ]
+    },
+    {
+      "name": "Pending Commands",
+      "request": {
+        "method": "GET",
+        "url": "https://cqdyxl.com/api/pending-commands/123456",
+        "body": {
+          "mode": "json",
+          "raw": ""
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 200, \"data\": {\"commands\": [{\"board_no\": 1, \"device_id\": \"123456\", \"lock_no\": 1, \"order_id\": \"\", \"protocol\": \"YBM\", \"timestamp\": \"2026-06-18 05:07:59\", \"type\": \"open_lock\"}, {\"device_id\": \"123456\", \"openAll\": true, \"order_id\": \"\", \"protocol\": \"YBM\", \"timestamp\": \"2026-06-18 05:07:59\", \"type\": \"open_lock\"}, {\"board_no\": 1, \"device_id\": \"123456\", \"lock_no\": 7, \"order_id\": \"103\", \"protocol\": \"YBM\", \"timestamp\": \"2026-06-18 05:07:59\", \"type\": \"open_lock\"}], \"orders\": [{\"access_code\": \"1234\", \"cabinet_id\": 8, \"compartment_number\": 7, \"deposit_amount\": 20.0, \"order_id\": 103, \"order_no\": \"ORD202606162004569636\", \"slot_size\": \"M\", \"store_time\": \"2026-06-16 20:04:56.466052\", \"user_phone\": \"13667618419\"}, {\"access_code\": \"1234\", \"cabinet_id\": 8, \"compartment_number\": 2, \"deposit_amount\": 20.0, \"order_id\": 101, \"order_no\": \"ORD202606161721459202\", \"slot_size\": \"M\", \"store_time\": \"2026-06-16 17:21:45.755758\", \"user_phone\": \"13667618419\"}, {\"access_code\": \"1234\", \"cabinet_id\": 8, \"compartment_number\": 8, \"deposit_amount\": 20.0, \"order_id\": 90, \"order_no\": \"ORD202606161310397881\", \"slot_size\": \"M\", \"store_time\": \"2026-06-16 13:10:39.080349\", \"user_phone\": \"13667618419\"}], \"server_time\": \"2026-06-18 05:07:59\"}, \"message\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Active Orders",
+      "request": {
+        "method": "GET",
+        "url": "https://cqdyxl.com/api/active-orders/by-device/123456",
+        "body": {
+          "mode": "json",
+          "raw": ""
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 200, \"data\": {\"count\": 3, \"device_id\": \"123456\", \"orders\": [{\"access_code\": \"1234\", \"cabinet_id\": 8, \"compartment_number\": 7, \"deposit_amount\": 20.0, \"order_id\": 103, \"order_no\": \"ORD202606162004569636\", \"slot_size\": \"M\", \"store_time\": \"2026-06-16 20:04:56.466052\", \"user_phone\": \"13667618419\"}, {\"access_code\": \"1234\", \"cabinet_id\": 8, \"compartment_number\": 2, \"deposit_amount\": 20.0, \"order_id\": 101, \"order_no\": \"ORD202606161721459202\", \"slot_size\": \"M\", \"store_time\": \"2026-06-16 17:21:45.755758\", \"user_phone\": \"13667618419\"}, {\"access_code\": \"1234\", \"cabinet_id\": 8, \"compartment_number\": 8, \"deposit_amount\": 20.0, \"order_id\": 90, \"order_no\": \"ORD202606161310397881\", \"slot_size\": \"M\", \"store_time\": \"2026-06-16 13:10:39.080349\", \"user_phone\": \"13667618419\"}], \"server_time\": \"2026-06-18 05:07:59\"}, \"message\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Lock Result Report",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/lock-result",
+        "body": {
+          "mode": "json",
+          "raw": "{\"device_id\": \"123456\", \"order_id\": \"103\", \"board_no\": 1, \"lock_no\": 1, \"success\": true}"
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 200, \"data\": {\"message\": \"结果已记录\"}, \"message\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Update App Check",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/device/updateApp",
+        "body": {
+          "mode": "json",
+          "raw": "{\"device_id\": \"123456\", \"version_code\": 112}"
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 0, \"data\": {\"download_url\": \"https://cqdyxl.com/static/smart-locker.apk\", \"has_update\": true, \"update_desc\": \"1. 新增远程升级功能\\\\n2. 新增版本更新弹窗\\\\n3. 新增下载进度显示\\\\n4. 支持WebSocket推送升级通知\", \"version_code\": 112, \"version_name\": \"1.1.2\"}, \"msg\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Get Token",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/device/getToken",
+        "body": {
+          "mode": "json",
+          "raw": "{\"device_id\": \"123456\"}"
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 0, \"data\": {\"token\": \"3b40caed-a0f2-4045-b122-51e158fda656\"}, \"msg\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Check Device Logs",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/device/checkDeviceLogs",
+        "body": {
+          "mode": "json",
+          "raw": "{\"device_id\": \"123456\", \"logs\": \"test\"}"
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 0, \"data\": {\"handled\": true}, \"msg\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Update Device Box",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/box/updateDeviceBox",
+        "body": {
+          "mode": "json",
+          "raw": "{\"device_id\": \"123456\", \"board_no\": 1, \"lock_no\": 1, \"status\": \"empty\"}"
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 0, \"data\": {\"affected\": 52}, \"msg\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Open Door Record",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/opendoor/createOpenDoorRecord",
+        "body": {
+          "mode": "json",
+          "raw": "{\"device_id\": \"123456\", \"slot_number\": 1, \"open_type\": \"manual\"}"
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 0, \"data\": {\"record_id\": 7}, \"msg\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Find Order By Pwd",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/order/findOrderByPwd",
+        "body": {
+          "mode": "json",
+          "raw": "{\"access_code\": \"000000\", \"device_id\": \"123456\"}"
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": -1, \"msg\": \"未找到该取件码对应的订单\"}"
+        }
+      ]
+    },
+    {
+      "name": "Finish Order",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/order/finishOrder",
+        "body": {
+          "mode": "json",
+          "raw": "{\"order_id\": \"103\", \"device_id\": \"123456\"}"
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": 0, \"data\": {\"affected\": 1}, \"msg\": \"success\"}"
+        }
+      ]
+    },
+    {
+      "name": "Offline Retrieve",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/offline-retrieve",
+        "body": {
+          "mode": "json",
+          "raw": "{\"order_id\": \"103\", \"order_no\": \"TEST\", \"user_phone\": \"13800138000\"}"
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 400,
+          "body": "{\"code\": 400, \"data\": null, \"message\": \"订单已处理（当前状态: 已完成）\"}"
+        }
+      ]
+    },
+    {
+      "name": "Offline Retrieve Batch",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/offline-retrieve/batch",
+        "body": {
+          "mode": "json",
+          "raw": "{\"device_id\": \"123456\", \"records\": []}"
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 400,
+          "body": "{\"code\": 400, \"data\": null, \"message\": \"无记录需要同步\"}"
+        }
+      ]
+    },
+    {
+      "name": "Retrieve (APK mode)",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/retrieve",
+        "body": {
+          "mode": "json",
+          "raw": "{\"phone\": \"13800138000\", \"access_code\": \"0000\", \"device_id\": \"123456\"}"
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 400,
+          "body": "{\"code\": 400, \"data\": null, \"message\": \"取件码错误或柜格已空\"}"
+        }
+      ]
+    },
+    {
+      "name": "Auth Login",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/auth/login",
+        "body": {
+          "mode": "json",
+          "raw": "{\"device_id\": \"123456\"}"
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": -1, \"msg\": \"用户名或密码错误\"}"
+        }
+      ]
+    },
+    {
+      "name": "Netpoint Info",
+      "request": {
+        "method": "POST",
+        "url": "https://cqdyxl.com/api/netpoint/findDeviceInfo",
+        "body": {
+          "mode": "json",
+          "raw": "{\"device_id\": \"123456\"}"
+        },
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "response": [
+        {
+          "status_code": 200,
+          "body": "{\"code\": -1, \"msg\": \"设备不存在\"}"
+        }
+      ]
+    },
+    {
+      "name": "WebSocket连接测试",
+      "request": {
+        "method": "WS",
+        "url": "wss://cqdyxl.com/ws/?device_id=123456",
+        "body": {
+          "mode": "json",
+          "raw": "{\"type\": \"register\", \"device_id\": \"123456\", \"version\": \"1.1.2\"}"
+        },
+        "headers": []
+      }
+    }
+  ]
+}

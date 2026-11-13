@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>H5 跳小程序 · 卓奔储物</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;padding:16px;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif;background:#f5f6f8;color:#222;font-size:15px;line-height:1.6}
+.card{background:#fff;border-radius:12px;padding:16px;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+h1{font-size:19px;margin:4px 0 10px}
+h2{font-size:16px;margin:0 0 4px;color:#1a1a1a}
+.sub{font-size:13px;color:#888;margin-bottom:12px}
+.kv{font-size:13px;color:#555;margin:2px 0}
+.kv b{color:#222}
+.btn{display:block;width:100%;padding:14px;margin:8px 0;border:0;border-radius:10px;font-size:16px;font-weight:600;text-align:center;text-decoration:none;cursor:pointer;font-family:inherit}
+.btn-main{background:#07c160;color:#fff}
+.btn-sec{background:#1aad19;color:#fff}
+.btn-ghost{background:#eef0f3;color:#333}
+.btn:active{opacity:.75}
+.tip{background:#fff8e6;border-left:4px solid #ffb300;padding:12px;border-radius:8px;font-size:13px;color:#6b5200;margin-bottom:14px}
+.warn{background:#fdecea;border-left:4px solid #e74c3c;padding:12px;border-radius:8px;font-size:13px;color:#7b241c;margin-bottom:14px}
+.code{font-family:Menlo,Consolas,monospace;font-size:11px;color:#666;word-break:break-all;background:#f7f8fa;padding:7px 9px;border-radius:6px;margin:4px 0 10px}
+#log{background:#1e1e1e;color:#7ee787;font-family:Menlo,Consolas,monospace;font-size:12px;padding:12px;border-radius:8px;white-space:pre-wrap;word-break:break-all;min-height:60px;margin-bottom:20px}
+.ok{color:#07c160}.bad{color:#ff7b72}
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h1>H5 跳小程序 · 测试页</h1>
+  <p class="kv">目标小程序：<b>卓奔储物</b></p>
+  <p class="kv">appid：<b>wxbb50aeccc21af2ff</b></p>
+  <p class="kv sub">生成时间：2026-09-28　链接有效期 30 天</p>
+</div>
+
+<div class="tip">
+  <b>怎么测最准：</b><br>
+  ① 先点 <b>「① URL Link」</b>——普通 https 链接，<b>微信里、浏览器里都能点</b>；<br>
+  ② <b>「② 加密跳转」</b>（<code>weixin://</code>）建议<b>用手机浏览器打开本页</b>再点，微信内置浏览器里大概率被拦；<br>
+  ③ <b>「③ 明文跳转」</b>要先在小程序后台配「明文scheme拉起此小程序」白名单。
+</div>
+
+<div class="card">
+  <h2>① URL Link（推荐，微信里直接点）</h2>
+  <a class="btn btn-main" href="https://wxmpurl.cn/MPMq7WabiYg">进「首页」</a>
+  <div class="code">https://wxmpurl.cn/MPMq7WabiYg</div>
+  <a class="btn btn-main" href="https://wxmpurl.cn/vuP8Nl9WMxv">进「存包」</a>
+  <div class="code">https://wxmpurl.cn/vuP8Nl9WMxv</div>
+  <a class="btn btn-main" href="https://wxmpurl.cn/qnuYxgOJxef">进「我的」</a>
+  <div class="code">https://wxmpurl.cn/qnuYxgOJxef</div>
+  <a class="btn btn-main" href="https://wxmpurl.cn/bMZ2oiZDKoj">进「订单」</a>
+  <div class="code">https://wxmpurl.cn/bMZ2oiZDKoj</div>
+  <a class="btn btn-main" href="https://wxmpurl.cn/GzENc3K0ZQo">进「钱包」</a>
+  <div class="code">https://wxmpurl.cn/GzENc3K0ZQo</div>
+</div>
+
+<div class="card">
+  <h2>② 加密跳转（weixin://，不需要后台配置）</h2>
+  <p class="sub">建议用手机浏览器打开本页再点</p>
+  <button class="btn btn-sec" onclick="go('weixin://dl/business/?t=U1zPggDeoZp','首页')">进「首页」</button>
+  <div class="code">weixin://dl/business/?t=U1zPggDeoZp</div>
+  <button class="btn btn-sec" onclick="go('weixin://dl/business/?t=jVFN6Ahi9oe','存包')">进「存包」</button>
+  <div class="code">weixin://dl/business/?t=jVFN6Ahi9oe</div>
+  <button class="btn btn-sec" onclick="go('weixin://dl/business/?t=5ZmFIbEyRWs','我的')">进「我的」</button>
+  <div class="code">weixin://dl/business/?t=5ZmFIbEyRWs</div>
+  <button class="btn btn-sec" onclick="go('weixin://dl/business/?t=oWjtvxHpqCv','订单')">进「订单」</button>
+  <div class="code">weixin://dl/business/?t=oWjtvxHpqCv</div>
+  <button class="btn btn-sec" onclick="go('weixin://dl/business/?t=4SYzUn7MeFp','钱包')">进「钱包」</button>
+  <div class="code">weixin://dl/business/?t=4SYzUn7MeFp</div>
+</div>
+
+<div class="card">
+  <h2>③ 明文跳转（需要后台配白名单）</h2>
+  <p class="sub">小程序后台 → 账号设置 → 隐私与安全 → 明文scheme拉起此小程序</p>
+  <button class="btn btn-ghost" onclick="go('weixin://dl/business/?appid=wxbb50aeccc21af2ff&path=pages/index/index&query=from%3Dh5&env_version=release','首页(明文)')">进「首页」</button>
+  <div class="code">weixin://dl/business/?appid=wxbb50aeccc21af2ff&amp;path=pages/index/index&amp;query=from%3Dh5&amp;env_version=release</div>
+  <button class="btn btn-ghost" onclick="go('weixin://dl/business/?appid=wxbb50aeccc21af2ff&path=pages/deposit/deposit&query=from%3Dh5&env_version=release','存包(明文)')">进「存包」</button>
+  <div class="code">weixin://dl/business/?appid=wxbb50aeccc21af2ff&amp;path=pages/deposit/deposit&amp;query=from%3Dh5&amp;env_version=release</div>
+</div>
+
+<div class="card">
+  <h2>跳转日志</h2>
+  <div id="log">等待操作…</div>
+  <button class="btn btn-ghost" onclick="document.getElementById('log').textContent='等待操作…'">清空日志</button>
+</div>
+
+<div class="warn">
+  <b>跳不动时排查顺序：</b><br>
+  1）URL Link 也点不动 → 换网络/换手机；<br>
+  2）加密跳转在微信里点不动 → 正常，换手机浏览器；<br>
+  3）明文跳转点不动 → 后台配「明文scheme拉起此小程序」白名单；<br>
+  4）跳过去停在某页打不开 → 那个页面路径在小程序里不存在。
+</div>
+
+<script>
+function log(s, cls) {
+  var el = document.getElementById('log');
+  if (el.textContent === '等待操作…') el.textContent = '';
+  var t = new Date().toTimeString().slice(0, 8);
+  var line = '[' + t + '] ' + s;
+  el.textContent += line + '\n';
+  if (cls) el.innerHTML = el.innerHTML.replace(line, '<span class="' + cls + '">' + line + '</span>');
+}
+function go(url, name) {
+  log('点击：' + (name || '') + ' → ' + url);
+  try { window.location.href = url; log('已发起跳转…', 'ok'); }
+  catch (e) { log('跳转报错：' + e, 'bad'); }
+  setTimeout(function () {
+    if (document.visibilityState === 'visible') log('⚠ 页面还在这儿 —— 这次跳转没成功', 'bad');
+    else log('✅ 已经跳走了', 'ok');
+  }, 2500);
+}
+</script>
+</body>
+</html>

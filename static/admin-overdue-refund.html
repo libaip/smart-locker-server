@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>超时费补退 - 后台</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+     background:#f0f2f5;color:#333;padding:20px;font-size:14px}
+.wrap{max-width:900px;margin:0 auto}
+.header{background:#fff;border-radius:10px;padding:18px 20px;margin-bottom:14px;
+        display:flex;align-items:center;justify-content:space-between;
+        box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.header h1{font-size:18px;font-weight:600;color:#1a1a1a}
+.header .hint{font-size:12px;color:#999;margin-top:4px}
+.header a{color:#1677ff;text-decoration:none;font-size:13px}
+.card{background:#fff;border-radius:10px;padding:20px;margin-bottom:14px;
+      box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+input[type=text]{flex:1;min-width:200px;padding:10px 14px;border:1px solid #d9d9d9;
+                 border-radius:6px;font-size:14px;outline:none}
+input[type=text]:focus{border-color:#1677ff}
+button{padding:10px 20px;border:none;border-radius:6px;font-size:14px;
+       cursor:pointer;transition:.15s;font-weight:500}
+.btn-primary{background:#1677ff;color:#fff}
+.btn-primary:hover{background:#0958d9}
+.btn-primary:disabled{background:#bfbfbf;cursor:not-allowed}
+.btn-green{background:#52c41a;color:#fff}
+.btn-green:hover{background:#389e0d}
+.btn-orange{background:#fa8c16;color:#fff}
+.btn-orange:hover{background:#d46b08}
+.btn-gray{background:#f5f5f5;color:#999;cursor:not-allowed}
+.tip{font-size:12px;color:#999;margin-top:8px;line-height:1.6}
+.order{border:1px solid #e8e8e8;border-radius:8px;padding:16px;margin-bottom:12px}
+.order.gap{border-color:#ffccc7;background:#fff7f6}
+.order.done{border-color:#d9d9d9;background:#fafafa;opacity:.75}
+.order-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.order-no{font-family:monospace;font-size:13px;color:#666}
+.badge{font-size:12px;padding:2px 8px;border-radius:10px}
+.badge-red{background:#ffccc7;color:#cf1322}
+.badge-green{background:#d9f7be;color:#389e0d}
+.badge-gray{background:#f0f0f0;color:#999}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px}
+.grid .item{font-size:13px}
+.grid .item .k{color:#999;font-size:12px;margin-bottom:3px}
+.grid .item .v{color:#333;font-weight:600;font-size:15px}
+.grid .item .v.hi{color:#cf1322}
+.actions{display:flex;gap:10px;flex-wrap:wrap;padding-top:10px;border-top:1px dashed #e8e8e8}
+.msg{padding:12px 16px;border-radius:6px;margin-bottom:14px;font-size:13px;display:none}
+.msg.show{display:block}
+.msg.ok{background:#f6ffed;border:1px solid #b7eb8f;color:#389e0d}
+.msg.err{background:#fff2f0;border:1px solid #ffccc7;color:#cf1322}
+.msg.info{background:#e6f4ff;border:1px solid #91caff;color:#0958d9}
+.empty{text-align:center;padding:40px 20px;color:#999;font-size:14px}
+.loading{text-align:center;padding:30px;color:#999}
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid #e8e8e8;
+         border-top-color:#1677ff;border-radius:50%;animation:spin .8s linear infinite;
+         vertical-align:middle;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.warn-box{background:#fffbe6;border:1px solid #ffe58f;border-radius:6px;
+          padding:12px 14px;font-size:12px;color:#874d00;line-height:1.7;margin-bottom:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="header">
+    <div>
+      <h1>超时费补退</h1>
+      <div class="hint">用户打电话来说被扣 1 元 → 输入手机号查询 → 一键补退</div>
+    </div>
+    <a href="/admin-v2">← 返回后台</a>
+  </div>
+
+  <div id="msg" class="msg"></div>
+
+  <div class="card">
+    <div class="row">
+      <input type="text" id="q" placeholder="输入手机号 或 订单号（二选一）" autocomplete="off">
+      <button class="btn-primary" id="btnQuery" onclick="doQuery()">查询</button>
+    </div>
+    <div class="tip">
+      · 支持手机号（11 位）或订单号（20 位）<br>
+      · 查询会调微信接口核对【实际退了多少】，不会用本地错误数据
+    </div>
+  </div>
+
+  <div class="warn-box">
+    <b>防多退三重保障：</b><br>
+    ① 差额 = 微信实收 − 微信实退（调 refund_query 权威核对，不信本地 refund_amount）<br>
+    ② 补退过的订单会打标记，再点会被拒绝<br>
+    ③ 差额 ≤ 0 直接拒绝
+  </div>
+
+  <div id="results"></div>
+
+</div>
+
+<script>
+var TOKEN = localStorage.getItem('admin_token') || '';
+
+function showMsg(text, type) {
+  var el = document.getElementById('msg');
+  el.className = 'msg show ' + (type || 'info');
+  el.innerHTML = text;
+  if (type === 'ok') setTimeout(function(){ el.className = 'msg'; }, 6000);
+}
+
+function api(path, opts) {
+  if (!TOKEN) {
+    showMsg('未登录，请先到后台登录：<a href="/admin-v2">点我去登录</a>', 'err');
+    return Promise.reject('no token');
+  }
+  var o = opts || {};
+  o.headers = Object.assign({
+    'Authorization': 'Bearer ' + TOKEN,
+    'Content-Type': 'application/json'
+  }, o.headers || {});
+  return fetch(path, o).then(function(r){
+    return r.json().then(function(j){ return { status: r.status, body: j }; });
+  }).then(function(x){
+    if (x.status === 401) {
+      showMsg('登录已过期，请重新登录：<a href="/admin-v2">点我</a>', 'err');
+      throw '401';
+    }
+    return x.body;
+  });
+}
+
+function doQuery() {
+  var q = (document.getElementById('q').value || '').trim();
+  if (!q) { showMsg('请输入手机号或订单号', 'err'); return; }
+  var isPhone = /^1[3-9]\d{9}$/.test(q);
+  var params = isPhone ? ('phone=' + encodeURIComponent(q)) : ('order_no=' + encodeURIComponent(q));
+
+  var box = document.getElementById('results');
+  box.innerHTML = '<div class="card"><div class="loading"><span class="spinner"></span>查询中（会调微信核对，约 2-3 秒）...</div></div>';
+  document.getElementById('btnQuery').disabled = true;
+
+  api('/api/admin/overdue/query?' + params, { method: 'GET' })
+    .then(function(res){
+      document.getElementById('btnQuery').disabled = false;
+      if (res.code !== 200) {
+        box.innerHTML = '';
+        showMsg('查询失败：' + (res.message || '未知错误'), 'err');
+        return;
+      }
+      var rows = (res.data && res.data.rows) || [];
+      render(rows, q);
+    })
+    .catch(function(e){
+      document.getElementById('btnQuery').disabled = false;
+      if (e !== '401') { box.innerHTML = ''; showMsg('请求失败：' + e, 'err'); }
+    });
+}
+
+function render(rows, q) {
+  var box = document.getElementById('results');
+  if (!rows.length) {
+    box.innerHTML = '<div class="card"><div class="empty">没有找到 ' + esc(q) + ' 的订单</div></div>';
+    return;
+  }
+  var html = '';
+  var refundable = 0;
+  rows.forEach(function(r){
+    var cls = 'order';
+    if (r.already_done) cls += ' done';
+    else if (r.gap > 0.01) cls += ' gap';
+
+    var badge = '';
+    if (r.already_done) badge = '<span class="badge badge-gray">已补退过</span>';
+    else if (r.gap > 0.01) { badge = '<span class="badge badge-red">差 ¥' + r.gap.toFixed(2) + '</span>'; refundable++; }
+    else badge = '<span class="badge badge-green">无差额</span>';
+
+    var actions = '';
+    if (!r.already_done && r.gap > 0.01) {
+      actions = '<div class="actions">' +
+        '<button class="btn-green" onclick="doRefund(' + r.order_id + ',\'balance\',this)">补退到余额</button>' +
+        '<button class="btn-orange" onclick="doRefund(' + r.order_id + ',\'wx\',this)">原路退回微信</button>' +
+        '</div>';
+    }
+
+    html += '<div class="' + cls + '">' +
+      '<div class="order-head">' +
+        '<div class="order-no">' + esc(r.order_no) + '</div>' + badge +
+      '</div>' +
+      '<div class="grid">' +
+        '<div class="item"><div class="k">手机号</div><div class="v">' + esc(r.phone || '-') + '</div></div>' +
+        '<div class="item"><div class="k">网点</div><div class="v">' + esc(r.location || '-') + '</div></div>' +
+        '<div class="item"><div class="k">使用时长</div><div class="v">' + (r.minutes != null ? r.minutes + ' 分钟' : '-') + '</div></div>' +
+        '<div class="item"><div class="k">押金</div><div class="v">¥' + r.deposit.toFixed(2) + '</div></div>' +
+        '<div class="item"><div class="k">微信实收</div><div class="v">¥' + r.paid.toFixed(2) + '</div></div>' +
+        '<div class="item"><div class="k">已退</div><div class="v">¥' + r.refunded.toFixed(2) + '</div></div>' +
+        '<div class="item"><div class="k">差额</div><div class="v' + (r.gap > 0.01 ? ' hi' : '') + '">¥' + r.gap.toFixed(2) + '</div></div>' +
+      '</div>' + actions + '</div>';
+  });
+
+  if (refundable > 0) {
+    html = '<div class="card"><div class="tip" style="color:#cf1322;font-size:13px;margin-bottom:12px">' +
+           '★ 有 ' + refundable + ' 笔可补退' +
+           '（补到余额：用户在小程序「我的钱包」看到；原路退：直接进微信零钱）</div></div>' + html;
+  }
+  box.innerHTML = html;
+}
+
+function doRefund(oid, mode, btn) {
+  var label = mode === 'balance' ? '补退到余额' : '原路退回微信';
+  if (!confirm('确认' + label + '？\n\n订单 ID：' + oid + '\n\n（点确定后立即执行，不可撤销）')) return;
+
+  var orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '处理中...';
+
+  api('/api/admin/overdue/refund', {
+    method: 'POST',
+    body: JSON.stringify({ order_id: oid, mode: mode, apply: true })
+  }).then(function(res){
+    btn.disabled = false;
+    btn.textContent = orig;
+    if (res.code === 200) {
+      showMsg('✓ ' + (res.message || '补退成功'), 'ok');
+      setTimeout(doQuery, 800);
+    } else {
+      showMsg('✗ ' + (res.message || '失败'), 'err');
+    }
+  }).catch(function(e){
+    btn.disabled = false;
+    btn.textContent = orig;
+    if (e !== '401') showMsg('请求失败：' + e, 'err');
+  });
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// 回车即查
+document.getElementById('q').addEventListener('keydown', function(e){
+  if (e.key === 'Enter') doQuery();
+});
+</script>
+</body>
+</html>

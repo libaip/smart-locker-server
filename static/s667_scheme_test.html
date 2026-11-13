@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>跳转方式测试（S667）</title>
+<style>
+body{font-family:-apple-system,sans-serif;padding:16px;line-height:1.7}
+a.b{display:block;padding:16px;margin:12px 0;background:#07c160;color:#fff;text-decoration:none;border-radius:10px;font-size:17px;text-align:center}
+a.g{background:#576b95}
+.t{font-size:13px;color:#666;word-break:break-all;margin:4px 0 14px}
+h3{margin:22px 0 4px;font-size:15px}
+</style></head><body>
+<h2>跳转方式测试</h2>
+<p style="font-size:13px;color:#888">请在微信里点，每个按钮点一次，记下哪个能进小程序、哪个报错。</p>
+
+<h3>① 明文 scheme（伧置 / 你刚配白名单的那个）</h3>
+<a class="b" href="weixin://dl/business/?appid=wxcabd4cbdb3096c4b&path=pages/deposit/deposit&env_version=release">①-a 明文scheme：pages/deposit/deposit</a>
+<div class="t">weixin://dl/business/?appid=wxcabd4cbdb3096c4b&amp;path=pages/deposit/deposit&amp;env_version=release</div>
+<a class="b" href="weixin://dl/business/?appid=wxcabd4cbdb3096c4b&path=pages/index/index&env_version=release">①-b 明文scheme：pages/index/index</a>
+<div class="t">weixin://dl/business/?appid=wxcabd4cbdb3096c4b&amp;path=pages/index/index&amp;env_version=release</div>
+
+<h3>② token scheme（伧置，接口生成）</h3>
+<a class="b" href="weixin://dl/business/?t=b4Mr6wOR8eb">② token scheme：伧置</a>
+<div class="t">weixin://dl/business/?t=b4Mr6wOR8eb</div>
+
+<h3>③ URL Link（伧置，接口生成）</h3>
+<a class="b g" href="https://wxmpurl.cn/5UIdBzpqhLt">③ URL Link：伧置</a>
+<div class="t">https://wxmpurl.cn/5UIdBzpqhLt</div>
+
+<h3>④ 对照：小云伧存（备案未完成）</h3>
+<a class="b g" href="https://wxmpurl.cn/EysQ63n4Zlc">④ URL Link：小云伧存</a>
+<div class="t">https://wxmpurl.cn/EysQ63n4Zlc</div>
+
+<p style="font-size:12px;color:#999;margin-top:26px">测试页，用完即删。</p>
+</body></html>

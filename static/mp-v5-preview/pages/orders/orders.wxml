@@ -1,0 +1,107 @@
+<view class="page">
+  <!-- 自定义导航栏 -->
+  <view class="nav" style="padding-top:{{statusBarHeight}}px;">
+    <view class="nav-inner">
+      <view class="nav-back" bindtap="goBack">
+        <image class="nav-back-icon" src="/images/mine_back_arrow_black.png" mode="aspectFit"/>
+      </view>
+      <text class="nav-title">我的订单</text>
+    </view>
+  </view>
+
+  <!-- Tabs -->
+  <view class="tabs">
+    <view class="tab {{currentTab==='ongoing'?'active':''}}" bindtap="switchTab" data-tab="ongoing">
+      <text>进行中</text>
+    </view>
+    <view class="tab {{currentTab==='done'?'active':''}}" bindtap="switchTab" data-tab="done">
+      <text>已完成</text>
+    </view>
+  </view>
+
+  <!-- 进行中 -->
+  <view class="tab-content" wx:if="{{currentTab==='ongoing'}}">
+    <view class="loading" wx:if="{{loading}}">
+      <text class="loading-text">加载中...</text>
+    </view>
+    <view class="empty" wx:elif="{{ongoingOrders.length===0}}">
+      <text class="empty-text">暂无进行中的订单</text>
+    </view>
+    <block wx:else>
+      <view class="order-card ongoing" wx:for="{{ongoingOrders}}" wx:key="id">
+        <view class="order-header" bindtap="showOrderModal" data-phone="{{item.user_phone}}" data-code="{{item.access_code}}">
+          <text class="order-cabinet">{{item.cabinet_name || '柜'}}{{item.compartment_number ? ' · '+item.compartment_number+'格口' : ''}}</text>
+          <text class="order-status green-bg">使用中</text>
+        </view>
+        <view class="order-row" bindtap="showOrderModal" data-phone="{{item.user_phone}}" data-code="{{item.access_code}}">
+          <text class="label">订单编号:</text>
+          <text>{{item.order_no}}</text>
+        </view>
+        <view class="order-row">
+          <text class="label">开始时间:</text>
+          <text>{{item.store_time_fmt}}</text>
+        </view>
+        <view class="order-row" wx:if="{{item.location_name}}">
+          <text class="label">寄存地点:</text>
+          <text>{{item.location_name}}</text>
+        </view>
+        <view class="elapsed" wx:if="{{item.elapsed}}">
+          <text>已用时 {{item.elapsed}}</text>
+        </view>
+        <view class="order-actions">
+          <view class="act-btn open-door" catchtap="midOpenDoor" data-id="{{item.id}}" data-cabinet="{{item.cabinet_code}}" data-code="{{item.access_code}}">中途开门</view>
+          <view class="act-btn end-order" catchtap="endOrder" data-id="{{item.id}}">结束订单</view>
+        </view>
+      </view>
+    </block>
+  </view>
+
+  <!-- 已完成 -->
+  <view class="tab-content" wx:if="{{currentTab==='done'}}">
+    <view class="loading" wx:if="{{loading}}">
+      <text class="loading-text">加载中...</text>
+    </view>
+    <view class="empty" wx:elif="{{doneOrders.length===0}}">
+      <text class="empty-text">暂无已完成的订单</text>
+    </view>
+    <block wx:else>
+      <view class="order-card" wx:for="{{doneOrders}}" wx:key="id">
+        <view class="order-header">
+          <text class="order-cabinet">{{item.cabinet_name || '柜'}}</text>
+          <text class="order-status">使用完成</text>
+        </view>
+        <view class="order-row">
+          <text class="label">订单编号:</text>
+          <text>{{item.order_no}}</text>
+        </view>
+        <view class="order-row">
+          <text class="label">下单时间:</text>
+          <text>{{item.store_time_fmt}}</text>
+        </view>
+        <view class="order-row" wx:if="{{item.location_name}}">
+          <text class="label">下单地点:</text>
+          <text>{{item.location_name}}</text>
+        </view>
+      </view>
+    </block>
+  </view>
+
+  <!-- 存包信息弹窗 -->
+  <view class="modal-overlay" wx:if="{{showModal}}" bindtap="closeModal">
+    <view class="modal-box" catchtap="">
+      <view class="modal-close" bindtap="closeModal">×</view>
+      <text class="modal-title">存包信息</text>
+      <view class="modal-info">
+        <view class="modal-row">
+          <text class="modal-label">存包手机号</text>
+          <text class="modal-value phone">{{modalPhone}}</text>
+        </view>
+        <view class="modal-row">
+          <text class="modal-label">取件码</text>
+          <text class="modal-value code">{{modalCode}}</text>
+        </view>
+      </view>
+      <view class="modal-btn" bindtap="closeModal">知道了</view>
+    </view>
+  </view>
+</view>

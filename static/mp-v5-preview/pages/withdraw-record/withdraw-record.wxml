@@ -1,0 +1,65 @@
+<view class="page">
+  <!-- 顶部导航 -->
+  <view class="nav-bar">
+    <view class="nav-back" bindtap="goBack">
+      <text class="nav-arrow">‹</text>
+    </view>
+    <text class="nav-title">提现记录</text>
+    <view class="nav-placeholder"></view>
+  </view>
+
+  <!-- 空状态 -->
+  <view wx:if="{{list.length === 0}}" class="empty">暂无提现记录</view>
+
+  <!-- 提现记录卡片列表 -->
+  <view class="card-list">
+    <view class="wr-card" wx:for="{{list}}" wx:key="id">
+      <!-- 第一行：订单号 -->
+      <view class="wr-row">
+        <text class="wr-label">订单号：</text>
+        <text class="wr-value">{{item.order_no || item.id}}</text>
+        <view class="wr-copy" bindtap="copyOrderNo" data-no="{{item.order_no || item.id}}">
+          <text class="wr-copy-icon">⎘</text>
+        </view>
+      </view>
+      <!-- 第二行：提现金额 + 状态标签 -->
+      <view class="wr-row">
+        <text class="wr-label">提现金额：</text>
+        <text class="wr-value">{{item.amount}}元</text>
+        <view class="wr-right">
+          <text class="wr-amount-plus">+{{item.amount}}元</text>
+          <view class="wr-status-tag {{item.statusClass}}">
+            <text class="wr-status-text">{{item.statusText}}</text>
+          </view>
+        </view>
+      </view>
+      <!-- 第三行：手续费 + 退款状态 -->
+      <view class="wr-row">
+        <text class="wr-label">手续费：</text>
+        <text class="wr-value">0.00元</text>
+        <view class="wr-right">
+          <view wx:if="{{item.status === 2}}" class="wr-refund-success">退款成功</view>
+          <view wx:elif="{{item.status === 3}}" class="wr-refund-fail">退款失败</view>
+        </view>
+      </view>
+      <!-- 第四行：提现时间 + 到账状态 -->
+      <view class="wr-row" style="margin-bottom:0;">
+        <text class="wr-label">提现时间：</text>
+        <text class="wr-value">{{item.apply_time || item.created_at}}</text>
+        <view class="wr-right">
+          <view wx:if="{{item.status !== 3}}" class="wr-arrived-outline">已到账</view>
+        </view>
+      </view>
+      <!-- 审核中的提示 -->
+      <view wx:if="{{item.status === 0}}" class="wr-pending-tip">
+        <text class="wr-pending-text">预计1-3个工作日到账 请耐心等待… 超时请联系客服</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 提现常见问题 -->
+  <view class="wr-faq" bindtap="goFaq">
+    <view class="wr-faq-icon">?</view>
+    <text class="wr-faq-text">提现常见问题</text>
+  </view>
+</view>

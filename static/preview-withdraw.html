@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=375,initial-scale=1,maximum-scale=1">
+<title>小程序 - 余额提现 预览</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{width:375px;min-height:812px;background:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+.nav{display:flex;align-items:center;padding:14px 16px;background:#fff;border-bottom:1px solid #f0f0f0;position:relative;}
+.nav .arrow{font-size:22px;color:#333;margin-right:8px;}
+.nav-title{font-size:17px;font-weight:500;position:absolute;left:50%;transform:translateX(-50%);color:#333;}
+.content{padding:50px 24px;text-align:center;}
+.label{font-size:18px;color:#333;margin-bottom:20px;font-weight:500;}
+.amount{font-size:60px;font-weight:bold;color:#333;margin-bottom:12px;}
+.available{font-size:13px;color:#999;margin-bottom:50px;}
+.available .highlight{color:#F0B429;}
+.withdraw-btn{display:block;width:100%;background:linear-gradient(135deg,#FAD36D,#F0B429);color:#fff;font-size:16px;font-weight:600;padding:14px;border-radius:26px;border:none;box-shadow:0 4px 16px rgba(240,180,41,0.25);cursor:pointer;text-align:center;}
+.warning{background:#FFF8E1;border-radius:8px;padding:12px 16px;font-size:12px;color:#E6A700;margin-top:20px;text-align:left;line-height:1.5;}
+</style></head>
+<body>
+<div class="nav"><span class="arrow">‹</span><span class="nav-title">余额提现</span></div>
+<div class="content">
+  <div class="label">提现金额</div>
+  <div class="amount">¥ 15.50</div>
+  <div class="available">可提现余额 ¥ <span class="highlight">15.50</span></div>
+  <button class="withdraw-btn">立即提现</button>
+  <div class="warning">⚠ 请注意提现后到账时间提示</div>
+</div>
+</body></html>

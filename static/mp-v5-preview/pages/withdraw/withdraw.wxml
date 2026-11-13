@@ -1,0 +1,49 @@
+<view class="page">
+  <!-- 顶部导航 -->
+  <view class="nav-bar" style="padding-top:{{statusBarHeight}}px;">
+    <view class="nav-back" bindtap="goBack">
+      <text class="nav-arrow">‹</text>
+    </view>
+    <text class="nav-title">余额提现</text>
+    <view class="nav-rule" bindtap="showRule">
+      <text class="nav-rule-text">提现规则</text>
+    </view>
+  </view>
+
+  <!-- 可提现金额 -->
+  <view class="amount-section">
+    <text class="amount-label">当前可提现金额(元)</text>
+    <text class="amount-value">{{balance}}</text>
+  </view>
+
+  <!-- 输入区域 -->
+  <view class="input-section">
+    <view class="input-row">
+      <input class="amount-input" type="digit" placeholder="请输入提现金额" placeholder-class="input-placeholder" value="{{inputAmount}}" bindinput="onInput" />
+    </view>
+    <view class="all-withdraw" bindtap="setAll">
+      <text class="all-withdraw-text">全部提现</text>
+    </view>
+  </view>
+
+  <!-- 手续费 -->
+  <view class="fee-row">
+    <text class="fee-label">手续费</text>
+    <text class="fee-value">免费</text>
+  </view>
+
+  <!-- 提现按钮 -->
+  <view class="btn-area">
+    <view class="withdraw-btn {{canSubmit ? '' : 'disabled'}}" bindtap="doWithdraw">
+      <text class="withdraw-btn-text">提现</text>
+    </view>
+  </view>
+
+  <!-- 温馨提示 -->
+  <view class="tips-section">
+    <text class="tips-title">温馨提示</text>
+    <text class="tips-item">1. 单笔提现金额范围5-200元</text>
+    <text class="tips-item">2. 提现将在1-3个工作日内到账</text>
+    <text class="tips-item">3. 如有问题请联系客服</text>
+  </view>
+</view>

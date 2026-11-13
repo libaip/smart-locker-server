@@ -1,0 +1,114 @@
+<!-- pages/index/index.wxml - 首页 -->
+<view class="container">
+  <!-- 顶部品牌区域 - 淡紫色背景 -->
+  <view class="header-section">
+    <view class="brand-card">
+      <view class="brand-logo">
+        <view class="locker-icon">
+          <view class="locker-body"></view>
+          <view class="locker-handle"></view>
+        </view>
+      </view>
+      <view class="brand-text">
+        <text class="brand-name">智能寄存柜</text>
+        <text class="brand-slogan">安全 · 便捷 · 智能</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 未登录时显示微信授权登录 -->
+  <view class="login-section" wx:if="{{!phone}}">
+    <view class="login-card">
+      <view class="login-title">微信授权登录</view>
+      <view class="wechat-login-area">
+        <view class="wechat-icon-big">
+          <text class="wechat-icon-text">W</text>
+        </view>
+        <text class="wechat-hint">点击下方按钮，授权微信登录</text>
+      </view>
+      <button class="btn-wechat-login" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber" disabled="{{loginLoading}}">
+        <text wx:if="{{!loginLoading}}">微信一键登录</text>
+        <text wx:else>登录中...</text>
+      </button>
+      <view class="agreement-row">
+        <checkbox-group bindchange="onAgreementChange">
+          <label class="agreement-label">
+            <checkbox value="agreed" checked="{{agreementChecked}}" color="#7C5CFC"/>
+            <text class="agreement-text">登录即同意</text>
+          </label>
+        </checkbox-group>
+        <text class="link-privacy" bindtap="onShowPrivacy">《隐私政策》</text>
+        <text class="agreement-text">和</text>
+        <text class="link-agreement" bindtap="onShowAgreement">《用户服务协议》</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 扫码存包主按钮 - 已登录状态 -->
+  <view class="scan-section" wx:if="{{phone}}">
+    <view class="scan-card">
+      <view class="scan-icon-wrapper">
+        <view class="scan-icon">
+          <text class="icon-qr">⊹</text>
+        </view>
+        <view class="scan-ring"></view>
+        <view class="scan-ring ring-2"></view>
+      </view>
+      <text class="scan-title">扫码存包</text>
+      <text class="scan-desc">扫描柜体上的二维码开始寄存</text>
+      <button class="btn-scan" bindtap="onScanCode">
+        <text>立即扫码</text>
+      </button>
+    </view>
+  </view>
+
+  <!-- 快速取物入口 - 已登录状态 -->
+  <view class="retrieve-section card" wx:if="{{phone}}">
+    <view class="section-header">
+      <text class="section-title">快速取物</text>
+    </view>
+    <view class="retrieve-form">
+      <view class="input-wrapper">
+        <text class="input-label">手机号</text>
+        <input class="input-field" type="number" maxlength="11" placeholder="请输入手机号" bindinput="onPhoneInput" value="{{inputPhone}}" />
+      </view>
+      <view class="input-wrapper">
+        <text class="input-label">取物码</text>
+        <input class="input-field" type="number" maxlength="4" placeholder="请输入4位取物码" bindinput="onCodeInput" value="{{code}}" />
+      </view>
+      <button class="btn-primary btn-retrieve" bindtap="onQuickRetrieve" disabled="{{!canRetrieve}}">
+        <text>验证取物</text>
+      </button>
+    </view>
+  </view>
+
+  <!-- 使用说明 -->
+  <view class="rules-section card">
+    <view class="section-header">
+      <text class="section-title">使用说明</text>
+    </view>
+    <view class="rule-list">
+      <view class="rule-item">
+        <view class="rule-num">1</view>
+        <view class="rule-content">
+          <text class="rule-title">扫码开柜</text>
+          <text class="rule-desc">扫描柜体二维码，选择空闲柜格</text>
+        </view>
+      </view>
+      <view class="rule-item">
+        <view class="rule-num">2</view>
+        <view class="rule-content">
+          <text class="rule-title">设置密码</text>
+          <text class="rule-desc">输入手机号和4位取物码，支付保证金</text>
+        </view>
+      </view>
+      <view class="rule-item">
+        <view class="rule-num">3</view>
+        <view class="rule-content">
+          <text class="rule-title">取物离场</text>
+          <text class="rule-desc">返回后输入手机号+取物码即可取物</text>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>

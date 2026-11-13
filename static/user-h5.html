@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<meta name="format-detection" content="telephone=no">
+<title>个人中心</title>
+<style>
+/* ===== 照小程序 pages/mine/mine.wxss 做（rpx×0.5=px）===== */
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;background:#fff}
+body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',Arial,sans-serif;color:#333}
+.page{min-height:100vh;display:flex;flex-direction:column;background:#fff;max-width:480px;margin:0 auto;box-shadow:0 0 10px rgba(0,0,0,.08);position:relative}
+/* 头部 */
+.header{position:relative;display:flex;align-items:center;justify-content:center;height:48px;background:#5ec9b4;padding:0 16px}
+.header.white{background:#fff;border-bottom:1px solid #f0f0f0}
+.header .back{position:absolute;left:16px;display:flex;align-items:center;justify-content:center;padding:4px;font-size:20px;color:#fff;cursor:pointer}
+.header.white .back{color:#333}
+.title{font-size:18px;color:#fff;font-weight:500}
+.title.black{color:#333}
+/* 用户卡片 */
+.user-card{background:#5ec9b4;padding:16px 20px 24px;display:flex;align-items:center}
+.avatar{width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,.25);border:3px solid rgba(255,255,255,.5);display:flex;align-items:center;justify-content:center;flex:0 0 auto;overflow:hidden;font-size:30px}
+.avatar img{width:100%;height:100%;border-radius:50%;object-fit:cover}
+.user-info{margin-left:14px;flex:1;min-width:0}
+.phone{font-size:20px;color:#fff;font-weight:500;letter-spacing:.5px;word-break:break-all}
+.user-sub{font-size:12px;color:rgba(255,255,255,.85);margin-top:4px}
+/* 内容卡片 */
+.content-card{background:#fff;border-radius:16px 16px 0 0;margin-top:-12px;padding:20px 16px 0;position:relative;z-index:2}
+.big-cards{display:flex;gap:12px}
+.big-card{flex:1;border-radius:12px;padding:20px 16px;display:flex;align-items:center;gap:12px;min-height:76px;cursor:pointer}
+.big-card.orders{background:#5ec9b4}
+.big-card.wallet{background:#f5c542}
+.card-icon{width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center;flex:0 0 auto;font-size:20px}
+.card-text{flex:1;min-width:0}
+.card-label{font-size:18px;color:#fff;font-weight:600;display:block}
+.card-sub{font-size:12px;color:rgba(255,255,255,.85);margin-top:4px;display:block}
+.order-count-red{color:#ff4757!important;font-weight:700}
+/* 列表 */
+.list-section{padding:16px 0}
+.list-item{display:flex;align-items:center;padding:14px 20px;cursor:pointer}
+.list-icon{width:36px;height:36px;border-radius:50%;background:#fdf3e0;display:flex;align-items:center;justify-content:center;flex:0 0 auto;font-size:18px}
+.list-item .label{margin-left:14px;font-size:16px;color:#333;flex:1}
+.arrow{color:#c8c9cc;font-size:18px;flex:0 0 auto}
+/* 常见问题 */
+.common-q{text-align:center;padding:20px;font-size:14px;color:#5ec9b4;display:flex;align-items:center;justify-content:center;gap:4px;cursor:pointer}
+/* 悬浮按钮 */
+.floating{position:fixed;right:16px;bottom:80px;display:flex;flex-direction:column;gap:12px;z-index:100}
+.float-btn{display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer}
+.float-icon{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:26px;animation:bounce 3s ease-in-out infinite;box-shadow:0 4px 16px rgba(0,0,0,.12)}
+.float-icon.robot{background:#5ec9b4}
+.float-icon.complaint{background:#f5c542}
+.float-label{font-size:11px;color:#666}
+@keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+/* 余额卡片 */
+.balance-card{background:linear-gradient(135deg,#5ec9b4 0%,#4ec9a8 100%);border-radius:12px;margin:16px;padding:24px 20px;position:relative;min-height:140px;overflow:hidden}
+.balance-decor{position:absolute;top:-30px;right:-30px;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,.08)}
+.balance-label{font-size:14px;color:rgba(255,255,255,.85);margin-bottom:8px;display:block}
+.balance-row{display:flex;align-items:flex-end;gap:4px}
+.currency{font-size:20px;color:#fff;font-weight:500;line-height:40px}
+.amount{font-size:48px;color:#fff;font-weight:700;line-height:52px}
+.balance-actions{display:flex;gap:10px;margin-top:16px}
+.btn-withdraw,.btn-rule{padding:8px 24px;border-radius:20px;font-size:14px;text-align:center;cursor:pointer;border:0}
+.btn-withdraw{background:#fff;color:#5ec9b4;font-weight:500}
+.btn-rule{background:rgba(255,255,255,.2);color:#fff}
+/* ===== 提现页：照小程序 pages/withdraw/withdraw.wxss（rpx×0.5=px）金额固定=全部余额，不能手输 ===== */
+.withdraw-content{padding:50px 24px;text-align:center}
+.withdraw-label{font-size:18px;color:#333;margin-bottom:20px;font-weight:500}
+.withdraw-amount{font-size:60px;font-weight:bold;color:#333;margin-bottom:12px;word-break:break-all}
+.withdraw-available{font-size:13px;color:#999;margin-bottom:50px}
+.withdraw-available .hl{color:#F0B429}
+.btn-gold{display:block;width:100%;background:linear-gradient(135deg,#FAD36D,#F0B429);color:#fff;font-size:16px;font-weight:600;padding:14px;border-radius:26px;border:none;box-shadow:0 4px 16px rgba(240,180,41,.25);cursor:pointer}
+.btn-gold:disabled{opacity:.6}
+.withdraw-warning{background:#FFF8E1;border-radius:8px;padding:12px 16px;font-size:12px;color:#E6A700;margin-top:20px;text-align:left;line-height:1.5}
+/* 通用 */
+.cell{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:#fff;border-bottom:1px solid #f5f5f5;font-size:15px}
+.cell .v{color:#969799;font-size:14px}
+.empty{text-align:center;padding:50px 0;color:#969799;font-size:14px}
+.btn-main{display:block;width:100%;padding:13px 0;background:#5ec9b4;color:#fff;border:0;border-radius:22px;font-size:16px;font-weight:600;cursor:pointer}
+.btn-main:disabled{opacity:.45}
+.wrap{padding:16px}
+.tabs{display:flex;background:#fff;border-bottom:1px solid #f0f0f0}
+.tabs div{flex:1;text-align:center;padding:12px 0;font-size:14px;color:#666;cursor:pointer}
+.tabs div.on{color:#5ec9b4;border-bottom:2px solid #5ec9b4;font-weight:600}
+/* ===== 投诉页：照小程序 pages/complaint/complaint.wxss（rpx×0.5=px） ===== */
+.hero{padding:18px 20px 0}
+.hero-title{display:block;font-size:17px;font-weight:600;color:#1a1a1a;margin-bottom:6px}
+.hero-desc{display:block;font-size:13px;color:#969799;line-height:1.6}
+.card{background:#fff;border-radius:12px;margin:12px 16px;padding:16px;box-shadow:0 1px 6px rgba(0,0,0,.05)}
+.card-title{display:block;font-size:15px;font-weight:600;color:#1a1a1a;margin-bottom:6px}
+.form-item{display:flex;align-items:center;padding:10px 0;border-bottom:1px solid #f5f5f5}
+.form-item:last-child{border-bottom:0}
+.form-item.column{display:block}
+.form-label{width:88px;flex:0 0 auto;font-size:14px;color:#333}
+.form-input,.form-select{flex:1;min-width:0;font-size:14px;border:0;outline:none;background:transparent;color:#333}
+.form-select{appearance:none;-webkit-appearance:none;width:100%;padding:2px 18px 2px 0;text-align:left}
+.select-wrap{flex:1;min-width:0;position:relative}
+.select-wrap::after{content:'▾';position:absolute;right:2px;top:50%;transform:translateY(-50%);color:#c8c9cc;font-size:14px;pointer-events:none}
+.form-textarea{width:100%;height:100px;background:#f7f8fa;border-radius:8px;padding:10px;font-size:14px;border:0;outline:none;font-family:inherit;margin-top:8px;resize:none}
+.char-count{display:block;text-align:right;font-size:12px;color:#c8c9cc;margin-top:4px}
+.btn-submit{display:block;width:calc(100% - 32px);margin:20px 16px 30px;padding:14px 0;background:#5ec9b4;color:#fff;border:0;border-radius:24px;font-size:16px;font-weight:600;cursor:pointer}
+.btn-submit:disabled{opacity:.6}
+.rules-content{padding:20px 16px}
+.rules-title{font-size:18px;font-weight:600;color:#333;margin-bottom:16px;display:block}
+.rules-text{font-size:14px;color:#666;line-height:2;display:block}
+.mask{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px}
+.modal{background:#fff;border-radius:16px;width:100%;max-width:340px;padding:28px 24px 20px;text-align:center}
+.modal h3{margin:0 0 14px;font-size:17px;color:#1a1a1a}
+.modal textarea{width:100%;height:100px;background:#f5f5f5;border-radius:10px;padding:10px;font-size:14px;border:0;outline:none;font-family:inherit}
+.modal-btns{display:flex;gap:12px;margin-top:20px}
+.modal-btns div{flex:1;padding:12px;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer}
+.modal-btns .cancel{background:#f0f0f0;color:#666}
+.modal-btns .confirm{background:#5ec9b4;color:#fff}
+.toast{position:fixed;left:50%;top:45%;transform:translate(-50%,-50%);background:rgba(0,0,0,.75);color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;z-index:10000}
+.hint{padding:40px 24px;text-align:center;color:#666;font-size:14px;line-height:1.9}
+.hint b{color:#5ec9b4}
+</style>
+</head>
+<body>
+<div id="app" class="page">
+
+  <!-- ================= 主页 ================= -->
+  <template v-if="page==='main'">
+    <div class="header"><span class="title">个人中心</span></div>
+    <div class="user-card">
+      <div class="avatar">
+        <img v-if="avatarUrl" :src="avatarUrl" alt="">
+        <span v-else>👤</span>
+      </div>
+      <div class="user-info">
+        <div class="phone">{{ phone || (openid ? '已绑定微信' : '未登录') }}</div>
+        <div class="user-sub">{{ nickname || '已绑定微信' }}</div>
+      </div>
+    </div>
+    <div class="content-card">
+      <div class="big-cards">
+        <div class="big-card orders" @click="goOrders()">
+          <div class="card-icon">📋</div>
+          <div class="card-text">
+            <span class="card-label">我的订单</span>
+            <span class="card-sub" :class="{'order-count-red':orderCount}">{{ orderCount ? ('进行中 '+orderCount+' 单') : '查看全部' }}</span>
+          </div>
+        </div>
+        <div class="big-card wallet" @click="goWallet()">
+          <div class="card-icon">💰</div>
+          <div class="card-text">
+            <span class="card-label">我的钱包</span>
+            <span class="card-sub">¥{{ wallet.balance || '0.00' }}</span>
+          </div>
+        </div>
+      </div>
+      <div class="list-section">
+        <div class="list-item" @click="goComplaint()">
+          <div class="list-icon">💬</div><span class="label">投诉反馈</span><span class="arrow">›</span>
+        </div>
+        <div class="list-item" @click="page='service'">
+          <div class="list-icon">📞</div><span class="label">联系客服</span><span class="arrow">›</span>
+        </div>
+      </div>
+      <div class="common-q" @click="page='rules'"><span>❓</span><span>常见问题</span></div>
+    </div>
+    <!-- [S418-20260921] 弹窗期间/刚关闭的 600ms 内隐藏悬浮按钮：
+         否则手机上弹窗消失的瞬间，同一次触摸会再被派发一次 click 到刚露出来的按钮上，
+         用户就会从"提现完成"跳到"联系客服"页。 -->
+    <div class="floating" v-if="!showWithdrawConfirm && !showWithdrawSuccess && !hideFloat">
+      <div class="float-btn" @click="page='service'"><div class="float-icon robot">📞</div><span class="float-label">联系客服</span></div>
+      <div class="float-btn" @click="goComplaint()"><div class="float-icon complaint">💬</div><span class="float-label">投诉商家</span></div>
+    </div>
+  </template>
+
+  <!-- ================= 钱包 ================= -->
+  <template v-if="page==='wallet'">
+    <div class="header white"><span class="back" @click="page='main'">‹</span><span class="title black">我的钱包</span></div>
+    <div class="balance-card">
+      <div class="balance-decor"></div>
+      <span class="balance-label">可用余额</span>
+      <div class="balance-row"><span class="currency">¥</span><span class="amount">{{ wallet.balance || '0.00' }}</span></div>
+      <div class="balance-actions">
+        <div class="btn-withdraw" @click="goWithdraw()">提现</div>
+        <div class="btn-rule" @click="page='rules'">提现规则</div>
+      </div>
+    </div>
+    <div class="list-section">
+      <div class="list-item" @click="goWithdrawals()"><div class="list-icon">📄</div><span class="label">提现记录</span><span class="arrow">›</span></div>
+      <div class="list-item" @click="goTransactions()"><div class="list-icon">📊</div><span class="label">交易明细</span><span class="arrow">›</span></div>
+    </div>
+    <div class="floating" v-if="!showWithdrawConfirm && !showWithdrawSuccess && !hideFloat">
+      <div class="float-btn" @click="page='service'"><div class="float-icon robot">📞</div><span class="float-label">联系客服</span></div>
+    </div>
+  </template>
+
+  <!-- ================= 提现规则 ================= -->
+  <template v-if="page==='rules'">
+    <div class="header white"><span class="back" @click="page='wallet'">‹</span><span class="title black">提现规则</span></div>
+    <div class="rules-content">
+      <span class="rules-title">提现规则说明</span>
+      <span class="rules-text">1. 可提现额度为您的账户当前余额</span>
+      <span class="rules-text">2. 每日提现次数：不限次数（支持全天多笔提现）</span>
+      <span class="rules-text">3. 提现时间：00:00-24:00，全天可操作</span>
+      <span class="rules-text">4. 提现将在 0-3 个工作日内原路退回支付账户</span>
+      <span class="rules-text">5. 如有疑问请联系客服 {{ servicePhone }}</span>
+    </div>
+  </template>
+
+  <!-- ================= 提现 ================= -->
+  <template v-if="page==='withdraw'">
+    <div class="header white"><span class="back" @click="page='wallet'">‹</span><span class="title black">余额提现</span></div>
+    <div class="withdraw-content">
+      <div class="withdraw-label">提现金额</div>
+      <div class="withdraw-amount">¥ {{ wallet.balance || '0.00' }}</div>
+      <div class="withdraw-available">可提现余额 ¥ <span class="hl">{{ wallet.balance || '0.00' }}</span></div>
+      <button class="btn-gold" :disabled="withdrawing || !(parseFloat(wallet.balance)>0)" @click="doWithdraw()">{{ withdrawBtnText }}</button>
+      <div class="withdraw-warning">⚠ 提现后0-3个工作日内到账</div>
+    </div>
+    <!-- [S417-20260921] 照小程序：提交前先「确认提现」 -->
+    <div v-if="showWithdrawConfirm" class="mask" @click="cancelWithdrawConfirm()">
+      <div class="modal" @click.stop>
+        <h3>确认提现</h3>
+        <div style="color:#333;font-size:16px;margin:10px 0 4px">确认提现 ¥{{ wallet.balance || '0.00' }} ？</div>
+        <div style="color:#999;font-size:12px">提现后 0-3 个工作日内到账</div>
+        <div class="modal-btns">
+          <div class="confirm" style="background:#F2F3F5;color:#333" @click="cancelWithdrawConfirm()">取消</div>
+          <div class="confirm" @click="confirmWithdraw()">确认</div>
+        </div>
+      </div>
+    </div>
+    <div v-if="showWithdrawSuccess" class="mask" @click="closeWithdrawSuccess()">
+      <div class="modal" @click.stop>
+        <div style="width:52px;height:52px;border-radius:50%;background:#5ec9b4;color:#fff;font-size:28px;line-height:52px;margin:0 auto 12px">✓</div>
+        <h3>提现申请已提交</h3>
+        <div style="color:#333;font-size:16px;margin:8px 0 4px">¥{{ lastWithdrawAmount }}</div>
+        <div style="color:#999;font-size:12px">预计 0-3 个工作日内到账</div>
+        <div class="modal-btns"><div class="confirm" @click="closeWithdrawSuccess()">完成</div></div>
+      </div>
+    </div>
+  </template>
+
+  <!-- ================= 提现记录 ================= -->
+  <template v-if="page==='withdrawals'">
+    <div class="header white"><span class="back" @click="page='wallet'">‹</span><span class="title black">提现记录</span></div>
+    <div v-if="!withdrawals.length" class="empty">暂无提现记录</div>
+    <div v-for="w in withdrawals" :key="w.id" class="cell">
+      <div><div>-{{ w.amount }}</div><div style="color:#969799;font-size:12px">{{ w.apply_time || w.created_at }}</div></div>
+      <span class="v">{{ statusMap[w.status] || '审核中' }}</span>
+    </div>
+  </template>
+
+  <!-- ================= 交易明细 ================= -->
+  <template v-if="page==='transactions'">
+    <div class="header white"><span class="back" @click="page='wallet'">‹</span><span class="title black">交易明细</span></div>
+    <div class="tabs">
+      <div :class="{on:transFilter==='all'}" @click="transFilter='all';loadTransactions()">全部</div>
+      <div :class="{on:transFilter==='income'}" @click="transFilter='income';loadTransactions()">收入</div>
+      <div :class="{on:transFilter==='expense'}" @click="transFilter='expense';loadTransactions()">支出</div>
+    </div>
+    <div v-if="!transactions.length" class="empty">暂无交易记录</div>
+    <div v-for="t in transactions" :key="t.id" class="cell">
+      <div><div>{{ t.remark || (t.amount>0?'收入':'支出') }}</div><div style="color:#969799;font-size:12px">{{ t.source_time }}</div></div>
+      <span class="v">{{ (t.amount>0?'+':'')+t.amount }}</span>
+    </div>
+  </template>
+
+  <!-- ================= 我的订单 ================= -->
+  <template v-if="page==='orders'">
+    <div class="header white"><span class="back" @click="page='main'">‹</span><span class="title black">我的订单</span></div>
+    <div class="tabs">
+      <div :class="{on:orderTab==='active'}" @click="orderTab='active';loadOrders()">进行中</div>
+      <div :class="{on:orderTab==='done'}" @click="orderTab='done';loadOrders()">已完成</div>
+    </div>
+    <div v-if="!orders.length" class="empty">暂无订单</div>
+    <div v-for="o in orders" :key="o.id" style="margin:10px;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 6px rgba(0,0,0,.05)">
+      <div style="padding:12px 14px 8px;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between">
+        <span :style="{color:o.status===3?'#999':'#ff6a3d',fontSize:'13px'}">{{ orderStatusText(o) }}</span>
+        <span style="font-size:12px;color:#999">{{ o.order_no }}</span>
+      </div>
+      <div class="cell"><span>存包时间</span><span class="v">{{ o.store_time }}</span></div>
+      <div class="cell"><span>金额</span><span class="v">¥{{ o.deposit_amount }}</span></div>
+      <div v-if="o.cabinet_name" class="cell"><span>柜体位置</span><span class="v">{{ o.cabinet_name }}</span></div>
+      <div v-if="o.status===2" style="padding:10px 14px;display:flex;justify-content:flex-end">
+        <button class="btn-withdraw" style="background:#5ec9b4;color:#fff;padding:8px 18px;border-radius:18px;font-size:13px" @click="orderReopen(o.id)">手动开锁</button>
+      </div>
+    </div>
+  </template>
+
+  <!-- ============ 投诉商家（照小程序 pages/complaint：联系电话 + 扣费订单号 + 描述） ============ -->
+  <template v-if="page==='complaint'">
+    <div class="header white"><span class="back" @click="page='main'">‹</span><span class="title black">投诉商家</span></div>
+    <div v-if="!complaintDone">
+      <div class="hero">
+        <span class="hero-title">非常抱歉给您带来不便</span>
+        <span class="hero-desc">我们重视每一位用户体验，请填写信息帮助我们明确问题。</span>
+      </div>
+      <div class="card">
+        <span class="card-title">投诉人信息</span>
+        <div class="form-item">
+          <span class="form-label">联系电话</span>
+          <input class="form-input" type="tel" inputmode="numeric" maxlength="11" v-model="complaint.phone" placeholder="请输入联系电话">
+        </div>
+      </div>
+      <div class="card">
+        <span class="card-title">投诉内容</span>
+        <div class="form-item">
+          <span class="form-label">扣费订单号</span>
+          <div class="select-wrap">
+            <select class="form-select" v-model="complaint.orderNo">
+              <option value="">请选择</option>
+              <option v-for="o in complaintOrders" :key="o.order_no" :value="o.order_no">{{ o.order_no }}（{{ o.cabinet_name || o.location_name || '未知网点' }}）</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-item column">
+          <span class="form-label">投诉描述</span>
+          <textarea class="form-textarea" maxlength="140" v-model="complaint.content" placeholder="请输入投诉内容"></textarea>
+          <span class="char-count">{{ (complaint.content || '').length }}/140</span>
+        </div>
+      </div>
+      <button class="btn-submit" :disabled="submittingComplaint" @click="submitComplaint()">{{ submittingComplaint ? '提交中...' : '提交' }}</button>
+    </div>
+    <div v-else class="hint" style="padding-top:56px">
+      <div style="font-size:48px">✅</div>
+      <div style="font-size:17px;font-weight:600;color:#1a1a1a;margin:12px 0 6px">投诉已提交</div>
+      我们会尽快处理您的投诉
+      <div><span @click="page='main'" style="display:inline-block;margin-top:22px;padding:12px 40px;background:#5ec9b4;color:#fff;border-radius:22px;cursor:pointer">返回</span></div>
+    </div>
+  </template>
+
+  <!-- ================= 客服 ================= -->
+  <template v-if="page==='service'">
+    <div class="header white"><span class="back" @click="page='main'">‹</span><span class="title black">联系客服</span></div>
+    <div class="wrap" style="text-align:center">
+      <div style="background:#fff;border-radius:12px;padding:30px;box-shadow:0 2px 10px rgba(0,0,0,.05)">
+        <div style="font-size:40px">📞</div>
+        <div style="font-size:22px;font-weight:600;color:#333;margin:8px 0 4px">{{ servicePhone }}</div>
+        <div style="color:#999;font-size:13px">工作日 9:00 - 18:00</div>
+      </div>
+      <a :href="'tel:'+servicePhone" style="display:inline-block;margin-top:20px;padding:13px 44px;background:#5ec9b4;color:#fff;border-radius:24px;text-decoration:none;font-size:16px;font-weight:600">拨打客服电话</a>
+    </div>
+  </template>
+
+  <!-- ================= 无身份提示 ================= -->
+  <template v-if="page==='noidentity'">
+    <div class="header"><span class="title">个人中心</span></div>
+    <div class="hint">
+      还没识别到你的账号。<br><br>
+      请从公众号菜单 <b>退款&amp;更多 → 个人中心</b> 打开本页（会先让你点一下"允许"授权），<br>
+      或者先扫描柜机上的二维码 <b>存一次包</b>。<br><br>
+      <a href="/store" style="display:inline-block;margin-top:8px;padding:12px 36px;background:#5ec9b4;color:#fff;border-radius:22px;text-decoration:none">去存包</a>
+    </div>
+  </template>
+
+  <div v-if="toast" class="toast">{{ toast }}</div>
+</div>
+
+<script src="/static/libs/vue.min.js"></script>
+<script>
+(function () {
+  function q(k) { try { var m = location.search.match(new RegExp('[?&]' + k + '=([^&]*)')); return m ? decodeURIComponent(m[1]) : ''; } catch (e) { return ''; } }
+  function ls(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+
+  // ===== 身份：全程按【openid】认人（跟小程序一个道理），不碰手机号 =====
+  //   后端 /user/balance、/user/orders、/user/wallet/transactions、/user/wallet/withdrawals、
+  //   /user/withdraw、/user/info 全都支持 openid 认人；其中交易明细/提现记录【必须】传 openid。
+  // [S393-20260921] 只认 URL 上的 openid，不再信 localStorage 里缓存的：
+  //   换了公众号之后，缓存里还是【旧公众号】的 openid，用它查订单/余额会查不到或查到别人，
+  //   表现就是"个人中心看不到进行中的订单"（2026-09-21 生产实例）。
+  //   没有 openid 时下面会自动走一次网页授权，回来后 URL 上就带上了。
+  var OPENID = q('openid') || '';
+  // 昵称：微信 OAuth 回跳时带在 URL 上的 wechat_name（昵称里生僻字会被微信变成 ？？？，那就当没有）
+  var NICK = q('wechat_name') || ls('locker_wx_name') || '';
+  if (/^[?？\s]+$/.test(NICK)) { NICK = ''; }
+  if (NICK) { try { localStorage.setItem('locker_wx_name', NICK); } catch (e) {} }
+  if (OPENID) { try { localStorage.setItem('openid', OPENID); } catch (e) {} }
+
+  new Vue({
+    el: '#app',
+    data: {
+      page: (location.search.match(/[?&]page=([a-z]+)/i) || [])[1] || 'main',
+      openid: OPENID,
+      phone: '',
+      nickname: NICK,
+      avatarUrl: '',
+      wallet: { balance: '0.00' },
+      orderCount: 0,
+      orders: [], orderTab: 'active',
+      transactions: [], transFilter: 'all',
+      withdrawals: [],
+      withdrawAmount: '', showWithdrawSuccess: false, showWithdrawConfirm: false, hideFloat: false, lastWithdrawAmount: '0.00',
+      withdrawing: false, withdrawBtnText: '立即提现',
+      complaint: { content: '', phone: '', orderNo: '' },
+      complaintOrders: [], complaintDone: false, submittingComplaint: false,
+      servicePhone: '{service_phone}',
+      toast: '',
+      statusMap: { 0: '审核中', 1: '审核通过', 2: '已到账', 3: '审核驳回', 4: '退款失败' }
+    },
+    mounted: function () {
+      // 没有 openid -> 自动做一次微信网页授权（用户点一下"允许"），之后全程只用 openid
+      if (!this.openid) { this.autoOAuth(); return; }
+      this.start();
+    },
+    methods: {
+      tip: function (m) { var t = this; this.toast = m; setTimeout(function () { t.toast = ''; }, 1800); },
+      api: function (u, o) { return fetch(u, o).then(function (r) { return r.json(); }); },
+      autoOAuth: function () {
+        // 只试一次，避免反复跳
+        var tried = '';
+        try { tried = sessionStorage.getItem('locker_oauth_tried') || ''; } catch (e) {}
+        if (tried) { this.page = 'noidentity'; return; }
+        try { sessionStorage.setItem('locker_oauth_tried', '1'); } catch (e) {}
+        location.href = '/api/wx/oauth?redirect_uri=' + encodeURIComponent(location.href);
+      },
+      start: function () { this.loadUserData(); this.loadOrderCount(); },
+      // 所有查询统一只带 openid
+      qs: function () { return this.openid ? ('?openid=' + encodeURIComponent(this.openid)) : ''; },
+      loadUserData: function () {
+        if (!this.openid) { return; }
+        var th = this;
+        this.api('/api/user/balance' + this.qs()).then(function (d) {
+          var x = d && (d.data || d);
+          if (x && typeof x.balance !== 'undefined') { th.wallet.balance = x.balance; }
+        }).catch(function () {});
+      },
+      loadOrderCount: function () {
+        if (!this.openid) { return; }
+        var th = this;
+        this.api('/api/user/orders' + this.qs()).then(function (d) {
+          var l = (d && d.data) || [];
+          th.orderCount = l.filter(function (o) { return o.status == 2; }).length;
+          // 顶部要显示手机号：openid 反查不到手机号，但订单里每条都带 user_phone
+          if (!th.phone) {
+            for (var i = 0; i < l.length; i++) {
+              if (l[i].user_phone) { th.phone = l[i].user_phone; break; }
+            }
+          }
+        }).catch(function () {});
+      },
+      goWallet: function () { this.page = 'wallet'; this.loadUserData(); },
+      goOrders: function () { this.page = 'orders'; this.loadOrders(); },
+      goTransactions: function () { this.page = 'transactions'; this.loadTransactions(); },
+      goComplaint: function () {
+        // 照小程序：进页面就带出「联系电话」和可选的「扣费订单号」
+        this.page = 'complaint';
+        this.complaintDone = false;
+        this.loadComplaintOrders();
+      },
+      loadComplaintOrders: function () {
+        if (!this.openid) { return; }
+        var th = this;
+        this.api('/api/user/orders' + this.qs()).then(function (d) {
+          var l = (d && d.data) || [];
+          // 照小程序：只列已完成(status=3)的订单；截取最近 20 条
+          th.complaintOrders = l.filter(function (o) { return o.status == 3; }).slice(0, 20);
+          // openid 查不到手机号，但订单里有 user_phone —— 用它把手机号自动匹配上
+          if (!th.complaint.phone) {
+            for (var i = 0; i < l.length; i++) {
+              if (l[i].user_phone) { th.complaint.phone = l[i].user_phone; break; }
+            }
+          }
+        }).catch(function () {});
+      },
+      goWithdraw: function () {
+        // 照小程序：提现金额固定 = 全部余额，用户不能手输
+        this.loadUserData();
+        this.withdrawAmount = this.wallet.balance || '';
+        this.withdrawBtnText = '立即提现';
+        this.page = 'withdraw';
+      },
+      goWithdrawals: function () { this.page = 'withdrawals'; this.loadWithdrawals(); },
+      loadOrders: function () {
+        if (!this.openid) { this.tip('还没识别到账号'); return; }
+        var th = this;
+        this.api('/api/user/orders' + this.qs()).then(function (d) {
+          var l = (d && d.data) || [];
+          th.orders = (th.orderTab === 'active') ? l.filter(function (o) { return o.status == 2; })
+                                                 : l.filter(function (o) { return o.status >= 3; });
+        }).catch(function () {});
+      },
+      loadTransactions: function () {
+        if (!this.openid) { return; }
+        var th = this, u = '/api/user/wallet/transactions' + this.qs();
+        if (this.transFilter !== 'all') { u += '&type=' + this.transFilter; }
+        this.api(u).then(function (d) {
+          var x = (d && d.data) || {};
+          th.transactions = x.list || (Array.isArray(x) ? x : []);
+        }).catch(function () {});
+      },
+      loadWithdrawals: function () {
+        if (!this.openid) { return; }
+        var th = this;
+        this.api('/api/user/wallet/withdrawals' + this.qs()).then(function (d) {
+          th.withdrawals = (d && d.data) || [];
+        }).catch(function () {});
+      },
+      doWithdraw: function () {
+        // 金额固定取当前余额（跟小程序一致）；后端 amount 不传也会自动全额
+        var amt = parseFloat(this.wallet.balance);
+        if (!amt || amt <= 0) { this.tip('暂无可提现余额'); return; }
+        if (this.withdrawing) { return; }
+        // [S417-20260921] 照小程序 wx.showModal('确认提现')：先弹确认，再提交
+        this.showWithdrawConfirm = true;
+      },
+      confirmWithdraw: function () {
+        var amt = parseFloat(this.wallet.balance);
+        if (!amt || amt <= 0) { this.showWithdrawConfirm = false; this.tip('暂无可提现余额'); return; }
+        if (this.withdrawing) { return; }
+        var th = this;
+        this.showWithdrawConfirm = false;
+        this.withdrawing = true; this.withdrawBtnText = '提交中...';
+        this.api('/api/user/withdraw', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ openid: this.openid, amount: amt })
+        }).then(function (d) {
+          th.withdrawing = false; th.withdrawBtnText = '立即提现';
+          if (d && (d.code === 0 || d.code === 200)) {
+            th.lastWithdrawAmount = amt.toFixed(2);
+            // [S417] 先本地清零，再拉实时余额；跟小程序「返回钱包页 onShow 重新拉」效果一致
+            th.wallet.balance = '0.00';
+            th.showWithdrawSuccess = true;
+            th.loadUserData();
+          } else { th.tip((d && d.message) || '提现失败'); }
+        }).catch(function () { th.withdrawing = false; th.withdrawBtnText = '立即提现'; th.tip('提现失败'); });
+      },
+      closeWithdrawSuccess: function () {
+        // [S418-20260921] 用户口径：提现完成后回【个人中心首页】，不要停在钱包页，
+        //   更不能因为"弹窗消失瞬间的补发点击"掉进联系客服页。
+        var th = this;
+        this.showWithdrawSuccess = false;
+        this.hideFloat = true;          // 防补发点击打到悬浮按钮
+        this.page = 'main';
+        this.loadUserData();
+        setTimeout(function () { th.hideFloat = false; }, 600);
+      },
+      cancelWithdrawConfirm: function () {
+        // 取消确认弹窗：同样短暂隐藏悬浮按钮，避免补发点击跳到客服页
+        var th = this;
+        this.showWithdrawConfirm = false;
+        this.hideFloat = true;
+        setTimeout(function () { th.hideFloat = false; }, 600);
+      },
+      orderReopen: function (i) {
+        var th = this;
+        this.api('/api/order/' + i + '/reopen', { method: 'POST' }).then(function (d) {
+          th.tip((d && d.message) || '开锁指令已发送');
+        }).catch(function () {});
+      },
+      submitComplaint: function () {
+        var content = (this.complaint.content || '').trim();
+        var phone = (this.complaint.phone || '').replace(/\s|-/g, '');
+        if (!content) { this.tip('请填写投诉描述'); return; }
+        if (!phone) { this.tip('请填写联系电话'); return; }
+        if (this.submittingComplaint) { return; }
+        var th = this;
+        this.submittingComplaint = true;
+        // 照小程序 api.submitComplaint：type/content/order_no/user_phone/openid
+        // 后端 create_complaint 要求 user_phone 非空；_auto_process_self_complaint 只按 order_no 退款
+        this.api('/api/complaints', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'self',
+            content: content,
+            order_no: this.complaint.orderNo || '',
+            user_phone: phone,
+            phone: phone,
+            openid: this.openid
+          })
+        }).then(function (d) {
+          th.submittingComplaint = false;
+          if (d && (d.code === 0 || d.code === 200)) {
+            th.complaintDone = true;
+            th.complaint = { content: '', phone: phone, orderNo: '' };
+          } else { th.tip((d && d.message) || '提交失败'); }
+        }).catch(function () { th.submittingComplaint = false; th.tip('提交失败'); });
+      },
+      orderStatusText: function (o) { return o.status == 2 ? '存包中' : '已完成'; }
+    }
+  });
+})();
+</script>
+
+
+<!-- 备案号（工信部要求：网站首页底部展示） -->
+<div style="text-align:center;padding:18px 0 24px;font-size:12px;line-height:1.6;color:#666;background:#fff;">
+  <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener" style="color:#666;text-decoration:none;">渝ICP备2025067912号</a>
+</div>
+</body>
+</html>

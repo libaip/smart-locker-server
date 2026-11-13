@@ -1,0 +1,327 @@
+/* pages/retrieve/retrieve.wxss - 取物页面样式 */
+
+.container {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #F0EBFF 0%, #F5F5F5 30%);
+  padding-bottom: 40rpx;
+}
+
+/* 验证步骤 */
+.verify-section {
+  padding: 40rpx 30rpx;
+}
+
+.verify-header {
+  text-align: center;
+  margin-bottom: 50rpx;
+}
+
+.verify-icon {
+  width: 120rpx;
+  height: 120rpx;
+  background: linear-gradient(135deg, #6C5CE7 0%, #A29BFE 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 24rpx;
+}
+
+.verify-icon text {
+  font-size: 60rpx;
+}
+
+.verify-title {
+  display: block;
+  font-size: 40rpx;
+  font-weight: 700;
+  color: #333333;
+  margin-bottom: 12rpx;
+}
+
+.verify-desc {
+  display: block;
+  font-size: 28rpx;
+  color: #666666;
+}
+
+.verify-form {
+  margin-top: 30rpx;
+}
+
+/* 操作步骤 */
+.action-section {
+  padding: 40rpx 30rpx;
+}
+
+.success-header {
+  text-align: center;
+  margin-bottom: 40rpx;
+}
+
+.success-icon {
+  width: 120rpx;
+  height: 120rpx;
+  background: linear-gradient(135deg, #00B894 0%, #55EFC4 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 24rpx;
+}
+
+.success-icon text {
+  font-size: 60rpx;
+  color: #FFFFFF;
+}
+
+.success-title {
+  display: block;
+  font-size: 40rpx;
+  font-weight: 700;
+  color: #333333;
+}
+
+.order-detail {
+  margin-bottom: 40rpx;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid #F0F0F0;
+}
+
+.detail-row:last-child {
+  border-bottom: none;
+}
+
+.detail-label {
+  font-size: 28rpx;
+  color: #666666;
+}
+
+.detail-value {
+  font-size: 28rpx;
+  color: #333333;
+  font-weight: 500;
+}
+
+.action-buttons {
+  margin-top: 20rpx;
+}
+
+.action-choice {
+  display: flex;
+  margin-top: 30rpx;
+}
+
+.choice-item {
+  flex: 1;
+  background-color: #FFFFFF;
+  border-radius: 16rpx;
+  padding: 30rpx;
+  display: flex;
+  align-items: center;
+  margin: 0 10rpx;
+  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.05);
+}
+
+.choice-item:first-child {
+  margin-left: 0;
+}
+
+.choice-item:last-child {
+  margin-right: 0;
+}
+
+.choice-icon {
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32rpx;
+  margin-right: 16rpx;
+}
+
+.choice-icon.continue {
+  background: linear-gradient(135deg, #6C5CE7 0%, #A29BFE 100%);
+  color: #FFFFFF;
+}
+
+.choice-icon.end {
+  background: linear-gradient(135deg, #00B894 0%, #55EFC4 100%);
+  color: #FFFFFF;
+}
+
+.choice-text {
+  flex: 1;
+}
+
+.choice-title {
+  display: block;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #333333;
+  margin-bottom: 4rpx;
+}
+
+.choice-desc {
+  display: block;
+  font-size: 22rpx;
+  color: #999999;
+}
+
+/* 投诉按钮 */
+.action-bottom {
+  margin-top: 40rpx;
+  display: flex;
+  justify-content: center;
+}
+
+.complaint-btn {
+  display: flex;
+  align-items: center;
+  padding: 16rpx 40rpx;
+  background-color: #FFFFFF;
+  border-radius: 32rpx;
+  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.05);
+}
+
+.complaint-btn:active {
+  background-color: #F8F8F8;
+}
+
+.complaint-icon {
+  font-size: 28rpx;
+  margin-right: 8rpx;
+}
+
+.complaint-text {
+  font-size: 26rpx;
+  color: #666666;
+}
+
+/* 加载状态 */
+.loading-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding-top: 200rpx;
+}
+
+.loading-icon {
+  position: relative;
+  width: 160rpx;
+  height: 160rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loading-icon-inner {
+  width: 100rpx;
+  height: 100rpx;
+  background: linear-gradient(135deg, #6C5CE7 0%, #A29BFE 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+.loading-icon-inner text {
+  font-size: 50rpx;
+}
+
+.loading-ring {
+  position: absolute;
+  width: 140rpx;
+  height: 140rpx;
+  border: 6rpx solid rgba(108, 92, 231, 0.2);
+  border-radius: 50%;
+  animation: rotate 1.5s linear infinite;
+}
+
+.ring-2 {
+  animation-delay: 0.5s;
+}
+
+@keyframes rotate {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.loading-text {
+  margin-top: 40rpx;
+  font-size: 32rpx;
+  color: #666666;
+}
+
+/* 结果页面 */
+.result-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 100rpx 30rpx;
+}
+
+.result-icon {
+  width: 140rpx;
+  height: 140rpx;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 40rpx;
+}
+
+.result-icon.success {
+  background: linear-gradient(135deg, #00B894 0%, #55EFC4 100%);
+}
+
+.result-icon text {
+  font-size: 80rpx;
+  color: #FFFFFF;
+}
+
+.result-title {
+  display: block;
+  font-size: 40rpx;
+  font-weight: 700;
+  color: #333333;
+  margin-bottom: 16rpx;
+}
+
+.result-desc {
+  display: block;
+  font-size: 28rpx;
+  color: #666666;
+}
+
+.refund-info {
+  width: 100%;
+  margin-top: 40rpx;
+}
+
+.refund-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.refund-label {
+  font-size: 30rpx;
+  color: #666666;
+}
+
+.refund-value {
+  font-size: 40rpx;
+  font-weight: 700;
+  color: #00B894;
+}

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>系统已升级 · 请扫描屏幕二维码</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+    background: #F7F8FA; color: #1A1A1A; min-height: 100vh;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .wrap { width: 100%; max-width: 520px; }
+  .card { background:#fff; border-radius:18px; overflow:hidden; box-shadow:0 6px 28px rgba(0,0,0,.08); }
+  .head { background:#FF3D00; color:#fff; text-align:center; padding:26px 20px 22px; }
+  .head .icon { font-size:44px; line-height:1; margin-bottom:10px; }
+  .head h1 { font-size:26px; font-weight:800; letter-spacing:1px; }
+  .body { padding:28px 24px 30px; text-align:center; }
+  .main { font-size:23px; font-weight:800; line-height:1.5; color:#1A1A1A; }
+  .main em { font-style:normal; color:#FF3D00; }
+  .sub { margin-top:14px; font-size:15px; color:#666; line-height:1.7; }
+  .steps { margin-top:24px; text-align:left; background:#FAFAFA; border-radius:12px; padding:18px 18px 8px; }
+  .step { display:flex; align-items:flex-start; margin-bottom:14px; font-size:15px; color:#444; line-height:1.5; }
+  .num { flex:0 0 22px; height:22px; border-radius:50%; background:#FF3D00; color:#fff; font-size:13px;
+         font-weight:700; display:flex; align-items:center; justify-content:center; margin-right:10px; margin-top:1px; }
+  .foot { margin-top:22px; font-size:13px; color:#999; line-height:1.7; }
+  .tag { display:inline-block; margin-top:16px; padding:6px 14px; border-radius:999px; background:#FFF1EC;
+         color:#FF3D00; font-size:13px; font-weight:600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="head">
+      <div class="icon">⚠️</div>
+      <h1>系统已升级</h1>
+    </div>
+    <div class="body">
+      <div class="main">请扫描柜机<em>屏幕上的二维码</em></div>
+      <div class="sub">原有的贴纸二维码已停用<br>请看向柜机屏幕，用微信扫码使用</div>
+
+      <div class="steps">
+        <div class="step"><span class="num">1</span><span>看向柜机的<b>屏幕</b></span></div>
+        <div class="step"><span class="num">2</span><span>用微信「扫一扫」屏幕上的二维码</span></div>
+        <div class="step"><span class="num">3</span><span>按页面提示完成存包 / 取包</span></div>
+      </div>
+
+      <div class="tag">屏幕二维码 ⇢ 新系统入口</div>
+      <div class="foot">给您带来不便，敬请谅解</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

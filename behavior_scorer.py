@@ -303,6 +303,10 @@ def extract_features(events, gap_seconds=1800, late_from=None):
         'avg_dur': sum(durations) / max(len(durations), 1),   # 平均停留(秒)
         'max_dur': max(durations) if durations else 0,
         'pages': len(pages),                      # 访问页面种类
+        # [S1827-20261116] 组合特征：反复打开 AND 反复看提现
+        #   min(sessions, wd) → 阈值设 3 等价于「sessions>=3 且 wd>=3」
+        #   数据：命中 289 单，投诉率 5.54%（整体0.89%的6.2倍），召回 9.3%
+        'combo_reopen_wd': min(len(sessions), wd),
         'bal': bal,                               # 查余额次数
         # [S1802-20261116] 从布尔改成次数：老板要求"反复看"才触发
         #   数据：看1次投诉率1.00%，看5次以上10.71%，看11次以上24.14%
@@ -334,6 +338,7 @@ TYPE_MAP = {
     'burstsmall': 'burst_small',  # [S1312] 10秒内最大请求数（仅当总次数<=15）
     'sumtaps': 'sum_taps',  # [S1272] 累计操作数
     'sess': 'sessions',
+    'combo': 'combo_reopen_wd',   # [S1827] 组合：反复打开+反复看提现
     'req': 'req',
     'bal': 'bal',
     'pages': 'pages',

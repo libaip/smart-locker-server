@@ -144,8 +144,8 @@ def extract_features(events, gap_seconds=1800, late_from=None):
                 'max_burst_10s': 0, 'burst_small': 0,
                 'avg_dur': 0, 'max_dur': 0, 'pages': len(_late_pages2),
                 'bal': sum(1 for _, p in _late_evs if p.startswith('/api/user/balance')),
-                'wd': any(p.startswith('/api/user/wallet/withdrawals') for _, p in _late_evs),
-                'tx': any(p.startswith('/api/user/wallet/transactions') for _, p in _late_evs),
+                'wd': sum(1 for _, p in _late_evs if p.startswith('/api/user/wallet/withdrawals')),
+                'tx': sum(1 for _, p in _late_evs if p.startswith('/api/user/wallet/transactions')),
                 'ord': sum(1 for _, p in _late_evs if p.startswith('/api/user/orders')),
                 'first_ts': _late_evs[0][0] if _late_evs else None,
                 'last_ts': _late_evs[-1][0] if _late_evs else None,
@@ -304,8 +304,10 @@ def extract_features(events, gap_seconds=1800, late_from=None):
         'max_dur': max(durations) if durations else 0,
         'pages': len(pages),                      # 访问页面种类
         'bal': bal,                               # 查余额次数
-        'wd': wd > 0,                             # 是否看过提现记录
-        'tx': tx > 0,                             # 是否看过交易流水
+        # [S1802-20261116] 从布尔改成次数：老板要求"反复看"才触发
+        #   数据：看1次投诉率1.00%，看5次以上10.71%，看11次以上24.14%
+        'wd': wd,                                 # [S1802] 看提现页次数（原 wd>0）
+        'tx': tx,                                 # [S1802] 看交易流水次数（原 tx>0）
         'ord': ord_,                              # 查订单次数
         'first_ts': evs[0][0],
         'last_ts': evs[-1][0],
@@ -357,10 +359,10 @@ def score_features(feat, score_table=None):
         v = feat.get(key)
         if v is None:
             continue
-        if key in ('wd', 'tx'):
-            ok = bool(v) if th >= 1 else True
-        else:
-            ok = (v or 0) >= th
+        # [S1803-20261116] 原逻辑：wd/tx 只判 bool(v)，数据库 threshold 改成 5 也不生效
+        #   改成统一数值比较：v >= th
+        #   （th=1 时等价于原来的 bool(v) 语义，向后兼容）
+        ok = (v or 0) >= th
         if ok:
             total += pts
             hit.append({'signal': name, 'value': v, 'points': pts})

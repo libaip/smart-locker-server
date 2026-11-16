@@ -397,6 +397,7 @@ def run(dry_run=True, window_min=360, verbose=False):
                 if _n_ok == 0 and _n_rf > 0 and not _has_beh:
                     result = {
                         "score": 6.0,
+                        "threshold": 6.0,   # [S1805] 原缺此字段，导致 log_decision 报 KeyError
                         "is_high_risk": True,
                         "hits": [{"signal": "sub_refuse_nobeh", "points": 6.0,
                                   "detail": "refused_subscribe_and_no_behavior"}],

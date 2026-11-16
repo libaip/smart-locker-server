@@ -366,8 +366,12 @@ def run(dry_run=True, window_min=360, verbose=False):
         result = bs.judge(feat, table, th)
         # [S1419] 补充判定：拒绝订阅(43101) + 取包后无任何行为 => 直接高风险
         #   实测(10-17~10-19)：这条单独抓 10/26 投诉，真白退仅 2 笔 ¥43。
+        # [S1813-20261116] ★ 老板决定关闭这条
+        #   真实数据（近20天，单独触发）：57 笔退款 ¥1,084.28 / 56 人 / ★ 投诉 0 人
+        #   → 100% 白退，完全没效果。置 False 关闭，改回 True 即可恢复。
+        S1419_ENABLED = False
         try:
-            if not result.get("is_high_risk"):
+            if S1419_ENABLED and not result.get("is_high_risk"):
                 _sb = None
                 _c_sb = db.cursor()
                 try:

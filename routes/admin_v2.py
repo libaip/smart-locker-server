@@ -2389,6 +2389,32 @@ def admin_withdrawal_offline_transfer():
                       ('%s_%d' % (offline_no, _s1602_oid), _s1602_need, _s1602_oid))
             c.execute("UPDATE user_balance_details SET status='withdrawn' "
                       "WHERE order_id=%s AND status IN ('available','pending')", (_s1602_oid,))
+            # [S1933-20261119] ★ 线下转账后自动完结对应投诉
+            #   老板需求：记录了线下转账就该自动处理投诉，不用手工再点
+            #   匹配：优先订单号，兜底手机号（投诉 order_no 常为空）
+            try:
+                c.execute('SELECT order_no, user_phone FROM orders WHERE id=%s', (_s1602_oid,))
+                _s1933_o = c.fetchone()
+                if _s1933_o:
+                    _s1933_ono = (_s1933_o['order_no'] if isinstance(_s1933_o, dict) else _s1933_o[0]) or ''
+                    _s1933_ph = (_s1933_o['user_phone'] if isinstance(_s1933_o, dict) else _s1933_o[1]) or ''
+                    _s1933_tag = ' [S1933] 已线下转账¥%.2f，投诉结案' % _s1602_need
+                    _s1933_n1 = 0
+                    if _s1933_ono:
+                        c.execute("UPDATE complaints SET status='3', refund_status='refunded', reply = COALESCE(NULLIF(reply,''),'订单已退款') || %s, reply_time = CURRENT_TIMESTAMP WHERE order_no = %s AND status::text NOT IN ('3','9')",
+                                  (_s1933_tag, _s1933_ono))
+                        _s1933_n1 = c.rowcount
+                    _s1933_n2 = 0
+                    if _s1933_ph:
+                        c.execute("UPDATE complaints SET status='3', refund_status='refunded', order_no = COALESCE(NULLIF(order_no,''), %s), reply = COALESCE(NULLIF(reply,''),'订单已退款') || %s, reply_time = CURRENT_TIMESTAMP WHERE user_phone = %s AND status::text NOT IN ('3','9') AND (order_no IS NULL OR order_no='' OR order_no=%s) AND created_at >= NOW() - INTERVAL '30 days'",
+                                  (_s1933_ono, _s1933_tag, _s1933_ph, _s1933_ono))
+                        _s1933_n2 = c.rowcount
+                    if _s1933_n1 or _s1933_n2:
+                        logger.info('[S1933] 线下转账 wid=%s 订单=%s 自动完结投诉 %d+%d 条',
+                                    withdrawal_id, _s1602_oid, _s1933_n1, _s1933_n2)
+            except Exception as _e1933:
+                logger.warning('[S1933] 自动完结投诉失败(不影响转账标记) order=%s err=%s',
+                               _s1602_oid, _e1933)
         # [S1603b] 全已退 -> 自动关闭提现单，不扣台账
         _ub_phone = wd.get('user_phone') if isinstance(wd, dict) else None
         _ub_amt = float(wd.get('amount') or 0) if isinstance(wd, dict) else 0

@@ -5291,6 +5291,45 @@ def do_real_refund(order_id=None, order_no=None, amount=0, payment_channel_id=No
         from database import get_db
         conn = get_db()
         cursor = conn.cursor()
+        # [S1928-20261119] ★ 防二次退款闸门
+        #   背景：线下转账是手工转账，微信支付系统不知道 -> 微信那边仍是"已付款未退款"
+        #         任何路径（投诉调度器/行为规则/后台）调用退款都会退第二笔
+        #   做法：order_id 或 order_no 能定位到订单时，先查 refund_status
+        #         已退过(refunded/success) 或 refund_amount>=deposit_amount 直接拒绝
+        if order_id or order_no:
+            try:
+                if order_id:
+                    cursor.execute(
+                        'SELECT id, refund_status, refund_amount, deposit_amount, refund_id FROM orders WHERE id=%s',
+                        (order_id,))
+                else:
+                    cursor.execute(
+                        'SELECT id, refund_status, refund_amount, deposit_amount, refund_id FROM orders WHERE order_no=%s',
+                        (order_no,))
+                _s1928 = cursor.fetchone()
+                if _s1928:
+                    _s1928_rs = str((_s1928['refund_status'] if isinstance(_s1928, dict) else _s1928[1]) or '')
+                    _s1928_ra = (_s1928['refund_amount'] if isinstance(_s1928, dict) else _s1928[2]) or 0
+                    _s1928_da = (_s1928['deposit_amount'] if isinstance(_s1928, dict) else _s1928[3]) or 0
+                    _s1928_rid = str((_s1928['refund_id'] if isinstance(_s1928, dict) else _s1928[4]) or '')
+                    try:
+                        _s1928_ra = float(_s1928_ra); _s1928_da = float(_s1928_da)
+                    except Exception:
+                        _s1928_ra = _s1928_da = 0.0
+                    _s1928_already = (
+                        _s1928_rs in ('refunded', 'success')
+                        or (_s1928_da > 0 and _s1928_ra >= _s1928_da - 0.01)
+                    )
+                    if _s1928_already:
+                        import logging as _lg1928
+                        _lg1928.getLogger(__name__).warning(
+                            '[S1928] 拒绝重复退款 order_id=%s order_no=%s rs=%s ra=%s da=%s rid=%s',
+                            order_id, order_no, _s1928_rs, _s1928_ra, _s1928_da, _s1928_rid[:40])
+                        conn.close()
+                        return False, '', 'ALREADY_REFUNDED: 订单已退款(含线下转账 %s)，跳过防止二次退款' % (_s1928_rid or _s1928_rs)
+            except Exception as _e1928:
+                import logging as _lg1928b
+                _lg1928b.getLogger(__name__).warning('[S1928] 防重检查异常(放行): %s', _e1928)
         if order_id:
             cursor.execute('SELECT order_no, transaction_id, payment_channel_id FROM orders WHERE id=%s', (order_id,))
             row = cursor.fetchone()

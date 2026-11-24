@@ -4383,6 +4383,29 @@ def admin_channels():
             ch['total_amount'] = ch.get('paid_total_amount', 0)
             ch['refund_total_count'] = ch.get('refund_total_count', 0)
             ch['refund_total_amount'] = ch.get('refund_total_amount', 0)
+        # [S1975-20261124] 今日/本小时已成功单数（后台限量进度）
+        try:
+            c.execute("SELECT payment_channel_id AS cid, COUNT(*) AS cnt FROM orders "
+                      "WHERE store_time >= CURRENT_DATE AND COALESCE(transaction_id,'') <> '' "
+                      "AND payment_channel_id IS NOT NULL GROUP BY 1")
+            _tu1975 = {}
+            for _r in c.fetchall():
+                _cid = _r['cid'] if isinstance(_r, dict) else _r[0]
+                _cnt = _r['cnt'] if isinstance(_r, dict) else _r[1]
+                _tu1975[_cid] = int(_cnt or 0)
+            c.execute("SELECT payment_channel_id AS cid, COUNT(*) AS cnt FROM orders "
+                      "WHERE store_time >= date_trunc('hour', NOW()) AND COALESCE(transaction_id,'') <> '' "
+                      "AND payment_channel_id IS NOT NULL GROUP BY 1")
+            _hu1975 = {}
+            for _r in c.fetchall():
+                _cid = _r['cid'] if isinstance(_r, dict) else _r[0]
+                _cnt = _r['cnt'] if isinstance(_r, dict) else _r[1]
+                _hu1975[_cid] = int(_cnt or 0)
+            for ch in channels:
+                ch['today_used'] = _tu1975.get(ch['id'], 0)
+                ch['hour_used'] = _hu1975.get(ch['id'], 0)
+        except Exception as _e1975:
+            logger.warning('[S1975] 用量统计失败: %s', _e1975)
         conn.close()
         return json_response(data=channels)
     except Exception as e:
@@ -4593,7 +4616,7 @@ def admin_channel_save():
         conn = get_db()
         c = conn.cursor()
         if data.get('id'):
-            fields = ['name','channel_type','app_id','mch_id','api_key','app_secret','cert_name','cert_serial_no','is_active','rotation_index','extra_config']
+            fields = ['name','channel_type','app_id','mch_id','api_key','app_secret','cert_name','cert_serial_no','is_active','rotation_index','extra_config','weight','hourly_limit','daily_limit']
             sets, params = [], []
             for f in fields:
                 if f in data:
@@ -4625,9 +4648,10 @@ def admin_channel_save():
             #   + 不走独立出口代理 -> 微信会把它和老主体记成关联，隔离白做。
             #   优先级：后台传入的 extra_config > 系统设置模板 > 兜底默认。
             _s1202_extra = data.get('extra_config') or _channel_isolation_template()
-            c.execute('''INSERT INTO payment_channels (name,channel_type,app_id,mch_id,api_key,app_secret,cert_name,cert_serial_no,is_active,rotation_index,extra_config) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+            c.execute('''INSERT INTO payment_channels (name,channel_type,app_id,mch_id,api_key,app_secret,cert_name,cert_serial_no,is_active,rotation_index,extra_config,weight,hourly_limit,daily_limit) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
                       (data.get('name'), data.get('channel_type'), data.get('app_id') or _wx_mp_id(),
-                       data.get('mch_id'), data.get('api_key'), data.get('app_secret') or _wx_oa_secret(), data.get('cert_name'), cert_serial, data.get('status',1), data.get('rotation_index', 0), _s1202_extra))
+                       data.get('mch_id'), data.get('api_key'), data.get('app_secret') or _wx_oa_secret(), data.get('cert_name'), cert_serial, data.get('status',1), data.get('rotation_index', 0), _s1202_extra,
+                       int(data.get('weight') or 1), float(data.get('hourly_limit') or 0), float(data.get('daily_limit') or 0)))
             try:
                 logger.info('[S1202][channel_save] 新商户号 mch=%s 隔离配置=%s',
                             data.get('mch_id'), str(_s1202_extra)[:160])

@@ -1018,24 +1018,86 @@ def _get_payment_channel(channel_id=None, exclude_channel_id=None, channel_type=
     except Exception:
         pass
 
-    # ====== Sequential mode: one at a time, failover on block ======
+    # ====== [S1966-20261124] Sequential mode: 分层 + 加权 + 限量 ======
+    #   老行为：只取 rotation_index 最小的第一个，一直用到被封才切下一个
+    #   新行为：
+    #     1) 统计每个渠道「今日已成功单数」和「本小时已成功单数」
+    #     2) 过滤掉超 daily_limit / hourly_limit 的渠道
+    #     3) 剩下的按 rotation_index 分组，取序号最小的一组
+    #     4) 组内按 weight 加权随机（如 9:1 = 90%/10%）
+    #     5) 全部超量 → 选今日用量最少的（保业务不停）
     if rotation_mode == 'sequential':
-        if exclude_channel_id:
-            cursor.execute('SELECT * FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0) AND id != %s ORDER BY rotation_index ASC', (exclude_channel_id,))
-        else:
-            cursor.execute('SELECT * FROM payment_channels WHERE is_active=1 AND (auto_disabled IS NULL OR auto_disabled=0) ORDER BY rotation_index ASC')
-        _seq_rows = cursor.fetchall()
-        # [S317] 按渠道类型挑第一个（原来 SQL 带 LIMIT 1，会越过类型过滤）
-        ch = None
-        for _r in _seq_rows:
-            if not channel_type or ((_r.get('channel_type') or 'wechat') == channel_type):
-                ch = _r
-                break
-        conn.close()
-        if ch:
+        _today_cnt = {}
+        _hour_cnt = {}
+        try:
+            cursor.execute("SELECT payment_channel_id AS cid, COUNT(*) AS cnt FROM orders "
+                           "WHERE store_time >= CURRENT_DATE AND COALESCE(transaction_id,'') <> '' "
+                           "AND payment_channel_id IS NOT NULL GROUP BY 1")
+            for _r in cursor.fetchall():
+                _cid = _r['cid'] if isinstance(_r, dict) else _r[0]
+                _cnt = _r['cnt'] if isinstance(_r, dict) else _r[1]
+                _today_cnt[_cid] = int(_cnt or 0)
+            cursor.execute("SELECT payment_channel_id AS cid, COUNT(*) AS cnt FROM orders "
+                           "WHERE store_time >= date_trunc('hour', NOW()) AND COALESCE(transaction_id,'') <> '' "
+                           "AND payment_channel_id IS NOT NULL GROUP BY 1")
+            for _r in cursor.fetchall():
+                _cid = _r['cid'] if isinstance(_r, dict) else _r[0]
+                _cnt = _r['cnt'] if isinstance(_r, dict) else _r[1]
+                _hour_cnt[_cid] = int(_cnt or 0)
+        except Exception as _e1966:
+            logger.warning('[S1966] 用量统计失败(本次不限量): %s', _e1966)
+
+        _cands = []
+        for _r in channels:
+            if channel_type and ((_r.get('channel_type') or 'wechat') != channel_type):
+                continue
+            if exclude_channel_id and _r['id'] == exclude_channel_id:
+                continue
+            if _r.get('auto_disabled'):
+                continue
+            _cands.append(_r)
+
+        _ok = []
+        for _r in _cands:
+            try:
+                _dl = float(_r.get('daily_limit') or 0)
+            except Exception:
+                _dl = 0.0
+            try:
+                _hl = float(_r.get('hourly_limit') or 0)
+            except Exception:
+                _hl = 0.0
+            _t = _today_cnt.get(_r['id'], 0)
+            _h = _hour_cnt.get(_r['id'], 0)
+            if _dl > 0 and _t >= _dl:
+                continue
+            if _hl > 0 and _h >= _hl:
+                continue
+            _ok.append(_r)
+
+        if _ok:
+            _min_ri = min((_r.get('rotation_index') or 0) for _r in _ok)
+            _group = [_r for _r in _ok if (_r.get('rotation_index') or 0) == _min_ri]
+            _ws = [max(1, int(_r.get('weight') or 1)) for _r in _group]
+            ch = random.choices(_group, weights=_ws, k=1)[0]
+            conn.close()
             selected = dict(ch)
-            logger.info('[channel-sequential] current: %s (id=%d)' % (selected.get('name',''), selected['id']))
+            logger.info('[S1966] 选中: %s (id=%s, ri=%s, w=%s, 今日=%s/%s, 本小时=%s/%s)',
+                        selected.get('name',''), selected['id'], selected.get('rotation_index'),
+                        selected.get('weight'),
+                        _today_cnt.get(selected['id'],0), selected.get('daily_limit') or 'unlimited',
+                        _hour_cnt.get(selected['id'],0), selected.get('hourly_limit') or 'unlimited')
             return selected
+
+        if _cands:
+            ch = min(_cands, key=lambda _r: (_today_cnt.get(_r['id'],0), _hour_cnt.get(_r['id'],0)))
+            conn.close()
+            selected = dict(ch)
+            logger.warning('[S1966] 全部超限，降级选用量最少: %s (id=%s, 今日=%s)',
+                           selected.get('name',''), selected['id'], _today_cnt.get(selected['id'],0))
+            return selected
+
+        conn.close()
         logger.error('[channel-sequential] no channel!')
         return None
     if rotation_mode == 'round_robin':

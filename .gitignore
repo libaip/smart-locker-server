@@ -4,6 +4,7 @@
 # ===== 备份目录（全部排除）=====
 backup/
 backups/
+_backups/
 db_backups/
 bak_*/
 backup_*/
